@@ -7,8 +7,8 @@ This is a decision record, not a plan. It exists so the question is answered onc
 **tvOS ships no web view.** `WKWebView` is not in the public tvOS SDK and Apple's Human Interface
 Guidelines state plainly that web views are not supported on tvOS. Every other ScreenTinker player is
 `server/player/index.html` inside a shell — a WebView on Android, Fire TV and Vega, an iframe on webOS,
-a `.wgt` on Tizen, an `roHtmlWidget` on BrightSign, a kiosk browser on Pi, Windows and ChromeOS. None
-of that exists here.
+a `.wgt` on Tizen, an `roHtmlWidget` on BrightSign, a kiosk browser on Pi, Windows and ChromeOS, a `WKWebView` in the iPad/iPhone app
+(`ios/`). None of that exists here.
 
 The app cannot bring its own engine either. tvOS grants no JIT entitlement, so a bundled WebKit or
 Chromium would interpret its JavaScript, and App Store guideline 2.5.6 requires web-browsing apps to

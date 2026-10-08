@@ -185,7 +185,7 @@ class App:
 
     def device_info(self):
         w = self.stage.window
-        scr = QGuiApplication.primaryScreen()
+        scr = (w.screen() if w is not None else None) or QGuiApplication.primaryScreen()
         size = scr.size() if scr else None
         dpr = scr.devicePixelRatio() if scr else 1.0
         info = {
@@ -962,9 +962,11 @@ class App:
     # ------------------------------------------------------------------ on-device menu
     def _refresh_menu(self):
         acts = [{"id": "refresh", "label": "Reload content"},
-                {"id": "repair", "label": "Forget pairing and re-pair"},
-                {"id": "reboot", "label": "Reboot"},
-                {"id": "shutdown", "label": "Shut down"}]
+                {"id": "repair", "label": "Forget pairing and re-pair"}]
+        # Only where the privileged helper exists (it is what reboots): a Mac, or a source checkout,
+        # would otherwise show two buttons that do nothing.
+        if privileged.available():
+            acts += [{"id": "reboot", "label": "Reboot"}, {"id": "shutdown", "label": "Shut down"}]
         if not self.config.get("kiosk_locked"):
             acts.append({"id": "exit", "label": "Exit player"})
         self.stage.set("menuActions", acts)
@@ -987,8 +989,10 @@ class App:
         elif aid == "exit" and not self.config.get("kiosk_locked"):
             self.emit("device:exit", {"device_id": self.config.device_id, "reason": "clean_exit", "detail": "menu"})
             # 42 = "an operator chose to exit": the Windows helper's watchdog stands down instead of
-            # relaunching (winhelper/service.py EXIT_BY_OPERATOR).
-            QTimer.singleShot(300, lambda: self.qt.exit(EXIT_BY_OPERATOR))
+            # relaunching (winhelper/service.py EXIT_BY_OPERATOR). A backend may name its own code:
+            # launchd can only tell "clean" (0) from "not", so macOS stays down on 0.
+            code = getattr(ops, "EXIT_BY_OPERATOR", EXIT_BY_OPERATOR)
+            QTimer.singleShot(300, lambda: self.qt.exit(code))
 
     # ------------------------------------------------------------------ Stage callbacks
     def on_slot_event(self, surface, token, event, detail):
@@ -1030,7 +1034,21 @@ class App:
                      "on" if self.stage.shadersSupported else "off: crossfade")
         except Exception as e:
             log.warning("could not read the scene-graph backend (%s); assuming GPU", e)
+        # --display / ST_DISPLAY: put the window on that output before going full screen there.
+        from .ui import screen_pick
+        idx = screen_pick.wanted_index(getattr(self.args, "display", None))
+        if idx is not None:
+            target = screen_pick.pick(QGuiApplication.screens(), QGuiApplication.primaryScreen(), idx)
+            if target is not None:
+                win.setScreen(target)
+                win.setGeometry(target.geometry())
+                log.info("display %d: %s", idx, target.name())
         if not self.args.windowed:
+            if getattr(ops, "HIDE_CURSOR", False):
+                # A kiosk Mac shows the arrow over content otherwise; input injection does not need it.
+                from PySide6.QtCore import Qt
+                from PySide6.QtGui import QCursor
+                self.qt.setOverrideCursor(QCursor(Qt.CursorShape.BlankCursor))
             if sys.platform == "win32":
                 # Fullscreen alone sits UNDER the taskbar and Start menu on Windows (seen in the VM);
                 # a kiosk surface must be topmost.
@@ -1080,8 +1098,21 @@ def _main(argv=None):
     ap.add_argument("--server", help="server URL (overrides the stored one)")
     ap.add_argument("--state-dir", help="where pairing/cache/state live")
     ap.add_argument("--windowed", action="store_true", help="do not go fullscreen (development)")
+    ap.add_argument("--display", help="which screen to use, 0 = the first (default: the primary); or ST_DISPLAY")
+    ap.add_argument("--install-autostart", action="store_true",
+                    help="start this player at login and keep it running (macOS LaunchAgent)")
+    ap.add_argument("--remove-autostart", action="store_true", help="undo --install-autostart")
     ap.add_argument("--verbose", "-v", action="store_true")
     args = ap.parse_args(argv)
+    if args.install_autostart or args.remove_autostart:
+        if not hasattr(ops, "install_autostart"):
+            print("autostart is set up by the installer on this OS")
+            return 2
+        if args.remove_autostart:
+            print("removed" if ops.remove_autostart() else "was not installed")
+            return 0
+        print("installed:", ops.install_autostart(args.server))
+        return 0
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if sys.stderr is None or getattr(sys, "frozen", False):
@@ -1104,6 +1135,11 @@ def _main(argv=None):
     if sys.platform == "win32" and not _single_instance():
         log.info("another player is already running in this session; exiting")
         return 0
+    if hasattr(ops, "single_instance"):
+        from .config import default_state_dir
+        if not ops.single_instance(args.state_dir or default_state_dir()):
+            log.info("another player is already running for this user; exiting")
+            return 0
 
     # Qt's own warnings (QML errors, shader failures, multimedia) go to stderr by default — which a
     # windowed Windows build discards. Route them into the player log.

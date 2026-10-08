@@ -559,6 +559,15 @@ function onVega() {
     return false;
   }
 }
+function onIOS() {
+  try {
+    if (new URLSearchParams(window.location.search).get("host") !== "ios") return false;
+    const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.screentinker;
+    return !!(h && typeof h.postMessage === "function");
+  } catch (e) {
+    return false;
+  }
+}
 const HOST = (() => {
   let platform = null;
   try {
@@ -567,13 +576,17 @@ const HOST = (() => {
   }
   const vegaBridge = () => {
     try {
+      if (platform === "ios") {
+        const m = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.screentinker;
+        return m && typeof m.postMessage === "function" ? m : null;
+      }
       const b = window.ReactNativeWebView;
       return b && typeof b.postMessage === "function" ? b : null;
     } catch (e) {
       return null;
     }
   };
-  const topLevelVega = platform === "vega" && window.parent === window;
+  const topLevelVega = (platform === "vega" || platform === "ios") && window.parent === window;
   if (!platform || window.parent === window && !topLevelVega) return null;
   const h = { platform, ready: false, caps: [], info: {}, topLevel: topLevelVega };
   h.send = (msg) => {
@@ -669,8 +682,8 @@ function restartPlayer(reason) {
   } catch (e) {
   }
   try {
-    if (onVega() && HOST && HOST.command("restart")) {
-      console.log("[vega] restart delegated to shell:", reason);
+    if ((onVega() || onIOS()) && HOST && HOST.command("restart")) {
+      console.log("[" + HOST.platform + "] restart delegated to shell:", reason);
       return;
     }
   } catch (e) {
@@ -691,7 +704,8 @@ let vegaConnectGaveUp = false;
 function vegaShellIdentity() {
   try {
     if (vegaIdentityCleared) return null;
-    if (typeof onVega !== "function" || !onVega()) return null;
+    const shell = typeof onVega === "function" && onVega() || typeof onIOS === "function" && onIOS();
+    if (!shell) return null;
     if (typeof HOST === "undefined" || !HOST || !HOST.ready || !HOST.info) return null;
     const deviceId = HOST.info.deviceId ? String(HOST.info.deviceId) : "";
     const deviceToken = HOST.info.deviceToken ? String(HOST.info.deviceToken) : "";
@@ -722,7 +736,8 @@ function adoptVegaIdentity() {
 function clearVegaIdentity() {
   vegaIdentityCleared = true;
   try {
-    if (typeof onVega !== "function" || !onVega()) return;
+    const shell = typeof onVega === "function" && onVega() || typeof onIOS === "function" && onIOS();
+    if (!shell) return;
     if (typeof HOST === "undefined" || !HOST || typeof HOST.command !== "function") return;
     HOST.command("clear-identity");
   } catch (e) {
@@ -801,7 +816,7 @@ function saveConfig(cfg) {
     }
   }
   try {
-    if (cfg && cfg.deviceId && cfg.deviceToken && typeof onVega === "function" && onVega() && typeof HOST !== "undefined" && HOST && typeof HOST.command === "function") {
+    if (cfg && cfg.deviceId && cfg.deviceToken && (typeof onVega === "function" && onVega() || typeof onIOS === "function" && onIOS()) && typeof HOST !== "undefined" && HOST && typeof HOST.command === "function") {
       HOST.command("set-identity", { deviceId: String(cfg.deviceId), deviceToken: String(cfg.deviceToken) });
     }
   } catch (e) {
@@ -2338,7 +2353,7 @@ function connect(serverUrl) {
     return;
   }
   try {
-    if (!vegaConnectGaveUp && !vegaIdentityCleared && typeof onVega === "function" && onVega() && typeof HOST !== "undefined" && HOST && !HOST.ready) {
+    if (!vegaConnectGaveUp && !vegaIdentityCleared && (typeof onVega === "function" && onVega() || typeof onIOS === "function" && onIOS()) && typeof HOST !== "undefined" && HOST && !HOST.ready) {
       vegaConnectDeferred = true;
       if (!vegaConnectWait) {
         vegaConnectWait = setTimeout(() => {
@@ -3678,6 +3693,13 @@ function declaredCapabilities() {
   if (typeof HOST !== "undefined" && HOST && HOST.ready) {
     for (const c of HOST.caps) if (!caps.includes(c)) caps.push(c);
   }
+  try {
+    if (typeof onIOS === "function" && onIOS()) {
+      const i = caps.indexOf("audio.volume");
+      if (i !== -1) caps.splice(i, 1);
+    }
+  } catch (e) {
+  }
   return caps;
 }
 function hostPackageVersion() {
@@ -3768,7 +3790,7 @@ function register() {
   reportedAppVersion = hostPackageVersion();
   data.client_type = "player";
   data.client_version = PLAYER_VERSION;
-  data.platform = ON_BRIGHTSIGN ? "brightsign" : onVega() ? "vega" : browserPlatform();
+  data.platform = ON_BRIGHTSIGN ? "brightsign" : onVega() ? "vega" : onIOS() ? "ios" : browserPlatform();
   if (ON_BRIGHTSIGN) {
     try {
       data.bs_model = BS.model() || null;

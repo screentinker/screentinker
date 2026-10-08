@@ -38,6 +38,7 @@ function entries(state = {}) {
   const brightsign = state.brightsign || {};
   const deb = state.deb || {};
   const exe = state.exe || {};
+  const dmg = state.dmg || {};
 
   return [
     {
@@ -156,6 +157,39 @@ function entries(state = {}) {
       available: true,
       version: null,
       size: null,
+    },
+    {
+      /*
+       * The NATIVE macOS player (native/, ScreenTinker.app in a .dmg). Like the Pi and Windows rows it
+       * exists only where someone built it or mounted it (lib/mac-cache.js). Unlike them it never
+       * updates itself — a Mac is updated from this file or by MDM — so the row says so.
+       */
+      id: 'macos-native',
+      name: 'Mac (native player, beta)',
+      file: dmg.filename || 'ScreenTinker-<version>.dmg',
+      what: 'A native player for macOS 12 or later. Drag it to Applications; update it from here or with your device management (it does not update itself).',
+      url: '/download/mac',
+      guide: '/guides/mac-ipad-digital-signage.html',
+      available: !!dmg.exists,
+      version: dmg.version || null,
+      size: formatSize(dmg.size),
+      absent: 'No macOS player is hosted on this instance. The web player in Safari or Chrome works on any Mac meanwhile.',
+      fallback: '/player',
+    },
+    {
+      id: 'ios',
+      name: 'iPad and iPhone (app, beta)',
+      file: null,
+      // Not a download: an iOS app installs only through Apple (TestFlight, the App Store, or an
+      // MDM/enterprise distribution) — a link to a file here could never install.
+      what: 'Not a download. The ScreenTinker app is distributed by your organisation through TestFlight or device management; it shows this instance’s player full screen.',
+      url: null,
+      guide: '/guides/mac-ipad-digital-signage.html',
+      available: false,
+      version: null,
+      size: null,
+      absent: 'Ask whoever runs this instance for the app, or open the web player in Safari meanwhile.',
+      fallback: '/player',
     },
     {
       id: 'web',

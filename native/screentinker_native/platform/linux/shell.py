@@ -218,6 +218,10 @@ class PtySession:
 
 
 class PtyManager:
+    # The session class is the one per-OS seam: macOS (platform/macos/shell.py) reuses all of this and
+    # replaces only how the shell process is started.
+    session_cls = PtySession
+
     def __init__(self, emit):
         self._emit = emit
         self.sessions = {}
@@ -245,7 +249,7 @@ class PtyManager:
             await self._emit("device:pty-exit", {"session_id": sid, "code": None, "reason": "too_many_sessions"})
             return
         try:
-            s = PtySession(sid, payload.get("rows"), payload.get("cols"), self._emit,
+            s = self.session_cls(sid, payload.get("rows"), payload.get("cols"), self._emit,
                            lambda k: self.sessions.pop(k, None))
         except OSError as e:
             await self._emit("device:pty-exit", {"session_id": sid, "code": None, "reason": "spawn_failed: %s" % e})

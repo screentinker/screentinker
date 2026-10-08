@@ -1,0 +1,147 @@
+name: Apple players
+
+# The macOS native player and the iPad/iPhone app. There is no Mac anywhere else in the pipeline, so
+# these jobs are the real test for both: the native suite on macOS, the player starting headless from
+# source AND from the built .app, the remote terminal's shell starter inside the frozen app, and the
+# iOS app compiling and passing its unit tests on a simulator. Only for changes that touch them —
+# an unrelated PR never waits on a macOS runner.
+on:
+  pull_request:
+    paths:
+      - 'native/**'
+      - 'ios/**'
+      - 'shared/Transitions/**'
+      - '.github/workflows/apple.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'native/**'
+      - 'ios/**'
+      - 'shared/Transitions/**'
+      - '.github/workflows/apple.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: apple-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  macos-player:
+    name: macOS native player (tests, headless start, .app/.dmg)
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      # ⚠️ Never the runner's (or anyone's) mixer, exactly like a workstation run.
+      ST_TEST_NO_SYSTEM_AUDIO: '1'
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the player's dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -q -r native/packaging/macos/requirements.txt pytest
+          python -c "import PySide6, sys, platform; print('PySide6', PySide6.__version__, platform.machine(), sys.version)"
+      - name: Native test suite (on macOS)
+        working-directory: native
+        run: python -m pytest -q
+      - name: Start the player from source, headless
+        working-directory: native
+        run: |
+          set +e
+          python -m screentinker_native --server http://127.0.0.1:9 --state-dir "$RUNNER_TEMP/st-src" --windowed -v > "$RUNNER_TEMP/src.log" 2>&1 &
+          pid=$!
+          sleep 25
+          kill -INT $pid; sleep 3; kill -9 $pid 2>/dev/null
+          cat "$RUNNER_TEMP/src.log"
+          set -e
+          ! grep -q Traceback "$RUNNER_TEMP/src.log"
+          grep -q "scene graph" "$RUNNER_TEMP/src.log"
+          grep -q "connect to http://127.0.0.1:9" "$RUNNER_TEMP/src.log"
+      - name: Build ScreenTinker.app and the .dmg (ad-hoc signed)
+        run: native/packaging/macos/build.sh
+      - name: Start the BUILT app, headless
+        run: |
+          APP=native/build/mac/dist/ScreenTinker.app
+          codesign --verify --deep --strict "$APP"
+          plutil -p "$APP/Contents/Info.plist" | grep -E "CFBundleIdentifier|CFBundleShortVersionString|NSAppSleepDisabled"
+          set +e
+          "$APP/Contents/MacOS/ScreenTinker" --server http://127.0.0.1:9 --state-dir "$RUNNER_TEMP/st-app" --windowed -v &
+          pid=$!
+          sleep 30
+          kill -INT $pid; sleep 3; kill -9 $pid 2>/dev/null
+          set -e
+          # A frozen build logs to <state>/player.log (there is no console).
+          cat "$RUNNER_TEMP/st-app/player.log"
+          ! grep -q Traceback "$RUNNER_TEMP/st-app/player.log"
+          grep -q "scene graph" "$RUNNER_TEMP/st-app/player.log"
+          grep -q "connect to http://127.0.0.1:9" "$RUNNER_TEMP/st-app/player.log"
+      - name: The frozen app starts a terminal shell with a controlling tty
+        run: |
+          python - <<'EOF'
+          import os, pty, subprocess, sys
+          exe = "native/build/mac/dist/ScreenTinker.app/Contents/MacOS/ScreenTinker"
+          master, slave = pty.openpty()
+          probe = 'echo pgrp=$(ps -o tpgid= -p $$ | tr -d " ") self=$$'
+          p = subprocess.Popen([exe, "--st-pty-exec", "/bin/sh", "-c", probe], stdin=slave, stdout=slave, stderr=slave, close_fds=True)
+          os.close(slave)
+          p.wait(timeout=60)
+          out = b""
+          while True:
+              try:
+                  chunk = os.read(master, 4096)
+              except OSError:
+                  break
+              if not chunk:
+                  break
+              out += chunk
+          text = out.decode(errors="replace")
+          print(text)
+          import re
+          m = re.search(r"pgrp=(\d+) self=(\d+)", text)
+          assert m and m.group(1) == m.group(2), "the shell is not the foreground process group of its tty"
+          EOF
+      - name: Third-party notices are in the bundle
+        run: |
+          N=native/build/mac/dist/ScreenTinker.app/Contents/Resources/THIRD-PARTY-NOTICES.txt
+          grep -q "LGPL-3.0" "$N"
+          ! grep -i -E "^PyQt" "$N"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScreenTinker-macOS-dmg
+          path: native/dist/ScreenTinker-*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  ios-app:
+    name: iPad/iPhone app (simulator build + unit tests)
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate the Xcode project
+        working-directory: ios
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild -version
+      - name: Build and test on a simulator (unsigned)
+        working-directory: ios
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          ios = sorted((k for k in d if "iOS" in k), reverse=True)
+          for k in ios:
+              for dev in d[k]:
+                  if dev["name"].startswith("iPhone"):
+                      print(dev["udid"]); sys.exit(0)
+          sys.exit("no iPhone simulator")')
+          echo "simulator $UDID"
+          xcodebuild test -project ScreenTinker.xcodeproj -scheme ScreenTinker \
+            -destination "id=$UDID" CODE_SIGNING_ALLOWED=NO | tail -60
+          exit ${PIPESTATUS[0]}

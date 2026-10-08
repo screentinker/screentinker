@@ -438,6 +438,43 @@ const BASELINE = {
     'system.restart_player',
     'sync.clock', 'offline.cache',
   ],
+  /*
+   * The NATIVE macOS player — the same engine again (native/screentinker_native, platform/macos),
+   * client_type 'mac', platform 'macOS/<version> (<model>)'. Exactly BASELINE.windows, for exactly its
+   * reason: no macOS build has been released, the player declares on every register, and only what
+   * the shared engine does by itself is assumed. And never system.self_update — a Mac does not update
+   * itself at all (platform/macos/ops.py withdraws it from its own declaration too).
+   */
+  macos: [
+    'playback.video', 'playback.image', 'playback.widget', 'playback.youtube',
+    'playback.zones', 'playback.transitions', 'playback.pip',
+    'playback.bundle', 'playback.slide_audio',
+    'audio.mute',
+    'display.rotation', 'display.brightness',
+    'remote.screenshot', 'remote.stream', 'remote.input',
+    'system.restart_player',
+    'sync.clock', 'offline.cache',
+  ],
+  /*
+   * The iPad/iPhone app (ios/): the web player, top-level in a WKWebView, platform 'ios'. BASELINE.web
+   * minus two things iOS takes away from a web view:
+   *   - audio.volume: HTMLMediaElement.volume is read-only (always 1) on iOS — the slider would be
+   *     dead. The player withdraws it from its own declaration as well (declaredCapabilities).
+   *   - offline.cache: a WKWebView runs service workers only for the "app-bound domains" an app lists
+   *     in its Info.plist at build time, and a customer's server cannot be listed in advance. The
+   *     player claims offline.cache only for a worker in control, so a row that declares never has it.
+   */
+  ios: [
+    'playback.video', 'playback.image', 'playback.widget', 'playback.youtube',
+    'playback.zones', 'playback.transitions', 'playback.pip',
+    'playback.bundle',
+    'playback.slide_audio',
+    'audio.mute',
+    'display.rotation',
+    'remote.screenshot', 'remote.stream', 'remote.input',
+    'system.restart_player',
+    'sync.clock',
+  ],
   // A browser tab. Deliberately the smallest set: it cannot reboot its host, rotate a panel, or
   // capture anything outside its own document.
   web: [
@@ -497,6 +534,12 @@ function platformFamily(device) {
   // before the Android fallback — it sends android_version '' today, and a build that ever put its
   // OS string there must not become an Android panel.
   if (clientType === 'win' || platform.startsWith('windows/')) return 'windows';
+  // The native macOS player: the same engine, the same two signals, the same position ahead of the
+  // Android fallback.
+  if (clientType === 'mac' || platform.startsWith('macos/')) return 'macos';
+  // The iPad/iPhone app registers through the web player (android_version 'Web/…', client_type
+  // 'player'), so this must come before the browser fallback below — like Vega above.
+  if (platform === 'ios') return 'ios';
   // client_type 'apk' is the Android player; android_version that is NOT the web player's
   // "Web/..." shape is the older signal for the same thing.
   if ((device && device.client_type === 'apk') || (android && !android.startsWith('Web/'))) return 'android';

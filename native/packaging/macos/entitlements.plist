@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements, used ONLY when build.sh signs with a Developer ID (for notarization).
+  An ad-hoc build is not hardened and ignores this file.
+    allow-jit / allow-unsigned-executable-memory  QtWebEngine is Chromium: V8 needs both.
+    disable-library-validation                     Qt's plugins and PySide6's extension modules are not
+                                                   signed by our team ID until build.sh re-signs them.
+    device.audio-input                             the dashboard's two-way intercom (remote.talk / mic).
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+  <key>com.apple.security.device.audio-input</key><true/>
+</dict>
+</plist>

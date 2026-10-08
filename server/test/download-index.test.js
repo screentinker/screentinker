@@ -25,6 +25,7 @@ const di = require('../lib/download-index');
 const GUIDE_DIR = path.join(__dirname, '..', '..', 'frontend', 'guides');
 const PLATFORM_GUIDES = [
   'windows-digital-signage.html',
+  'mac-ipad-digital-signage.html',
   'chromeos-digital-signage.html',
   'lg-webos-digital-signage.html',
   'brightsign-digital-signage.html',

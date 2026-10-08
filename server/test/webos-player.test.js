@@ -111,7 +111,8 @@ test('webos: the player only forms a host bridge when a shell asks for one', () 
   assert.ok(bridge.length > 0, 'the HOST bridge exists');
   assert.match(bridge, /get\('host'\)/, 'it is opt-in via ?host=');
   assert.match(bridge, /window\.parent === window && !topLevelVega\)\) return null/, 'and only inside a frame, unless this is the Vega top window');
-  assert.match(bridge, /platform === 'vega' && window\.parent === window/, 'the top-window exception is Vega-only');
+  // The top-window exception is the two shells whose page IS the top window: Vega and the iOS app.
+  assert.match(bridge, /\(platform === 'vega' \|\| platform === 'ios'\) && window\.parent === window/, 'the top-window exception is Vega and iOS only');
   assert.match(bridge, /ev\.source !== window\.parent\) return/, 'it listens to the embedding window and nobody else');
   assert.match(bridge, /d\.source !== 'screentinker-host'\) return/);
 });
