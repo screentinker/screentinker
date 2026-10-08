@@ -87,7 +87,17 @@ rm -f "$DMG"
 STAGE=$(mktemp -d)
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "ScreenTinker $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+# ⚠️ Retried: hdiutil fails now and then with "Resource busy" when something on the Mac (Spotlight,
+# XProtect, a lingering mount) holds the new volume for a moment. Seen on GitHub's macOS runners; the
+# same command succeeds seconds later.
+for attempt in 1 2 3 4 5; do
+  if hdiutil create -volname "ScreenTinker $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null; then
+    break
+  fi
+  if [ "$attempt" = 5 ]; then echo "hdiutil create failed 5 times" >&2; exit 1; fi
+  echo "hdiutil create failed (attempt $attempt); retrying in $((attempt * 5)) s" >&2
+  sleep $((attempt * 5))
+done
 rm -rf "$STAGE"
 if [ -n "${ST_CODESIGN_IDENTITY:-}" ]; then
   codesign --force --timestamp --sign "$ST_CODESIGN_IDENTITY" "$DMG"
