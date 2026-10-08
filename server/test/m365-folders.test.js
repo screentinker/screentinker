@@ -217,6 +217,33 @@ test('a file changed upstream replaces its item: same id, new bytes, revision bu
   assert.equal(afterRow.width, 8);
 });
 
+test('a file head office mandates is not rewritten by a sync its creator could not make', async () => {
+  // The same rule as the Canva sync (lib/content-replace.js `writer`): a store editor's folder must
+  // not change media that head office now plays in a corporate playlist.
+  const map = db.prepare("SELECT content_id FROM cloud_folder_items WHERE folder_id = ? AND remote_id = 'a'").get(folderId);
+  const before = db.prepare('SELECT updated_at, byte_digest FROM content WHERE id = ?').get(map.content_id);
+  const owner = db.prepare('SELECT user_id FROM cloud_folders WHERE id = ?').get(folderId).user_id;
+  db.prepare('UPDATE cloud_folders SET user_id = ? WHERE id = ?').run(EDITOR, folderId);
+  db.prepare('UPDATE playlists SET corporate = 1 WHERE id = ?').run(playlistId);
+  const prevA = files.a;
+  files.a = { ...files.a, bytes: png(5, 5, [1, 2, 3]), tag: 'c-corp' };
+  try {
+    const r = await call('editor', 'POST', `/folders/${folderId}/sync`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.summary.updated, 0, JSON.stringify(r.body.summary));
+    assert.ok(r.body.summary.errors.some((e) => e.startsWith(files.a.name)), JSON.stringify(r.body.summary.errors));
+    assert.deepEqual(db.prepare('SELECT updated_at, byte_digest FROM content WHERE id = ?').get(map.content_id), before, 'bytes untouched');
+    // The org owner may author corporate media, so their folder still syncs the change.
+    db.prepare('UPDATE cloud_folders SET user_id = ? WHERE id = ?').run(ADMIN, folderId);
+    const ok = await call('admin', 'POST', `/folders/${folderId}/sync`);
+    assert.equal(ok.body.summary.updated, 1, JSON.stringify(ok.body.summary));
+  } finally {
+    db.prepare('UPDATE playlists SET corporate = 0 WHERE id = ?').run(playlistId);
+    db.prepare('UPDATE cloud_folders SET user_id = ? WHERE id = ?').run(owner, folderId);
+    files.a = { ...prevA, tag: 'c-corp' };   // stay in step with what is now synced
+  }
+});
+
 test('a file removed upstream leaves the playlist and the library; one used elsewhere is kept', async () => {
   const bId = db.prepare("SELECT content_id FROM cloud_folder_items WHERE folder_id = ? AND remote_id = 'b'").get(folderId).content_id;
   const aId = db.prepare("SELECT content_id FROM cloud_folder_items WHERE folder_id = ? AND remote_id = 'a'").get(folderId).content_id;

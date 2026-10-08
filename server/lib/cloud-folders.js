@@ -264,6 +264,14 @@ async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
 
     const mapped = new Map(db.prepare('SELECT * FROM cloud_folder_items WHERE folder_id = ?').all(folder.id).map((r) => [r.remote_id, r]));
     const actor = { userId: null, kind: 'system', label: 'SharePoint sync' };
+    /*
+     * WHO the bytes are written for (lib/content-replace.js `writer`): the folder's creator. Without
+     * it the sync runs as system, and a synced file that head office later put in a corporate
+     * playlist would be rewritten on every mandated screen from SharePoint — the same hole the Canva
+     * sync had. A refused file is a per-file error in the summary; the rest of the folder syncs.
+     */
+    const ownerRow = db.prepare('SELECT id, role FROM users WHERE id = ?').get(folder.user_id);
+    const writer = ownerRow ? require('./corporate/actor').fromUser(ownerRow) : null;
     const { ingestUploadedFile } = require('./content-ingest');
     const { replaceContentBytes } = require('./content-replace');
 
@@ -286,7 +294,7 @@ async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
         tmp = await m365.downloadFile(folder.organization_id, folder.drive_id, f.id, { destDir: config.contentDir, maxBytes: Math.min(cap || Infinity, room == null ? Infinity : room) });
         const file = { path: tmp.path, size: tmp.size, originalname: f.name };
         if (row && live) {
-          const r = await replaceContentBytes({ content: live, file, actor, reqOrIo: io });
+          const r = await replaceContentBytes({ content: live, file, actor, writer, reqOrIo: io });
           if (r.status !== 200) throw new Error(r.body && r.body.error ? r.body.error : `replace failed (${r.status})`);
           db.prepare('UPDATE cloud_folder_items SET tag = ?, name = ?, size = ? WHERE folder_id = ? AND remote_id = ?').run(f.tag, f.name, f.size, folder.id, f.id);
           summary.updated++;
