@@ -34,8 +34,10 @@ def launcher(monkeypatch, tmp_path):
 def setup(mod, mode=None, desktop=False):
     mod.boots_to_desktop = lambda: desktop
     mod.desktop_login_user = lambda: "pi"
+    # Never touch the test machine's own clock or zone.
+    mod.setup_clock = lambda server, wanted=None, **k: mod.calls.append(("setup_clock", server, wanted))
     mod.cmd_setup(types.SimpleNamespace(url="http://localhost:3001/", name=None, mode=mode,
-                                        user=None, allow_package_install=False))
+                                        user=None, allow_package_install=False, timezone=None))
     with open(mod.SYSTEM_CONFIG) as f:
         return json.load(f)
 
@@ -192,3 +194,120 @@ def test_build_deb_purge_removes_the_addon():
         src = f.read()
     assert "rm -rf /usr/lib/screentinker-pi-audience" in src and '"$1" = "purge"' in src
     assert "rm -rf /opt/screentinker/audience-addon" in src, "and the old location"
+
+
+# ---------------------------------------------------------------------- sound on Lite (PipeWire)
+
+def test_pulse_server_finds_the_player_users_pipewire_socket(launcher):
+    """Debian's Qt has no ALSA backend: without a sound server every Lite Pi played video silently
+    ("No audio device detected"). The launcher points the player at its own user's PipeWire socket."""
+    seen = []
+    assert launcher.pulse_server(uid=102, exists=lambda p: seen.append(p) or True) == "unix:/run/user/102/pulse/native"
+    assert seen == ["/run/user/102/pulse/native"]
+    # Not up yet at boot: waits, then finds it.
+    calls = {"n": 0}
+    def later(p):
+        calls["n"] += 1
+        return calls["n"] >= 3
+    assert launcher.pulse_server(uid=102, sleep=lambda s: None, exists=later) == "unix:/run/user/102/pulse/native"
+    # Never comes up: gives up (the player still runs, without sound) instead of blocking forever.
+    naps = []
+    assert launcher.pulse_server(uid=102, wait_s=5, sleep=naps.append, exists=lambda p: False) is None
+    assert len(naps) == 5
+
+
+def test_the_package_brings_a_sound_server_and_sends_audio_to_every_output():
+    with open(BUILD_DEB) as f:
+        src = f.read()
+    for pkg in ("pipewire", "pipewire-pulse", "wireplumber"):
+        assert pkg in src.split("Depends:", 1)[1].split("EOF", 1)[0], pkg
+    assert "loginctl enable-linger screentinker" in src
+    assert "pipewire-all-outputs.conf" in src and "/var/lib/screentinker-pi/.config/pipewire/pipewire.conf.d/" in src
+    conf = os.path.join(os.path.dirname(BUILD_DEB), "pipewire-all-outputs.conf")
+    with open(conf) as f:
+        c = f.read()
+    assert "libpipewire-module-combine-stream" in c and 'node.name = "~alsa_output.*"' in c
+    assert "priority.session" in c, "the combined sink must win as the default"
+
+
+# ---------------------------------------------------------------------- clock: NTP + a real time zone
+
+class _Run:
+    def __init__(self, rc=0):
+        self.calls, self.rc = [], rc
+    def __call__(self, *argv):
+        self.calls.append(argv)
+        return type("R", (), {"returncode": self.rc, "stdout": "", "stderr": "nope"})()
+    def zones_set(self):
+        return [c[2] for c in self.calls if c[:2] == ("timedatectl", "set-timezone")]
+
+
+def test_setup_clock_turns_on_ntp_and_detects_a_default_zone(launcher):
+    """⚠️ Pi OS's default zone IS Europe/London: a Pi in Chicago played its schedules on UK time."""
+    run, out = _Run(), []
+    tz = launcher.setup_clock("http://s", run=run, current="Europe/London",
+                              lookup=lambda s: "America/Chicago", out=out.append)
+    assert tz == "America/Chicago" and run.zones_set() == ["America/Chicago"]
+    assert ("timedatectl", "set-ntp", "true") in run.calls
+    assert "detected" in out[-1]
+
+
+def test_setup_clock_keeps_a_zone_somebody_chose(launcher):
+    run, looked = _Run(), []
+    tz = launcher.setup_clock("http://s", run=run, current="Asia/Tokyo",
+                              lookup=lambda s: looked.append(s) or "America/Chicago", out=lambda m: None)
+    assert tz == "Asia/Tokyo" and run.zones_set() == [] and looked == [], "never second-guess a chosen zone"
+    assert ("timedatectl", "set-ntp", "true") in run.calls
+
+
+def test_setup_clock_explicit_zone_wins_and_bad_ones_are_refused(launcher):
+    run = _Run()
+    assert launcher.setup_clock("http://s", "America/Denver", run=run, current="Asia/Tokyo",
+                                lookup=lambda s: "America/Chicago", out=lambda m: None) == "America/Denver"
+    assert run.zones_set() == ["America/Denver"]
+    run, out = _Run(), []
+    for bad in ("Mars/Olympus", "../../etc/passwd", "America/Chicago; reboot"):
+        assert launcher.setup_clock("http://s", bad, run=run, current="Europe/London", out=out.append) == "Europe/London"
+    assert run.zones_set() == [] and all("Unknown time zone" in m for m in out)
+
+
+def test_setup_clock_keeps_the_zone_when_it_cannot_tell(launcher):
+    """A LAN server can't see where the Pi is: keep the zone and say how to fix it, never guess."""
+    run, out = _Run(), []
+    assert launcher.setup_clock("http://s", run=run, current="Etc/UTC", lookup=lambda s: None,
+                                out=out.append) == "Etc/UTC"
+    assert run.zones_set() == [] and "--timezone" in " ".join(out)
+    run = _Run(rc=1)   # timedatectl refused: report it, don't claim success
+    out = []
+    assert launcher.setup_clock("http://s", run=run, current="Etc/UTC", lookup=lambda s: "America/Chicago",
+                                out=out.append) == "Etc/UTC"
+    assert "Could not set" in out[-1]
+
+
+def test_lookup_zone_asks_our_own_server_and_validates_the_answer(launcher):
+    import io
+    asked = []
+    def opener(body):
+        def urlopen(url, timeout):
+            asked.append(url)
+            class R(io.BytesIO):
+                def __enter__(self): return self
+                def __exit__(self, *a): return False
+            return R(body)
+        return urlopen
+    assert launcher.lookup_zone("https://screentinker.com/", opener(b'{"timezone":"America/Chicago"}')) == "America/Chicago"
+    assert asked == ["https://screentinker.com/api/public/timezone"]
+    assert launcher.lookup_zone("http://s", opener(b'{"timezone":"Mars/Olympus"}')) is None
+    assert launcher.lookup_zone("http://s", opener(b'{"timezone":null}')) is None
+    assert launcher.lookup_zone("http://s", opener(b'<html>404</html>')) is None
+    def boom(url, timeout):
+        raise OSError("down")
+    assert launcher.lookup_zone("http://s", boom) is None
+
+
+def test_setup_sets_the_clock_before_the_service_starts(launcher):
+    setup(launcher)
+    names = [c[0] if c[0] == "setup_clock" else " ".join(c) for c in launcher.calls]
+    assert ("setup_clock", "http://localhost:3001", None) in launcher.calls
+    assert names.index("setup_clock") < names.index("systemctl restart screentinker-pi"), \
+        "the player must start in the right zone, not pick it up at the next reboot"

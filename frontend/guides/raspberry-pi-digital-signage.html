@@ -65,7 +65,7 @@
     <ul>
       <li><strong>Raspberry Pi 3, Pi 4, or Pi 5.</strong> Pi 4 (4GB+) is the sweet spot. Pi 3 works for static images and 1080p video. Pi 5 is overkill but futureproof.</li>
       <li><strong>microSD card,</strong> 16 GB or larger. Class 10 or A1/A2 rated.</li>
-      <li><strong>Power supply</strong> appropriate for your model (Pi 4 uses USB-C 15W; Pi 5 uses USB-C 27W).</li>
+      <li><strong>A proper power supply:</strong> 5.1V 3A USB-C (15W) for a Pi 4, 27W USB-C for a Pi 5. The official Raspberry Pi supply is the safe choice. A phone charger or a TV's USB port usually is not; see <a href="#power">Troubleshooting</a>.</li>
       <li><strong>HDMI cable</strong> to your TV or monitor (micro-HDMI on Pi 4/5).</li>
       <li><strong>Network connection</strong> - Ethernet preferred for reliability, Wi-Fi works fine.</li>
       <li><strong>A ScreenTinker account.</strong> <a href="/app#/login">Sign up free</a> if you do not have one.</li>
@@ -163,6 +163,28 @@
     stops, open a terminal on the desktop and run <code>screentinker-pi run</code> (errors print in the terminal), or read
     <code>~/.local/state/screentinker-pi/player.log</code>. Don't start the service on a desktop: the
     desktop keeps the screen and the service can't draw on it.</p>
+
+    <h3 id="power">The Pi reboots by itself, or forgets its Wi-Fi</h3>
+    <p>Almost always the power supply. Under load (video, HDMI, Ethernet) a weak charger sags, the
+    Pi browns out and cold-boots, and a file being written at that moment can come back empty,
+    which is how a Pi loses its saved Wi-Fi network. Check with <code>vcgencmd get_throttled</code>:
+    anything other than <code>throttled=0x0</code> means it has been short of power since boot. A
+    lightning-bolt icon in a corner of the screen means the same thing. Use a 5.1V 3A supply (Pi 4)
+    or 27W (Pi 5) and a short, thick USB-C cable.</p>
+
+    <h3>Schedules start at the wrong time</h3>
+    <p>Check the Pi's time zone with <code>timedatectl</code>. Raspberry Pi OS defaults to
+    Europe/London, so a Pi set up without the Imager's locale settings runs on UK time. The
+    installer now turns on network time and detects the zone when it is still the default; to set
+    it yourself, re-run it with <code>--timezone America/Chicago</code> (any
+    <a href="https://en.wikipedia.org/wiki/List_of_tz_database_time_zones">IANA zone</a>), or run
+    <code>sudo timedatectl set-timezone America/Chicago</code>.</p>
+
+    <h3>No sound</h3>
+    <p>The native player sends sound to every output at once (both HDMI ports and the headphone jack), so whichever one has
+    a speaker plays it. Older packages played no sound at all on Pi OS Lite; updating the player
+    (self-update from the dashboard, or installing the new package) fixes it. Also check the TV or monitor itself is not muted and its input is
+    set to the Pi's HDMI port.</p>
 
     <h3>The screen goes dark after a few minutes</h3>
     <p>The installer should disable screen blanking, but some monitors sleep based on their own timer. Disable sleep mode on the monitor itself, or use a dummy HDMI plug if the Pi negotiates a low-power mode.</p>

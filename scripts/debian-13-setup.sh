@@ -30,9 +30,48 @@ log()  { echo -e "${GREEN}[ScreenTinker]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 err()  { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
+# -- Clock: NTP on, and a real time zone --
+#
+# ⚠️ Pi OS's default zone IS Europe/London, so a Pi set up without the Imager's locale step played
+# its schedules on UK time (seen on a Pi 4 in Chicago). --timezone wins; a zone somebody chose is
+# kept; a default one is asked of OUR server (screentinker.com answers from where it sees the Pi —
+# no third-party geo-IP service). A LAN server can't tell, so the dashboard fills it in at pairing.
+# Never fatal: when unsure, keep the zone and say how to fix it.
+st_setup_clock() {
+    local server="$1" cur tz=""
+    timedatectl set-ntp true 2>/dev/null || true
+    cur="$(timedatectl show -p Timezone --value 2>/dev/null)"
+    if [ -n "$TIMEZONE" ]; then
+        tz="$TIMEZONE"
+    else
+        case "$cur" in
+            ""|Europe/London|Etc/UTC|UTC|Etc/Universal|Universal|GMT|Etc/GMT) ;;
+            *) log "Time zone: $cur (kept; change with --timezone Area/City)"; return 0 ;;
+        esac
+        [ -n "$server" ] && tz="$(curl -fsS --max-time 5 "$server/api/public/timezone" 2>/dev/null \
+            | sed -n 's/.*"timezone"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')" || tz=""   # ⚠️ set -e + pipefail: an unreachable server must not end the install
+        if [ -z "$tz" ]; then
+            warn "Time zone: ${cur:-UTC}. Could not detect one; if that is wrong, pair the display from a browser"
+            warn "  in its time zone, or re-run with --timezone Area/City (e.g. America/Chicago)."
+            return 0
+        fi
+    fi
+    if ! [[ "$tz" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}$ ]] || [ ! -f "/usr/share/zoneinfo/$tz" ]; then
+        warn "Unknown time zone '$tz' (expected Area/City, e.g. America/Chicago): kept ${cur:-UTC}"
+        return 0
+    fi
+    if [ "$tz" != "$cur" ] && ! timedatectl set-timezone "$tz" 2>/dev/null; then
+        warn "Could not set the time zone to $tz: kept ${cur:-UTC}"
+        return 0
+    fi
+    log "Time zone: $tz"
+}
+
 MODE="both"
 MODE_SET=false
 SERVER_URL=""
+# IANA zone (--timezone Area/City). "" = keep a chosen zone, detect a default one.
+TIMEZONE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -50,6 +89,10 @@ while [[ $# -gt 0 ]]; do
                 shift
             fi
             ;;
+        --timezone)
+            TIMEZONE="$2"
+            shift 2
+            ;;
         --both)
             MODE="both"
             MODE_SET=true
@@ -62,6 +105,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --server-only         Install only the server"
             echo "  --player-only [URL]   Install only the player (URL required)"
             echo "  --both                Install both server and player (default)"
+            echo "  --timezone ZONE       e.g. America/Chicago. Default: kept, or detected when it"
+            echo "                        is still the image's default (Etc/UTC)"
             echo "  --help                Show this help"
             echo ""
             echo "Examples:"
@@ -502,6 +547,8 @@ cat > /etc/motd << 'MOTDEOF'
    screentinker-logs     Follow logs (server|kiosk|all)
 
 MOTDEOF
+
+st_setup_clock "${SERVER_URL%/}"
 
 if grep -q "#RuntimeWatchdogSec=0" /etc/systemd/system.conf 2>/dev/null; then
     sed -i 's/#RuntimeWatchdogSec=0/RuntimeWatchdogSec=10/' /etc/systemd/system.conf

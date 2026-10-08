@@ -104,6 +104,26 @@ def kms_card():
     return "/dev/dri/" + cards[0] if cards else None
 
 
+def pulse_server(uid=None, wait_s=20, sleep=None, exists=None):
+    """The player user's own PipeWire (PulseAudio protocol) socket, waited for briefly at boot.
+
+    ⚠️ Debian's Qt has no ALSA audio backend: without a sound server it reports "No audio device
+    detected" and every video plays silently. The Lite service runs as a system user with no login
+    session; the package enables lingering for it, so systemd starts its PipeWire at boot. A system
+    unit cannot name its own User='s uid (%U is root's there), so this finds the socket by uid instead.
+    Returns "unix:<path>", or None when there is none (the player still runs, just without sound)."""
+    import time
+    uid = os.getuid() if uid is None else uid
+    sleep = sleep or time.sleep
+    exists = exists or os.path.exists
+    sock = "/run/user/%d/pulse/native" % uid
+    for _ in range(max(1, int(wait_s))):
+        if exists(sock):
+            return "unix:" + sock
+        sleep(1)
+    return None
+
+
 def cmd_run(args):
     env = dict(os.environ)
     env["PYTHONPATH"] = LIB + (":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
@@ -127,12 +147,71 @@ def cmd_run(args):
         # the desktop autostart ran, the player died before drawing anything, and the screen just
         # showed the desktop. xcb goes through Xwayland, which Pi OS's labwc and wayfire both run.
         env["QT_QPA_PLATFORM"] = "wayland;xcb"
+    pulse = pulse_server()
+    if pulse and "PULSE_SERVER" not in env:
+        env["PULSE_SERVER"] = pulse
     # WebEngine: GPU rasterisation on the Pi's V3D is where Chromium is least stable; the scene graph
     # (video, images, transitions) keeps its GPU path regardless.
     env.setdefault("QTWEBENGINE_CHROMIUM_FLAGS",
                    "--autoplay-policy=no-user-gesture-required --disable-gpu-rasterization --enable-zero-copy")
     argv = [sys.executable, "-m", "screentinker_native"] + args.rest
     os.execve(sys.executable, argv, env)
+
+
+# The zone an image ships with, i.e. one nobody chose. ⚠️ Pi OS's default IS Europe/London: every Pi
+# set up without the Imager's locale step ran its schedules on UK time (seen on a Pi 4 in Chicago).
+DEFAULT_ZONES = ("", "Europe/London", "Etc/UTC", "UTC", "Etc/Universal", "Universal", "GMT", "Etc/GMT")
+
+
+def valid_zone(tz):
+    import re
+    return bool(tz) and bool(re.match(r"^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}$", tz)) \
+        and os.path.isfile(os.path.join("/usr/share/zoneinfo", tz))
+
+
+def lookup_zone(server, urlopen=None):
+    """The zone the SERVER sees this Pi in (screentinker.com answers from Cloudflare's visitor
+    location). Our own server only: no third-party geo-IP service sees the customer's IP. None when
+    it cannot say (a LAN server, an older server, no network); the dashboard fills it in at pairing."""
+    urlopen = urlopen or urllib.request.urlopen
+    try:
+        with urlopen(server.rstrip("/") + "/api/public/timezone", timeout=5) as r:
+            tz = (json.loads(r.read().decode("utf-8") or "{}") or {}).get("timezone")
+    except Exception:
+        return None
+    return tz if isinstance(tz, str) and valid_zone(tz) else None
+
+
+def setup_clock(server, wanted=None, run=None, current=None, lookup=None, out=print):
+    """NTP on, and a real time zone. An explicit --timezone wins; a zone somebody chose is kept; a
+    default one is looked up. Never fails setup: a wrong zone is worse than none, so when unsure, keep."""
+    run = run or (lambda *a: subprocess.run(list(a), capture_output=True, text=True))
+    run("timedatectl", "set-ntp", "true")
+    if current is None:
+        r = run("timedatectl", "show", "-p", "Timezone", "--value")
+        current = (getattr(r, "stdout", "") or "").strip()
+    if wanted:
+        if not valid_zone(wanted):
+            out("⚠️  Unknown time zone %r (expected Area/City, e.g. America/Chicago): kept %s" % (wanted, current or "the current zone"))
+            return current
+        tz, why = wanted, "from --timezone"
+    elif current not in DEFAULT_ZONES:
+        out("Time zone: %s (kept; change with --timezone Area/City)" % current)
+        return current
+    else:
+        tz = (lookup or lookup_zone)(server)
+        if not tz:
+            out("Time zone: %s — could not detect one. If that is wrong, pair the display from a browser in" % (current or "UTC"))
+            out("   its time zone, or re-run with --timezone Area/City (e.g. America/Chicago).")
+            return current
+        why = "detected"
+    if tz != current:
+        r = run("timedatectl", "set-timezone", tz)
+        if getattr(r, "returncode", 0) != 0:
+            out("⚠️  Could not set the time zone to %s: %s" % (tz, (getattr(r, "stderr", "") or "").strip()))
+            return current
+    out("Time zone: %s (%s)" % (tz, why))
+    return tz
 
 
 def cmd_setup(args):
@@ -154,6 +233,7 @@ def cmd_setup(args):
         print("   be able to draw until the desktop is disabled (sudo raspi-config → System → Boot → Console).")
         print("   To run inside the desktop instead: sudo screentinker-pi setup URL --mode desktop")
     cfg["mode"] = mode
+    setup_clock(cfg["server_url"], args.timezone)
     cfg["allow_package_install"] = bool(args.allow_package_install)
     if mode == "desktop":
         user = args.user or desktop_login_user()
@@ -360,6 +440,7 @@ def main():
     s.add_argument("--mode", choices=("lite", "desktop"), default=None,
                    help="default: desktop if this Pi boots to a desktop, else lite")
     s.add_argument("--user")
+    s.add_argument("--timezone", help="IANA zone, e.g. America/Chicago (default: kept, or detected if it is still the image default)")
     s.add_argument("--allow-package-install", action="store_true",
                    help="let the dashboard install ANY .deb (maintainer scripts run as root)")
     sub.add_parser("run", help="start the player; any further options (--server, -v, --windowed) pass through")
