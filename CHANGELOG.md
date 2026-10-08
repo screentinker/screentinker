@@ -71,6 +71,12 @@
 
 ### Fixed (Android player)
 
+- **A screen deleted from the dashboard stayed on "Waiting for content" instead of showing a new
+  pairing code** (#508), whenever it had last been paired through the pairing screen. The pairing
+  screen, closing late, removed the main screen's handlers along with its own. The same late close
+  also stopped reconnects from clearing the status and re-reporting downloads, and the re-pair
+  screen's code and countdown no longer showed when it opened. Thanks to @xela1978 for the report
+  and the diagnosis.
 - **A web, widget or YouTube item no longer shows "webpage not available" when the network
   drops.**
   - A page that fails to load is hidden instead of showing the browser's error page, and it keeps
