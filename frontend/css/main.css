@@ -2528,3 +2528,31 @@ tr[hidden] { display: none; }
 
 /* Video wall Live tab with no panels assigned. */
 .wall-live-empty { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 160px; padding: 24px; color: var(--text-muted); font-size: 13px; }
+
+/* Generic loading spinner (data sources). It was referenced but never defined, so loading showed nothing. */
+.spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--border-light); border-top-color: var(--accent-2); border-radius: 50%; animation: st-spin .8s linear infinite; vertical-align: middle; }
+@keyframes st-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
+/* Display power schedule editor (screen detail and the group modal): components/power-schedule-editor.js. */
+.power-schedule-editor { display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.power-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.power-enable { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; cursor: pointer; }
+.power-state { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text-secondary); }
+.power-state-on { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); }
+.power-state-scheduled_off { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 40%, transparent); }
+.power-explainer { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-secondary); }
+.power-hint { font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+.power-warning { padding: 8px 12px; border-radius: var(--radius); background: var(--bg-card); border-left: 3px solid var(--warning); font-size: 12px; color: var(--text-secondary); }
+.power-warning ul { margin: 6px 0 0 18px; }
+.power-empty { padding: 14px; text-align: center; color: var(--text-muted); border: 1px dashed var(--border); border-radius: var(--radius); font-size: 12px; }
+#powerWindows { display: flex; flex-direction: column; gap: 8px; }
+.power-window { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); }
+.power-window-times { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.power-window-times label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text-muted); }
+.power-window-times input[type="time"] { padding: 6px 8px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-primary); color-scheme: dark; }
+.power-window-times .power-remove { margin-left: auto; }
+.power-days { display: flex; gap: 6px; flex-wrap: wrap; }
+.power-day { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+.power-day:has(input:checked) { color: var(--text-primary); border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2) 14%, transparent); }
+.power-actions { display: flex; gap: 6px; flex-wrap: wrap; }

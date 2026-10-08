@@ -527,7 +527,7 @@ export async function render(container) {
       `).join('')}
     </div>
     <div class="content-grid" id="widgetGrid"></div>
-    <div id="pluginSubmitCard" style="display:none;margin-top:32px" class="card"></div>
+    <div id="pluginSubmitCard" style="display:none;margin-top:32px" class="corp-card"></div>
 
     <!-- Widget Config Modal -->
     <div class="modal-overlay" id="widgetModal" style="display:none">

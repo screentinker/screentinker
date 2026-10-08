@@ -56,7 +56,7 @@ const hhmm = (sec) => (sec == null ? '' : new Date(sec * 1000).toLocaleString())
  */
 const shortId = (id) => (id ? String(id).slice(0, 8) : '');
 const idBadge = (id) => (id
-  ? `<span class="badge" title="${esc(id)}" style="font-family:monospace">${esc(shortId(id))}</span>`
+  ? `<span class="corp-chip" title="${esc(id)}" style="font-family:monospace">${esc(shortId(id))}</span>`
   : '<span style="color:var(--text-muted)">—</span>');
 
 /*
@@ -433,7 +433,7 @@ async function renderClients(panel) {
                    nothing, because the refusal is deliberately indistinguishable from "no such
                    thing". */
                 ? `<button class="btn btn-secondary btn-sm" data-send-to="${esc(nodeId)}">Send content</button>`
-                : '<span class="badge">read-only — they have not granted changes</span>'}
+                : '<span class="corp-chip">read-only — they have not granted changes</span>'}
             </div>
             <div style="color:var(--text-muted);font-size:12px">
               ${org.writable ? `You may change playlists on this server${remaining}.` : ''}
@@ -445,7 +445,7 @@ async function renderClients(panel) {
         ${c.access.length ? c.access.map((a) => `
           <div style="display:flex;gap:8px;align-items:center;padding:4px 0">
             <span style="flex:1">${esc(a.name || a.email || a.user_id)}</span>
-            <span class="badge">${esc(a.role)}</span>
+            <span class="corp-chip">${esc(a.role)}</span>
             <button class="btn btn-secondary btn-sm"
                     data-revoke-access="${esc(c.id)}" data-user="${esc(a.user_id)}">Remove</button>
           </div>`).join('')
@@ -513,7 +513,7 @@ async function renderClients(panel) {
        */
       results.innerHTML = (r.results || []).map((x) => `
         <div style="padding:2px 0">
-          <span class="badge">${x.ok ? 'sent' : 'failed'}</span>
+          <span class="corp-chip">${x.ok ? 'sent' : 'failed'}</span>
           ${esc(x.nodeId)}${x.ok
             ? ` — ${x.stored} stored${x.alreadyHeld ? `, ${x.alreadyHeld} already there` : ''}`
             : ` — ${esc(x.reason || 'no reason given')}`}
@@ -836,13 +836,13 @@ async function renderTopology(panel) {
         <td style="${TD}">
           <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${colour};margin-right:6px"></span>${esc(word)}</td>
         <td style="${TD}">${esc(e.peerVersion || '—')}
-          ${skew ? '<span class="badge" style="background:var(--warning,#f59e0b)">skew</span>' : ''}</td>
+          ${skew ? '<span class="corp-chip corp-chip-hq">skew</span>' : ''}</td>
         <td style="${TD};font-size:12px">${esc((e.grant || []).join(', ') || 'nothing')}</td>
         <td style="${TD};font-size:12px">${esc(e.transportDirection || '')}
           ${e.tlsVerify === false
             // ⚠️ Surfaced, not hidden. An edge with certificate checking off is a decision somebody
             // made once and nobody revisits unless a screen shows it.
-            ? '<span class="badge" style="background:#ef4444">TLS unverified</span>' : ''}</td>
+            ? '<span class="corp-chip corp-chip-emergency">TLS unverified</span>' : ''}</td>
         <td style="${TD}">${esc(e.lastSyncAt ? hhmm(e.lastSyncAt) : 'never')}</td>
         <!-- ⚠️ The parent can end it too. The node HOLDING a copy must be able to stop holding it
              (consent from below, read from this side); waiting a year for the pairing token is
@@ -1099,8 +1099,8 @@ function writeGrantBlock(u, caps) {
     ? Math.min(100, Math.round((u.writeBytesUsed / u.writeBytesBudget) * 100)) : 0;
 
   const state = granted.length
-    ? `<span class="badge badge-warn">can change your screens</span>`
-    : `<span class="badge">read-only — this server cannot be changed from there</span>`;
+    ? `<span class="corp-chip corp-chip-hq">can change your screens</span>`
+    : `<span class="corp-chip">read-only — this server cannot be changed from there</span>`;
 
   const rows = Object.entries(cats).map(([name, meta]) => {
     const unavailable = meta.available === false;
@@ -1110,7 +1110,7 @@ function writeGrantBlock(u, caps) {
                ${unavailable ? 'disabled' : ''} style="margin-top:3px">
         <span>
           <strong>${esc(meta.summary || name)}</strong>
-          ${unavailable ? ' <span class="badge">not supported yet</span>' : ''}
+          ${unavailable ? ' <span class="corp-chip">not supported yet</span>' : ''}
           <br><span style="color:var(--text-muted);font-size:12px">${esc(meta.consequence || '')}</span>
         </span>
       </label>`;
@@ -1216,7 +1216,7 @@ async function renderConnect(panel, caps) {
       <p style="font-size:14px;margin:0 0 4px"><strong>${esc(caps.nodeName || 'unnamed')}</strong></p>
       <p style="color:var(--text-muted);font-size:12px">Other servers will see this name.
         Its id in the mesh is
-        ${caps.nodeId ? idBadge(caps.nodeId) : '<span class="badge">not assigned yet</span>'} —
+        ${caps.nodeId ? idBadge(caps.nodeId) : '<span class="corp-chip">not assigned yet</span>'} —
         generated here and registered nowhere, since there is no central directory.</p>
     </div>
 
@@ -1245,7 +1245,7 @@ async function renderConnect(panel, caps) {
         <div style="padding:12px 0;border-bottom:1px solid var(--border)">
           <div><strong>${esc(u.parentName || `server ${String(u.parentNodeId || '').slice(0, 8)}`)}</strong>
             ${idBadge(u.parentNodeId)}
-            ${u.revoked ? '<span class="badge">severed</span>' : ''}</div>
+            ${u.revoked ? '<span class="corp-chip">severed</span>' : ''}</div>
           <div style="color:var(--text-muted);font-size:12px;margin-top:4px">
             ${esc(u.parentUrl || '')}<br>
             Shares: ${esc((u.sharing || []).join(', ') || 'nothing')}<br>
@@ -1386,7 +1386,7 @@ async function renderConnect(panel, caps) {
                <div style="display:flex;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)">
                  <span style="flex:1">${esc(i.filename || i.localId)}</span>
                  <span>${esc(fmtBytes(i.bytes))}</span>
-                 <span class="badge">${i.inUse ? 'in use' : 'unused'}</span>
+                 <span class="corp-chip">${i.inUse ? 'in use' : 'unused'}</span>
                </div>`).join('')}</div>
              <div style="margin-top:6px">${esc(r.note || '')}</div>`
           : `<div>That server has not stored anything here.</div>`;
@@ -1407,7 +1407,7 @@ async function renderConnect(panel, caps) {
         body.innerHTML = rows.length
           ? `<div style="max-height:240px;overflow:auto">${rows.map((e) => `
               <div style="padding:4px 0;border-bottom:1px solid var(--border)">
-                <span class="badge">${e.applied ? 'applied' : 'refused'}</span>
+                <span class="corp-chip">${e.applied ? 'applied' : 'refused'}</span>
                 ${esc(e.what)}
                 <div style="font-size:11px">${e.at ? esc(new Date(e.at).toLocaleString()) : ''}</div>
               </div>`).join('')}</div>

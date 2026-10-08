@@ -44,7 +44,7 @@ export async function openHistoryModal(type, id, { name = '', onChanged } = {}) 
   let data, selected = null, compareWith = null;
 
   async function load() {
-    try { data = await api.getHistory(type, id); } catch (e) { list.innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+    try { data = await api.getHistory(type, id); } catch (e) { list.innerHTML = `<div class="corp-notice corp-notice-danger">${esc(e.message)}</div>`; return; }
     note.textContent = data.require_approval ? t('history.note_approval_on') : t('history.note_approval_off');
     list.innerHTML = data.revisions.map((r) => `
       <div class="history-row" data-rev="${esc(r.id)}" style="padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;${selected === r.id ? 'background:var(--bg-secondary)' : ''}">
@@ -81,9 +81,9 @@ export async function openHistoryModal(type, id, { name = '', onChanged } = {}) 
       if (type === 'content') {
         body = `<div><strong>${esc(st.filename || '')}</strong> <span style="color:var(--text-muted)">${esc(st.mime_type || '')} · ${st.file_size ? Math.round(st.file_size / 1024) + ' KB' : ''}</span></div>`;
         if (rev.has_file && /^image\//.test(st.mime_type || '')) {
-          try { const url = await fetchRevisionFileUrl(type, id, revId); body += `<img src="${url}" style="max-width:100%;max-height:260px;border-radius:8px;margin-top:8px">`; } catch (e) { body += `<div class="err">${esc(e.message)}</div>`; }
+          try { const url = await fetchRevisionFileUrl(type, id, revId); body += `<img src="${url}" style="max-width:100%;max-height:260px;border-radius:8px;margin-top:8px">`; } catch (e) { body += `<div class="corp-notice corp-notice-danger">${esc(e.message)}</div>`; }
         } else if (rev.has_file && /^video\//.test(st.mime_type || '')) {
-          try { const url = await fetchRevisionFileUrl(type, id, revId); body += `<video src="${url}" controls style="max-width:100%;max-height:260px;margin-top:8px"></video>`; } catch (e) { body += `<div class="err">${esc(e.message)}</div>`; }
+          try { const url = await fetchRevisionFileUrl(type, id, revId); body += `<video src="${url}" controls style="max-width:100%;max-height:260px;margin-top:8px"></video>`; } catch (e) { body += `<div class="corp-notice corp-notice-danger">${esc(e.message)}</div>`; }
         } else if (!rev.has_file && !st.remote_url) {
           body += `<div style="margin-top:8px;color:#fbbf24">${esc(t('history.bytes_gone'))}</div>`;
         }
@@ -100,7 +100,7 @@ export async function openHistoryModal(type, id, { name = '', onChanged } = {}) 
         body = `<div><strong>${esc(st.name || '')}</strong> · ${slides.length} ${esc(t('history.slides'))}</div><ol style="margin:8px 0 0 18px;padding:0">${slides.map((sl) => `<li>${esc(sl.name || sl.id)}</li>`).join('')}</ol>`;
       }
       detail.innerHTML = body;
-    } catch (e) { detail.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+    } catch (e) { detail.innerHTML = `<div class="corp-notice corp-notice-danger">${esc(e.message)}</div>`; }
     load();
   }
 

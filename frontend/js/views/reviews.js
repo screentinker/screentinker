@@ -28,7 +28,7 @@ export async function render(container) {
 
   async function load() {
     try { rows = filter.value === 'mine' ? await api.getMySubmissions('all') : await api.getReviewQueue(filter.value); }
-    catch (e) { list.innerHTML = `<div style="padding:12px" class="err">${esc(e.message)}</div>`; return; }
+    catch (e) { list.innerHTML = `<div style="margin:12px" class="corp-notice corp-notice-danger">${esc(e.message)}</div>`; return; }
     list.innerHTML = rows.map((r) => `
       <div data-id="${esc(r.id)}" style="padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;${selected === r.id ? 'background:var(--bg-secondary)' : ''}">
         <div style="display:flex;justify-content:space-between;gap:8px"><strong>${esc(r.resource_name || r.resource_id)}</strong><span class="pill" style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--bg-secondary)">${esc(t('review.status.' + r.status))}</span></div>
@@ -54,7 +54,7 @@ export async function render(container) {
     selected = id; load();
     detail.innerHTML = esc(t('common.loading'));
     let sub;
-    try { sub = await api.getSubmission(id); } catch (e) { detail.innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+    try { sub = await api.getSubmission(id); } catch (e) { detail.innerHTML = `<div class="corp-notice corp-notice-danger">${esc(e.message)}</div>`; return; }
     const st = sub.revision && sub.revision.state || {};
     const canDecide = sub.is_reviewer && sub.status === 'submitted' && !(sub.authors || []).includes(currentUserId());
     detail.innerHTML = `

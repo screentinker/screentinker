@@ -356,7 +356,7 @@ async function loadUptime() {
           ${r.incidents.slice(0, 50).map((i) => `
             <tr style="border-bottom:1px solid var(--border)">
               <td style="${TDs}">${esc(i.deviceName || i.deviceId)}</td>
-              <td style="${TDs}"><span class="badge" title="${esc(i.originNodeId)}" style="font-family:monospace">${esc(String(i.originNodeId).slice(0, 8))}</span></td>
+              <td style="${TDs}"><span class="corp-chip" title="${esc(i.originNodeId)}" style="font-family:monospace">${esc(String(i.originNodeId).slice(0, 8))}</span></td>
               <td style="${TDs}">${esc(String(i.alertType || '').replace(/[_-]/g, ' '))}</td>
               <td style="${TDs}">${esc(new Date(i.openedAt * 1000).toLocaleString())}</td>
               <td style="${TDs}">${i.ongoing ? '<strong>still down</strong>' : esc(mins(i.downSeconds))}</td>
