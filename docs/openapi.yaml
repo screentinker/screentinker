@@ -303,6 +303,9 @@ components:
           type: array
           items: { type: string }
           description: Labels for this screen (lower-case). Dynamic groups match on them.
+        latitude: { type: [number, "null"], description: Where the screen is. Used by weather and area conditions. }
+        longitude: { type: [number, "null"] }
+        location_label: { type: [string, "null"] }
         created_at:
           type: integer
         playlist_source:
@@ -1324,6 +1327,18 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/Device' }
+  /devices/geocode:
+    get:
+      tags: [devices]
+      summary: Search a place for a screen's location
+      description: 'Requires scope: read. Up to six places with coordinates (Open-Meteo geocoding).'
+      x-required-scope: read
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+        - { name: lang, in: query, required: false, schema: { type: string } }
+      responses:
+        '200': { description: '[{ name, region, country, latitude, longitude }].' }
+        '502': { description: Place search unavailable. }
   /devices/{id}:
     get:
       tags: [devices]
@@ -1359,6 +1374,9 @@ paths:
                   oneOf:
                     - { type: array, items: { type: string } }
                     - { type: string }
+                latitude: { type: [number, "null"], description: 'With longitude; both null clears the location.' }
+                longitude: { type: [number, "null"] }
+                location_label: { type: [string, "null"] }
                 timezone: { type: string }
                 orientation: { type: string }
                 default_content_id: { type: string }

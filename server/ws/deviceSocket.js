@@ -557,7 +557,7 @@ function buildPlaylistPayloadUnchecked(deviceId) {
       d.triggers_accept_http, d.triggers_accept_udp, d.trigger_secret, d.trigger_http_port,
       d.trigger_udp_port, d.trigger_multicast_group, d.trigger_clear_all_token,
       d.local_api_enabled, d.local_api_secret,
-      d.default_content_id, d.workspace_id,
+      d.default_content_id, d.workspace_id, d.latitude, d.longitude,
       d.capabilities, d.platform, d.android_version, d.client_type
       FROM devices d JOIN device_resolved_playlist r ON r.device_id = d.id
       WHERE d.id = ?`).get(deviceId);
@@ -935,6 +935,8 @@ function buildPlaylistPayloadUnchecked(deviceId) {
   stampFileUrls(assignments, deviceId);
   if (default_content) stampFileUrls([default_content], deviceId);
 
+  // Weather and area conditions are decided here, for this screen (lib/local-conditions.js).
+  assignments = require('../lib/local-conditions').filterItems(assignments, device);
   return assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints: deviceEndpoints });
 }
 

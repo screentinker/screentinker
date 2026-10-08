@@ -820,19 +820,47 @@ async function editConditionModal(ids, parsed) {
         <option value="ds" ${curType === 'ds' || !parsed ? 'selected' : ''}>${esc(t('playlist.condition.type_ds'))}</option>
         <option value="tag" ${curType === 'tag' ? 'selected' : ''}>${esc(t('playlist.condition.type_tag'))}</option>
         <option value="meta" ${curType === 'meta' ? 'selected' : ''}>${esc(t('playlist.condition.type_meta'))}</option>
+        <option value="weather" ${curType === 'weather' ? 'selected' : ''}>${esc(t('playlist.condition.type_weather'))}</option>
+        <option value="geo" ${curType === 'geo' ? 'selected' : ''}>${esc(t('playlist.condition.type_geo'))}</option>
       </select>
+      <div id="condWeatherWrap" hidden>
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${esc(t('playlist.condition.weather_hint'))}</p>
+        <select id="condWxField" class="input" style="width:100%;margin:4px 0 12px">
+          <option value="condition" ${!parsed || parsed.field !== 'temperature' ? 'selected' : ''}>${esc(t('playlist.condition.wx_condition'))}</option>
+          <option value="temperature" ${parsed && parsed.field === 'temperature' ? 'selected' : ''}>${esc(t('playlist.condition.wx_temperature'))}</option>
+        </select>
+        <div id="condWxCondWrap" style="display:flex;gap:8px">
+          <select id="condWxCondOp" class="input" style="flex:1"><option value="eq" ${!parsed || parsed.op !== 'neq' ? 'selected' : ''}>${esc(t('playlist.condition.wx_is'))}</option><option value="neq" ${parsed && parsed.op === 'neq' ? 'selected' : ''}>${esc(t('playlist.condition.wx_is_not'))}</option></select>
+          <select id="condWxCondValue" class="input" style="flex:2">${['clear', 'cloudy', 'rain', 'snow', 'storm', 'fog'].map((g) => `<option value="${g}" ${parsed && parsed.type === 'weather' && parsed.value === g ? 'selected' : ''}>${esc(t(`playlist.condition.wx.${g}`))}</option>`).join('')}</select>
+        </div>
+        <div id="condWxTempWrap" style="display:flex;gap:8px" hidden>
+          <select id="condWxTempOp" class="input" style="flex:1">${[['gt', '>'], ['gte', '≥'], ['lt', '<'], ['lte', '≤']].map(([v, l]) => `<option value="${v}" ${parsed && parsed.type === 'weather' && parsed.op === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+          <input id="condWxTempValue" type="number" class="input" style="flex:1" value="${esc(parsed && parsed.type === 'weather' && parsed.field === 'temperature' ? String(parsed.value) : '20')}">
+          <select id="condWxUnits" class="input" style="flex:1"><option value="c" ${!parsed || parsed.units !== 'f' ? 'selected' : ''}>°C</option><option value="f" ${parsed && parsed.units === 'f' ? 'selected' : ''}>°F</option></select>
+        </div>
+      </div>
+      <div id="condGeoWrap" hidden>
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${esc(t('playlist.condition.geo_hint'))}</p>
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <select id="condGeoOp" class="input" style="flex:1"><option value="within" ${!parsed || parsed.op !== 'outside' ? 'selected' : ''}>${esc(t('playlist.condition.geo_within'))}</option><option value="outside" ${parsed && parsed.op === 'outside' ? 'selected' : ''}>${esc(t('playlist.condition.geo_outside'))}</option></select>
+          <input id="condGeoRadius" type="number" min="1" class="input" style="width:90px" value="${esc(parsed && parsed.type === 'geo' ? String(parsed.radius_km) : '25')}"> <span style="align-self:center;font-size:13px">km</span>
+        </div>
+        <input id="condGeoSearch" class="input" style="width:100%;margin-bottom:6px" placeholder="${esc(t('playlist.condition.geo_search'))}" value="${esc(parsed && parsed.type === 'geo' ? (parsed.label || '') : '')}">
+        <div id="condGeoResults" style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px"></div>
+        <div id="condGeoPoint" style="font-size:12px;color:var(--text-muted);margin-bottom:12px">${parsed && parsed.type === 'geo' ? esc(`${parsed.lat}, ${parsed.lon}`) : ''}</div>
+      </div>
       <div id="condDsWrap">
         ${sources.length ? '' : `<p style="color:#fbbf24;font-size:13px;margin-bottom:12px">${esc(t('playlist.condition.no_sources'))}</p>`}
         <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.slug'))}</label>
         <select id="condSlug" class="input" style="width:100%;margin:4px 0 12px">${opts}</select>
         <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.path'))}</label>
-        <input id="condPath" class="input" list="condFields" placeholder="e.g. status or now.title" value="${esc(parsed && parsed.type !== 'tag' && parsed.type !== 'meta' ? (parsed.path || '') : '')}" style="width:100%;margin:4px 0 12px">
+        <input id="condPath" class="input" list="condFields" placeholder="e.g. status or now.title" value="${esc(parsed && !['tag', 'meta', 'weather', 'geo'].includes(parsed.type) ? (parsed.path || '') : '')}" style="width:100%;margin:4px 0 12px">
         <datalist id="condFields"></datalist>
         <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.op'))}</label>
         <select id="condOp" class="input" style="width:100%;margin:4px 0 12px">${opOpts}</select>
         <div id="condValueWrap">
           <label style="font-size:12px;color:var(--text-muted)">${esc(t('playlist.condition.value'))}</label>
-          <input id="condValue" class="input" value="${esc(parsed && parsed.type !== 'tag' && parsed.type !== 'meta' && parsed.value != null ? String(parsed.value) : '')}" style="width:100%;margin:4px 0 12px">
+          <input id="condValue" class="input" value="${esc(parsed && !['tag', 'meta', 'weather', 'geo'].includes(parsed.type) && parsed.value != null ? String(parsed.value) : '')}" style="width:100%;margin:4px 0 12px">
         </div>
       </div>
       <div id="condTagWrap" hidden>
@@ -868,12 +896,41 @@ async function editConditionModal(ids, parsed) {
   const dsWrap = modal.querySelector('#condDsWrap');
   const tagWrap = modal.querySelector('#condTagWrap');
   const metaWrap = modal.querySelector('#condMetaWrap');
+  const wxWrap = modal.querySelector('#condWeatherWrap');
+  const geoWrap = modal.querySelector('#condGeoWrap');
   const showType = () => {
     const ty = typeSel.value;
     dsWrap.hidden = ty !== 'ds';
     tagWrap.hidden = ty !== 'tag';
     metaWrap.hidden = ty !== 'meta';
+    wxWrap.hidden = ty !== 'weather';
+    geoWrap.hidden = ty !== 'geo';
   };
+  const wxField = modal.querySelector('#condWxField');
+  const showWx = () => { modal.querySelector('#condWxCondWrap').hidden = wxField.value !== 'condition'; modal.querySelector('#condWxTempWrap').hidden = wxField.value !== 'temperature'; };
+  wxField.addEventListener('change', showWx); showWx();
+  // Area: search a place and take its coordinates as the centre.
+  let geoPoint = parsed && parsed.type === 'geo' ? { lat: parsed.lat, lon: parsed.lon, label: parsed.label || '' } : null;
+  const geoSearch = modal.querySelector('#condGeoSearch');
+  const geoResults = modal.querySelector('#condGeoResults');
+  let geoTimer = null;
+  geoSearch.addEventListener('input', () => {
+    clearTimeout(geoTimer);
+    geoTimer = setTimeout(async () => {
+      const q = geoSearch.value.trim();
+      if (q.length < 2) { geoResults.innerHTML = ''; return; }
+      try {
+        const rows = await api.get(`/devices/geocode?q=${encodeURIComponent(q)}`);
+        geoResults.innerHTML = rows.map((r, i) => `<button type="button" class="btn btn-secondary btn-sm" data-geo-i="${i}" style="text-align:left">${esc([r.name, r.region, r.country].filter(Boolean).join(', '))}</button>`).join('');
+        geoResults.querySelectorAll('[data-geo-i]').forEach((b) => b.addEventListener('click', () => {
+          const r = rows[Number(b.dataset.geoI)];
+          geoPoint = { lat: r.latitude, lon: r.longitude, label: [r.name, r.region, r.country].filter(Boolean).join(', ') };
+          geoSearch.value = geoPoint.label; geoResults.innerHTML = '';
+          modal.querySelector('#condGeoPoint').textContent = `${r.latitude}, ${r.longitude}`;
+        }));
+      } catch (e) { geoResults.innerHTML = `<span style="font-size:12px;color:var(--danger)">${esc(e.message)}</span>`; }
+    }, 300);
+  });
   typeSel.addEventListener('change', showType);
   showType();
 
@@ -909,6 +966,13 @@ async function editConditionModal(ids, parsed) {
       const value = modal.querySelector('#condTagValue').value.trim().toLowerCase();
       if (!value) { modal.querySelector('#condTagValue').focus(); return; }
       play_when = { type: 'tag', op: modal.querySelector('#condTagOp').value, value };
+    } else if (ty === 'weather') {
+      play_when = wxField.value === 'temperature'
+        ? { type: 'weather', field: 'temperature', op: modal.querySelector('#condWxTempOp').value, value: Number(modal.querySelector('#condWxTempValue').value), units: modal.querySelector('#condWxUnits').value }
+        : { type: 'weather', field: 'condition', op: modal.querySelector('#condWxCondOp').value, value: modal.querySelector('#condWxCondValue').value };
+    } else if (ty === 'geo') {
+      if (!geoPoint) { geoSearch.focus(); return; }
+      play_when = { type: 'geo', op: modal.querySelector('#condGeoOp').value, lat: geoPoint.lat, lon: geoPoint.lon, radius_km: Number(modal.querySelector('#condGeoRadius').value) || 25, label: geoPoint.label };
     } else if (ty === 'meta') {
       const path = modal.querySelector('#condMetaPath').value.trim();
       const op = metaOp.value;

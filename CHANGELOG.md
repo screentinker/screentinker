@@ -4,6 +4,17 @@
 
 ### Added
 
+- **Play an item depending on the weather, or the area, where each screen is.**
+  - Give a screen a location (Display → Info → Location: search a city or address).
+  - New playlist item conditions: **Weather where the screen is** (clear, cloudy, rain, snow,
+    thunderstorm, fog, or a temperature above or below a value in °C or °F) and **Where the screen
+    is** (within or outside N km of a place).
+  - Each screen is judged at its own location, so one playlist shows the umbrella ad only where
+    it's raining, or a regional offer only in that region. Weather is checked every 15 minutes.
+  - A screen with no location plays weather-conditioned items, but never area-limited ones.
+  - These conditions are applied by the server, so every player supports them without an update.
+    When the weather changes, the screen's playlist starts again from the first item.
+
 - **Offline alerts to Slack, Microsoft Teams, PagerDuty, email or a webhook** (Automate → Alerts).
   - Each channel says when to alert (offline for N minutes, and back online), and for which
     screens: all, some groups or some screens. One message per outage, and "back online" only

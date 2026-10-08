@@ -489,6 +489,52 @@ function terminalPresets(device) {
   return TERMINAL_PRESETS;
 }
 
+
+/*
+ * Location field (lib/local-conditions.js): search a place, pick it, Save stores its coordinates.
+ * Delegated from the document and installed once, because this page re-renders its form and a
+ * listener on the input itself would be left on a node that is no longer there.
+ */
+let locWired = false;
+function wireLocationSearch() {
+  if (locWired) return;
+  locWired = true;
+  let timer = null;
+  let rows = [];
+  document.addEventListener('input', (e) => {
+    const input = e.target;
+    if (!input || input.id !== 'deviceLocSearch') return;
+    const results = document.getElementById('deviceLocResults');
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const q = input.value.trim();
+      if (!results) return;
+      if (q.length < 2) { results.innerHTML = ''; return; }
+      try {
+        rows = await api.get(`/devices/geocode?q=${encodeURIComponent(q)}`);
+        results.innerHTML = rows.map((r, i) => `<button type="button" class="btn btn-secondary btn-sm" data-loc-i="${i}" style="text-align:left">${esc([r.name, r.region, r.country].filter(Boolean).join(', '))}</button>`).join('');
+      } catch (err) { results.innerHTML = `<span style="font-size:12px;color:var(--danger)">${esc(err.message)}</span>`; }
+    }, 300);
+  });
+  document.addEventListener('click', (e) => {
+    const pick = e.target.closest && e.target.closest('#deviceLocResults [data-loc-i]');
+    const clear = e.target.closest && e.target.closest('#deviceLocClear');
+    const input = document.getElementById('deviceLocSearch');
+    if (!input || (!pick && !clear)) return;
+    if (pick) {
+      const r = rows[Number(pick.dataset.locI)];
+      if (!r) return;
+      input.value = [r.name, r.region, r.country].filter(Boolean).join(', ');
+      input.dataset.lat = String(r.latitude); input.dataset.lon = String(r.longitude);
+    } else {
+      input.value = ''; input.dataset.lat = ''; input.dataset.lon = '';
+    }
+    input.dataset.changed = '1';
+    const results = document.getElementById('deviceLocResults');
+    if (results) results.innerHTML = '';
+  });
+}
+
 export function render(container, deviceId) {
   container.innerHTML = `
     <div class="device-detail">
@@ -1117,6 +1163,18 @@ async function loadDevice(deviceId, activeTab = null) {
             <label>${t('device.form.tags_label')}</label>
             <input id="deviceTags" class="input" value="${esc((Array.isArray(device.tags) ? device.tags : []).join(', '))}" placeholder="${t('device.form.tags_placeholder')}">
             <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('device.form.tags_hint')}</div>
+          </div>
+          <div class="form-group">
+            <label>${t('device.form.location_label')}</label>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <input id="deviceLocSearch" class="input" style="flex:1;min-width:200px" value="${esc(device.location_label || (device.latitude != null ? `${device.latitude}, ${device.longitude}` : ''))}" placeholder="${t('device.form.location_placeholder')}"
+                data-lat="${device.latitude != null ? esc(String(device.latitude)) : ''}" data-lon="${device.longitude != null ? esc(String(device.longitude)) : ''}">
+              <button type="button" class="btn btn-secondary btn-sm" id="deviceLocClear">${t('device.form.location_clear')}</button>
+            </div>
+            <div id="deviceLocResults" style="display:flex;flex-direction:column;gap:4px;margin-top:6px"></div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${device.local_weather
+              ? esc(t('device.form.location_weather', { cond: t(`playlist.condition.wx.${device.local_weather.group || 'clear'}`), temp: Math.round(device.local_weather.temperature_c) }))
+              : t('device.form.location_hint')}</div>
           </div>
           <div class="form-group">
             <label>${t('device.form.notes_label')}</label>
@@ -2424,6 +2482,7 @@ function setupActions(device) {
     showToast(ok ? t('device.debug.copied', { n: panel.childElementCount }) : t('device.debug.copy_failed'), ok ? 'success' : 'error');
   });
 
+  wireLocationSearch();
   document.getElementById('saveNotesBtn')?.addEventListener('click', async () => {
     try {
   // #325: "Use the default" clears the override. A colour input cannot be empty, so the intent is
@@ -2439,7 +2498,13 @@ function setupActions(device) {
     bgInput.addEventListener('input', () => { bgInput.dataset.cleared = ''; });
   }
 
+      const loc = document.getElementById('deviceLocSearch');
+      const locBody = loc && loc.dataset.changed === '1'
+        ? (loc.dataset.lat ? { latitude: Number(loc.dataset.lat), longitude: Number(loc.dataset.lon), location_label: loc.value.trim() || null }
+          : { latitude: null, longitude: null, location_label: null })
+        : {};
       const saved = await api.updateDevice(device.id, {
+        ...locBody,
         tags: document.getElementById('deviceTags')?.value ?? undefined,
         notes: document.getElementById('deviceNotes').value,
         orientation: document.getElementById('deviceOrientation').value,
