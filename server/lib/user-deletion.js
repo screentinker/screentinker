@@ -40,7 +40,7 @@ const WORKSPACE_SCOPED = [
 ];
 // Logs that carry a device_id but NO foreign key (so they don't block, but we
 // clean them to avoid dangling rows).
-const DEVICE_LOG_TABLES = ['device_status_log', 'player_debug_logs', 'audience_buckets', 'automation_device_state'];
+const DEVICE_LOG_TABLES = ['device_status_log', 'player_debug_logs', 'audience_buckets', 'audience_ingested', 'automation_device_state'];
 // Nullable creator/inviter columns -> SET NULL (preserve the resource).
 const NULLABLE_USER_REFS = [
   ['content', 'user_id'], ['devices', 'user_id'], ['layouts', 'user_id'], ['widgets', 'user_id'],

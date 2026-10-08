@@ -45,6 +45,7 @@ const WS_TABLES = {
   automation_device_state: "device_id = 'dev-$W'",
   cap_feeds: "workspace_id = $W", cap_alerts: "feed_id = 'cap-$W'", cap_feed_scopes: "feed_id = 'cap-$W'",
   audience_buckets: "device_id = 'dev-$W'",
+  audience_ingested: "device_id = 'dev-$W'",
 };
 const ORG_TABLES = {
   org_m365_apps: 'organization_id = $O', canva_integrations: 'organization_id = $O', bi_connections: 'organization_id = $O',
@@ -120,9 +121,10 @@ function ws(id, orgId, by, ...members) {
   db.prepare("INSERT INTO automation_device_state (device_id, status) VALUES (?, 'online')").run(`dev-${id}`);
   db.prepare(`INSERT INTO audience_buckets (device_id, workspace_id, bucket_start, bucket_sec, item_kind, present_max, present_avg_x100, arrivals, impressions, d0, d1, d2, d3, d4, d5)
     VALUES (?, ?, ?, 60, 'content', 1, 100, 1, 1, 0, 0, 0, 0, 0, 0)`).run(`dev-${id}`, id, t);
+  db.prepare('INSERT INTO audience_ingested (device_id, bucket_start, id_hash) VALUES (?, ?, ?)').run(`dev-${id}`, t, 12345);
 }
 
-const ALL = ['audience_buckets', 'audience_org_settings', 'automation_deliveries', 'automation_device_state', 'automation_events',
+const ALL = ['audience_buckets', 'audience_ingested', 'audience_org_settings', 'automation_deliveries', 'automation_device_state', 'automation_events',
   'automation_hook_calls', 'automation_hooks', 'automation_overrides', 'automation_subscriptions', 'bi_connections', 'canva_connections',
   'canva_integrations', 'canva_jobs', 'canva_links', 'cap_alerts', 'cap_feed_scopes', 'cap_feeds', 'cloud_folder_items', 'cloud_folder_removed',
   'cloud_folders', 'org_m365_apps', 'room_bookings', 'room_checkins', 'room_connections', 'rooms', 'social_connections', 'social_feeds',
