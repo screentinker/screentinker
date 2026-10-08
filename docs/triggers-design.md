@@ -1,6 +1,6 @@
 # Triggers
 
-**Status: BUILT AND ENABLEABLE over the API; no dashboard UI yet, and unverified on hardware.**
+**Status: BUILT. Managed from the dashboard (Triggers) or over the API; unverified on hardware.**
 Externally-fired events that put interrupt content over a running playlist, resolved entirely on the
 device.
 
