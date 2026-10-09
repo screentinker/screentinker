@@ -214,6 +214,31 @@ def setup_clock(server, wanted=None, run=None, current=None, lookup=None, out=pr
     return tz
 
 
+ALL_OUTPUTS_CONF = "/usr/share/screentinker-pi/pipewire-all-outputs.conf"
+
+
+def install_all_outputs(user, run=None, src=ALL_OUTPUTS_CONF):
+    """The "All outputs" sound sink (HDMI and the headphone jack together) for the desktop user.
+
+    The package installs it for the Lite service's `screentinker` user only; in desktop mode the
+    player runs as the login user, whose PipeWire picked the headphone jack — video sound never
+    reached the HDMI screen (seen on a Pi 4 with the Desktop image). Written AS that user, so root
+    never follows a link in someone's home. Takes effect at their next login, which is when the
+    player starts. Never fails setup: no sound is better than no player."""
+    run = run or (lambda *a: subprocess.run(list(a), capture_output=True, text=True))
+    try:
+        home = pwd.getpwnam(user).pw_dir
+    except KeyError:
+        return False
+    dest = os.path.join(home, ".config/pipewire/pipewire.conf.d/50-screentinker-all-outputs.conf")
+    r = run("runuser", "-u", user, "--", "install", "-D", "-m", "0644", src, dest)
+    if getattr(r, "returncode", 0) != 0:
+        print("⚠️  Could not set up sound on all outputs for %s: %s" % (user, (getattr(r, "stderr", "") or "").strip()))
+        return False
+    print("Sound: all outputs (HDMI and headphones) for %s, from the next login." % user)
+    return True
+
+
 def cmd_setup(args):
     need_root()
     cfg = load_cfg()
@@ -243,6 +268,7 @@ def cmd_setup(args):
         cfg["desktop_user"] = user
         # The helper is granted to the screentinker GROUP: put the desktop user in it.
         sh("adduser", user, "screentinker")
+        install_all_outputs(user)
         sh("systemctl", "disable", "--now", SERVICE)
         print("Desktop mode: the player starts full screen at %s's next desktop login." % user)
         print("⚠️  The dashboard's remote terminal runs as %s — if that user has sudo, so does the terminal." % user)

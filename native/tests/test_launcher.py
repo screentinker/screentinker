@@ -36,6 +36,7 @@ def setup(mod, mode=None, desktop=False):
     mod.desktop_login_user = lambda: "pi"
     # Never touch the test machine's own clock or zone.
     mod.setup_clock = lambda server, wanted=None, **k: mod.calls.append(("setup_clock", server, wanted))
+    mod.install_all_outputs = lambda user, **k: mod.calls.append(("install_all_outputs", user))
     mod.cmd_setup(types.SimpleNamespace(url="http://localhost:3001/", name=None, mode=mode,
                                         user=None, allow_package_install=False, timezone=None))
     with open(mod.SYSTEM_CONFIG) as f:
@@ -311,3 +312,35 @@ def test_setup_sets_the_clock_before_the_service_starts(launcher):
     assert ("setup_clock", "http://localhost:3001", None) in launcher.calls
     assert names.index("setup_clock") < names.index("systemctl restart screentinker-pi"), \
         "the player must start in the right zone, not pick it up at the next reboot"
+
+
+# ---------------------------------------------------------------------- desktop sound: all outputs
+
+def test_desktop_setup_sends_the_login_users_sound_to_all_outputs(launcher):
+    """⚠️ The package sets "All outputs" up for the Lite service's user only. In desktop mode the
+    player runs as the login user, whose sound went to the headphone jack — never the HDMI screen."""
+    setup(launcher, desktop=True)
+    assert ("install_all_outputs", "pi") in launcher.calls
+    launcher.calls.clear()
+    setup(launcher, desktop=False)
+    assert not [c for c in launcher.calls if c[0] == "install_all_outputs"], "Lite's user has it from the package"
+
+
+def test_install_all_outputs_writes_as_the_user_into_their_pipewire_config(launcher, monkeypatch, capsys):
+    monkeypatch.setattr(launcher.pwd, "getpwnam", lambda u: types.SimpleNamespace(pw_dir="/home/" + u))
+    run = _Run()
+    assert launcher.install_all_outputs("owner", run=run) is True
+    assert run.calls == [("runuser", "-u", "owner", "--", "install", "-D", "-m", "0644", launcher.ALL_OUTPUTS_CONF,
+                          "/home/owner/.config/pipewire/pipewire.conf.d/50-screentinker-all-outputs.conf")], \
+        "as the user, never root writing into someone's home"
+    assert "all outputs" in capsys.readouterr().out
+
+
+def test_install_all_outputs_never_fails_setup(launcher, monkeypatch, capsys):
+    monkeypatch.setattr(launcher.pwd, "getpwnam", lambda u: types.SimpleNamespace(pw_dir="/home/" + u))
+    assert launcher.install_all_outputs("owner", run=_Run(rc=1)) is False
+    assert "Could not set up sound" in capsys.readouterr().out
+    def missing(u):
+        raise KeyError(u)
+    monkeypatch.setattr(launcher.pwd, "getpwnam", missing)
+    assert launcher.install_all_outputs("ghost", run=_Run()) is False

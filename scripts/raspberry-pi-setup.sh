@@ -256,8 +256,6 @@ if [ "$NATIVE" = true ]; then
     # for its Chromium kiosk, and the old package test read that as Desktop: the service was left
     # disabled (no player after reboot) and a manual start lost the screen to the kiosk's X server
     # ("Could not set DRM mode … Permission denied").
-    # Before the player starts, so it comes up in the right zone.
-    st_setup_clock "$SERVER_URL"
     if [ -z "$NATIVE_MODE" ]; then
         NATIVE_MODE=lite
         if [ -e /etc/systemd/system/display-manager.service ] \
@@ -287,11 +285,15 @@ if [ "$NATIVE" = true ]; then
             rm -f "$KIOSK_ENTRY"
         fi
     done
+    # The clock (NTP + zone) is set by `screentinker-pi setup` itself, before the player starts —
+    # not by st_setup_clock as well, which printed every warning twice.
+    TZ_ARGS=()
+    [ -n "${TIMEZONE:-}" ] && TZ_ARGS=(--timezone "$TIMEZONE")
     if [ "$NATIVE_MODE" = desktop ]; then
-        screentinker-pi setup "$SERVER_URL" --mode desktop --user "$DESKTOP_USER"
+        screentinker-pi setup "$SERVER_URL" --mode desktop --user "$DESKTOP_USER" "${TZ_ARGS[@]}"
     else
         systemctl disable getty@tty1.service 2>/dev/null || true
-        screentinker-pi setup "$SERVER_URL" --mode lite
+        screentinker-pi setup "$SERVER_URL" --mode lite "${TZ_ARGS[@]}"
     fi
     if [ "$AUDIENCE" = yes ]; then
         log "Installing the audience-counting add-on..."

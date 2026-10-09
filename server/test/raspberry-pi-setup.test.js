@@ -512,7 +512,13 @@ for (const [name, file] of [['raspberry-pi-setup.sh', SCRIPT], ['debian-13-setup
 }
 
 test('the clock is set BEFORE the native player starts, and on the kiosk paths too', () => {
-  const arm = SRC.slice(SRC.indexOf('if [ "$NATIVE" = true ]; then'));
-  assert.ok(arm.indexOf('st_setup_clock') > 0 && arm.indexOf('st_setup_clock') < arm.indexOf('screentinker-pi setup'));
+  // Native: `screentinker-pi setup` sets it (before it starts the player — test_launcher.py), with
+  // --timezone passed through; the installer calling st_setup_clock too printed every warning twice.
+  const arm = SRC.slice(SRC.indexOf('if [ "$NATIVE" = true ]; then'), SRC.indexOf('# 8. Kiosk launcher supervision'));
+  assert.ok(!/^\s*st_setup_clock /m.test(arm), 'the native path leaves the clock to screentinker-pi setup');
+  assert.match(arm, /&& TZ_ARGS=\(--timezone "\$TIMEZONE"\)/);
+  for (const mode of ['desktop', 'lite']) {
+    assert.match(arm, new RegExp(`screentinker-pi setup "\\$SERVER_URL" --mode ${mode}[^\\n]*"\\$\\{TZ_ARGS\\[@\\]\\}"`));
+  }
   assert.ok(SRC.lastIndexOf('st_setup_clock "$SERVER_URL"') > SRC.indexOf('# 8. Kiosk launcher supervision'), 'kiosk installs set it too');
 });

@@ -325,6 +325,9 @@
   detected"). The package now brings PipeWire and starts it for the player at boot. Sound plays
   on every output at once (both HDMI ports and the headphone jack), so whichever one has a
   speaker plays it.
+- **Pi OS Desktop played video sound on the headphone jack only, never HDMI.** The desktop player
+  runs as the login user, who was left on the Pi's default output. Setup now sends that user's
+  sound to every output at once too, from the next login.
 - **A black frame flashed when a video started.** The player showed a video a fixed 120 ms after it
   started playing, and the Pi's hardware decoder takes 91-115 ms to produce its first picture, so it
   was a close race. It now waits for the first picture.
