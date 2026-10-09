@@ -116,8 +116,33 @@ Thanks to the people whose reports this release fixes: @PowerSprout and カタ�
 - `POST /content/remote`, `/youtube`, `/hls` and `/hold` accept a `folder_id` in the same
   workspace.
 
+### Fixed (Android player)
+
+- **A scheduled "screen off" lasted half a second.** Waking a screen (Screen On, a relaunch, or a
+  schedule's own "on" time) left the player's window set to show over the lock screen and turn the
+  screen on, so locking it to blank the panel lit it straight back up. The player now clears those
+  before it blanks, scheduled or by Screen Off, and drops "keep screen on" before locking rather than
+  after.
+
+### Fixed (dashboard)
+
+- **The display power schedule could not be set on a screen whose player cannot blank yet.** Every
+  control was disabled but looked clickable, under a note meant for groups. The schedule can now be
+  set and saved, and the page says it starts working once the screen updates its player (2.1.6 or
+  later on Android). The server already accepted it, and screens receive it with their content.
+- **"All weekend" saved an empty power schedule.** It ends at 24:00, which a browser time field
+  cannot hold, so the row was blanked and then silently dropped on Save. A row can now be **All day**,
+  an end at midnight is shown as 00:00 and saved as 24:00, and a row that cannot be saved (no day
+  ticked, or a time missing) stops the Save with a message naming it, instead of disappearing.
+
 ### Fixed (server)
 
+- **A screen left on an old beta build could never update.** The beta slot still held a test build
+  from weeks earlier, so a screen opted into beta was told it was up to date with it, while unticking
+  beta then offered it nothing at all. A healthy screen stayed on that build, missing every feature
+  since, including the display power schedule. A beta older than the stable release no longer counts,
+  so opted-in screens get stable. A screen that was on the beta channel and is switched off it now
+  updates to the release.
 - **Grafana dashboards on screens showed Grafana's own sidebar and toolbar** (and, on a fresh
   Grafana 13, an announcement dialog over the dashboard). ScreenTinker asked for kiosk mode as
   `kiosk=` with an empty value, which Grafana does not treat as kiosk mode; it now sends a bare

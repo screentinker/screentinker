@@ -875,6 +875,7 @@ class MainActivity : AppCompatActivity() {
          * DURING a window, since blanking the panel is lockNow().
          */
         wsService?.onPowerWindow = { off -> applyPowerWindowFlag(off) }
+        wsService?.onBeforeBlank = { releaseLockScreenWake() }
 
         wsService?.onUnpaired = {
             runOnUiThread {
@@ -1324,6 +1325,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 // Screen off = real lock on owner/admin (FORCE_LOCK), else accessibility lock. Exec retired.
                 "screen_off", "lock_now" -> {
+                    releaseLockScreenWake()   // or the lock is undone by our own turn-screen-on
                     if (!stPolicy().lockNow()) {
                         com.remotedisplay.player.service.PowerAccessibilityService.instance?.lockScreen()
                             ?: Log.w("MainActivity", "screen_off/lock_now: no owner/admin/accessibility — unsupported")
@@ -1970,6 +1972,26 @@ class MainActivity : AppCompatActivity() {
      * a scheduled off is lockNow() and therefore stops this Activity: anything owned here would
      * switch the panel off and then die with it, and the morning wake would never run.
      */
+    /**
+     * Undo what screen_on set so a lock STAYS dark: show-when-locked + turn-screen-on (and their
+     * pre-O_MR1 window flags). screen_on sets them again when the panel is woken on purpose. Must run
+     * on the main thread, BEFORE lockNow() — see WebSocketService.onBeforeBlank.
+     */
+    private fun releaseLockScreenWake() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(false)
+                setTurnScreenOn(false)
+            }
+            @Suppress("DEPRECATION")
+            window.clearFlags(
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+            )
+        } catch (e: Throwable) { Log.w("MainActivity", "releaseLockScreenWake: ${e.message}") }
+    }
+
     private fun applyPowerWindowFlag(off: Boolean) {
         runOnUiThread {
             try {
@@ -2242,6 +2264,7 @@ class MainActivity : AppCompatActivity() {
         // Drop the window-flag callback so the service stops calling into a dead Activity. The
         // SCHEDULE keeps running — it is the service's, deliberately.
         try { wsService?.onPowerWindow = null } catch (e: Throwable) { }
+        try { wsService?.onBeforeBlank = null } catch (e: Throwable) { }
         remoteStreaming = false
         // #talk video: drop the bus listener (it holds `this`) and release the renderer.
         try { com.remotedisplay.player.remote.TalkVideoBus.listener = null } catch (e: Throwable) { }

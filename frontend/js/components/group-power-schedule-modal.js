@@ -2,7 +2,7 @@ import { t, tn } from '../i18n.js';
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { esc } from '../utils.js';
-import { renderPowerScheduleEditor, readPowerScheduleEditor, presetWindows } from './power-schedule-editor.js';
+import { renderPowerScheduleEditor, readPowerScheduleEditor, presetWindows, problemMessage } from './power-schedule-editor.js';
 
 /*
  * The weekly backlight schedule for a GROUP.
@@ -109,7 +109,7 @@ export function openGroupPowerScheduleModal(group, devices = []) {
       const s = readPowerScheduleEditor(host);
       redraw((s?.windows || []).filter((_, n) => n !== i), s?.enabled !== false, facts);
     }));
-    host.querySelectorAll('.power-start, .power-end').forEach((el) => el.addEventListener('change', () => {
+    host.querySelectorAll('.power-start, .power-end, .power-allday').forEach((el) => el.addEventListener('change', () => {
       const s = readPowerScheduleEditor(host);
       redraw(s?.windows || [], s?.enabled !== false, facts);
     }));
@@ -117,8 +117,13 @@ export function openGroupPowerScheduleModal(group, devices = []) {
     host.querySelector('#powerSave')?.addEventListener('click', async () => {
       const s = readPowerScheduleEditor(host);
       if (!s) return;
+      // A row that cannot be saved is said, never dropped (an empty schedule saved over visible times).
+      const problem = problemMessage(s);
+      if (problem) { showToast(problem, 'error'); return; }
+      const { problems, ...body } = s;
+      void problems;
       try {
-        const r = current?.id ? await api.updatePowerSchedule(current.id, s) : await api.createPowerSchedule({ group_id: group.id, ...s });
+        const r = current?.id ? await api.updatePowerSchedule(current.id, body) : await api.createPowerSchedule({ group_id: group.id, ...body });
         showToast(t('power.saved'), 'success');
         // Head office: members playing its playlist keep head office's power schedule, not this one.
         if (r && r.mandated_members) showToast(tn('corp.skipped.power', r.mandated_members), 'info');

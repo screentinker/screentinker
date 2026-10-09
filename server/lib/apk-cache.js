@@ -98,13 +98,28 @@ function refresh() {
 function get() { return stable; }
 function getBeta() { return beta; }
 
-/** The slot to serve for a channel, falling back to stable whenever beta is not usable. */
-function forChannel(channel) {
-  return channel === 'beta' && beta.exists ? beta : stable;
+/*
+ * ⚠️ A BETA OLDER THAN THE STABLE RELEASE IS NOT A CHANNEL, IT IS A TRAP. The beta slot is left
+ * holding whatever was last handed out for testing (alpha still had a 2.1.5-beta1 from September
+ * once 2.5.0 shipped), and an opted-in display compared against it is told "up to date" for ever:
+ * a healthy screen that never receives another release, and every feature added since it — the
+ * display power schedule, reported — silently missing. So a beta only counts while it is not behind
+ * stable; otherwise the channel resolves to stable, for the check AND the download.
+ * `stableVersion` is the version the check advertises for stable (the APK's own, else VERSION).
+ */
+function betaSuperseded(stableVersion) {
+  if (!beta.exists || !beta.version || !stableVersion) return false;
+  const c = require('./ota-breaker').cmp(beta.version, String(stableVersion));
+  return c !== null && c < 0;
 }
 
-/** Whether a usable beta build is published right now. */
-function betaAvailable() { return beta.exists && !!beta.version; }
+/** The slot to serve for a channel, falling back to stable whenever beta is not usable. */
+function forChannel(channel, stableVersion = stable.version) {
+  return channel === 'beta' && beta.exists && !betaSuperseded(stableVersion) ? beta : stable;
+}
+
+/** Whether a usable beta build is published right now (and is not behind `stableVersion`). */
+function betaAvailable(stableVersion = stable.version) { return beta.exists && !!beta.version && !betaSuperseded(stableVersion); }
 
 let timer = null;
 function start() {
@@ -116,4 +131,4 @@ function start() {
   return stable;
 }
 
-module.exports = { start, refresh, get, getBeta, forChannel, betaAvailable };
+module.exports = { start, refresh, get, getBeta, forChannel, betaAvailable, betaSuperseded };

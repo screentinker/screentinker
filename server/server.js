@@ -2214,7 +2214,9 @@ app.get('/api/update/check', (req, res) => {
   // Channel selection. An opted-in display is compared against — and offered — the BETA build's
   // declared version, not the server's. Falls back to stable whenever no usable beta is published,
   // so ticking the box on a server with no beta build is a no-op, not a broken display.
-  const onBeta = betaChannel && apkCache.betaAvailable();
+  // A beta behind the stable release does not count (lib/apk-cache.js betaSuperseded): the display
+  // is then compared against stable, and decide()'s beta exemption lets it be offered.
+  const onBeta = betaChannel && apkCache.betaAvailable(latestVersion);
   if (onBeta) latestVersion = apkCache.getBeta().version;
 
   /*
@@ -3025,7 +3027,7 @@ app.get('/download/apk', (req, res) => {
   // Serve the slot the check advertised. If these disagree the client is handed bytes whose
   // size does not match apk_size, which is how an OTA loop starts — so both sides resolve
   // the channel the same way, and both fall back to stable identically.
-  const apk = apkCache.forChannel(req.query.channel === 'beta' ? 'beta' : 'stable');
+  const apk = apkCache.forChannel(req.query.channel === 'beta' ? 'beta' : 'stable', apkCache.get().version || VERSION);
   if (!apk.exists) {
     return res.status(404).send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>APK Not Available</title><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}div{text-align:center;max-width:480px;padding:32px 24px}h1{color:#f87171;font-size:22px;margin:0 0 8px}p{line-height:1.6;color:#94a3b8;font-size:14px;margin:0 0 20px}code{background:#1e293b;padding:2px 6px;border-radius:4px;font-size:13px}a{color:#3b82f6;text-decoration:none}a:hover{text-decoration:underline}.btn{display:inline-block;background:#2563eb;color:#fff;padding:10px 20px;border-radius:6px;font-size:14px;font-weight:500;text-decoration:none;margin-bottom:24px}.btn:hover{background:#1d4ed8;text-decoration:none}.muted{font-size:12px;color:#64748b}</style></head><body><div><h1>APK Not Available</h1><p>The Android APK has not been compiled yet.</p><a class="btn" href="https://github.com/screentinker/screentinker/releases/latest" target="_blank" rel="noopener">&#128230; Download from GitHub Releases</a><p class="muted">Self-hosting? Mount a built APK at <code>/data/ScreenTinker.apk</code> to serve it from this instance. Or use the <a href="/player">web player</a> instead.</p></div></body></html>`);
   }

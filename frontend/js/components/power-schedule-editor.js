@@ -44,20 +44,31 @@ function windowRow(w, i) {
       <span>${esc(t(`power.day.${DAY_KEY[d]}`))}</span>
     </label>`).join('');
 
+  /*
+   * ⚠️ 24:00 cannot live in an <input type="time"> (its range is 00:00–23:59): the browser blanks it,
+   * and the row was then dropped on Save — "All weekend" (00:00–24:00) saved as an empty schedule.
+   * A whole day is an "All day" box instead, and an end at midnight is shown as 00:00, which the
+   * schedule treats the same (a window ending at 00:00 stops at midnight; see readPowerScheduleEditor).
+   */
+  const allDay = w.start === '00:00' && w.end === '24:00';
+  const endShown = w.end === '24:00' ? '00:00' : (w.end || '06:00');
   return `
     <div class="power-window" data-win="${i}">
       <div class="power-window-times">
-        <label>${esc(t('power.off_from'))}
-          <input type="time" class="power-start" data-win="${i}" value="${esc(w.start || '22:00')}">
-        </label>
-        <label>${esc(t('power.on_at'))}
-          <input type="time" class="power-end" data-win="${i}" value="${esc(w.end || '06:00')}">
-        </label>
+        <label class="power-allday-label"><input type="checkbox" class="power-allday" data-win="${i}" ${allDay ? 'checked' : ''}> ${esc(t('power.all_day'))}</label>
+        <span class="power-times"${allDay ? ' hidden' : ''}>
+          <label>${esc(t('power.off_from'))}
+            <input type="time" class="power-start" data-win="${i}" value="${esc(allDay ? '22:00' : (w.start || '22:00'))}">
+          </label>
+          <label>${esc(t('power.on_at'))}
+            <input type="time" class="power-end" data-win="${i}" value="${esc(allDay ? '06:00' : endShown)}">
+          </label>
+        </span>
         <button type="button" class="btn btn-secondary btn-sm power-remove" data-win="${i}"
                 aria-label="${esc(t('power.remove_window'))}">✕</button>
       </div>
       <div class="power-days">${dayBoxes}</div>
-      ${(w.start && w.end && w.start > w.end)
+      ${(!allDay && w.start && w.end && w.end !== '24:00' && w.start > w.end)
         ? `<div class="power-hint">${esc(t('power.crosses_midnight'))}</div>` : ''}
     </div>`;
 }
@@ -73,16 +84,18 @@ export function renderPowerScheduleEditor(schedule, ctx = {}) {
   const enabled = schedule ? schedule.enabled !== false : true;
 
   /*
-   * ⚠️ On a DEVICE page an unsupported panel disables the editor, and that is a deliberate reversal
-   * of my first version. The original argument — "an operator may reasonably schedule a screen that
-   * is offline, or a mixed-hardware group" — holds for a GROUP, where some members can honour it.
-   * It does not hold here: this page is one panel, deliverCommand will refuse set_power_schedule
-   * for it, and the payload field will be ignored. Letting someone save is letting them save a row
-   * that nothing will ever act on, then walk away believing the shop lights go off at ten.
+   * A screen whose player cannot blank its display YET can still be given a schedule. The server
+   * accepts it, and every playlist payload carries power_schedule (ws/deviceSocket.js), so the
+   * schedule reaches the screen and starts working the moment it runs a player that declares
+   * display.power_schedule — Android 2.1.6 or later. This used to disable every control instead,
+   * and disabled buttons that look live read as "nothing works": reported on a healthy, device-owner
+   * Android 15 screen that was simply still on a 2.1.5 beta. The note says what will happen, and when.
    */
   const unsupported = ctx.supported === false;
   const warn = unsupported
-    ? `<div class="power-warning">${esc(t('power.unsupported'))}</div>` : '';
+    ? `<div class="power-warning" role="note">${esc(ctx.playerVersion
+      ? t('power.pending_device_version', { version: ctx.playerVersion })
+      : t('power.pending_device'))}</div>` : '';
 
   const inherited = ctx.inherited
     ? `<div class="power-hint">${esc(t('power.inherited_from_group'))}</div>` : '';
@@ -115,7 +128,7 @@ export function renderPowerScheduleEditor(schedule, ctx = {}) {
     <div class="power-schedule-editor" id="powerScheduleEditor">
       <div class="power-head">
         <label class="power-enable">
-          <input type="checkbox" id="powerEnabled" ${enabled ? 'checked' : ''}${unsupported ? ' disabled' : ''}>
+          <input type="checkbox" id="powerEnabled" ${enabled ? 'checked' : ''}>
           <span>${esc(t('power.enable'))}</span>
         </label>
         ${status}
@@ -125,9 +138,9 @@ export function renderPowerScheduleEditor(schedule, ctx = {}) {
       ${warn}${conflicts}${inherited}${next}
       <div id="powerWindows">${windows.map(windowRow).join('') || `<div class="power-empty">${esc(t('power.no_windows'))}</div>`}</div>
       <div class="power-actions">
-        <button type="button" class="btn btn-secondary btn-sm" id="powerAddWindow"${unsupported ? ' disabled' : ''}>+ ${esc(t('power.add_window'))}</button>
-        ${PRESETS.map((p) => `<button type="button" class="btn btn-secondary btn-sm power-preset" data-preset="${p.key}"${unsupported ? ' disabled' : ''}>${esc(t(`power.preset.${p.key}`))}</button>`).join('')}
-        <button type="button" class="btn btn-primary btn-sm" id="powerSave"${unsupported ? ' disabled title="' + esc(t('power.unsupported')) + '"' : ''}>${esc(t('power.save'))}</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="powerAddWindow">+ ${esc(t('power.add_window'))}</button>
+        ${PRESETS.map((p) => `<button type="button" class="btn btn-secondary btn-sm power-preset" data-preset="${p.key}">${esc(t(`power.preset.${p.key}`))}</button>`).join('')}
+        <button type="button" class="btn btn-primary btn-sm" id="powerSave">${esc(t('power.save'))}</button>
         ${schedule?.id ? `<button type="button" class="btn btn-secondary btn-sm" id="powerDelete">${esc(t('power.remove_schedule'))}</button>` : ''}
       </div>
     </div>`;
@@ -136,29 +149,42 @@ export function renderPowerScheduleEditor(schedule, ctx = {}) {
 /**
  * Read the editor back out of the DOM.
  *
- * ⚠️ Drops windows with no days selected rather than sending them. The server refuses them (a
- * window with no days can never be active), and silently discarding a half-built row the operator
- * abandoned is friendlier than a 400 that names an index they cannot see.
+ * Returns { enabled, windows, problems }. ⚠️ A row that cannot be saved (no day ticked, or a time
+ * left empty) is reported in `problems` rather than silently dropped: dropping it is how a schedule
+ * with times on screen was saved as no schedule at all. Callers refuse to save while there are any.
  */
 export function readPowerScheduleEditor(root = document) {
   const host = root.getElementById ? root.getElementById('powerScheduleEditor') : root.querySelector('#powerScheduleEditor');
   if (!host) return null;
   const windows = [];
-  host.querySelectorAll('.power-window').forEach((el) => {
+  const problems = [];
+  host.querySelectorAll('.power-window').forEach((el, row) => {
     const i = el.getAttribute('data-win');
-    const start = host.querySelector(`.power-start[data-win="${i}"]`)?.value || '';
-    const end = host.querySelector(`.power-end[data-win="${i}"]`)?.value || '';
+    const allDay = !!host.querySelector(`.power-allday[data-win="${i}"]`)?.checked;
+    let start = allDay ? '00:00' : (host.querySelector(`.power-start[data-win="${i}"]`)?.value || '');
+    let end = allDay ? '24:00' : (host.querySelector(`.power-end[data-win="${i}"]`)?.value || '');
+    // An end of 00:00 after a later start means "at midnight": store it as 24:00 (end of day).
+    if (!allDay && end === '00:00' && start && start !== '00:00') end = '24:00';
     const days = [];
     host.querySelectorAll(`input[data-win="${i}"][data-day]`).forEach((cb) => {
       if (cb.checked) days.push(Number(cb.getAttribute('data-day')));
     });
-    if (!days.length || !start || !end) return;
+    if (!days.length) { problems.push({ row: row + 1, reason: 'no_days' }); return; }
+    if (!start || !end || start === end) { problems.push({ row: row + 1, reason: 'no_time' }); return; }
     windows.push({ days: days.sort((a, b) => a - b), start, end });
   });
   return {
     enabled: !!host.querySelector('#powerEnabled')?.checked,
     windows,
+    problems,
   };
+}
+
+/** The message for the first unsaveable row, or null. */
+export function problemMessage(s) {
+  const p = s && s.problems && s.problems[0];
+  if (!p) return null;
+  return t(p.reason === 'no_days' ? 'power.err_no_days' : 'power.err_no_time', { n: p.row });
 }
 
 export function presetWindows(key) {
