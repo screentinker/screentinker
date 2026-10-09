@@ -803,6 +803,9 @@ export const api = {
   adminListOrgs: () => request('/admin/orgs'),
   // Platform-admin view: EVERY plan incl. hidden ones, with subscriber counts.
   adminListPlans: () => request('/admin/plans'),
+  adminPlanImpact: (id) => request(`/admin/plans/${encodeURIComponent(id)}/impact`),
+  adminUpdatePlan: (id, data) => request(`/admin/plans/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  adminCreatePlan: (data) => request('/admin/plans', { method: 'POST', body: JSON.stringify(data) }),
   adminListPromotions: () => request('/admin/promotions'),
   adminCreatePromotion: (body) => request('/admin/promotions', { method: 'POST', body: JSON.stringify(body) }),
   adminEndPromotion: (id) => request(`/admin/promotions/${encodeURIComponent(id)}/end`, { method: 'POST' }),

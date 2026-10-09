@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Added
+
+- **Plans can be edited from the dashboard** (Platform → Plans & sales, platform admins). Each plan
+  can change its name, screen and storage limits (or unlimited), features, monthly and yearly price,
+  linked Stripe prices, whether it is shown on the pricing page, and its order. **New plan** adds one,
+  hidden until it is shown. The table now says whether each paid plan can actually be bought.
+  - **Prices are linked, not typed.** Checkout charges the Stripe price linked to the plan, so a price
+    is created in Stripe and its id pasted here. The save is refused while the shown amount, the
+    currency (USD), the interval or an archived Stripe price disagrees. Without Stripe configured
+    (self-hosted, alpha) prices are display-only and the dialog says so.
+  - **Who it reaches is shown first.** The dialog says how many accounts are on the plan and how many
+    pay. Lowering a limit asks before saving, and paying customers keep the Stripe price they
+    subscribed with.
+  - **Free stays free.** Expired trials and lapsed subscriptions land on it, so its price stays $0
+    and it cannot be linked to a Stripe price. One Stripe price cannot be linked to two plans.
+  - Every change is recorded in the activity log, field by field.
+- `PUT /api/admin/plans/:id`, `POST /api/admin/plans` and `GET /api/admin/plans/:id/impact`. The
+  old `PUT/POST /api/subscription/plans` routes now apply the same validation and Stripe checks, and
+  are limited to platform admins.
+- **Room displays speak the room's language.** The page's own words (Available, In use, Book,
+  End meeting, the schedule and every refusal) now come in the dashboard's ten languages. A new
+  **Language on the screen** setting picks one; left on its default, each screen uses its own
+  language, so one widget can serve rooms in two countries. hi/ja/zh are best-effort. Reported by
+  @PowerSprout.
+
 ### Changed
 
 - **The Content Library is rebuilt around the content.** A populated library now opens on its
@@ -42,14 +67,6 @@
 - **Hold screens are added from the playlist they belong to:** a playlist's new **Add hold screen**
   adds a freeze or blank step of the length you choose, reusing one hold per mode. The library no
   longer has a Hold card. Existing holds are untouched and can be filtered for.
-
-### Added
-
-- **Room displays speak the room's language.** The page's own words (Available, In use, Book,
-  End meeting, the schedule and every refusal) now come in the dashboard's ten languages. A new
-  **Language on the screen** setting picks one; left on its default, each screen uses its own
-  language, so one widget can serve rooms in two countries. hi/ja/zh are best-effort. Reported by
-  @PowerSprout.
 
 ### Added (server)
 
