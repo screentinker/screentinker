@@ -151,7 +151,13 @@ test('[SAFE] Ed25519 malleability: S + L (non-canonical scalar) is rejected', ()
 test('[SAFE] key_id: uppercase, long, short, binary and non-hex ids are refused at parse', () => {
   const bytes = slideTemplate();
   const env = JSON.parse(signedEnvelope(bytes).toString());
-  for (const kid of [env.signature.key_id.toUpperCase(), env.signature.key_id + '00', 'abc', '\u0000'.repeat(16), 'g'.repeat(16), 'a'.repeat(100000), 123]) {
+  // ⚠️ The key id is random hex: one made only of digits (about 1 run in 2000) has no letters to
+  // upper-case, so toUpperCase() returned a VALID id and this test failed CI on a coin flip.
+  // Force at least one upper-case hex letter instead.
+  const kidOk = env.signature.key_id;
+  const upper = /[a-f]/.test(kidOk) ? kidOk.toUpperCase() : 'A' + kidOk.slice(1);
+  assert.notEqual(upper, kidOk);
+  for (const kid of [upper, env.signature.key_id + '00', 'abc', '\u0000'.repeat(16), 'g'.repeat(16), 'a'.repeat(100000), 123]) {
     const e = { ...env, signature: { ...env.signature, key_id: kid } };
     assert.throws(() => pkg.parseEnvelope(Buffer.from(JSON.stringify(e))), /key_id/, String(kid).slice(0, 20));
   }
