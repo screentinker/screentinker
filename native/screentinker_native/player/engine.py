@@ -524,7 +524,11 @@ class PlaybackEngine:
             muted = bool(it.muted) or bool(self.wall and not self.wall["leader"] and not self.wall["group"])
         # A plain wall stretches the one item over the canvas; wall ZONES keep their own fit.
         stretch = bool(self.wall and not self.wall["group"] and self.mode != "wallzones")
-        d = {"fit": "fill" if stretch else (fit or it.fit_mode or "cover"),
+        # ⚠️ Fullscreen with no fit of its own ("Layout" in the dashboard) is CONTAIN — the whole
+        # picture — as on Android (MediaPlayerManager RESIZE_MODE_FIT) and the web player. This was
+        # cover: barely visible on a landscape panel, but a landscape video on a screen turned to
+        # portrait showed only its middle third. Zones pass their own fit (their default is cover).
+        d = {"fit": "fill" if stretch else (fit or it.fit_mode or "contain"),
              "muted": muted, "loop": loop, "live": it.is_live}
         if it.is_widget:
             q = ("?device=" + urllib.parse.quote(self.config.device_id)) if self.config.device_id else "?d="

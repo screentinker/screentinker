@@ -336,6 +336,10 @@
   detected"). The package now brings PipeWire and starts it for the player at boot. Sound plays
   on every output at once (both HDMI ports and the headphone jack), so whichever one has a
   speaker plays it.
+- **A screen turned to portrait cropped landscape content to its middle third** (Raspberry Pi,
+  Windows and macOS players). With no fit chosen, these players filled the screen and cut off what
+  spilled over; Android and the web player show the whole picture. They now do too. A fit you set,
+  and a zone's own fit, are unchanged.
 - **Pi OS Desktop played video sound on the headphone jack only, never HDMI.** The desktop player
   runs as the login user, who was left on the Pi's default output. Setup now sends that user's
   sound to every output at once too, from the next login.
