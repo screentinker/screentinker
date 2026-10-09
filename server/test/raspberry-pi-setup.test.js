@@ -459,3 +459,66 @@ test('native (run): Lite with NO lightdm.conf runs to the end under set -euo pip
   assert.equal(r.out, 'MODE=lite USER=sudoer');
   assert.equal(r.exists(KIOSK_UNIT), false);
 });
+
+// ---------------------------------------------------------------------- clock: NTP + a real time zone
+// ⚠️ Pi OS's default zone IS Europe/London: a Pi in Chicago played its schedules on UK time.
+
+function runClock(src, { cur, body = '', tz = '' }) {
+  const fn = src.match(/^st_setup_clock\(\) \{[\s\S]*?^\}$/m);
+  assert.ok(fn, 'st_setup_clock not found');
+  const fake = fs.mkdtempSync(path.join(os.tmpdir(), 'st-clock-'));
+  const calls = path.join(fake, 'calls');
+  const script = [
+    'set -euo pipefail',
+    `TIMEZONE=${JSON.stringify(tz)}`,
+    'log() { echo "LOG $1"; }', 'warn() { echo "WARN $1"; }',
+    `timedatectl() { case "$1" in show) echo ${JSON.stringify(cur)};; *) echo "$*" >> "${calls}";; esac; }`,
+    `curl() { [ -n ${JSON.stringify(body)} ] && printf '%s' ${JSON.stringify(body)} || return 22; }`,
+    fn[0],
+    'st_setup_clock http://server',
+  ].join('\n');
+  try {
+    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8' });
+    const done = fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n') : [];
+    return { out, ntp: done.includes('set-ntp true'), set: done.filter((c) => c.startsWith('set-timezone')).map((c) => c.split(' ')[1]) };
+  } finally {
+    fs.rmSync(fake, { recursive: true, force: true });
+  }
+}
+
+for (const [name, file] of [['raspberry-pi-setup.sh', SCRIPT], ['debian-13-setup.sh', path.join(path.dirname(SCRIPT), 'debian-13-setup.sh')]]) {
+  const src = fs.readFileSync(file, 'utf8');
+  test(`${name}: clock — NTP on, a default zone is detected from our server`, () => {
+    for (const cur of ['Europe/London', 'Etc/UTC', '']) {
+      const r = runClock(src, { cur, body: '{"timezone":"America/Chicago"}' });
+      assert.ok(r.ntp, 'NTP is turned on');
+      assert.deepEqual(r.set, ['America/Chicago'], `from ${cur || '(none)'}`);
+    }
+  });
+  test(`${name}: clock — a zone somebody chose is kept; --timezone wins`, () => {
+    let r = runClock(src, { cur: 'Asia/Tokyo', body: '{"timezone":"America/Chicago"}' });
+    assert.deepEqual(r.set, []);
+    assert.ok(r.ntp);
+    r = runClock(src, { cur: 'Asia/Tokyo', tz: 'America/Denver' });
+    assert.deepEqual(r.set, ['America/Denver']);
+  });
+  test(`${name}: clock — no answer or a bad one keeps the zone, never fails the install`, () => {
+    for (const body of ['', '<html>404</html>', '{"timezone":"Mars/Olympus"}', '{"timezone":"../../etc/passwd"}', '{"timezone":"a; reboot"}']) {
+      const r = runClock(src, { cur: 'Etc/UTC', body });
+      assert.deepEqual(r.set, [], `body ${body || '(none)'}`);
+      assert.match(r.out, /WARN/);
+    }
+  });
+}
+
+test('the clock is set BEFORE the native player starts, and on the kiosk paths too', () => {
+  // Native: `screentinker-pi setup` sets it (before it starts the player — test_launcher.py), with
+  // --timezone passed through; the installer calling st_setup_clock too printed every warning twice.
+  const arm = SRC.slice(SRC.indexOf('if [ "$NATIVE" = true ]; then'), SRC.indexOf('# 8. Kiosk launcher supervision'));
+  assert.ok(!/^\s*st_setup_clock /m.test(arm), 'the native path leaves the clock to screentinker-pi setup');
+  assert.match(arm, /&& TZ_ARGS=\(--timezone "\$TIMEZONE"\)/);
+  for (const mode of ['desktop', 'lite']) {
+    assert.match(arm, new RegExp(`screentinker-pi setup "\\$SERVER_URL" --mode ${mode}[^\\n]*"\\$\\{TZ_ARGS\\[@\\]\\}"`));
+  }
+  assert.ok(SRC.lastIndexOf('st_setup_clock "$SERVER_URL"') > SRC.indexOf('# 8. Kiosk launcher supervision'), 'kiosk installs set it too');
+});

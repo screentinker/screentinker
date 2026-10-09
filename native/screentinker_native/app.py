@@ -571,6 +571,29 @@ class App:
     def _content_on_screen(self):
         return self.engine.mode in ("zones", "wallzones") or self.engine.controller.has_content_on_screen
 
+    def _watch_gl_flavour(self, win):
+        """Tell the shader library whether the GL context is OpenGL ES, which decides the GLSL
+        variants it bakes (player/transitions.py bake_profile). Read on the render thread once Qt has
+        created the context (DirectConnection: the context is only current there)."""
+        from PySide6.QtCore import Qt
+
+        def check():
+            try:
+                gles = _context_is_gles()
+            except Exception as e:
+                log.warning("could not tell GL from GLES (%s); keeping the desktop bake", e)
+                return
+            self.on_ui(lambda: self.engine.shaders.set_gles(gles))
+        win.sceneGraphInitialized.connect(check, Qt.ConnectionType.DirectConnection)
+        if win.isSceneGraphInitialized():
+            # ⚠️ Already up, so the signal has fired: on eglfs (Pi Lite) the scene graph initialises
+            # synchronously, before this runs. Read the window's ACTUAL surface format. NOT
+            # QOpenGLContext.openGLModuleType(): Debian's Qt reports LibGL there although the live
+            # context is OpenGL ES 3.1 (measured on a Pi 4), so it would pick the wrong bake.
+            from PySide6.QtGui import QSurfaceFormat
+            self.engine.shaders.set_gles(
+                win.format().renderableType() == QSurfaceFormat.RenderableType.OpenGLES)
+
     def show_status(self, title, detail=""):
         self.stage.set("statusTitle", title)
         self.stage.set("statusDetail", detail)
@@ -665,7 +688,16 @@ class App:
     def _cmd_set_timezone(self, p):
         tz = str(p.get("timezone") or "")
         if tz:
-            self.on_net(self._op_log("set_timezone", ops.set_timezone(tz)))
+            self.on_net(self._set_timezone(tz))
+
+    async def _set_timezone(self, tz):
+        # ⚠️ Changing the OS zone does not change OURS: glibc loads the zone once per process, so the
+        # player kept the old one until it restarted. Log times were off, and so were schedules on a
+        # device with no zone of its own (they fall back to the process's local time).
+        ok = await self._op_log("set_timezone", ops.set_timezone(tz))
+        if ok:
+            reload_local_zone()
+        return ok
 
     def _cmd_update(self, p):
         self.on_net(self.updater.check(forced=True))
@@ -1092,6 +1124,8 @@ class App:
             self.stage.set("shadersSupported", api != QSGRendererInterface.GraphicsApi.Software)
             log.info("scene graph: %s (shader transitions %s)", api.name,
                      "on" if self.stage.shadersSupported else "off: crossfade")
+            if api == QSGRendererInterface.GraphicsApi.OpenGL:
+                self._watch_gl_flavour(win)
         except Exception as e:
             log.warning("could not read the scene-graph backend (%s); assuming GPU", e)
         # --display / ST_DISPLAY: put the window on that output before going full screen there.
@@ -1133,6 +1167,21 @@ class App:
         if final is not None:
             rc = final(rc, self._operator_exit, bool(self.config.get("kiosk_locked")))
         return rc
+
+
+def reload_local_zone():
+    """Make this process pick up a time zone the OS just switched to (no-op where there is no tzset)."""
+    if hasattr(time, "tzset"):
+        time.tzset()
+
+
+def _context_is_gles():
+    """On the render thread with the scene graph's context current: is it OpenGL ES?"""
+    from PySide6.QtGui import QOpenGLContext
+    ctx = QOpenGLContext.currentContext()
+    if ctx is not None:
+        return ctx.isOpenGLES()
+    return QOpenGLContext.openGLModuleType() == QOpenGLContext.OpenGLModuleType.LibGLES
 
 
 def _single_instance():

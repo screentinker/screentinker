@@ -43,6 +43,7 @@ install -m 0755 "$HERE/screentinker-pi" "$ROOT/usr/bin/screentinker-pi"
 install -m 0644 "$HERE/screentinker-pi.service" "$ROOT/lib/systemd/system/screentinker-pi.service"
 install -m 0644 "$HERE/screentinker-pi-desktop.desktop" "$ROOT/etc/xdg/autostart/screentinker-pi.desktop"
 install -m 0440 "$HERE/sudoers" "$ROOT/etc/sudoers.d/screentinker-pi"
+install -D -m 0644 "$HERE/pipewire-all-outputs.conf" "$ROOT/usr/share/screentinker-pi/pipewire-all-outputs.conf"
 
 cat > "$ROOT/DEBIAN/control" <<EOF
 Package: screentinker-pi
@@ -57,7 +58,8 @@ Depends: python3 (>= 3.13), python3-pyside6.qtcore, python3-pyside6.qtgui, pytho
  qml6-module-qtquick, qml6-module-qtquick-window, qml6-module-qtqml-workerscript,
  qml6-module-qtmultimedia, qml6-module-qtwebengine, qt6-qpa-plugins, qt6-wayland, qt6-shader-baker,
  python3-socketio (>= 5), python3-aiohttp, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good,
- gstreamer1.0-plugins-bad, gstreamer1.0-libav, fonts-noto-color-emoji, sudo, util-linux, curl
+ gstreamer1.0-plugins-bad, gstreamer1.0-libav, fonts-noto-color-emoji, sudo, util-linux, curl,
+ pipewire, pipewire-pulse, wireplumber
 Recommends: cec-utils, ddcutil, alsa-utils, wlopm, x11-xserver-utils
 Description: ScreenTinker native digital signage player for Raspberry Pi
  A native (Qt/QML) ScreenTinker player with Android-app parity: offline playback,
@@ -87,6 +89,17 @@ if [ "$1" = "configure" ]; then
   chmod 0755 /usr/lib/screentinker-pi/st-helper
   visudo -cf /etc/sudoers.d/screentinker-pi >/dev/null || { echo "sudoers check failed" >&2; rm -f /etc/sudoers.d/screentinker-pi; }
   [ -e /etc/modules-load.d/screentinker-pi.conf ] || echo i2c-dev > /etc/modules-load.d/screentinker-pi.conf
+  # ⚠️ SOUND on Lite. Debian's Qt plays audio only through a sound server, and the Lite service runs
+  # as a system user with no login session, so nothing ever started one: every Lite Pi was silent
+  # ("No audio device detected"). Lingering gives the screentinker user its own PipeWire at boot,
+  # with nobody logged in; the launcher points the player at it. Sound goes to every output at once.
+  install -d -o screentinker -g screentinker -m 0755 /var/lib/screentinker-pi/.config \
+    /var/lib/screentinker-pi/.config/pipewire /var/lib/screentinker-pi/.config/pipewire/pipewire.conf.d
+  install -o screentinker -g screentinker -m 0644 /usr/share/screentinker-pi/pipewire-all-outputs.conf \
+    /var/lib/screentinker-pi/.config/pipewire/pipewire.conf.d/50-screentinker-all-outputs.conf
+  if [ -d /run/systemd/system ] && command -v loginctl >/dev/null; then
+    loginctl enable-linger screentinker || true
+  fi
   if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
     # Restart only if it was running: an upgrade must come back up, a fresh install waits for `setup`.

@@ -158,3 +158,88 @@ def test_pty_exit_never_overtakes_the_last_output():
 def test_trigger_post_body_shapes(body, line):
     from screentinker_native.net.triggers import post_body_to_line
     assert post_body_to_line(body) == line
+
+
+# ---------------------------------------------------------------------- transition bake profile (GLES)
+
+def test_shader_bake_profile_is_picked_from_the_gl_flavour(tmp_path):
+    """A real Pi 4 (OpenGL ES 3) failed to link every transition: our .qsb offered GLSL "300 es",
+    Qt's own ShaderEffect vertex shader stops at "100 es", and a mixed pair does not link. On GLES the
+    bake drops 300 es (new cache name); everywhere else it is exactly what it always was (.v2)."""
+    from screentinker_native.player import transitions
+    lib = transitions.ShaderLibrary(str(tmp_path / "lib"), str(tmp_path / "cache"))
+    assert lib.bake_profile() == ("100 es,120,150,300 es", ".v2"), "desktop GL, D3D and Metal unchanged"
+    lib._baked["x"] = ("stale", [])
+    lib.set_gles(True)
+    glsl, suffix = lib.bake_profile()
+    assert "300 es" not in glsl and "100 es" in glsl
+    assert suffix != ".v2", "a GLES bake never reuses a desktop .qsb"
+    assert lib._baked == {}, "switching profile drops what was resolved under the old one"
+    lib.set_gles(True)
+    lib._baked["y"] = ("keep", [])
+    lib.set_gles(True)
+    assert "y" in lib._baked, "setting the same profile again is a no-op"
+
+
+
+def test_set_timezone_reloads_the_players_own_zone(monkeypatch):
+    """The OS zone changed but the player kept the old one until it restarted (glibc loads it once):
+    log times and zone-less schedules stayed hours off. After the helper succeeds, re-read it."""
+    import asyncio
+    from screentinker_native import app as app_mod
+    calls = []
+    monkeypatch.setattr(app_mod, "reload_local_zone", lambda: calls.append("reload"))
+
+    class Holder:
+        async def _op_log(self, label, coro):
+            return await coro
+
+    for ok, want in ((True, ["reload"]), (False, [])):
+        calls.clear()
+        async def helper(tz, ok=ok):
+            return ok
+        monkeypatch.setattr(app_mod.ops, "set_timezone", helper)
+        assert asyncio.run(app_mod.App._set_timezone(Holder(), "America/Chicago")) is ok
+        assert calls == want, "reload only after the OS change actually succeeded"
+
+
+SLOT_QML = os.path.join(os.path.dirname(__file__), "..", "screentinker_native", "ui", "qml", "Slot.qml")
+
+
+def test_video_is_revealed_on_its_first_frame_not_a_timer():
+    """A fixed 120 ms after PlayingState hid the previous item before the Pi's hardware decoder had
+    a picture up (first frame measured at 91-115 ms): a black frame at video starts. Reveal on the
+    sink's first frame; the timer is only a fallback, long enough that a slow decoder wins."""
+    import re
+    with open(SLOT_QML) as f:
+        src = f.read()
+    video = src[src.index("id: videoComp"):src.index("id: webComp")]
+    assert re.search(r"target:\s*vo\.videoSink", video) and "onVideoFrameChanged" in video
+    assert "slot.markReady()" in video.split("onVideoFrameChanged", 1)[1].split("}", 1)[0]
+    m = re.search(r"id:\s*readyTimer;\s*interval:\s*(\d+)", video)
+    assert m and int(m.group(1)) >= 1000, "the timer must be a fallback, not the reveal"
+
+
+def test_qt_video_output_exposes_a_sink_with_a_frame_signal():
+    """If VideoOutput had no videoSink, the Connections above would bind to nothing and every video
+    would wait out the fallback: check the real Qt this player runs on."""
+    pytest.importorskip("PySide6.QtMultimedia")
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtQml import QQmlComponent, QQmlEngine
+    app = QGuiApplication.instance() or QGuiApplication([])
+    engine = QQmlEngine()
+    comp = QQmlComponent(engine)
+    comp.setData(b"""
+import QtQuick
+import QtMultimedia
+Item {
+    property bool hasSink: vo.videoSink !== null && vo.videoSink !== undefined
+    VideoOutput { id: vo }
+    Connections { target: vo.videoSink; function onVideoFrameChanged() {} }
+}""", QUrl())
+    obj = comp.create()
+    assert obj is not None, comp.errorString()
+    assert obj.property("hasSink") is True
+    from PySide6.QtMultimedia import QVideoSink
+    assert hasattr(QVideoSink, "videoFrameChanged")

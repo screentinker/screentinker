@@ -320,6 +320,27 @@
   file Lite doesn't have, and that failed lookup ended the script. An earlier browser kiosk was
   left in charge of the screen and the player was never set up ("No server configured"). The
   lookup no longer stops the install. Thanks to JackyL (Discord) for the report.
+- **Pi OS Lite played no sound.** Debian's Qt plays audio only through a sound server, and the
+  Lite player runs without a login session, so none was ever started ("No audio device
+  detected"). The package now brings PipeWire and starts it for the player at boot. Sound plays
+  on every output at once (both HDMI ports and the headphone jack), so whichever one has a
+  speaker plays it.
+- **Pi OS Desktop played video sound on the headphone jack only, never HDMI.** The desktop player
+  runs as the login user, who was left on the Pi's default output. Setup now sends that user's
+  sound to every output at once too, from the next login.
+- **A black frame flashed when a video started.** The player showed a video a fixed 120 ms after it
+  started playing, and the Pi's hardware decoder takes 91-115 ms to produce its first picture, so it
+  was a close race. It now waits for the first picture.
+- **Transitions didn't show on the Pi.** Every transition failed to start on the Pi's OpenGL ES
+  graphics and the screen cut straight to the next item. The player now picks a shader build
+  that works on OpenGL ES; other players keep the one they had.
+- **Changing a screen's time zone from the dashboard didn't take effect until the player
+  restarted.** Schedules on a screen with no time zone of its own ran on the old zone until
+  then. The player now switches straight away.
+- **Pis set up without the Imager's locale settings ran their schedules on UK time.** Pi OS's
+  default time zone is Europe/London. The installers (and `screentinker-pi setup`) now turn on
+  network time and set a real time zone: `--timezone Area/City` if you give one, the zone you
+  already chose if there is one, otherwise the zone your ScreenTinker server sees the Pi in.
 
 ### Fixed (video walls)
 

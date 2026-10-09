@@ -147,9 +147,35 @@ class ShaderLibrary:
         os.makedirs(cache_dir, exist_ok=True)
         self.custom = {}           # id -> glsl source (custom_shaders on the payload)
         self._baked = {}           # source hash -> (qsb path, names) | None
+        # True once the scene graph is known to run on an OpenGL ES context (set_gles). Picks the GLSL
+        # variants baked — see bake_profile().
+        self.gles = False
         self.qsb = find_qsb()
         if not self.qsb:
             log.warning("qsb not found (install qt6-shader-baker): transitions fall back to crossfade")
+
+    def set_gles(self, gles):
+        """The scene graph's real context is OpenGL ES (called once Qt has created it). Switching
+        profiles drops what this run already resolved, so the next transition bakes for the right one."""
+        gles = bool(gles)
+        if gles != self.gles:
+            self.gles = gles
+            self._baked = {}
+            log.info("baking for %s", "OpenGL ES" if gles else "desktop GL / D3D / Metal")
+
+    def bake_profile(self):
+        """(GLSL variant list, cache-name suffix) for this run.
+
+        ⚠️ Qt pairs our fragment shader with ITS OWN built-in ShaderEffect vertex shader and, per
+        shader, picks the newest GLSL variant the .qsb carries that the context supports. On an
+        OpenGL ES 3 driver (the Pi 4's V3D) our "300 es" variant won, Qt's vertex shader only goes to
+        "100 es", and the GPU refuses to link the mixed pair ("all shaders must use same shading
+        language version"): every transition failed to draw on a real Pi 4. On GLES we therefore bake
+        without 300 es (the library is GLSL ES 1.0 anyway). Every other context keeps exactly the
+        variant list and cache name it always had (".v2"), so no other player changes."""
+        if self.gles:
+            return "100 es,120,150", ".v3gles"
+        return "100 es,120,150,300 es", ".v2"
 
     def set_custom(self, mapping):
         self.custom = {str(k): str(v) for k, v in (mapping or {}).items() if isinstance(v, str)}
@@ -174,8 +200,10 @@ class ShaderLibrary:
             return self._baked[h]
         wrapped, names = wrap(src)
         frag = os.path.join(self.cache_dir, h + ".frag")
-        # ".v2": bakes before this carried GLSL only; they must not be reused (see the qsb call).
-        out = os.path.join(self.cache_dir, h + ".v2.frag.qsb")
+        # The suffix names the variant set (bake_profile): ".v2" replaced GLSL-only bakes, ".v3gles" is
+        # the GLES set. A bake is never reused across sets.
+        glsl, suffix = self.bake_profile()
+        out = os.path.join(self.cache_dir, h + suffix + ".frag.qsb")
         result = None
         # A shader already baked (by an earlier run, or shipped pre-baked) needs no qsb at all.
         if not os.path.exists(out) and self.qsb:
@@ -186,7 +214,7 @@ class ShaderLibrary:
                 # through Metal. A GLSL-only .qsb loads fine there and draws NOTHING — every transition
                 # on the Windows build was ~2.5 s of black. HLSL/MSL are emitted as source (SPIRV-Cross)
                 # and compiled by the driver at load, so this bakes the same on any build machine.
-                p = subprocess.run([self.qsb, "--glsl", "100 es,120,150,300 es", "--hlsl", "50", "--msl", "12",
+                p = subprocess.run([self.qsb, "--glsl", glsl, "--hlsl", "50", "--msl", "12",
                                     "-o", out, frag],
                                    capture_output=True, text=True, timeout=60)
                 if p.returncode != 0:

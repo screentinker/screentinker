@@ -42,6 +42,8 @@ SERVER_URL=""
 # The optional audience-counting add-on for the native player (OpenCV + face model, ~54 MB). OFF
 # unless asked for: --audience, or "y" at the prompt (default No). "" = not decided yet.
 AUDIENCE=""
+# IANA zone (--timezone Area/City). "" = keep a chosen zone, detect a default one.
+TIMEZONE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -49,6 +51,7 @@ while [[ $# -gt 0 ]]; do
         --native) NATIVE=true; shift ;;
         --audience) AUDIENCE=yes; shift ;;
         --no-audience) AUDIENCE=no; shift ;;
+        --timezone) TIMEZONE="$2"; shift 2 ;;
         --native-mode)
             case "$2" in
                 lite|desktop) NATIVE_MODE="$2"; shift 2 ;;
@@ -65,6 +68,8 @@ while [[ $# -gt 0 ]]; do
             echo "                       desktop session); detected when omitted"
             echo "  --audience           with --native: also install the optional audience-counting"
             echo "                       add-on (~54 MB, needs a USB webcam). Off by default"
+            echo "  --timezone ZONE      e.g. America/Chicago. Default: kept, or detected when it is"
+            echo "                       still the image's default (Pi OS ships Europe/London)"
             echo "  --help               Show this help"
             echo ""
             echo "Examples:"
@@ -174,6 +179,43 @@ fi
 # Strip trailing slash from server URL
 SERVER_URL="${SERVER_URL%/}"
 
+# -- Clock: NTP on, and a real time zone --
+#
+# ⚠️ Pi OS's default zone IS Europe/London, so a Pi set up without the Imager's locale step played
+# its schedules on UK time (seen on a Pi 4 in Chicago). --timezone wins; a zone somebody chose is
+# kept; a default one is asked of OUR server (screentinker.com answers from where it sees the Pi —
+# no third-party geo-IP service). A LAN server can't tell, so the dashboard fills it in at pairing.
+# Never fatal: when unsure, keep the zone and say how to fix it.
+st_setup_clock() {
+    local server="$1" cur tz=""
+    timedatectl set-ntp true 2>/dev/null || true
+    cur="$(timedatectl show -p Timezone --value 2>/dev/null)"
+    if [ -n "$TIMEZONE" ]; then
+        tz="$TIMEZONE"
+    else
+        case "$cur" in
+            ""|Europe/London|Etc/UTC|UTC|Etc/Universal|Universal|GMT|Etc/GMT) ;;
+            *) log "Time zone: $cur (kept; change with --timezone Area/City)"; return 0 ;;
+        esac
+        [ -n "$server" ] && tz="$(curl -fsS --max-time 5 "$server/api/public/timezone" 2>/dev/null \
+            | sed -n 's/.*"timezone"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')" || tz=""   # ⚠️ set -e + pipefail: an unreachable server must not end the install
+        if [ -z "$tz" ]; then
+            warn "Time zone: ${cur:-UTC}. Could not detect one; if that is wrong, pair the display from a browser"
+            warn "  in its time zone, or re-run with --timezone Area/City (e.g. America/Chicago)."
+            return 0
+        fi
+    fi
+    if ! [[ "$tz" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}$ ]] || [ ! -f "/usr/share/zoneinfo/$tz" ]; then
+        warn "Unknown time zone '$tz' (expected Area/City, e.g. America/Chicago): kept ${cur:-UTC}"
+        return 0
+    fi
+    if [ "$tz" != "$cur" ] && ! timedatectl set-timezone "$tz" 2>/dev/null; then
+        warn "Could not set the time zone to $tz: kept ${cur:-UTC}"
+        return 0
+    fi
+    log "Time zone: $tz"
+}
+
 # -- Native player: a package from the operator's OWN server, then done --
 #
 # The .deb comes from <server>/download/pi rather than a fixed release URL on purpose: the player a
@@ -243,11 +285,15 @@ if [ "$NATIVE" = true ]; then
             rm -f "$KIOSK_ENTRY"
         fi
     done
+    # The clock (NTP + zone) is set by `screentinker-pi setup` itself, before the player starts —
+    # not by st_setup_clock as well, which printed every warning twice.
+    TZ_ARGS=()
+    [ -n "${TIMEZONE:-}" ] && TZ_ARGS=(--timezone "$TIMEZONE")
     if [ "$NATIVE_MODE" = desktop ]; then
-        screentinker-pi setup "$SERVER_URL" --mode desktop --user "$DESKTOP_USER"
+        screentinker-pi setup "$SERVER_URL" --mode desktop --user "$DESKTOP_USER" "${TZ_ARGS[@]}"
     else
         systemctl disable getty@tty1.service 2>/dev/null || true
-        screentinker-pi setup "$SERVER_URL" --mode lite
+        screentinker-pi setup "$SERVER_URL" --mode lite "${TZ_ARGS[@]}"
     fi
     if [ "$AUDIENCE" = yes ]; then
         log "Installing the audience-counting add-on..."
@@ -831,6 +877,8 @@ done
 if [ "$HAS_DESKTOP" = true ] && [ -f /etc/lightdm/lightdm.conf ]; then
     sed -i 's/#xserver-command=X/xserver-command=X -s 0 -dpms/' /etc/lightdm/lightdm.conf
 fi
+
+st_setup_clock "$SERVER_URL"
 
 # Hardware watchdog for auto-recovery from system hangs
 if grep -q "#RuntimeWatchdogSec=0" /etc/systemd/system.conf 2>/dev/null; then
