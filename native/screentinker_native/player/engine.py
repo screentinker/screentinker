@@ -150,7 +150,7 @@ class ZoneRunner:
             self.timer.start(30_000)       # a daypart may open
             self.index = -1
             return
-        self.index = idx
+        prev, self.index = self.index, idx
         it = self.items[idx]
         if wz.is_hold(it):
             # A HOLD: nothing new for its duration — keep the zone's picture paused, or blank it.
@@ -160,8 +160,12 @@ class ZoneRunner:
             if self.multi:
                 self.timer.start(int(slot_ms(it)))
             return
+        # A zone transitions only into a DIFFERENT item, after its first: a zone left with one
+        # playable item (the rest dayparted out) re-shows it every dwell, and must not play an
+        # effect into itself.
         rendered = self.e.render(it, surface=self.sid, loop=(not self.multi and not it.is_live),
-                                 fit=it.fit_mode or self.zone.get("fit_mode") or "cover")
+                                 fit=it.fit_mode or self.zone.get("fit_mode") or "cover",
+                                 transition=prev >= 0 and idx != prev)
         if rendered is None:
             if self.multi:
                 self.timer.start(1000)
@@ -575,13 +579,18 @@ class PlaybackEngine:
             return None
         return d
 
-    def render(self, it, surface="main", loop=False, fit=None):
+    def render(self, it, surface="main", loop=False, fit=None, transition=None):
+        """`transition`: whether the item's transition plays — by default on the main surface only.
+        Layout zones pass it (each zone's Surface has its own TransitionRunner, so zones transition
+        independently). Wall zones never come through here: they cut on the shared wall clock."""
         d = self.item_dict(it, fit=fit, loop=loop)
         if d is None:
             return None
         tok = self._new_token(surface, it)
         d["token"] = tok
-        tr = self.shaders.resolve(it.transition) if surface == "main" else None
+        if transition is None:
+            transition = surface == "main"
+        tr = self.shaders.resolve(it.transition) if transition else None
         if tr:
             d["transition"] = tr
         self.stage.showItem.emit(surface, d)
