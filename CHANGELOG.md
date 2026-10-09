@@ -340,6 +340,10 @@
   Windows and macOS players). With no fit chosen, these players filled the screen and cut off what
   spilled over; Android and the web player show the whole picture. They now do too. A fit you set,
   and a zone's own fit, are unchanged.
+- **Transitions now play inside layout zones** (Raspberry Pi, Windows and macOS players). They used
+  to run only on a fullscreen playlist, and zones cut straight to the next item. Each zone now
+  transitions on its own; a zone showing one item never transitions into itself. Video-wall zones
+  still cut, on the wall's shared clock. Android and the web player still cut in zones.
 - **Pi OS Desktop played video sound on the headphone jack only, never HDMI.** The desktop player
   runs as the login user, who was left on the Pi's default output. Setup now sends that user's
   sound to every output at once too, from the next login.

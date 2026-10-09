@@ -598,3 +598,51 @@ def test_fullscreen_items_with_no_fit_show_the_whole_picture(eng):
     assert e.item_dict(v)["fit"] == "contain"
     assert e.item_dict(Item.parse({"content_id": "A", "mime_type": "video/mp4", "fit_mode": "cover"}))["fit"] == "cover"
     assert e.item_dict(v, fit="cover")["fit"] == "cover", "a zone's own fit"
+TR = {"effects": [{"shader": "Crossfade", "params": {}}], "durationMs": 800}
+
+
+def _zone_shows(app):
+    return [(a[1], a[2].get("transition")) for a in app.stage.log if a[0] == "show"]
+
+
+def test_layout_zones_play_their_transitions(eng):
+    # Zones used to hard-cut whatever the playlist said (transitions were main-surface only). Each
+    # zone's Surface has its own TransitionRunner, so a zone now transitions on its own.
+    from screentinker_native.player.engine import ZoneRunner
+    e, app = eng
+    e.shaders.resolve = lambda spec: {"shader": spec["effects"][0]["shader"]} if spec else None
+    app.cache.files.update(A="/c/A.png", B="/c/B.png")
+    items = [Item.parse({"id": n, "content_id": c, "mime_type": "image/png", "duration_sec": 5,
+                         "zone_id": "a", "sort_order": n, "transition": TR}) for n, c in ((1, "A"), (2, "B"))]
+    r = ZoneRunner(e, {"id": "a", "fit_mode": "cover"}, items)
+    r.show(0)
+    r.advance()
+    r.timer.stop()
+    assert _zone_shows(app) == [("zone:a", None), ("zone:a", {"shader": "Crossfade"})], \
+        "the first item has nothing to transition from (the Surface hard-cuts it anyway)"
+
+
+def test_a_zone_never_transitions_into_the_same_item(eng):
+    # Two items, one dayparted out: the zone re-shows the other every dwell — no effect into itself.
+    from screentinker_native.player.engine import ZoneRunner
+    e, app = eng
+    e.shaders.resolve = lambda spec: {"shader": "Crossfade"} if spec else None
+    app.cache.files.update(A="/c/A.png", B="/c/B.png")
+    items = [Item.parse({"id": n, "content_id": c, "mime_type": "image/png", "duration_sec": 5,
+                         "zone_id": "a", "sort_order": n, "transition": TR}) for n, c in ((1, "A"), (2, "B"))]
+    e.allows = lambda it: it.content_id == "A"
+    r = ZoneRunner(e, {"id": "a"}, items)
+    r.show(0)
+    r.advance()
+    r.timer.stop()
+    assert [t for _, t in _zone_shows(app)] == [None, None]
+
+
+def test_the_main_surface_still_transitions_by_default_and_other_surfaces_do_not(eng):
+    e, app = eng
+    e.shaders.resolve = lambda spec: {"shader": "Crossfade"} if spec else None
+    app.cache.files.update(A="/c/A.png")
+    it = Item.parse({"content_id": "A", "mime_type": "image/png", "transition": TR})
+    e.render(it)
+    e.render(it, surface="trigger")
+    assert [t for _, t in _zone_shows(app)] == [{"shader": "Crossfade"}, None]
