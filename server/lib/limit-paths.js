@@ -3,6 +3,10 @@
  * requests share a counter, and a mistake here makes a limit decorative rather than wrong-looking.
  */
 const LIMIT_PATH_SHAPES = [
+  // View-only display access: the token / display id is caller-chosen, so one bucket per shape.
+  [/^\/view\/screen\/[^/]+\/?$/, () => '/view/screen/:id'],
+  [/^\/view\/[^/]+\/?$/, () => '/view/:token'],
+  [/^\/api\/view\/(t|d)\/[^/]+\/payload$/, (m) => `/api/view/${m[1]}/:key/payload`],
   [/^\/api\/auth\/oidc\/[^/]+\/(start|callback)$/, (m) => `/api/auth/oidc/:slug/${m[1]}`],
   [/^\/api\/organizations\/sso-only\/removal-requests\/[^/]+\/[^/]+$/, () => '/api/organizations/sso-only/removal-requests/:id/:decision'],
   [/^\/api\/organizations\/sso-only\/removal-requests$/, () => '/api/organizations/sso-only/removal-requests'],

@@ -224,6 +224,21 @@ module.exports = {
   // Redirect / -> /app instead of serving the marketing landing page.
   // For self-hosted internal deployments that don't want the public homepage.
   disableHomepage: ['true', '1'].includes(String(process.env.DISABLE_HOMEPAGE || '').toLowerCase()),
+  /*
+   * View-only display access (lib/view-access.js): a read-only /view/<token> link per display, off
+   * per display until an admin turns it on. This switch removes the feature from the whole instance.
+   * Default: ON for self-hosted, OFF for the hosted cloud; VIEW_ONLY_ENABLED=true|false overrides.
+   */
+  viewOnlyEnabled: process.env.VIEW_ONLY_ENABLED !== undefined && process.env.VIEW_ONLY_ENABLED !== ''
+    ? ['true', '1'].includes(String(process.env.VIEW_ONLY_ENABLED).toLowerCase())
+    : process.env.SELF_HOSTED === 'true',
+  /*
+   * Proxies whose X-Forwarded-For the view-only NETWORK check believes (comma-separated IPs/CIDRs,
+   * or proxy-addr names such as loopback). Empty = believe only the TCP peer. ⚠️ Deliberately NOT the
+   * app-wide trust list, which trusts every private address and would let any LAN host claim to be
+   * inside an allowed range.
+   */
+  viewTrustedProxies: String(process.env.VIEW_TRUSTED_PROXIES || '').split(',').map((s) => s.trim()).filter(Boolean),
   // Issue #12: auto-create a personal org + Default workspace for self-service
   // signups (public register + OAuth). Defaults TRUE so single-tenant and the
   // hosted self-service flow are unaffected; set AUTO_CREATE_ORG_ON_SIGNUP=false

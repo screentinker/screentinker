@@ -1802,6 +1802,17 @@ const migrations = [
    */
   'ALTER TABLE devices ADD COLUMN enrol_key TEXT',
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_enrol_key ON devices(enrol_key) WHERE enrol_key IS NOT NULL',
+  /*
+   * View-only access (lib/view-access.js): watch a display from a browser without pairing one.
+   * OFF by default. The share token is a separate secret from device_token and enrol_key: stored as
+   * a sha256 for lookup and sealed (secretbox) so an admin can copy the link again. view_cidrs is a
+   * JSON array of networks that may open the display's token-less view address.
+   */
+  'ALTER TABLE devices ADD COLUMN view_enabled INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE devices ADD COLUMN view_token_hash TEXT',
+  'ALTER TABLE devices ADD COLUMN view_token_enc TEXT',
+  'ALTER TABLE devices ADD COLUMN view_cidrs TEXT',
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_view_token ON devices(view_token_hash) WHERE view_token_hash IS NOT NULL',
   // #299 offline proof-of-play: a player-minted id for plays replayed after an outage, so a
   // re-flush cannot double-count. Partial index — live plays leave it NULL and must not collide.
   'ALTER TABLE play_logs ADD COLUMN client_event_id TEXT',

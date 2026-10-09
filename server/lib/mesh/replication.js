@@ -44,6 +44,8 @@ const BLOCKLIST = Object.freeze({
   devices: [
     'device_token', 'enrol_key', 'settings_pin', 'claim_secret', 'trigger_secret',
     'trigger_clear_all_token', 'pairing_code',
+    // View-only share link (lib/view-access.js): the hash finds the display, the sealed copy IS it.
+    'view_token_hash', 'view_token_enc',
     /*
      * ⚠️ Goal B part 3. Turns an HTTP request from the panel's own LAN into "reload that screen,
      * blank it, change its volume" — so it belongs here for the same reason trigger_secret does,

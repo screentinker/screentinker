@@ -718,6 +718,10 @@ export const api = {
   // #313: mint or roll the enrolment key that lets a storage-less web player identify itself.
   createEnrolKey: (id) => request(`/devices/${id}/enrol-key`, { method: 'POST' }),
   revokeEnrolKey: (id) => request(`/devices/${id}/enrol-key`, { method: 'DELETE' }),
+  // View-only access (server lib/view-access.js)
+  getViewAccess: (id) => request(`/devices/${id}/view`),
+  updateViewAccess: (id, body) => request(`/devices/${id}/view`, { method: 'PUT', body: JSON.stringify(body) }),
+  regenerateViewLink: (id) => request(`/devices/${id}/view/regenerate`, { method: 'POST' }),
   assignPlaylistToDevice: (playlistId, device_id) => request(`/playlists/${playlistId}/assign`, { method: 'POST', body: JSON.stringify({ device_id }) }),
   clearDevicePlaylist: (device_id) => request(`/devices/${device_id}/playlist`, { method: 'DELETE' }),
   publishPlaylist: (id) => request(`/playlists/${id}/publish`, { method: 'POST' }),

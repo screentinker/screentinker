@@ -12,6 +12,7 @@ import { LiveViewer, whenVisible } from '../lib/webrtc-viewer.js';
 import { renderPowerScheduleEditor, readPowerScheduleEditor, presetWindows } from '../components/power-schedule-editor.js';
 import * as cui from '../components/corporate-ui.js';
 import { openDeviceMoveDialog } from '../components/device-move-dialog.js';
+import { setupViewAccess } from '../components/view-access-card.js';
 
 // The player distinguishes three cases for the Wi-Fi name, because "--" was hiding a real
 // answer: Android 8.1+ refuses to reveal the SSID to an app without location permission, and a
@@ -1136,6 +1137,8 @@ async function loadDevice(deviceId, activeTab = null) {
         ${renderTriggerConfig(device)}
         ${renderTriggerDiagnostics(device)}
 
+        <div id="viewAccessCard"></div>
+
         <!-- Uptime Timeline (24h) -->
         <div style="margin-top:20px">
           <h4 style="font-size:13px;margin-bottom:8px">${t('device.timeline.title')}</h4>
@@ -1540,6 +1543,7 @@ async function loadDevice(deviceId, activeTab = null) {
     setupPlaylistActions(device);
     setupCorporateDevice(device);
     setupEnrolKey(device);
+    setupViewAccess(device);
 
     /*
      * The checklist, at the end of its own trail.

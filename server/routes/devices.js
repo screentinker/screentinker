@@ -3,6 +3,10 @@ const router = express.Router();
 const { db } = require('../db/database');
 const config = require('../config');
 const enrolKey = require('../lib/enrol-key');   // #313
+const viewAccess = require('../lib/view-access');   // view-only display access
+const secretbox = require('../lib/secretbox');
+const { canAdminWorkspace } = require('../lib/permissions');
+const { logActivity, getClientIp } = require('../services/activity');
 const { resolveDevicePlaylist, resolvedLayoutId } = require('../lib/resolve-device-playlist');
 const { PLATFORM_ROLES, ELEVATED_ROLES, isPlatformStaff } = require('../middleware/auth');
 // Phase 2.2a: workspace-aware access. accessContext returns { workspaceRole, actingAs }
@@ -1168,6 +1172,108 @@ router.delete('/:id/enrol-key', requireScope('full'), (req, res) => {
   enrolKey.clearEnrolKey(db, req.params.id);
   console.warn(`[enrol] revoked enrolment key for device ${req.params.id} (user ${req.user.id})`);
   res.json({ success: true, id: req.params.id, enrol_key: null });
+});
+
+/*
+ * View-only access (lib/view-access.js): let people WATCH this display from a browser without pairing
+ * anything. Off by default. Only the display's workspace admins (and org owners/admins, platform
+ * admins) may see or change it — editors may not: a share link reaches people outside the workspace,
+ * and that is an admin's decision. Never through an API token: the link is a credential for a person
+ * to hold, not an integration's.
+ *
+ * Every change is written to the activity log with what changed (never the token itself).
+ */
+function viewAdminDevice(req, res) {
+  if (req.viaToken) { res.status(403).json({ error: 'View-only access is managed from the dashboard, not with an API token' }); return null; }
+  const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(req.params.id);
+  if (!device) { res.status(404).json({ error: 'Device not found' }); return null; }
+  const ws = device.workspace_id && db.prepare('SELECT * FROM workspaces WHERE id = ?').get(device.workspace_id);
+  if (!ws || !resourceAccess(req, ws)) { res.status(403).json({ error: 'Access denied' }); return null; }
+  if (!canAdminWorkspace(db, req.user, ws)) { res.status(403).json({ error: 'Only workspace admins can change view-only access' }); return null; }
+  return device;
+}
+
+function viewState(req, device) {
+  const origin = `${req.protocol}://${req.get('host')}`;
+  const token = device.view_token_enc ? secretbox.decrypt(device.view_token_enc) : null;
+  const cidrs = viewAccess.parseStoredCidrs(device.view_cidrs);
+  return {
+    available: !!config.viewOnlyEnabled,
+    enabled: !!device.view_enabled,
+    share_url: token ? `${origin}/view/${token}` : null,
+    cidrs,
+    network_url: cidrs.length ? `${origin}/view/screen/${device.id}` : null,
+    trusted_proxies_configured: (config.viewTrustedProxies || []).length > 0,
+  };
+}
+
+function logView(req, device, action, detail) {
+  try { logActivity(req.user.id, action, detail, device.id, getClientIp(req), device.workspace_id); } catch (_) { /* never fail the change over its log line */ }
+}
+
+// Anyone who can read the display learns whether it is on (so the page can say so); only an admin
+// gets the link and the networks.
+router.get('/:id/view', (req, res) => {
+  const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(req.params.id);
+  if (!device) return res.status(404).json({ error: 'Device not found' });
+  const ws = device.workspace_id && db.prepare('SELECT * FROM workspaces WHERE id = ?').get(device.workspace_id);
+  if (!ws || !resourceAccess(req, ws)) return res.status(403).json({ error: 'Access denied' });
+  const admin = !req.viaToken && canAdminWorkspace(db, req.user, ws);
+  if (!admin) return res.json({ available: !!config.viewOnlyEnabled, enabled: !!device.view_enabled, can_admin: false });
+  res.json({ ...viewState(req, device), can_admin: true });
+});
+
+// { enabled?: boolean, cidrs?: string[] | string }. Turning it on the first time mints the link.
+router.put('/:id/view', (req, res) => {
+  const device = viewAdminDevice(req, res);
+  if (!device) return;
+  if (!config.viewOnlyEnabled) return res.status(409).json({ error: 'View-only access is turned off on this server' });
+  const body = req.body || {};
+  const sets = [];
+  const args = [];
+  const changes = [];
+  if (body.enabled !== undefined) {
+    const on = body.enabled === true || body.enabled === 1 || body.enabled === '1' || body.enabled === 'true';
+    if (on !== !!device.view_enabled) {
+      sets.push('view_enabled = ?'); args.push(on ? 1 : 0);
+      changes.push(on ? 'view:enabled' : 'view:disabled');
+    }
+    if (on && !device.view_token_hash) {
+      const t = viewAccess.mintToken();
+      sets.push('view_token_hash = ?', 'view_token_enc = ?'); args.push(t.hash, t.enc);
+      changes.push('view:link_created');
+    }
+  }
+  if (body.cidrs !== undefined) {
+    const n = viewAccess.normaliseCidrs(body.cidrs);
+    if (n.error) return res.status(400).json({ error: n.error, invalid: n.invalid || [] });
+    const before = viewAccess.parseStoredCidrs(device.view_cidrs);
+    if (JSON.stringify(before) !== JSON.stringify(n.cidrs)) {
+      sets.push('view_cidrs = ?'); args.push(n.cidrs.length ? JSON.stringify(n.cidrs) : null);
+      changes.push(`view:networks ${n.cidrs.length ? n.cidrs.join(', ') : '(none)'}`);
+    }
+  }
+  if (sets.length) {
+    db.prepare(`UPDATE devices SET ${sets.join(', ')}, updated_at = strftime('%s','now') WHERE id = ?`).run(...args, device.id);
+    for (const c of changes) {
+      const [action, ...rest] = c.split(' ');
+      logView(req, device, action, `${device.name || device.id}${rest.length ? ': ' + rest.join(' ') : ''}`);
+    }
+  }
+  const fresh = db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id);
+  res.json({ ...viewState(req, fresh), can_admin: true });
+});
+
+// New link; the old one stops working at once (open viewers go dark on their next poll).
+router.post('/:id/view/regenerate', (req, res) => {
+  const device = viewAdminDevice(req, res);
+  if (!device) return;
+  if (!config.viewOnlyEnabled) return res.status(409).json({ error: 'View-only access is turned off on this server' });
+  const t = viewAccess.mintToken();
+  db.prepare("UPDATE devices SET view_token_hash = ?, view_token_enc = ?, updated_at = strftime('%s','now') WHERE id = ?").run(t.hash, t.enc, device.id);
+  logView(req, device, 'view:link_regenerated', `${device.name || device.id}${device.view_token_hash ? ': previous link revoked' : ''}`);
+  const fresh = db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id);
+  res.json({ ...viewState(req, fresh), can_admin: true });
 });
 
 router.post('/:id/block', (req, res) => {

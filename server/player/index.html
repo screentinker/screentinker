@@ -539,7 +539,18 @@
     // and one SD storage_path, so they share localStorage: without this the second output reads
     // the first one's config and device id and the two collapse into a single device row. Empty
     // for screen 1 and for every other platform, so nothing existing moves.
-    const SCREEN_SUFFIX = (() => {
+    // View-only viewer (/view/<token>, routes/view.js): renders a display's content read-only. Set by
+    // the server before this script runs; a screen never has it.
+    const VIEWER = (window.__playerConfig && window.__playerConfig.viewer) || null;
+    const VIEWER_MODE = !!VIEWER;
+    // ⚠️ Declared HERE, not beside bootViewer: the boot gate calls bootViewer from further up the
+    // script than its body, and a `let` read before its line runs is a TDZ ReferenceError (1.9.32).
+    let viewerRev = null;
+    let viewerTimer = null;
+    let viewerEnded = false;
+    let viewerLastAnchor = null;
+    let viewerJoin = null;          // one-shot { index, offsetMs, until } consumed by scheduleAdvance
+    const SCREEN_SUFFIX = VIEWER_MODE ? '__view' : (() => {
       try { return BS ? (BS.storageSuffix() || '') : ''; } catch (e) { return ''; }
     })();
 
@@ -1544,6 +1555,8 @@
      */
     function scheduleAdvance(fn, ms) {
       if (advanceTimer) clearTimeout(advanceTimer);
+      // view-only: finish a joined item with the screen. typeof: playback tests extract this alone.
+      if (typeof VIEWER_MODE !== 'undefined' && VIEWER_MODE) ms = viewerAdvanceMs(fn, ms);
       advanceTimer = setTimeout(fn, ms);
       return advanceTimer;
     }
@@ -2353,7 +2366,9 @@
     // pairing and NO socket. Gated here, before the normal boot, so the unpaired
     // auto-connect timer below can never fire underneath a preview.
     const _previewQS = new URLSearchParams(location.search);
-    if (_previewQS.get('preview') === '1' && (_previewQS.get('playlist') || _previewQS.get('device'))) {
+    if (VIEWER_MODE) {
+      bootViewer(VIEWER);
+    } else if (_previewQS.get('preview') === '1' && (_previewQS.get('playlist') || _previewQS.get('device'))) {
       bootPreview(_previewQS);
     } else {
 
@@ -2533,11 +2548,119 @@
       }
     }
 
+    // ==================== View-only viewer ====================
+    // /view/<token> (routes/view.js): the display's content, read-only, for someone who is not the
+    // screen. Reuses the preview path — PREVIEW_MODE keeps every socket, pairing, proof-of-play and
+    // reporting path off — and adds what a preview lacks: it follows the display as it changes, joins
+    // the screen at the item and offset the screen is on, and goes dark the moment access is withdrawn.
+    // No control channel is installed: nothing outside this page can steer it.
+    // (Its state is declared next to VIEWER at the top: bootViewer runs from the boot gate, above here.)
+
+    function bootViewer(v) {
+      PREVIEW_MODE = true;
+      config.serverUrl = window.location.origin;
+      const setup = document.getElementById('setupScreen');
+      if (setup) setup.style.display = 'none';
+      viewerPoll(v, true);
+    }
+
+    function viewerPoll(v, first) {
+      if (viewerEnded) return;
+      const url = v.payload_url + (viewerRev ? ('?rev=' + encodeURIComponent(viewerRev)) : '');
+      const sentAt = Date.now();
+      fetch(url, { cache: 'no-store', credentials: 'omit' }).then(function (res) {
+        if (res.status === 404 || res.status === 403 || res.status === 410) { viewerEnd(first); return null; }
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      }).then(function (body) {
+        if (!body || viewerEnded) return;
+        if (body.server_ms) ingestClockSample(body.server_ms, sentAt);
+        if (body.payload) {
+          viewerRev = body.rev;
+          handlePlaylistUpdate(body.payload);
+          viewerLastAnchor = null;      // a new playlist: re-join wherever the screen is
+        }
+        viewerAlign(body.now_playing);
+      }).catch(function (e) {
+        // A network blip is not a revocation: keep showing what we have and try again.
+        console.warn('[viewer] poll failed', e && e.message);
+      }).then(function () {
+        if (viewerEnded) return;
+        clearTimeout(viewerTimer);
+        viewerTimer = setTimeout(function () { viewerPoll(v, false); }, Math.max(2000, Number(v.poll_ms) || 4000));
+      });
+    }
+
+    // The screen's most recent start (main area). Move to it when it is new, or when we have drifted.
+    function viewerAlign(list) {
+      if (!Array.isArray(list) || !playlist.length) return;
+      let a = null;
+      for (let i = 0; i < list.length; i++) if (list[i] && !list[i].zone_id) a = list[i];
+      if (!a) a = list[0];
+      if (!a || !a.started_ms) return;
+      const key = (a.content_id || '') + '|' + (a.widget_id || '') + '|' + a.started_ms;
+      if (key === viewerLastAnchor) return;
+      viewerLastAnchor = key;
+      let idx = -1;
+      for (let i = 0; i < playlist.length; i++) {
+        const it = playlist[i];
+        if ((a.widget_id && it.widget_id === a.widget_id) || (a.content_id && (it.content_id === a.content_id || it.widget_id === a.content_id))) { idx = i; break; }
+      }
+      if (idx === -1) return;                                   // not something this viewer plays: carry on
+      const offsetMs = Math.max(0, syncedNow() - a.started_ms);
+      const dur = (Number(playlist[idx].duration_sec) || 0) * 1000;
+      if (dur && offsetMs >= dur) return;                       // that item is already over on the screen
+      // Already on it and close enough (we advanced on our own a moment ago): leave it alone.
+      if (idx === currentIndex && Math.abs((Date.now() - currentItemStartedAt) - offsetMs) < 1500) return;
+      viewerJoin = { index: idx, offsetMs: offsetMs, until: Date.now() + 5000 };
+      clearTimeout(scheduleRetryTimer);
+      currentIndex = idx;
+      isPlaying = true;
+      playCurrentItem();
+      viewerSeekVideo(offsetMs);
+    }
+
+    // A video joins at the screen's position, once its metadata is known.
+    function viewerSeekVideo(offsetMs) {
+      if (offsetMs < 1000) return;
+      setTimeout(function () {
+        const container = document.getElementById('playerContainer');
+        const vid = container && container.querySelector('video');
+        if (!vid) return;
+        const seek = function () { try { if (vid.duration && offsetMs / 1000 < vid.duration) vid.currentTime = offsetMs / 1000; } catch (e) {} };
+        if (vid.readyState >= 1) seek(); else vid.addEventListener('loadedmetadata', seek, { once: true });
+      }, 0);
+    }
+
+    // Consumed by scheduleAdvance: the item the viewer joined part-way through ends when the screen's does.
+    function viewerAdvanceMs(fn, ms) {
+      const j = viewerJoin;
+      if (!VIEWER_MODE || !j || fn !== nextItem) return ms;
+      viewerJoin = null;
+      if (j.index !== currentIndex || Date.now() > j.until) return ms;
+      return Math.max(500, ms - j.offsetMs);
+    }
+
+    function viewerEnd(first) {
+      viewerEnded = true;
+      clearTimeout(viewerTimer);
+      isPlaying = false;
+      try { teardownCurrentMedia(); } catch (e) {}
+      try { clearTimeout(advanceTimer); } catch (e) {}
+      const pc = document.getElementById('playerContainer');
+      if (pc) { pc.innerHTML = ''; pc.style.display = 'none'; }
+      const div = document.createElement('div');
+      div.id = 'viewerEnded';
+      div.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;display:flex;align-items:center;justify-content:center;color:#e5e7eb;background:#111827;font:18px sans-serif;z-index:4000;text-align:center;padding:24px';
+      div.textContent = first ? 'This view is not available.' : 'This view is no longer available.';
+      document.body.appendChild(div);
+    }
+
     // #zone-orphan: one operator-only banner, built from previewBannerParts. Created on
     // first use, removed when there's nothing to report. PREVIEW_MODE only — the live
     // player/wall must stay clean for the audience.
     function renderPreviewBanner() {
-      if (!PREVIEW_MODE) return;
+      if (!PREVIEW_MODE || (typeof VIEWER_MODE !== 'undefined' && VIEWER_MODE)) return;   // an operator note; a viewer is the audience
       const lines = [previewBannerParts.layout, previewBannerParts.orphans].filter(Boolean);
       let el = document.getElementById('previewBanner');
       if (!lines.length) { if (el) el.remove(); return; }
@@ -8534,7 +8657,8 @@
     window.addEventListener('offline', () => { if (disconnectedAt) linkLostDuringGap = true; });
 
     // Register service worker for offline content caching
-    if ('serviceWorker' in navigator) {
+    // A viewer is not a screen: no offline cache to keep, and no worker of its own to install.
+    if ('serviceWorker' in navigator && !VIEWER_MODE) {
       // Explicit scope. The default would be the worker's own directory (/player/), which does NOT
       // include /player — the URL the dashboard shows and the one panels are actually configured
       // with. Registration succeeded there and then controlled nothing: no shell cache, no content

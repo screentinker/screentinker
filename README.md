@@ -209,6 +209,8 @@ Schema migrations run automatically on first boot — no manual migration comman
 | `HIDE_BILLING` | Hide the Subscription nav item + billing view; `#/billing` redirects to the dashboard (UI-only, opt-in) | `false` |
 | `DISABLE_REGISTRATION` | Block new account creation (including OAuth auto-signup). First-user setup on an empty DB is still allowed. | `false` |
 | `DISABLE_HOMEPAGE` | Redirect `/` to `/app` instead of serving the marketing landing page. For internal-only self-hosted deployments. | `false` |
+| `VIEW_ONLY_ENABLED` | View-only display links (`/view/<token>`). Each display is still off until a workspace admin turns it on. `false` removes the feature from the instance — see [View-only display access](docs/view-only-access.md). | `true` when `SELF_HOSTED=true`, else `false` |
+| `VIEW_TRUSTED_PROXIES` | Comma-separated proxy addresses/CIDRs whose `X-Forwarded-For` the view-only **network** check believes. Unset = only the TCP peer counts. | unset |
 | `APP_URL` | Your public URL (used for Stripe callbacks and invite-accept URLs in emailed invites) | _(none)_ |
 | `JWT_SECRET` | JWT signing key (auto-generated if not set) | _(auto)_ |
 | `SSL_CERT` | Path to SSL certificate | `server/certs/cert.pem` |
