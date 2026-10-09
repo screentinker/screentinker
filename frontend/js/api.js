@@ -1,5 +1,12 @@
 const API_BASE = '/api';
 
+// The admin's own IANA zone, sent when pairing so a display still on its OS image's default zone
+// (Raspberry Pi OS ships Europe/London) can be set to where its admin is. A zone name only: no
+// location. undefined where the browser can't say.
+export function browserTimezone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined; } catch (_) { return undefined; }
+}
+
 /*
  * The Error a failed request throws. ⚠️ Its MESSAGE IS UNCHANGED from what every caller has always
  * read (the server's `error` text), so `catch (e) { showToast(e.message) }` behaves exactly as
@@ -407,7 +414,7 @@ export const api = {
   // Provisioning
   pairDevice: (pairing_code, name) => request('/provision/pair', {
     method: 'POST',
-    body: JSON.stringify({ pairing_code, name })
+    body: JSON.stringify({ pairing_code, name, browser_timezone: browserTimezone() })
   }),
 
   // Content

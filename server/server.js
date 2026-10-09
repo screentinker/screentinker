@@ -2053,6 +2053,18 @@ app.get('/api/release-notes', (req, res) => {
 app.use('/api/status', require('./routes/status'));
 
 /*
+ * The zone this server sees the caller in, for the Pi/Debian installers to set a real time zone
+ * on a fresh image (Pi OS ships Europe/London). Answered from Cloudflare's cf-timezone header, so
+ * screentinker.com can say and a self-hosted server without Cloudflare answers null (the dashboard
+ * then offers the pairing admin's browser zone instead). ⚠️ no-store: one cached answer would
+ * give every Pi the first caller's zone.
+ */
+app.get('/api/public/timezone', (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  res.json({ timezone: require('./lib/device-timezone').requestTimezone(req) });
+});
+
+/*
  * Opt-in install statistics — the COLLECTOR side, plus the public aggregate the marketing
  * page reads. Both live in routes/telemetry-collector.js; both are mounted only when
  * TELEMETRY_COLLECTOR=1, so a normal self-hosted install exposes neither.
@@ -2880,6 +2892,19 @@ app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (
   const pairedRoom = deviceNs.adapter.rooms.get(device.id);
   if (pairedRoom && pairedRoom.size > 0) deviceNs.to(device.id).emit('device:paired', pairedMsg);
   else if (device.attached_node_id) { try { require('./lib/mesh/command-relay').relayToAttached(db, device.id, 'device:paired', pairedMsg); } catch (e) { /* the screen learns on its next register */ } }
+
+  // Time zone fallback: a display still on its image's default zone (Pi OS ships Europe/London)
+  // gets the pairing admin's browser zone, when it can set its own (system.time: the native
+  // players). Only for a LAN server's sake — on screentinker.com the installer already asked
+  // /api/public/timezone. Never blocks the pairing; an override or a chosen zone is left alone.
+  try {
+    const row = db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id);
+    const tz = require('./lib/device-timezone').pairingTimezone(row, req.body && req.body.browser_timezone);
+    if (tz) {
+      const r = require('./lib/device-command').deliverCommand(deviceNs, row, 'set_timezone', { timezone: tz });
+      console.log(`[pair] ${device.id}: time zone ${row.reported_timezone || '(none)'} → ${tz} from the pairing browser (${r.status})`);
+    }
+  } catch (e) { console.warn(`[pair] time zone fallback failed for ${device.id}: ${e.message}`); }
 
   const updated = db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id);
   require('./lib/device-sanitize').stripDeviceSecrets(updated); // never leak device_token to clients
