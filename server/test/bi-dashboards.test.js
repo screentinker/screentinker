@@ -77,7 +77,10 @@ test('Tableau view addresses, public links and Grafana variables are parsed stri
   assert.equal(g.vars, 'var-host=web1&var-env=prod', 'only var-* keys survive, so render options cannot be injected');
   assert.throws(() => grafana.normaliseWidgetConfig({ dashboard_uid: '../x' }), /UID/);
   const url = grafana.renderUrl({ config: { base_url: 'https://g.example/grafana' } }, { ...g, org_id: 1, theme: 'dark' }, { width: 1920, height: 1088 });
-  assert.match(url, /^https:\/\/g\.example\/grafana\/render\/d\/abc_1\?orgId=1&width=1920&height=1088&theme=dark&kiosk=&timeout=60&var-host=web1&var-env=prod$/);
+  assert.match(url, /^https:\/\/g\.example\/grafana\/render\/d\/abc_1\?orgId=1&width=1920&height=1088&theme=dark&timeout=60&var-host=web1&var-env=prod&kiosk$/, 'a bare kiosk: Grafana ignores kiosk= (empty)');
+  const solo = grafana.renderUrl({ config: { base_url: 'https://g.example' } }, { ...g, org_id: 1, theme: 'dark', panel_id: 4 }, { width: 800, height: 448 });
+  assert.match(solo, /\/render\/d-solo\/abc_1\?orgId=1&panelId=4&/);
+  assert.doesNotMatch(solo, /kiosk/, 'a single panel has no chrome to hide');
   assert.equal(grafana.sizeBucket(1913, 320, 3840, 1920), 1920);
   assert.equal(grafana.sizeBucket(99999, 320, 3840, 1920), 3840);
 });

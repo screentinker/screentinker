@@ -70,12 +70,15 @@ function renderUrl(conn, cfg, { width, height }) {
   q.set('width', String(width));
   q.set('height', String(height));
   q.set('theme', cfg.theme === 'light' ? 'light' : 'dark');
-  if (!cfg.panel_id) q.set('kiosk', '');
   if (cfg.time_from) q.set('from', cfg.time_from);
   if (cfg.time_to) q.set('to', cfg.time_to);
   q.set('timeout', '60');
   for (const [k, v] of new URLSearchParams(cfg.vars || '')) if (VAR_KEY_RE.test(k)) q.append(k, v);
-  return `${base}${path}?${q.toString()}`;
+  // ⚠️ A BARE `kiosk`, appended by hand: URLSearchParams can only write `kiosk=` (empty value), and
+  // Grafana does not treat that as kiosk mode — screens got Grafana's sidebar, toolbar and, on a
+  // fresh Grafana 13, an announcement dialog over the dashboard (seen rendering a real Grafana 13).
+  // A single panel (d-solo) has no chrome to hide.
+  return `${base}${path}?${q.toString()}${cfg.panel_id ? '' : '&kiosk'}`;
 }
 
 function put(key, entry) {
