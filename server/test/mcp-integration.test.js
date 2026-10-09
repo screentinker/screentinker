@@ -62,6 +62,19 @@ const jsonOf = (r) => JSON.parse(textOf(r));
 function openDb() {
   return new (require('better-sqlite3'))(DB_PATH, { timeout: 5000 });
 }
+// ⚠️ The server writes its audit row on the response's 'finish' (services/activity.js), in ANOTHER
+// process: the reply can reach this test first, and a read straight after it found no row (seen
+// once in CI on main). Wait briefly for it.
+async function auditRow(sql) {
+  for (let i = 0; i < 40; i++) {
+    const db = openDb();
+    const row = db.prepare(sql).get();
+    db.close();
+    if (row) return row;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return undefined;
+}
 
 before(async () => {
   PORT = await freePort();
@@ -305,9 +318,7 @@ test('⚠️ two tenants on different addresses have separate rate-limit budgets
 test('⚠️ the activity log records the agent\'s address, not 127.0.0.1', async () => {
   const r = await tool(S.tok.write, 'create_playlist', { name: 'attributed' }, '198.51.100.77');
   assert.equal(r.body.result.isError, false, textOf(r));
-  const db = openDb();
-  const row = db.prepare("SELECT ip_address FROM activity_log WHERE action LIKE 'POST /api/playlists%' AND details LIKE '%attributed%' ORDER BY id DESC LIMIT 1").get();
-  db.close();
+  const row = await auditRow("SELECT ip_address FROM activity_log WHERE action LIKE 'POST /api/playlists%' AND details LIKE '%attributed%' ORDER BY id DESC LIMIT 1");
   assert.ok(row, 'no audit row');
   assert.equal(row.ip_address, '198.51.100.77');
 });
@@ -322,9 +333,8 @@ test('a forged forwarding header is ignored', async () => {
     body: JSON.stringify({ name: 'forged-attrib' }),
   });
   assert.equal(r.status, 201);
-  const db = openDb();
-  const row = db.prepare("SELECT ip_address FROM activity_log WHERE details LIKE '%forged-attrib%' ORDER BY id DESC LIMIT 1").get();
-  db.close();
+  const row = await auditRow("SELECT ip_address FROM activity_log WHERE details LIKE '%forged-attrib%' ORDER BY id DESC LIMIT 1");
+  assert.ok(row, 'no audit row');
   assert.equal(row.ip_address, '198.51.100.88', 'the forged address must not be believed');
 });
 
