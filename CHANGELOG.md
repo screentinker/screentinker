@@ -277,6 +277,10 @@
     their own clock get this: the Raspberry Pi, Linux and Windows players.
   - Fixed along the way: what a new screen says it can do is now recorded as soon as it shows a
     pairing code, not only after its first reconnect.
+- **Raspberry Pi 4 Model B is Certified Hardware** (certified with limits, from 2.5.0), on the
+  native player under Pi OS Trixie Lite and Desktop. The limits: it needs a supply that holds
+  5.1 V at 3 A, and it was tested on one screen at up to 1920x1200. See
+  `/certified-hardware#raspberry-pi-4-model-b`.
 
 ### Fixed (Android player)
 

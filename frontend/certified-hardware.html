@@ -101,7 +101,7 @@
     <h1>Certified Hardware</h1>
     <p class="lead">The device models ScreenTinker has tested with ScreenTinker, what each one actually
       does, and which ones to avoid.</p>
-    <p class="updated">Last updated 2026-09-24. 5 devices currently certified.</p>
+    <p class="updated">Last updated 2026-10-08. 6 devices currently certified.</p>
 
     <p style="margin:20px 0 4px">
       <a href="/certified-hardware/submit" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Report hardware that works</a>
@@ -241,6 +241,38 @@
           <li>No minimum browser version has been established.</li>
           <li>There is no ScreenTinker version floor either. The browser has been a supported display since the first release, and it is re-tested with the current one.</li>
         </ul>
+      </article>
+    </section>
+
+    <section class="status-group status-certified-with-limits">
+      <h2>Certified with limits <span class="count">(1)</span></h2>
+      <p class="group-blurb">Supported under ScreenTinker agreements, with a documented limitation. The limitation is spelled out on each entry.</p>
+      <article class="device" id="raspberry-pi-4-model-b">
+        <h3><a class="anchor" href="#raspberry-pi-4-model-b" aria-label="Link to Raspberry Pi 4 Model B">#</a>Raspberry Pi 4 Model B</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd>Raspberry Pi</dd>
+          <dt>Model numbers</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Category</dt><dd>Single-board computer</dd>
+          <dt>Operating system</dt><dd>Raspberry Pi OS (64-bit), Debian 13 &quot;Trixie&quot;: the Lite image, and the Desktop image of 2026-10-06</dd>
+          <dt>ScreenTinker player</dt><dd>Native player (the screentinker-pi package), installed by the setup script with --native. On Lite it runs as a system service drawing straight to the screen; on Desktop it runs full screen in the desktop session.</dd>
+          <dt>Maximum resolution</dt><dd>1920x1200 at 60 Hz, the highest tested. 4K has not been tested.</dd>
+          <dt>Validated on</dt><dd>2026-10-08</dd>
+          <dt>Validated by</dt><dd>ScreenTinker</dd>
+          <dt>Tested against</dt><dd>2.5.0</dd>
+          <dt>Minimum ScreenTinker version</dt><dd>2.5.0</dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>⚠️ Limit: needs a power supply that holds 5.1 V at 3 A over USB-C, such as the official Raspberry Pi supply. On a weaker one the board reported under-voltage, rebooted under load and lost its saved Wi-Fi settings.</li>
+          <li>⚠️ Limit: tested on one screen, on the HDMI port next to the USB-C power socket. Two screens, 4K and video walls have not been tested on this board.</li>
+          <li>Tested unit: 4 GB, board revision 1.1. Other memory sizes have not been tested.</li>
+          <li>2.5.0 is the floor. Earlier builds played no sound on Lite and sent the Desktop&#39;s sound to the headphone jack only, skipped every transition on Lite, and could show a black frame as each video started.</li>
+          <li>Sound plays on HDMI and the headphone jack at the same time, so whichever has a speaker plays it.</li>
+          <li>H.264 video plays on the hardware decoder. Other codecs have not been tested.</li>
+          <li>Tested: images, video with sound, shader transitions (fullscreen and inside layout zones), multi-zone layouts, and portrait rotation.</li>
+          <li>The time zone is set at setup from where screentinker.com sees the screen, or from the browser that pairs it. Pi OS otherwise defaults to UK time.</li>
+        </ul>
+        <p class="setup-link"><a href="/guides/raspberry-pi-digital-signage.html">Setup guide for this device</a></p>
       </article>
     </section>
 
