@@ -12,37 +12,18 @@
  * there by a player that supports it — see lib/rooms/service.js panelToken). Without it the page is a
  * read-only sign, which is what every other player shows.
  *
+ * Its own words are in the widget's language, or with "auto" the screen's (navigator.languages), so
+ * one widget can serve rooms in two countries; see strings.js.
+ *
  * Every string from the calendar is inserted as TEXT (textContent), never as HTML: meeting titles are
  * typed by anyone who can send an invitation.
  */
 
 const { computeRoomState, dayBounds, midnightIn, dateIn } = require('./freebusy');
+const { ROOM_PAGE_STRINGS, ROOM_PAGE_LANGUAGES } = require('./strings');
 
-const STRINGS = {
-  available: 'Available',
-  busy: 'In use',
-  checkin: 'Check in',
-  free_until: 'Free until {t}',
-  free_all_day: 'Free for the rest of the day',
-  until: 'Until {t}',
-  left: '{n} min left',
-  next: 'Next: {t}',
-  next_free: 'Next free at {t}',
-  today: 'Today',
-  no_more: 'No more meetings today',
-  private_meeting: 'Private meeting',
-  reserved: 'Reserved',
-  all_day: 'All day',
-  book: 'Book {n} min',
-  book_until: 'Book until {t}',
-  end: 'End meeting',
-  check_in: 'Check in',
-  release_at: 'Released at {t} if nobody checks in',
-  checked_in: 'Checked in',
-  offline: 'Showing the saved schedule — the calendar can’t be reached right now.',
-  no_room: 'This room display has no room selected.',
-  working: 'One moment…',
-};
+// Every language goes into the page; the screen picks one (see strings.js).
+const STRINGS = ROOM_PAGE_STRINGS.en;
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // JSON inside <script>: escape what could close the element or start a comment.
@@ -58,7 +39,8 @@ function renderRoomDisplay({ widgetId, origin, config = {}, initial = null }) {
     locale: LOCALE_RE.test(String(config.locale || '')) ? config.locale : null,
     layout: ['portrait', 'landscape'].includes(config.layout) ? config.layout : 'auto',
     showSchedule: config.show_schedule !== false,
-    strings: STRINGS,
+    language: ROOM_PAGE_LANGUAGES.includes(config.language) ? config.language : null,
+    strings: ROOM_PAGE_STRINGS,
     initial,
   };
   return `<!doctype html>
@@ -118,7 +100,31 @@ ${dateIn.toString()}
 ${dayBounds.toString()}
 (function () {
   var CFG = ${jsonForScript(cfg)};
-  var S = CFG.strings;
+  // The widget's language, else its locale's, else the screen's own, else English. Missing words
+  // fall back to English one by one.
+  var LANG = (function () {
+    var want = [CFG.language, CFG.locale];
+    try { want = want.concat(navigator.languages || [navigator.language]); } catch (e) {}
+    for (var i = 0; i < want.length; i++) {
+      var c = String(want[i] || '').toLowerCase().split(/[-_]/)[0];
+      if (c && CFG.strings[c]) return c;
+    }
+    return 'en';
+  })();
+  var S = {};
+  for (var k in CFG.strings.en) S[k] = CFG.strings[LANG][k] || CFG.strings.en[k];
+  document.documentElement.lang = LANG;
+  var TIME_LOCALE = CFG.locale || (CFG.language ? LANG : undefined);
+  // The server's refusals are English; a code it sends is answered in the panel's own language.
+  var REFUSALS = { 'busy': 'err_busy', 'too-short': 'err_too_short', 'not-current': 'err_not_current', 'not-panel': 'err_not_panel', 'booking-off': 'err_booking_off', 'read-only': 'err_booking_off' };
+  function refusal(status, j) {
+    var code = j && j.code;
+    if (code && REFUSALS[code]) return S[REFUSALS[code]];
+    if (status === 429) return S.err_limited;
+    if (status === 502) return S.err_calendar;
+    if (LANG === 'en' && j && j.error) return j.error;
+    return S.failed;
+  }
   var m = /(?:^|[#&])panel=([^&]+)/.exec(location.hash || '');
   var PANEL = m ? decodeURIComponent(m[1]) : null;
   var q = /[?&]device=([^&]+)/.exec(location.search || '');
@@ -129,7 +135,7 @@ ${dayBounds.toString()}
   var fmt = function (s, v) { return s.replace(/\\{(\\w)\\}/g, function (_, k) { return v[k]; }); };
   var now = function () { return Date.now() + skew; };
   function time(ms) {
-    try { return new Intl.DateTimeFormat(CFG.locale || undefined, { hour: '2-digit', minute: '2-digit', timeZone: (state && state.room.timezone) || 'UTC' }).format(new Date(ms)); }
+    try { return new Intl.DateTimeFormat(TIME_LOCALE, { hour: '2-digit', minute: '2-digit', timeZone: (state && state.room.timezone) || 'UTC' }).format(new Date(ms)); }
     catch (e) { return new Date(ms).toISOString().slice(11, 16); }
   }
   var ICONS = {
@@ -137,7 +143,7 @@ ${dayBounds.toString()}
     busy: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M7 12h10"/></svg>',
     pending: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 7v5l3 2"/></svg>'
   };
-  function label(e) { return e.title || (e.private ? S.private_meeting : S.reserved); }
+  function label(e) { return e.panel ? S.booked_here : (e.title || (e.private ? S.private_meeting : S.reserved)); }
   function note(text) {
     $('note').textContent = text || '';
     if (noteTimer) clearTimeout(noteTimer);
@@ -155,14 +161,14 @@ ${dayBounds.toString()}
     busyAction = true; note(S.working); paint(true);
     body.device = DEVICE; body.panel = PANEL;
     fetch(CFG.actionUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(body), cache: 'no-store' })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }); })
       .then(function (res) {
         busyAction = false;
         if (res.j && res.j.state) accept(res.j.state);
-        note(res.ok ? '' : ((res.j && res.j.error) || 'That did not work.'));
+        note(res.ok ? '' : refusal(res.status, res.j));
         paint(true);
       })
-      .catch(function () { busyAction = false; note('The server could not be reached.'); paint(true); });
+      .catch(function () { busyAction = false; note(S.unreachable); paint(true); });
   }
   function accept(s) { state = s; skew = s.server_now - Date.now(); lastOk = Date.now(); }
   function poll() {

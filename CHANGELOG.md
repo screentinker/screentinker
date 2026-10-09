@@ -43,6 +43,14 @@
   adds a freeze or blank step of the length you choose, reusing one hold per mode. The library no
   longer has a Hold card. Existing holds are untouched and can be filtered for.
 
+### Added
+
+- **Room displays speak the room's language.** The page's own words (Available, In use, Book,
+  End meeting, the schedule and every refusal) now come in the dashboard's ten languages. A new
+  **Language on the screen** setting picks one; left on its default, each screen uses its own
+  language, so one widget can serve rooms in two countries. hi/ja/zh are best-effort. Reported by
+  @PowerSprout.
+
 ### Added (server)
 
 - `GET /api/content?envelope=1` returns `{ items, total }`. The plain array is unchanged for every
@@ -68,6 +76,13 @@
   Grafana 13.0.
 - The **Videos** type filter no longer includes HDMI inputs, and **Web / remote** no longer includes
   holds or HDMI inputs.
+
+- **Ending a meeting at a room display now frees the room on screen at once.** A meeting booked
+  and ended in the same minute kept saying "In use" for up to a minute, because the calendar needs
+  it to last at least a minute. A calendar answering a moment behind after a booking or an end
+  was also cached as fresh for a minute. The panel now shows what it just did. A forced calendar
+  read after a change also no longer reuses a read that began before the change. Reported by
+  @PowerSprout on a ThinkSmart View.
 
 ## 2.5.0
 

@@ -355,6 +355,75 @@ test('end early: someone elseâ€™s meeting is refused, unless the org allows it â
   assert.ok(!st.events.some((e) => e.id === 'theirs'));
 });
 
+// Reported from a ThinkSmart View: Book, then End a few seconds later, and the panel kept saying
+// "In use" for up to a minute. The calendar needs the meeting to end after it starts, so it keeps a
+// one-minute stub; the panel must not show that stub as the room being in use.
+test('end early: a meeting ended the minute it was booked frees the panel at once', async () => {
+  mock.state.graph['boardroom@acme.test'] = [];
+  const b = await svc.book(room(ROOM_M), 'dev-1', 30);
+  now = NOW + 15 * 1000;
+  await svc.endMeeting(room(ROOM_M), 'dev-1', b.event_id);
+  const e = mock.state.graph['boardroom@acme.test'].find((x) => x.id === b.event_id);
+  assert.equal(e.end, Date.parse('2026-10-08T10:08:00Z'), 'the calendar keeps a one-minute meeting');
+  const st = await svc.panelState(room(ROOM_M));
+  assert.equal(fb.computeRoomState(st.events, now).busy, false, 'the panel shows the room free now');
+  await assert.rejects(svc.endMeeting(room(ROOM_M), 'dev-1', b.event_id), (x) => x.code === 'not-current', 'a second tap ends nothing');
+  const again = await svc.book(room(ROOM_M), 'dev-1', 15);
+  assert.ok(again.event_id && again.event_id !== b.event_id, 'and the room can be booked again straight away');
+});
+
+// Exchange can answer a calendarView with the meeting as it was for a few seconds after a change.
+// That copy was cached as fresh for a minute, so the panel showed the old state until it expired.
+test('end early and book now: a calendar that is a moment behind does not undo what the panel just did', async () => {
+  mock.state.graph['boardroom@acme.test'] = [];
+  const lag = () => {
+    const inner = mock.fetch;
+    let snapshot = null;
+    mock.fetch = async (url, opts) => {
+      if (/calendarView/.test(String(url)) && snapshot) {
+        const live = mock.state.graph['boardroom@acme.test'];
+        mock.state.graph['boardroom@acme.test'] = snapshot;
+        try { return await inner(url, opts); } finally { mock.state.graph['boardroom@acme.test'] = live; }
+      }
+      return inner(url, opts);
+    };
+    return { freeze() { snapshot = JSON.parse(JSON.stringify(mock.state.graph['boardroom@acme.test'])); }, thaw() { snapshot = null; mock.fetch = inner; } };
+  };
+  const l = lag();
+  l.freeze();                                       // every read now returns the calendar as it is here: empty
+  const b = await svc.book(room(ROOM_M), 'dev-1', 60);
+  let st = await svc.panelState(room(ROOM_M));
+  assert.equal(fb.computeRoomState(st.events, now).busy, true, 'the booking shows although the calendar has not caught up');
+  l.thaw();
+  now = NOW + 12 * MIN;
+  await svc.panelState(room(ROOM_M));               // cache refreshed: the booking is there
+  l.freeze();                                       // ... and stays there in every read after the end
+  await svc.endMeeting(room(ROOM_M), 'dev-1', b.event_id);
+  st = await svc.panelState(room(ROOM_M));
+  assert.equal(fb.computeRoomState(st.events, now).busy, false, 'the end shows although the calendar has not caught up');
+  l.thaw();
+});
+
+test('cache: a forced read after a change never joins a read that began before it', async () => {
+  mock.state.graph['boardroom@acme.test'] = [graphEvent('a', -7, 23)];
+  const inner = mock.fetch;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  let held = false;
+  mock.fetch = async (url, opts) => {
+    if (/calendarView/.test(String(url)) && !held) { held = true; const r = await inner(url, opts); await gate; return r; }
+    return inner(url, opts);
+  };
+  const early = svc.getDay(ROOM_M);                 // a panel's poll, on its way with the old calendar
+  await new Promise((r) => setImmediate(r));
+  mock.state.graph['boardroom@acme.test'][0].end = NOW;   // the change lands upstream
+  const forced = svc.getDay(ROOM_M, { force: true });
+  release();
+  assert.equal((await early).events[0].end, NOW + 23 * MIN, 'the poll got what it asked for');
+  assert.equal((await forced).events[0].end, NOW, 'the forced read saw the change');
+  mock.fetch = inner;
+});
+
 test('end early: only the meeting actually in progress', async () => {
   mock.state.graph['boardroom@acme.test'] = [graphEvent('later', 30, 60)];
   db.prepare('UPDATE organizations SET room_end_any = 1 WHERE id = ?').run(ORG);

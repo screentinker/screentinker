@@ -13,6 +13,10 @@ let conns = [];
 let canManage = false;
 let cfg = {};
 
+// The room display page's languages (server lib/rooms/strings.js), each named in itself.
+const PAGE_LANGUAGES = [['en', 'English'], ['de', 'Deutsch'], ['nl', 'Nederlands'], ['fr', 'Français'], ['es', 'Español'],
+  ['pt', 'Português'], ['it', 'Italiano'], ['ja', '日本語'], ['zh', '中文'], ['hi', 'हिन्दी']];
+
 const browserTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (_) { return 'UTC'; } };
 
 export async function mountRoomEditor(el, config, helpers) {
@@ -56,6 +60,11 @@ function render() {
         <option value="landscape" ${cfg.layout === 'landscape' ? 'selected' : ''}>${esc(t('rooms.layout_landscape'))}</option>
         <option value="portrait" ${cfg.layout === 'portrait' ? 'selected' : ''}>${esc(t('rooms.layout_portrait'))}</option>
       </select></div>
+    <div class="form-group"><label>${esc(t('rooms.language'))}</label>
+      <select id="rdLanguage" class="input" style="background:var(--bg-input)">
+        <option value="" ${!cfg.language ? 'selected' : ''}>${esc(t('rooms.language_auto'))}</option>
+        ${PAGE_LANGUAGES.map(([code, name]) => `<option value="${code}" ${cfg.language === code ? 'selected' : ''}>${esc(name)}</option>`).join('')}
+      </select></div>
     <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="rdSchedule" ${cfg.show_schedule !== false ? 'checked' : ''}> ${esc(t('rooms.show_schedule'))}</label>
     <p style="font-size:12px;color:var(--text-muted);margin-top:10px">${esc(t('rooms.player_note'))}</p>`;
 
@@ -68,7 +77,9 @@ function render() {
 function capture() {
   const l = host.querySelector('#rdLayout');
   const s = host.querySelector('#rdSchedule');
+  const g = host.querySelector('#rdLanguage');
   if (l) cfg.layout = l.value;
+  if (g) cfg.language = g.value || undefined;
   if (s) cfg.show_schedule = s.checked;
 }
 
@@ -186,6 +197,7 @@ function wireAddForm() {
 export function readRoomConfig() {
   capture();
   const out = { layout: cfg.layout || 'auto', show_schedule: cfg.show_schedule !== false };
+  if (cfg.language) out.language = cfg.language;
   const sel = host && host.querySelector('#rdRoom');
   const id = sel ? sel.value : cfg.room_id;
   if (id) out.room_id = id;
