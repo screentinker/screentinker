@@ -54,6 +54,9 @@ function displayOptions(raw) {
     // Off: pictures only, e.g. an Instagram feed as a promo strip beside the main content. The text
     // is then not sent to the screen at all, and posts with nothing but text are left out.
     show_text: c.show_text !== false,
+    // The play badge on a video's thumbnail. A wall shows the thumbnail, not the video, and a screen
+    // cannot be tapped, so on a sign the badge can read as broken: it can be turned off.
+    show_play: c.show_play !== false,
     theme: THEMES.includes(c.theme) ? c.theme : 'dark',
     background: colour(c.background, ''),
     accent: colour(c.accent, '#4f8cff'),
@@ -62,7 +65,7 @@ function displayOptions(raw) {
 }
 
 /** What a screen receives about a post. Nothing more than it shows. */
-function payloadPost(widgetId, r, { showText = true } = {}) {
+function payloadPost(widgetId, r, { showText = true, showPlay = true } = {}) {
   const m = (h) => `/api/widgets/${encodeURIComponent(widgetId)}/social-media/${h}`;
   let media = [];
   try { media = JSON.parse(r.media || '[]'); } catch { media = []; }
@@ -74,7 +77,7 @@ function payloadPost(widgetId, r, { showText = true } = {}) {
     av: r.author_avatar ? m(r.author_avatar) : null,
     t: showText ? (r.text || '') : '',
     m: media.slice(0, 4).map(m),
-    v: !!r.is_video,
+    v: showPlay && !!r.is_video,
     at: r.posted_at,
   };
 }
@@ -83,7 +86,8 @@ function payload(db, widget, config) {
   const feed = config && config.feed_id ? feeds.forWorkspace(db, widget.workspace_id, config.feed_id) : null;
   if (!feed) return { posts: [], configured: false };
   const showText = config.show_text !== false;
-  let posts = feeds.visiblePosts(db, feed).map((r) => payloadPost(widget.id, r, { showText }));
+  const showPlay = config.show_play !== false;
+  let posts = feeds.visiblePosts(db, feed).map((r) => payloadPost(widget.id, r, { showText, showPlay }));
   if (!showText) posts = posts.filter((p) => p.m.length);   // a text-only post would be an empty card
   return { posts, configured: true, title: config.title || '' };
 }
@@ -134,8 +138,8 @@ function render(db, widget, rawConfig, { origin = '', sample = null, poll = true
   else data = seeded ? payload(db, widget, config) : { posts: [], configured: true };
   const cfg = config ? {
     layout: config.layout, interval: config.interval_sec, columns: config.columns, showAuthor: config.show_author, showTime: config.show_time,
-    showText: config.show_text, title: config.title, accent: config.accent,
-  } : { layout: 'carousel', interval: 10, columns: 0, showAuthor: true, showTime: true, showText: true, title: '', accent: '#4f8cff' };
+    showText: config.show_text, showPlay: config.show_play, title: config.title, accent: config.accent,
+  } : { layout: 'carousel', interval: 10, columns: 0, showAuthor: true, showTime: true, showText: true, showPlay: true, title: '', accent: '#4f8cff' };
   const dark = !config || config.theme === 'dark';
   const bg = (config && config.background) || (dark ? '#0d1117' : '#f5f6f8');
   const fg = dark ? '#f2f4f8' : '#16181d';
@@ -220,7 +224,7 @@ body.ticker-mode #app{padding:0}
     c.appendChild(who(p));
     if (p.m && p.m.length) {
       var m = el('div','media'); var im = el('img'); im.alt = ''; im.src = abs(p.m[0]); m.appendChild(im);
-      if (p.v) m.appendChild(el('div','play'));
+      if (p.v && cfg.showPlay !== false) m.appendChild(el('div','play'));
       c.appendChild(m);
     }
     if (p.t && cfg.showText !== false) c.appendChild(el('div','text', p.t));

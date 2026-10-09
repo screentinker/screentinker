@@ -4789,6 +4789,7 @@ export default {
   'social.w_title': 'Heading',
   'social.w_title_ph': 'Optional, e.g. #YourEvent',
   'social.w_show_author': 'Show the author',
+  'social.w_show_play': 'Mark videos with a play icon (the wall shows the video\u2019s picture; it does not play)',
   'social.w_show_text': 'Show the post text (off: pictures only; posts without a picture are skipped)',
   'social.w_show_time': 'Show how long ago it was posted',
   'social.w_hint': 'The wall checks for new posts every two minutes, and keeps showing the last ones it had if the network is down.',

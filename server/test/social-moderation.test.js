@@ -319,3 +319,16 @@ test('show_text off: pictures only — the text never reaches the screen and tex
   assert.ok(!html.includes('caption that would get in the way'), 'not in the seeded page either');
   assert.match(html, /"showText":false/);
 });
+
+test('show_play off: a video keeps its picture but loses the play badge, which a sign cannot honour', async () => {
+  const db = freshDb();
+  const feed = mkFeed(db);
+  await ingest(db, feed, [post('r', 'a reel', { media: ['https://cdn.example/r.jpg'], is_video: true })]);
+  const w = { id: 'w3', workspace_id: 'ws1', updated_at: 1, config: '{}' };
+  assert.equal(widget.displayOptions({}).show_play, true, 'on by default: existing walls are unchanged');
+  assert.equal(widget.payload(db, w, { feed_id: feed.id }).posts[0].v, true);
+  const off = widget.payload(db, w, { feed_id: feed.id, show_play: false });
+  assert.equal(off.posts[0].v, false, 'the screen is not even told it is a video');
+  assert.equal(off.posts[0].m.length, 1, 'its picture is still shown');
+  assert.match(widget.render(db, w, { feed_id: feed.id, show_play: false }, { origin: 'https://st.example' }).html, /"showPlay":false/);
+});
