@@ -742,7 +742,46 @@ router.get('/plans', requirePlatformAdmin, (req, res) => {
      WHERE u.plan_id IS NOT NULL AND u.plan_id NOT IN (SELECT id FROM plans)
      GROUP BY u.plan_id
   `).all();
-  res.json({ plans, orphaned });
+  res.json({ plans, orphaned, stripe_configured: !!require('../lib/stripe-client').get() });
+});
+
+/*
+ * Edit and create plans (lib/plan-admin.js). Platform admin only: a plan's limits apply at once to
+ * every account on it, and its linked Stripe prices are what new customers are charged. A save is
+ * refused while a shown price disagrees with the Stripe price linked to it.
+ */
+function sendPlanError(res, e) {
+  const { PlanError } = require('../lib/plan-admin');
+  if (e instanceof PlanError) return res.status(e.status).json({ error: e.message, field: e.field });
+  console.error('[admin/plans]', e);
+  return res.status(500).json({ error: 'The plan could not be saved' });
+}
+
+router.get('/plans/:id/impact', requirePlatformAdmin, (req, res) => {
+  if (!db.prepare('SELECT 1 FROM plans WHERE id = ?').get(req.params.id)) return res.status(404).json({ error: 'Plan not found' });
+  res.json(require('../lib/plan-admin').impactOf(db, req.params.id));
+});
+
+router.put('/plans/:id', requirePlatformAdmin, async (req, res) => {
+  const planAdmin = require('../lib/plan-admin');
+  try {
+    const before = db.prepare('SELECT * FROM plans WHERE id = ?').get(req.params.id);
+    const r = await planAdmin.updatePlan(db, require('../lib/stripe-client').get(), req.params.id, req.body);
+    if (r.changed.length) {
+      const detail = r.changed.map((k) => `${k}: ${before[k] === null ? '—' : before[k]} → ${r.plan[k] === null ? '—' : r.plan[k]}`).join(', ');
+      logActivity(req.user.id, 'admin_update_plan', `${r.plan.display_name} (${r.plan.id}): ${detail}`.slice(0, 1000), null, getClientIp(req), null);
+    }
+    res.json({ plan: r.plan, changed: r.changed, warnings: r.stripe.warnings, stripe_checked: r.stripe.checked, impact: planAdmin.impactOf(db, r.plan.id) });
+  } catch (e) { sendPlanError(res, e); }
+});
+
+router.post('/plans', requirePlatformAdmin, async (req, res) => {
+  const planAdmin = require('../lib/plan-admin');
+  try {
+    const r = await planAdmin.createPlan(db, require('../lib/stripe-client').get(), req.body);
+    logActivity(req.user.id, 'admin_create_plan', `${r.plan.display_name} (${r.plan.id})`, null, getClientIp(req), null);
+    res.status(201).json({ plan: r.plan, warnings: r.stripe.warnings, stripe_checked: r.stripe.checked });
+  } catch (e) { sendPlanError(res, e); }
 });
 
 // ─── Sales / limited-time discounts (lib/promotions.js) ─────────────────────────

@@ -753,10 +753,19 @@ async function loadPlans() {
     // Admin endpoint, not /api/subscription/plans: that one filters `active = 1` because it feeds
     // the pricing page, so a deliberately hidden plan (a comped or beta tier) was invisible to the
     // operator too. Here we want every plan, plus who is actually on each one.
-    const { plans, orphaned } = await api.adminListPlans();
+    const { plans, orphaned, stripe_configured: stripeConfigured } = await api.adminListPlans();
+    // Platform operators look; only platform admins change plans (the server enforces it).
+    const canEdit = isPlatformAdmin(JSON.parse(localStorage.getItem('user') || '{}'));
+    // Whether a paid plan can actually be bought: checkout charges its linked Stripe price.
+    const checkout = (p) => {
+      if (!(p.price_monthly > 0) && !(p.price_yearly > 0)) return `<span style="color:var(--text-muted)">${esc(t('admin.plan.checkout_none'))}</span>`;
+      const missing = (p.price_monthly > 0 && !p.stripe_price_monthly) || (p.price_yearly > 0 && !p.stripe_price_yearly);
+      return missing ? `<span style="color:var(--warning)">${esc(t('admin.plan.checkout_missing'))}</span>` : esc(t('admin.plan.checkout_linked'));
+    };
     el.innerHTML = `
+      ${canEdit ? `<div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button type="button" class="btn btn-primary btn-sm" id="planNewBtn">${esc(t('admin.plan.new'))}</button></div>` : ''}
       <div class="table-wrap">
-      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:500px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:640px">
         <thead><tr style="border-bottom:1px solid var(--border)">
           <th style="padding:8px;text-align:left;color:var(--text-muted)">${t('admin.col.plan')}</th>
           <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('admin.col.devices')}</th>
@@ -765,6 +774,8 @@ async function loadPlans() {
           <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('admin.col.yearly')}</th>
           <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('admin.col.accounts')}</th>
           <th style="padding:8px;text-align:right;color:var(--text-muted)">${t('admin.col.screens')}</th>
+          <th style="padding:8px;text-align:left;color:var(--text-muted)">${t('admin.plan.checkout')}</th>
+          ${canEdit ? `<th style="padding:8px"><span class="lib-visually-hidden">${esc(t('admin.col.actions'))}</span></th>` : ''}
         </tr></thead>
         <tbody>
           ${plans.map(p => `
@@ -779,6 +790,8 @@ async function loadPlans() {
               <td style="padding:8px;text-align:right">${p.price_yearly > 0 ? '$'+p.price_yearly : '-'}</td>
               <td style="padding:8px;text-align:right${p.user_count ? ';font-weight:500' : ';color:var(--text-muted)'}">${p.user_count}</td>
               <td style="padding:8px;text-align:right;color:var(--text-muted)">${p.device_count}</td>
+              <td style="padding:8px;font-size:12px">${checkout(p)}</td>
+              ${canEdit ? `<td style="padding:8px;text-align:right"><button type="button" class="btn btn-secondary btn-sm" data-plan-edit="${esc(p.id)}" aria-label="${esc(t('admin.plan.edit_named', { name: p.display_name }))}">${esc(t('admin.plan.edit'))}</button></td>` : ''}
             </tr>
           `).join('')}
         </tbody>
@@ -789,6 +802,14 @@ async function loadPlans() {
           ${t('admin.plan_orphaned')}: ${orphaned.map(o => `<strong>${esc(o.plan_id)}</strong> (${o.user_count})`).join(', ')}
         </p>` : ''}
     `;
+    el.querySelector('#planNewBtn')?.addEventListener('click', async () => {
+      const { openPlanEditor } = await import('../components/plan-editor.js');
+      openPlanEditor({ stripeConfigured, onSaved: () => loadPlans() });
+    });
+    el.querySelectorAll('[data-plan-edit]').forEach((b) => b.addEventListener('click', async () => {
+      const { openPlanEditor } = await import('../components/plan-editor.js');
+      openPlanEditor({ plan: plans.find((x) => x.id === b.dataset.planEdit), stripeConfigured, onSaved: () => loadPlans() });
+    }));
   } catch (err) { el.innerHTML = `<p style="color:var(--danger)">${esc(err.message)}</p>`; }
 }
 
