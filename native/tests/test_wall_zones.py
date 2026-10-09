@@ -586,3 +586,15 @@ def test_a_room_display_widget_carries_its_panel_capability_in_the_fragment(eng)
     assert src.endswith("&rev=3#panel=a%2Bb%2Fc%3D")
     plain = Item.parse({"widget_id": "W2", "widget_type": "clock", "widget_rev": 1})
     assert "#" not in e.item_dict(plain)["source"]
+
+
+def test_fullscreen_items_with_no_fit_show_the_whole_picture(eng):
+    # ⚠️ Android (RESIZE_MODE_FIT) and the web player show a fullscreen item whole when it has no fit
+    # of its own. This player cropped it: a landscape video on a screen turned to portrait showed only
+    # its middle third (seen on a Pi 4). An item's own fit, and a zone's, still win.
+    e, app = eng
+    app.cache.files.update(A="/c/A.mp4")
+    v = Item.parse({"content_id": "A", "mime_type": "video/mp4"})
+    assert e.item_dict(v)["fit"] == "contain"
+    assert e.item_dict(Item.parse({"content_id": "A", "mime_type": "video/mp4", "fit_mode": "cover"}))["fit"] == "cover"
+    assert e.item_dict(v, fit="cover")["fit"] == "cover", "a zone's own fit"
