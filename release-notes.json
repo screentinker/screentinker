@@ -17,6 +17,8 @@
       "version": "2.5.1",
       "date": "2026-10-09",
       "notes": [
+        "Watch a display from any browser without pairing it: a workspace admin turns on View-only access for the display and shares the link. Viewers see what the screen shows and nothing else, and regenerating the link or turning it off disconnects them within seconds.",
+        "Display power schedules can be set on any screen, including one whose player cannot blank yet (it applies once the player updates), and All day covers a whole day. Android screens now stay dark for the scheduled time instead of waking straight back up.",
         "The Content Library is rebuilt: browse folders, recent and unused content, search and filter, switch between grid and list, open an item's details beside the list, and add anything from one Add content button. Uploads show each file's progress, and one bad file no longer stops the rest.",
         "Hold screens are now added from a playlist with Add hold screen.",
         "Meeting-room displays: ending a meeting frees the room on screen at once, and the display speaks the screen's language (ten languages, or pick one in the widget).",
