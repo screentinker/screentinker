@@ -26,7 +26,7 @@ const BUILDER = path.join(__dirname, '..', 'scripts', 'build-certified-hardware.
 const data = JSON.parse(fs.readFileSync(DATA, 'utf8'));
 const devices = data.devices;
 
-const STATUSES = ['certified', 'certified-with-limits', 'community-reported', 'known-issues', 'not-supported'];
+const STATUSES = ['certified', 'certified-with-limits', 'community-reported', 'compatible-per-manufacturer', 'known-issues', 'not-supported'];
 const CATEGORIES = ['streaming-player', 'soc-display', 'media-player', 'browser', 'sbc'];
 const FIELDS = ['id', 'name', 'manufacturer', 'model_numbers', 'category', 'os', 'player', 'status',
   'max_resolution', 'validated_on', 'validated_by', 'player_version', 'min_version',
@@ -106,6 +106,16 @@ test('⚠️ nothing claims certification without the evidence certification mea
   for (const d of devices.filter((x) => x.status === 'community-reported')) {
     assert.notEqual(d.validated_by, 'ScreenTinker',
       `${d.id} is community-reported but claims ScreenTinker validated it`);
+  }
+  // A manufacturer's compatibility list is the manufacturer's claim, not a test of ours, and it carries
+  // no version: it must not borrow the fields that make a card read like a ScreenTinker validation.
+  for (const d of devices.filter((x) => x.status === 'compatible-per-manufacturer')) {
+    assert.ok(d.validated_by && d.validated_by !== 'ScreenTinker' && d.validated_by !== 'Community',
+      `${d.id} is compatible-per-manufacturer, so validated_by must name the manufacturer`);
+    for (const f of ['validated_on', 'player_version', 'min_version', 'photo']) {
+      assert.equal(d[f], null, `${d.id}.${f} must be null — nothing was tested`);
+    }
+    assert.ok(Array.isArray(d.model_numbers) && d.model_numbers.length, `${d.id} names the model number the source lists`);
   }
 });
 

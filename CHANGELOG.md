@@ -22,6 +22,13 @@ Thanks to the people whose reports this release fixes: @PowerSprout and カタ�
   - `VIEW_ONLY_ENABLED=false` removes the feature from a server. On by default for self-hosted.
   - Pairing, `/player`, `/player/legacy` and the vMix web-player URL work exactly as before. Old
     browsers get the ES5 build with `?legacy=1`.
+- **Certified Hardware: the Fire TV Cube (3rd Gen) is certified**, from 2.5.0 (AFTGAZL, tested at
+  1920x1080). Its HDMI input can be shown live in a playlist. The live picture cannot be captured, so
+  screenshots and previews show that area black.
+- **Certified Hardware: a new "Compatible per manufacturer" list.** The 88 Fire OS models on Amazon's
+  device list are shown, one row each, with their model numbers. These are not Certified Hardware and
+  carry no support commitment: ScreenTinker has not tested them. Models sold on amazon.com have a
+  where-to-buy link.
 - **Social walls can show pictures only.** A new **Show the post text** option sits next to **Show the
   author**. Turned off, captions are not shown (or even sent to the screen), posts without a picture
   are skipped, and the ticker shows each post's picture instead of its text. That suits an Instagram
