@@ -158,9 +158,18 @@ Item {
                 onErrorOccurred: function(error, errorString) { slot.failed(errorString || ("error " + error)) }
                 Component.onCompleted: play()
             }
-            // Qt 6.4 has no first-frame signal. A short hold after PlayingState is what keeps the
-            // previous item on screen until the decoder has actually produced a picture.
-            Timer { id: readyTimer; interval: 120; onTriggered: slot.markReady() }
+            // ⚠️ Revealed on the FIRST DECODED FRAME, not a guess. This used to be a fixed 120 ms after
+            // PlayingState. On a Pi 4's hardware decoder the first picture arrives 91-115 ms after it
+            // (measured), so the old timer won by a frame or two at best, and a black frame showed at
+            // video starts (seen on HDMI between two bright cards; gone with this). The sink's frame
+            // signal fires once there is a picture, so the previous item stays up until then.
+            Connections {
+                target: vo.videoSink
+                function onVideoFrameChanged() { slot.markReady() }
+            }
+            // Fallback only, for a backend that never reports frames to the sink: a clip must not sit
+            // hidden behind the previous item for ever. Long enough that a slow decoder wins first.
+            Timer { id: readyTimer; interval: 1500; onTriggered: slot.markReady() }
             // Position for the sync engines and device:playback-state.
             Timer {
                 interval: 250; repeat: true; running: player.playbackState === MediaPlayer.PlayingState

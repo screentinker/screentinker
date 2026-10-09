@@ -325,6 +325,9 @@
   detected"). The package now brings PipeWire and starts it for the player at boot. Sound plays
   on every output at once (both HDMI ports and the headphone jack), so whichever one has a
   speaker plays it.
+- **A black frame flashed when a video started.** The player showed a video a fixed 120 ms after it
+  started playing, and the Pi's hardware decoder takes 91-115 ms to produce its first picture, so it
+  was a close race. It now waits for the first picture.
 - **Transitions didn't show on the Pi.** Every transition failed to start on the Pi's OpenGL ES
   graphics and the screen cut straight to the next item. The player now picks a shader build
   that works on OpenGL ES; other players keep the one they had.

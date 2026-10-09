@@ -201,3 +201,45 @@ def test_set_timezone_reloads_the_players_own_zone(monkeypatch):
         monkeypatch.setattr(app_mod.ops, "set_timezone", helper)
         assert asyncio.run(app_mod.App._set_timezone(Holder(), "America/Chicago")) is ok
         assert calls == want, "reload only after the OS change actually succeeded"
+
+
+SLOT_QML = os.path.join(os.path.dirname(__file__), "..", "screentinker_native", "ui", "qml", "Slot.qml")
+
+
+def test_video_is_revealed_on_its_first_frame_not_a_timer():
+    """A fixed 120 ms after PlayingState hid the previous item before the Pi's hardware decoder had
+    a picture up (first frame measured at 91-115 ms): a black frame at video starts. Reveal on the
+    sink's first frame; the timer is only a fallback, long enough that a slow decoder wins."""
+    import re
+    with open(SLOT_QML) as f:
+        src = f.read()
+    video = src[src.index("id: videoComp"):src.index("id: webComp")]
+    assert re.search(r"target:\s*vo\.videoSink", video) and "onVideoFrameChanged" in video
+    assert "slot.markReady()" in video.split("onVideoFrameChanged", 1)[1].split("}", 1)[0]
+    m = re.search(r"id:\s*readyTimer;\s*interval:\s*(\d+)", video)
+    assert m and int(m.group(1)) >= 1000, "the timer must be a fallback, not the reveal"
+
+
+def test_qt_video_output_exposes_a_sink_with_a_frame_signal():
+    """If VideoOutput had no videoSink, the Connections above would bind to nothing and every video
+    would wait out the fallback: check the real Qt this player runs on."""
+    pytest.importorskip("PySide6.QtMultimedia")
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtQml import QQmlComponent, QQmlEngine
+    app = QGuiApplication.instance() or QGuiApplication([])
+    engine = QQmlEngine()
+    comp = QQmlComponent(engine)
+    comp.setData(b"""
+import QtQuick
+import QtMultimedia
+Item {
+    property bool hasSink: vo.videoSink !== null && vo.videoSink !== undefined
+    VideoOutput { id: vo }
+    Connections { target: vo.videoSink; function onVideoFrameChanged() {} }
+}""", QUrl())
+    obj = comp.create()
+    assert obj is not None, comp.errorString()
+    assert obj.property("hasSink") is True
+    from PySide6.QtMultimedia import QVideoSink
+    assert hasattr(QVideoSink, "videoFrameChanged")
