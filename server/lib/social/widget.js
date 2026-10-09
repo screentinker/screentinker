@@ -51,6 +51,9 @@ function displayOptions(raw) {
     columns: intIn(c.columns, 0, 6, 0),
     show_author: c.show_author !== false,
     show_time: c.show_time !== false,
+    // Off: pictures only, e.g. an Instagram feed as a promo strip beside the main content. The text
+    // is then not sent to the screen at all, and posts with nothing but text are left out.
+    show_text: c.show_text !== false,
     theme: THEMES.includes(c.theme) ? c.theme : 'dark',
     background: colour(c.background, ''),
     accent: colour(c.accent, '#4f8cff'),
@@ -59,7 +62,7 @@ function displayOptions(raw) {
 }
 
 /** What a screen receives about a post. Nothing more than it shows. */
-function payloadPost(widgetId, r) {
+function payloadPost(widgetId, r, { showText = true } = {}) {
   const m = (h) => `/api/widgets/${encodeURIComponent(widgetId)}/social-media/${h}`;
   let media = [];
   try { media = JSON.parse(r.media || '[]'); } catch { media = []; }
@@ -69,7 +72,7 @@ function payloadPost(widgetId, r) {
     a: r.author_name || '',
     h: r.author_handle || '',
     av: r.author_avatar ? m(r.author_avatar) : null,
-    t: r.text || '',
+    t: showText ? (r.text || '') : '',
     m: media.slice(0, 4).map(m),
     v: !!r.is_video,
     at: r.posted_at,
@@ -79,7 +82,10 @@ function payloadPost(widgetId, r) {
 function payload(db, widget, config) {
   const feed = config && config.feed_id ? feeds.forWorkspace(db, widget.workspace_id, config.feed_id) : null;
   if (!feed) return { posts: [], configured: false };
-  return { posts: feeds.visiblePosts(db, feed).map((r) => payloadPost(widget.id, r)), configured: true, title: config.title || '' };
+  const showText = config.show_text !== false;
+  let posts = feeds.visiblePosts(db, feed).map((r) => payloadPost(widget.id, r, { showText }));
+  if (!showText) posts = posts.filter((p) => p.m.length);   // a text-only post would be an empty card
+  return { posts, configured: true, title: config.title || '' };
 }
 
 /*
@@ -128,8 +134,8 @@ function render(db, widget, rawConfig, { origin = '', sample = null, poll = true
   else data = seeded ? payload(db, widget, config) : { posts: [], configured: true };
   const cfg = config ? {
     layout: config.layout, interval: config.interval_sec, columns: config.columns, showAuthor: config.show_author, showTime: config.show_time,
-    title: config.title, accent: config.accent,
-  } : { layout: 'carousel', interval: 10, columns: 0, showAuthor: true, showTime: true, title: '', accent: '#4f8cff' };
+    showText: config.show_text, title: config.title, accent: config.accent,
+  } : { layout: 'carousel', interval: 10, columns: 0, showAuthor: true, showTime: true, showText: true, title: '', accent: '#4f8cff' };
   const dark = !config || config.theme === 'dark';
   const bg = (config && config.background) || (dark ? '#0d1117' : '#f5f6f8');
   const fg = dark ? '#f2f4f8' : '#16181d';
@@ -177,6 +183,7 @@ body.ticker-mode #app{padding:0}
 .tick-item .av{width:1.6em;height:1.6em}
 .tick-item .net{font-size:.55em;padding:.2em .45em;border-radius:.3em}
 .tick-item .handle{font-size:.75em}
+.tick-item .thumb{height:2.4em;width:auto;max-width:6em;border-radius:.2em;object-fit:cover;display:block}
 </style></head><body>
 <div id="app"><div id="title"></div><div id="stage"></div></div>
 <script type="application/json" id="seed">${jsonForScript({ cfg, data })}</script>
@@ -216,12 +223,12 @@ body.ticker-mode #app{padding:0}
       if (p.v) m.appendChild(el('div','play'));
       c.appendChild(m);
     }
-    if (p.t) c.appendChild(el('div','text', p.t));
+    if (p.t && cfg.showText !== false) c.appendChild(el('div','text', p.t));
     if (cfg.showTime) c.appendChild(el('div','when', ago(p.at)));
     return c;
   }
   function clear(){ if (timer) { clearInterval(timer); timer = null; } while (stage.firstChild) stage.removeChild(stage.firstChild); }
-  function empty(){ stage.appendChild(el('div','empty', configured ? 'No posts to show yet.' : 'Choose a social feed for this wall in the widget settings.')); }
+  function empty(){ stage.appendChild(el('div','empty', !configured ? 'Choose a social feed for this wall in the widget settings.' : cfg.showText === false ? 'No posts with a picture to show yet.' : 'No posts to show yet.')); }
   function carousel(){
     var box = el('div','carousel'); box.style.position='absolute'; box.style.inset='0'; stage.appendChild(box);
     var cards = posts.map(card); cards.forEach(function(c){ box.appendChild(c); });
@@ -248,7 +255,9 @@ body.ticker-mode #app{padding:0}
       if (cfg.showAuthor && p.av) { var i = el('img','av'); i.alt=''; i.src = abs(p.av); it.appendChild(i); }
       it.appendChild(el('span','net', NETS[p.n] || p.n));
       if (cfg.showAuthor) it.appendChild(el('span','handle', p.h || p.a));
-      it.appendChild(el('span','', (p.t || '').replace(/\\s+/g, ' ').slice(0, 280)));
+      // Pictures only: the strip shows each post's picture where its text would be.
+      if (cfg.showText === false) { if (p.m && p.m[0]) { var th = el('img','thumb'); th.alt = ''; th.src = abs(p.m[0]); it.appendChild(th); } }
+      else it.appendChild(el('span','', (p.t || '').replace(/\\s+/g, ' ').slice(0, 280)));
       tr.appendChild(it);
     });
     var x = 0, speed = Math.max(40, window.innerWidth / 12); var last = performance.now();
@@ -258,6 +267,9 @@ body.ticker-mode #app{padding:0}
   function draw(){
     clear();
     var t = document.getElementById('title'); if (cfg.title && cfg.layout !== 'ticker') { t.textContent = cfg.title; t.style.display = 'block'; }
+    // Pictures only: a post with nothing but text has nothing to show (the server leaves them out
+    // too; this covers the editor's sample preview).
+    if (cfg.showText === false) posts = posts.filter(function(p){ return p.m && p.m.length; });
     if (!posts.length) return loaded ? empty() : null;
     document.body.classList.toggle('ticker-mode', cfg.layout === 'ticker');
     if (cfg.layout === 'grid') grid(); else if (cfg.layout === 'ticker') ticker(); else carousel();
