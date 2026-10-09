@@ -157,3 +157,37 @@ test('stable advertises the version declared beside the APK, not the server buil
   assert.equal(ask('2.0.0', apkCache.get().version, false).update_available, false,
     'a 2.0.0 display offered a 2.0.0 APK is up to date, not a reinstall candidate');
 });
+
+/*
+ * Reported on alpha: a healthy, device-owner Android 15 screen stuck on 2.1.5-beta1 after 2.5.0
+ * shipped. The beta slot still held 2.1.5-beta1 from a September test, so the opted-in screen was
+ * "up to date" with it for ever; unticking beta then hit the superseded-prerelease guard and it was
+ * offered nothing. Stranded both ways, and every feature since (the display power schedule) missing.
+ */
+test('a beta OLDER than the stable release no longer shadows it, for the check and the download', () => {
+  writeStable(); writeBeta('2.1.5-beta1'); apkCache.refresh();
+  assert.equal(apkCache.betaSuperseded('2.5.0'), true);
+  assert.equal(apkCache.betaAvailable('2.5.0'), false, 'the stale beta is not a channel');
+  assert.equal(apkCache.forChannel('beta', '2.5.0').path, STABLE, 'the download agrees with the check');
+  // A beta of the current core (or newer) is still a channel, as before.
+  writeBeta('2.5.1-rc1'); apkCache.refresh();
+  assert.equal(apkCache.betaSuperseded('2.5.0'), false);
+  assert.equal(apkCache.forChannel('beta', '2.5.0').path, BETA);
+  writeBeta('2.5.0-rc2'); apkCache.refresh();
+  assert.equal(apkCache.betaSuperseded('2.5.0'), true, 'a prerelease of a version that has shipped is behind it');
+  // Unknown stable version: nothing to compare against, behave as before.
+  assert.equal(apkCache.betaSuperseded(null), false);
+});
+
+test('the stranded screen: opted in on a stale beta, it is offered the stable release', () => {
+  // server.js: onBeta is false (stale), so decide() compares against stable with the beta exemption.
+  const v = ask('2.1.5-beta1', '2.5.0', true, true);
+  assert.equal(v.update_available, true, v.reason);
+});
+
+test('the stranded screen: beta unticked, a display WE served beta to is offered the release', () => {
+  const v = ask('2.1.5-beta1', '2.5.0', false, true);
+  assert.equal(v.update_available, true, v.reason);
+  // Still protected: a pre-release we never served (a phantom or someone's own build) is not chased.
+  assert.equal(ask('2.1.5-beta1', '2.5.0', false, false).reason, 'superseded-prerelease');
+});

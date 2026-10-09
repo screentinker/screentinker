@@ -124,7 +124,12 @@ function decide(clientVersion, latestVersion, deviceId = null, now = Date.now(),
   // installs, and auto-offering floods the check endpoint). The escape hatches are deliberate:
   // opt the display into the beta channel (below), or FORCE an update (handled above) — a human
   // aiming at one panel. A -patchN release is NOT a prerelease (isReleased), so it still gets offered.
-  if (!betaChannel && !isReleased(pc) && coreCmp(pc, pl) < 0) {                                    // GENUINE superseded old-core prerelease (e.g. 1.9.1-beta4) — a -patchN release is NOT one, so it still gets offered
+  // ⚠️ NOT for a display WE served the beta channel (wasOnBeta) and that has since been switched
+  // off it. That is no phantom — it is a real screen on a build we handed it, and unticking the beta
+  // box must move it forward onto the release. Without this, a screen left on an old beta was
+  // stranded both ways: ticked, it was "up to date" with the stale beta; unticked, it was offered
+  // nothing (reported on a healthy device-owner Android 15 screen stuck on 2.1.5-beta1).
+  if (!betaChannel && !wasOnBeta && !isReleased(pc) && coreCmp(pc, pl) < 0) {                                    // GENUINE superseded old-core prerelease (e.g. 1.9.1-beta4) — a -patchN release is NOT one, so it still gets offered
     return { update_available: false, reason: 'superseded-prerelease', log: logOnce(clientVersion, `[ota] superseded prerelease '${clientVersion}' (older core than latest=${latestVersion}) — no offer`) };
   }
 

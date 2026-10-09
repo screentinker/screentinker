@@ -1119,6 +1119,17 @@ class WebSocketService : Service() {
      * with no Activity at all. Null means "no UI attached", which is a normal state mid-window.
      */
     var onPowerWindow: ((off: Boolean) -> Unit)? = null
+    /**
+     * Called (on the main thread) right before the panel is blanked, by schedule or by an operator.
+     * The Activity drops its "show when locked" + "turn screen on" settings here.
+     *
+     * ⚠️ WITHOUT THIS A SCHEDULED OFF LASTS HALF A SECOND. screen_on sets setShowWhenLocked(true) +
+     * setTurnScreenOn(true) and nothing cleared them, so once a panel had been woken that way (the
+     * Screen On button, a relaunch, a schedule's own "on" edge), lockNow() blanked it and the
+     * player's window — still asking to turn the screen on when shown — lit it straight back up.
+     * Reported on a device-owner Android 15 panel with an all-day schedule.
+     */
+    var onBeforeBlank: (() -> Unit)? = null
 
     /**
      * Make the panel dark — the ONE implementation, shared by the remote screen_off command and the
@@ -1126,6 +1137,7 @@ class WebSocketService : Service() {
      * the divergence would only ever show up on hardware nobody has in front of them.
      */
     private fun blankPanel() {
+        try { onBeforeBlank?.invoke() } catch (e: Throwable) { Log.w("WebSocketService", "before blank: ${e.message}") }
         try {
             if (!com.remotedisplay.player.admin.STPolicy(this@WebSocketService).lockNow()) {
                 PowerAccessibilityService.instance?.lockScreen()
@@ -1169,8 +1181,14 @@ class WebSocketService : Service() {
      * and it re-applies the correct state in onCreate.
      */
     private fun applyScheduledPower(off: Boolean) {
-        handler.post { try { onPowerWindow?.invoke(off) } catch (e: Throwable) { Log.w("WebSocketService", "power window flag: ${e.message}") } }
-        if (off) blankPanel() else wakePanel(bringToFront = true)
+        // The window flag FIRST, then the lock: posting it meant lockNow() ran while the window was
+        // still holding FLAG_KEEP_SCREEN_ON. Run inline on the main thread (the tick and restore()
+        // are already on it); from anywhere else, post the whole sequence so the order holds.
+        val apply = {
+            try { onPowerWindow?.invoke(off) } catch (e: Throwable) { Log.w("WebSocketService", "power window flag: ${e.message}") }
+            if (off) blankPanel() else wakePanel(bringToFront = true)
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) apply() else handler.post { apply() }
         // An endpoint bound to screen_on/screen_off is how a building system learns the sign went
         // dark. Fired from the SCHEDULE too, not only from an operator's button — the scheduled
         // edge is the one that happens every night with nobody watching.

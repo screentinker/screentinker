@@ -2556,3 +2556,7 @@ tr[hidden] { display: none; }
 .power-day { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
 .power-day:has(input:checked) { color: var(--text-primary); border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2) 14%, transparent); }
 .power-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.power-times { display: contents; }
+.power-times[hidden] { display: none; }
+.power-allday-label { display: inline-flex; align-items: center; gap: 6px; }
+.power-schedule-editor input:disabled, .power-schedule-editor .btn:disabled { opacity: .5; cursor: not-allowed; }
