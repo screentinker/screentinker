@@ -5015,6 +5015,8 @@ export default {
   'rooms.layout_landscape': 'Landscape',
   'rooms.layout_portrait': 'Portrait',
   'rooms.show_schedule': 'Show the rest of today’s meetings',
+  'rooms.language': 'Language on the screen',
+  'rooms.language_auto': 'The screen’s own language',
   'rooms.player_note': 'Book now and End meeting appear on touch screens running the Android, web or Raspberry Pi / Windows player. Other screens show the room read-only.',
   'menu.start_from': 'Start from an example, or build your own below:',
   'menu.starter.cafe': 'Café',

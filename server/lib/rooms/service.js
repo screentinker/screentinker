@@ -109,7 +109,15 @@ async function getDay(roomId, { force = false } = {}) {
   if (!force && (fresh || backingOff)) {
     return { room, events: cached || [], fetched_at: room.cache_at || null, error: room.last_error || null };
   }
-  if (inflight.has(roomId)) return inflight.get(roomId);
+  if (inflight.has(roomId)) {
+    if (!force) return inflight.get(roomId);
+    // ⚠️ A forced read follows a change (book, end, release). A read already on its way began
+    // BEFORE that change and would hand back the meeting as it was, cached as fresh for a minute.
+    // Let it finish, then read again; one that began after this call is good enough to join.
+    await inflight.get(roomId).catch(() => {});
+    if (inflight.has(roomId)) return inflight.get(roomId);
+    return getDay(roomId, { force });
+  }
   const p = (async () => {
     try {
       const events = await fetchEvents(room);
@@ -144,6 +152,34 @@ const checkinsOf = (roomId) => {
   return m;
 };
 
+/*
+ * The calendar as this server last changed it.
+ *
+ * What a panel did must show on the panel at once, whatever the calendar says for the next moment:
+ *   - a meeting ended at the panel is over when it was ended. The calendar keeps it to the end of
+ *     the minute at least (a meeting must end after it starts, so one booked this very minute keeps
+ *     a one-minute stub), which left the panel saying "In use" for up to a minute after End.
+ *   - Exchange may answer a calendarView with the meeting as it was for a few seconds after a change,
+ *     and that answer was cached as fresh for a minute. A booking the calendar does not list yet is
+ *     added for LAG_MS; after that the calendar is believed (someone may have deleted it in Outlook).
+ */
+const LAG_MS = 2 * 60 * 1000;
+function withPanelChanges(roomId, events) {
+  const rows = db.prepare('SELECT event_id, start_ms, end_ms, ended_at, created_at FROM room_bookings WHERE room_id = ?').all(roomId);
+  if (!rows.length) return events;
+  const byId = new Map(rows.map((r) => [r.event_id, r]));
+  const out = events.map((e) => {
+    const b = byId.get(e.id);
+    return b && b.ended_at && e.end > b.ended_at ? { ...e, end: Math.max(e.start, b.ended_at) } : e;
+  });
+  const listed = new Set(events.map((e) => e.id));
+  for (const b of rows) {
+    if (listed.has(b.event_id) || b.ended_at || clock() - b.created_at > LAG_MS) continue;
+    out.push({ id: b.event_id, title: PANEL_TITLE, organiser: '', start: b.start_ms, end: b.end_ms, allDay: false, free: false, private: false });
+  }
+  return out;
+}
+
 /** One event as a panel may see it. Hidden details are dropped here, not in the page. */
 function publicEvent(e, room, booked, checkins) {
   const panel = booked.has(e.id);
@@ -169,7 +205,7 @@ async function panelState(room) {
   const booked = bookedIds(room.id);
   const checkins = checkinsOf(room.id);
   const s = orgSettings(orgOfWorkspace(room.workspace_id));
-  const events = (day ? day.events : [])
+  const events = withPanelChanges(room.id, day ? day.events : [])
     .map((e) => publicEvent(e, room, booked, checkins))
     .filter((e) => !e.released);
   const writable = room.source !== 'ics' && !!room.allow_booking && !isReadOnly(room);
@@ -294,7 +330,7 @@ async function book(room, deviceId, minutes) {
     const { conn, a } = writableRoom(room);
     const day = await getDay(room.id, { force: true });
     const now = clock();
-    const st = computeRoomState(day.events, now);
+    const st = computeRoomState(withPanelChanges(room.id, day.events), now);
     if (st.busy) throw new ActionError('The room is in use.', 409, 'busy');
     const start = floorMinute(now);
     // 0 = "until the next meeting", offered when no full option fits the gap.
@@ -314,7 +350,7 @@ async function endMeeting(room, deviceId, eventId) {
     const { conn, a } = writableRoom(room);
     const day = await getDay(room.id, { force: true });
     const now = clock();
-    const st = computeRoomState(day.events, now);
+    const st = computeRoomState(withPanelChanges(room.id, day.events), now);
     if (!st.busy || !st.current || st.current.id !== eventId) throw new ActionError('That meeting is not in progress.', 409, 'not-current');
     const panel = bookedIds(room.id).has(eventId);
     const s = orgSettings(orgOfWorkspace(room.workspace_id));
