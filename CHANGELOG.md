@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 2.5.0
+
+Thanks to the people whose reports this release fixes: @xela1978, JackyL, Mr. Car [MHA], J.O. and
+カタカナ. Every commit in it was authored by the ScreenTinker team.
 
 ### Added
 

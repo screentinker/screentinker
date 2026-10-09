@@ -14,6 +14,20 @@
   ],
   "releases": [
     {
+      "version": "2.5.0",
+      "date": "2026-10-09",
+      "notes": [
+        "Show more on your screens: Canva designs that stay up to date, Google and Microsoft documents, Grafana, Power BI and Tableau dashboards, and real posts from Instagram, Facebook, YouTube, X, Bluesky and Mastodon.",
+        "New screen types: meeting-room displays that show and book a room, menu boards with a sold-out switch, and QR codes that count their scans.",
+        "Alerts: other systems can put an alert on your screens through hooks, Zapier, Alertus or InformaCast, public emergency alerts can appear automatically, and an offline screen can alert Slack, Teams, PagerDuty, email or a webhook.",
+        "Organize screens with tags and rule-based groups, and play an item only in certain weather or areas, judged where each screen is.",
+        "New player versions now roll out in waves and stop themselves if screens start failing, instead of reaching every screen at once.",
+        "A video wall now works like one big screen, media can be kept on S3-compatible storage or Azure Blob, and organizations can sign in with SAML single sign-on.",
+        "New Mac and iPad/iPhone players (beta), optional audience counting, and the screen's own HDMI input as a playlist item on supported devices.",
+        "Raspberry Pi: sound now plays, transitions run (now inside layout zones too), portrait screens show the whole picture, new screens get the right time zone, and the Pi 4 is now Certified Hardware."
+      ]
+    },
+    {
       "version": "2.4.3",
       "date": "2026-10-06",
       "notes": [
