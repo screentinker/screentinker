@@ -112,12 +112,19 @@ test('e-ink never lands on a live input', () => {
 const fs = require('node:fs');
 const readF = (p) => fs.readFileSync(path.join(__dirname, '..', '..', p), 'utf8');
 
-test('dashboard: the Add card posts hdmi://<port>, and the library labels and previews it as HDMI in', () => {
+test('dashboard: the Add content form posts hdmi://<port>, and the library labels and previews it as HDMI in', () => {
+  // The form lives in the Add content modal (components/library/add-content.js); the type, the
+  // thumbnail and the inspector's preview in components/library/content-meta.js and inspector.js.
+  const add = readF('frontend/js/components/library/add-content.js');
+  assert.match(add, /'addHdmiInBtn'/);
+  assert.match(add, /'hdmi:\/\/' \+ port/);
+  const meta = readF('frontend/js/components/library/content-meta.js');
+  assert.match(meta, /m === 'video\/hdmi-in'\) return \{ key: 'hdmi'/, 'its own type, not the generic "Remote" link');
+  assert.match(meta, /\['hold', 'hdmi', 'live', 'bundle'\]\.includes\(ty\)\) return null/, 'an icon, never an <img> of hdmi://');
+  const insp = readF('frontend/js/components/library/inspector.js');
+  assert.match(insp, /if \(ty === 'hdmi'\) return explain\(/, 'the inspector explains it and never builds a <video src="hdmi://...">');
   const lib = readF('frontend/js/views/content-library.js');
-  assert.match(lib, /id="addHdmiInBtn"/);
-  assert.match(lib, /'hdmi:\/\/' \+ port/);
-  assert.match(lib, /c\.mime_type === 'video\/hdmi-in'/, 'its own thumbnail, not the generic "Remote" link');
-  assert.match(lib, /isHdmiIn/, 'the preview never builds a <video src="hdmi://...">');
+  assert.match(lib, /isHdmiIn/, 'the full preview never builds a <video src="hdmi://...">');
 });
 
 test('i18n: the live-input keys exist in BOTH en and nl', () => {

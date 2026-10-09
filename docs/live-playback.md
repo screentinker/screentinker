@@ -36,7 +36,7 @@ latency. If you have a camera but need it on many screens or on non-Android play
 
 ## Adding a live stream
 
-1. **Content library → Add live stream.** Paste the URL:
+1. **Content library → Add content → Live stream.** Paste the URL:
    - HLS: `https://…/channel.m3u8`
    - RTSP: `rtsp://user:pass@10.0.0.5/stream`
 

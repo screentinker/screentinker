@@ -15,7 +15,7 @@ const CACHE = 'rd-admin-v4';
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll([
-    '/', '/index.html', '/css/variables.css', '/css/reset.css', '/css/main.css',
+    '/', '/index.html', '/css/variables.css', '/css/reset.css', '/css/main.css', '/css/library.css',
     '/js/app.js', '/js/api.js', '/js/socket.js', '/js/i18n.js',
     '/js/components/toast.js'
   ])));

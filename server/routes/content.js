@@ -39,6 +39,7 @@ const { unlinkIfUnreferenced, releaseMeshProvenance } = require('../lib/content-
 const storageLocations = require('../lib/storage/locations');
 const storageServe = require('../lib/storage/serve');
 const revisionsLib = require('../lib/revisions');
+const libraryLib = require('../lib/content-library');
 // IPTV/HLS: the URL gates (server-fetched vs player-opened) and the live mime live
 // in one place so the route, the PUT boundary and the tests share one definition.
 const { LIVE_MIME, RTSP_MIME, HDMI_IN_MIME, LIVE_MIMES, validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, validateHdmiInUrl, looksLikeHlsUrl, looksLikeRtspUrl, classifyLiveUrl } = require('../lib/remote-url');
@@ -73,26 +74,31 @@ function safeFilename(name) {
 // switch-workspace, not a special list filter.
 // folder_id filter: omit for everything; "root" or "" for root-level only; <uuid> for that folder.
 router.get('/', (req, res) => {
-  if (!req.workspaceId) return res.json([]);
+  const envelope = req.query.envelope === '1';
+  if (!req.workspaceId) return res.json(envelope ? { items: [], total: 0, limit: 0, offset: 0 } : []);
   const folder = req.query.folder;
   const folderId = req.query.folder_id;
-  let sql = 'SELECT * FROM content WHERE (workspace_id = ? OR workspace_id IS NULL)';
+  let sql = ' FROM content c WHERE (c.workspace_id = ? OR c.workspace_id IS NULL)';
   const params = [req.workspaceId];
   // #157: by default hide expired/deactivated content (the "live" set). ?include_expired=1
   // returns everything so the library's "Show expired" view can surface + restore them.
-  if (req.query.include_expired !== '1' && req.query.include_expired !== 'true') {
-    sql += " AND is_active = 1 AND (expires_at IS NULL OR expires_at > strftime('%s','now'))";
+  // The library's status filter (lib/content-library.js STATUS_SQL) decides liveness itself.
+  const status = Object.prototype.hasOwnProperty.call(libraryLib.STATUS_SQL, req.query.status) ? req.query.status : null;
+  if (status) {
+    sql += ' AND ' + libraryLib.STATUS_SQL[status];
+  } else if (req.query.include_expired !== '1' && req.query.include_expired !== 'true') {
+    sql += ' AND ' + libraryLib.LIVE_SQL;
   }
-  if (folder) { sql += ' AND folder = ?'; params.push(folder); }
+  if (folder) { sql += ' AND c.folder = ?'; params.push(folder); }
   // #214: a text search (?q=) spans the whole workspace, not just the open folder —
   // "searching for a logo on page 1 shouldn't miss logos in another folder". When q is
-  // absent we keep the folder-scoped browse behaviour.
+  // absent we keep the folder-scoped browse behaviour (a folder shows its DIRECT items only).
   const q = (req.query.q || '').trim();
   if (!q && folderId !== undefined) {
     if (folderId === 'root' || folderId === '') {
-      sql += ' AND folder_id IS NULL';
+      sql += ' AND c.folder_id IS NULL';
     } else {
-      sql += ' AND folder_id = ?';
+      sql += ' AND c.folder_id = ?';
       params.push(folderId);
     }
   }
@@ -100,10 +106,10 @@ router.get('/', (req, res) => {
     const esc = q.replace(/[\\%_]/g, (m) => '\\' + m);
     const tagQ = q.replace(/^#/, '').replace(/^tag:/i, '').trim().toLowerCase();
     if (q.startsWith('#') || /^tag:/i.test(q)) {
-      sql += " AND tags LIKE ? ESCAPE '\\'";
+      sql += " AND c.tags LIKE ? ESCAPE '\\'";
       params.push('%"' + tagQ.replace(/[\\%_]/g, (m) => '\\' + m) + '"%');
     } else {
-      sql += " AND (filename LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\' OR meta LIKE ? ESCAPE '\\')";
+      sql += " AND (c.filename LIKE ? ESCAPE '\\' OR c.tags LIKE ? ESCAPE '\\' OR c.meta LIKE ? ESCAPE '\\')";
       const like = '%' + esc + '%';
       params.push(like, like, like);
     }
@@ -111,35 +117,68 @@ router.get('/', (req, res) => {
   // #214: type filter. youtube (video/youtube) and web (any other remote_url) are split
   // out from plain uploaded video/image so the UI's four buckets map cleanly.
   switch (req.query.type) {
-    case 'image':   sql += " AND mime_type LIKE 'image/%'"; break;
+    case 'image':   sql += " AND c.mime_type LIKE 'image/%'"; break;
     // Live streams are their own bucket (operators need to find channels), so they
     // are excluded from the plain uploaded-video bucket and from the web-page bucket.
-    case 'video':   sql += " AND mime_type LIKE 'video/%' AND mime_type NOT IN ('video/youtube','video/hls','video/rtsp')"; break;
-    case 'youtube': sql += " AND mime_type = 'video/youtube'"; break;
-    case 'live':    sql += " AND mime_type IN ('video/hls','video/rtsp')"; break;
-    case 'web':     sql += " AND remote_url IS NOT NULL AND mime_type NOT IN ('video/youtube','video/hls','video/rtsp')"; break;
+    case 'video':   sql += " AND c.mime_type LIKE 'video/%' AND c.mime_type NOT IN ('video/youtube','video/hls','video/rtsp','video/hdmi-in')"; break;
+    case 'youtube': sql += " AND c.mime_type = 'video/youtube'"; break;
+    case 'live':    sql += " AND c.mime_type IN ('video/hls','video/rtsp')"; break;
+    case 'hdmi':    sql += " AND c.mime_type = 'video/hdmi-in'"; break;
+    case 'hold':    sql += " AND c.mime_type = 'application/x-st-hold'"; break;
+    case 'web':     sql += " AND c.remote_url IS NOT NULL AND c.mime_type NOT IN ('video/youtube','video/hls','video/rtsp','video/hdmi-in','application/x-st-hold')"; break;
     // HTML bundles are their own bucket: they are neither image nor video, and without a case here
     // they appear only under "all" — present in the library and unfindable.
-    case 'audio':   sql += " AND mime_type LIKE 'audio/%'"; break;
-    case 'bundle':  sql += " AND mime_type = '" + htmlBundle.BUNDLE_MIME + "'"; break;
+    case 'audio':   sql += " AND c.mime_type LIKE 'audio/%'"; break;
+    case 'bundle':  sql += " AND c.mime_type = '" + htmlBundle.BUNDLE_MIME + "'"; break;
     // default / 'all' / unknown: no type constraint
   }
+  // The library's navigation scopes and usage filter (lib/content-library.js).
+  if (req.query.scope === 'recent') sql += ` AND c.created_at >= strftime('%s','now') - ${libraryLib.RECENT_DAYS * 86400}`;
+  if (req.query.scope === 'unused' || req.query.usage === 'unused') sql += ' AND NOT ' + libraryLib.REFERENCED_SQL;
+  else if (req.query.usage === 'used') sql += ' AND ' + libraryLib.REFERENCED_SQL;
   // #214: whitelisted sort (never interpolate user input into ORDER BY). Default keeps the
-  // legacy newest-first ordering.
+  // legacy newest-first ordering. Every order ends on the id, so equal keys (a batch uploaded in
+  // the same second, two files of one size) keep one order across pages instead of swapping.
   const SORTS = {
-    date_desc: 'created_at DESC',
-    date_asc:  'created_at ASC',
-    name:      'filename COLLATE NOCASE ASC',
-    size:      'file_size DESC',
+    date_desc: 'c.created_at DESC',
+    date_asc:  'c.created_at ASC',
+    name:      'c.filename COLLATE NOCASE ASC',
+    name_desc: 'c.filename COLLATE NOCASE DESC',
+    size:      'c.file_size DESC',
+    size_asc:  'c.file_size ASC',
+    type:      'c.mime_type ASC',
+    type_desc: 'c.mime_type DESC',
+    duration:  'c.duration_sec IS NULL, c.duration_sec ASC',
+    duration_desc: 'c.duration_sec IS NULL, c.duration_sec DESC',
+    dims:      '(c.width * c.height) IS NULL, (c.width * c.height) ASC',
+    dims_desc: '(c.width * c.height) IS NULL, (c.width * c.height) DESC',
   };
-  sql += ' ORDER BY ' + (SORTS[req.query.sort] || SORTS.date_desc) + ' LIMIT ? OFFSET ?';
-  params.push(Math.min(parseInt(req.query.limit) || 100, 500), parseInt(req.query.offset) || 0);
-  const content = db.prepare(sql).all(...params);
+  const order = ' ORDER BY ' + (SORTS[req.query.sort] || SORTS.date_desc) + ', c.id ASC';
+  const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+  const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+  const content = db.prepare('SELECT c.*' + sql + order + ' LIMIT ? OFFSET ?').all(...params, limit, offset);
   for (const c of content) {
     c.tags = parseTags(c.tags);
     c.meta = parseMeta(c.meta);
   }
-  res.json(content);
+  if (!envelope) return res.json(content);
+  // The library page: the total for "Showing 8 of 24", and each row's usage and status inputs.
+  const total = db.prepare('SELECT COUNT(*) AS n' + sql).get(...params).n;
+  const usage = libraryLib.usageFor(db, content);
+  const canvaErr = new Set(content.length ? db.prepare(`SELECT content_id FROM canva_links WHERE last_error IS NOT NULL AND content_id IN (${content.map(() => '?').join(',')})`).all(...content.map((c) => c.id)).map((r) => r.content_id) : []);
+  for (const c of content) {
+    c.usage = usage[c.id];
+    c.has_draft = !!c.draft_json;
+    c.sync_problem = canvaErr.has(c.id);
+    delete c.draft_json;
+  }
+  res.json({ items: content, total, limit, offset });
+});
+
+// The counts beside the library's navigation (All content, Recently added, Unused).
+router.get('/library-summary', (req, res) => {
+  if (!req.workspaceId) return res.json({ all: 0, recent: 0, unused: 0, recent_days: libraryLib.RECENT_DAYS });
+  res.json(libraryLib.summary(db, req.workspaceId));
 });
 
 /*
@@ -550,10 +589,26 @@ router.delete('/uploads/:id', (req, res) => {
 });
 
 // Add remote URL content
+// The library's destination for a no-bytes item (remote URL, YouTube, live stream, HDMI input, hold):
+// a folder of THIS workspace, or the root. Same rule as an upload's folder_id. Returns
+// { ok, folderId } or sends the 400 itself.
+function bodyFolder(req, res) {
+  const folderId = (req.body && req.body.folder_id) || null;
+  if (!folderId) return { ok: true, folderId: null };
+  const target = db.prepare('SELECT workspace_id FROM content_folders WHERE id = ?').get(String(folderId));
+  if (!target || target.workspace_id !== req.workspaceId) {
+    res.status(400).json({ error: 'Invalid folder_id for this workspace' });
+    return { ok: false };
+  }
+  return { ok: true, folderId: String(folderId) };
+}
+
 router.post('/remote', checkRemoteUrl, (req, res) => {
   try {
     if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before adding remote content.' });
     if (denyReadOnly(req, res)) return;
+    const dest = bodyFolder(req, res);
+    if (!dest.ok) return;
     const { url, name, mime_type } = req.body;
     if (!url) return res.status(400).json({ error: 'url is required' });
     const urlErr = validateRemoteUrl(url);
@@ -564,9 +619,9 @@ router.post('/remote', checkRemoteUrl, (req, res) => {
     const mimeType = mime_type || (url.match(/\.(mp4|webm|mkv|avi|mov)/i) ? 'video/mp4' : 'image/jpeg');
 
     db.prepare(`
-      INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, remote_url)
-      VALUES (?, ?, ?, ?, '', ?, 0, ?)
-    `).run(id, req.user.id, req.workspaceId, safeFilename(filename), mimeType, url);
+      INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, remote_url, folder_id)
+      VALUES (?, ?, ?, ?, '', ?, 0, ?, ?)
+    `).run(id, req.user.id, req.workspaceId, safeFilename(filename), mimeType, url, dest.folderId);
 
     const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
     try { require('../lib/revisions').recordCurrent(db, 'content', content.id, { actor: require('../lib/releases').actorOf(req), summary: 'Added' }); } catch (_) {}
@@ -582,6 +637,8 @@ router.post('/youtube', async (req, res) => {
   try {
     if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before adding YouTube content.' });
     if (denyReadOnly(req, res)) return;
+    const dest = bodyFolder(req, res);
+    if (!dest.ok) return;
     const { url, name } = req.body;
     if (!url) return res.status(400).json({ error: 'url is required' });
 
@@ -617,9 +674,9 @@ router.post('/youtube', async (req, res) => {
     const thumbnailUrl = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
 
     db.prepare(`
-      INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, remote_url, thumbnail_path)
-      VALUES (?, ?, ?, ?, '', 'video/youtube', 0, ?, ?)
-    `).run(id, req.user.id, req.workspaceId, safeFilename(filename), embedUrl, thumbnailUrl);
+      INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, remote_url, thumbnail_path, folder_id)
+      VALUES (?, ?, ?, ?, '', 'video/youtube', 0, ?, ?, ?)
+    `).run(id, req.user.id, req.workspaceId, safeFilename(filename), embedUrl, thumbnailUrl, dest.folderId);
 
     const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
     try { require('../lib/revisions').recordCurrent(db, 'content', content.id, { actor: require('../lib/releases').actorOf(req), summary: 'Added' }); } catch (_) {}
@@ -642,6 +699,8 @@ router.post('/hls', (req, res) => {
   try {
     if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before adding a live stream.' });
     if (denyReadOnly(req, res)) return;
+    const dest = bodyFolder(req, res);
+    if (!dest.ok) return;
     const { url, name } = req.body;
     if (!url) return res.status(400).json({ error: 'url is required' });
     const kind = classifyLiveUrl(url);
@@ -653,9 +712,9 @@ router.post('/hls', (req, res) => {
     // duration_sec on the CONTENT stays null (unknown / infinite) — DWELL is set per
     // playlist item.
     db.prepare(`
-      INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, remote_url)
-      VALUES (?, ?, ?, ?, '', ?, 0, ?)
-    `).run(id, req.user.id, req.workspaceId, safeFilename(filename), kind.mime, url);
+      INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, remote_url, folder_id)
+      VALUES (?, ?, ?, ?, '', ?, 0, ?, ?)
+    `).run(id, req.user.id, req.workspaceId, safeFilename(filename), kind.mime, url, dest.folderId);
 
     const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
     try { require('../lib/revisions').recordCurrent(db, 'content', content.id, { actor: require('../lib/releases').actorOf(req), summary: 'Added' }); } catch (_) {}
@@ -672,15 +731,17 @@ router.post('/hold', (req, res) => {
   try {
     if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before adding a hold.' });
     if (denyReadOnly(req, res)) return;
+    const dest = bodyFolder(req, res);
+    if (!dest.ok) return;
     const { HOLD_MIME, HOLD_MODES, holdUrl } = require('../lib/hold-item');
     const mode = req.body && req.body.mode ? String(req.body.mode) : 'blank';
     if (!HOLD_MODES.includes(mode)) return res.status(400).json({ error: `mode must be one of: ${HOLD_MODES.join(', ')}` });
     const name = (req.body && req.body.name && String(req.body.name).trim()) || (mode === 'freeze' ? 'Hold (freeze frame)' : 'Hold (blank)');
     const id = uuidv4();
     db.prepare(`
-      INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, remote_url)
-      VALUES (?, ?, ?, ?, '', ?, 0, ?)
-    `).run(id, req.user.id, req.workspaceId, safeFilename(name), HOLD_MIME, holdUrl(mode));
+      INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, remote_url, folder_id)
+      VALUES (?, ?, ?, ?, '', ?, 0, ?, ?)
+    `).run(id, req.user.id, req.workspaceId, safeFilename(name), HOLD_MIME, holdUrl(mode), dest.folderId);
     const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
     try { require('../lib/revisions').recordCurrent(db, 'content', content.id, { actor: require('../lib/releases').actorOf(req), summary: 'Added' }); } catch (_) {}
     res.status(201).json(content);
@@ -944,6 +1005,54 @@ router.post('/batch/move', (req, res) => {
     for (const content of rows) stmt.run(folderId, content.id);
   })();
   res.json({ success: true, moved: rows.length, folder_id: folderId });
+});
+
+// Where one item is used: the playlists by name, and counts of every other kind of reference
+// (lib/content-library.js). Read access, like the item itself.
+router.get('/:id/usage', (req, res) => {
+  const content = checkContentRead(req, res);
+  if (!content) return;
+  res.json(libraryLib.usageDetail(db, content));
+});
+
+// Batch tag: add and/or remove labels on many items. Tags are live metadata (never a draft) and
+// smart playlists match on them, so the router-level hook above republishes what changed. Same
+// atomic validate-all-first rule as batch delete and move.
+router.post('/batch/tags', (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : null;
+  if (!ids || ids.length === 0) return res.status(400).json({ error: 'ids must be a non-empty array' });
+  if (ids.length > 500) return res.status(400).json({ error: 'Too many items (max 500 per batch)' });
+  const add = req.body.add === undefined ? [] : normalizeTags(req.body.add);
+  const remove = req.body.remove === undefined ? [] : normalizeTags(req.body.remove);
+  if (add === false || remove === false) return res.status(400).json({ error: 'tags must be an array of labels, or a comma-separated string' });
+  if (!add.length && !remove.length) return res.status(400).json({ error: 'Nothing to add or remove' });
+
+  const rows = [];
+  for (const id of ids) {
+    if (typeof id !== 'string' || !UUID_RE.test(id)) return res.status(400).json({ error: `Invalid content ID: ${id}` });
+    const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
+    if (!content) return res.status(404).json({ error: `Content not found: ${id}` });
+    if (!contentWritable(req, content)) return res.status(403).json({ error: `Access denied for content: ${id}` });
+    rows.push(content);
+  }
+  // Every row must still fit the per-item limits normalizeTags enforces (count and length).
+  const next = new Map();
+  for (const content of rows) {
+    const merged = parseTags(content.tags).filter((tg) => !remove.includes(tg));
+    for (const tg of add) if (!merged.includes(tg)) merged.push(tg);
+    const n = normalizeTags(merged);
+    if (n === false || n.length !== merged.length) return res.status(400).json({ error: `Too many tags on ${content.filename}` });
+    next.set(content.id, n);
+  }
+  const actor = require('../lib/releases').actorOf(req);
+  db.transaction(() => {
+    const stmt = db.prepare('UPDATE content SET tags = ? WHERE id = ?');
+    for (const [id, tags] of next) stmt.run(JSON.stringify(tags), id);
+  })();
+  for (const id of next.keys()) {
+    try { revisionsLib.recordCurrent(db, 'content', id, { actor, summary: 'Updated tags' }); } catch (_) { /* history is best-effort */ }
+  }
+  res.json({ success: true, updated: rows.length });
 });
 
 // Get content metadata
