@@ -4,6 +4,13 @@
 
 ### Added
 
+- **Social walls can show pictures only.** A new **Show the post text** option sits next to **Show the
+  author**. Turned off, captions are not shown (or even sent to the screen), posts without a picture
+  are skipped, and the ticker shows each post's picture instead of its text. That suits an Instagram
+  feed as a promo strip beside the main content. On by default, so existing walls are unchanged.
+- **Social walls: the play icon on videos can be turned off.** A wall shows a reel's or video's
+  picture, not the video, and nobody can tap a sign, so the play icon read as broken. **Mark videos
+  with a play icon** is on by default; turned off, the picture shows without it. Reported by カタカナ.
 - **Plans can be edited from the dashboard** (Platform → Plans & sales, platform admins). Each plan
   can change its name, screen and storage limits (or unlimited), features, monthly and yearly price,
   linked Stripe prices, whether it is shown on the pricing page, and its order. **New plan** adds one,

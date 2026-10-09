@@ -297,3 +297,38 @@ test("a wall's cacheable page carries no posts, and its data shows a hide at onc
   assert.equal(widget.cachedPayload(db, w, cfg).posts.length, 1);
   assert.equal(widget.cachedPayload(db, w, cfg, Date.now() + widget.PAYLOAD_TTL_MS + 1).posts.length, 0);
 });
+
+test('show_text off: pictures only — the text never reaches the screen and text-only posts are left out', async () => {
+  const db = freshDb();
+  const feed = mkFeed(db);
+  await ingest(db, feed, [post('a', 'caption that would get in the way', { media: ['https://cdn.example/a.png'] }), post('b', 'text only, no picture')]);
+  const w = { id: 'w2', workspace_id: 'ws1', updated_at: 1, config: '{}' };
+  assert.equal(widget.displayOptions({}).show_text, true, 'on by default: existing walls are unchanged');
+  assert.equal(widget.displayOptions({ show_text: false }).show_text, false);
+
+  const on = widget.payload(db, w, { feed_id: feed.id });
+  assert.deepEqual(on.posts.map((p) => p.k).sort(), ['bluesky:a', 'bluesky:b']);
+  assert.ok(on.posts.some((p) => p.t === 'caption that would get in the way'));
+
+  const off = widget.payload(db, w, { feed_id: feed.id, show_text: false });
+  assert.deepEqual(off.posts.map((p) => p.k), ['bluesky:a'], 'the text-only post would be an empty card');
+  assert.equal(off.posts[0].t, '', 'the caption is not sent at all');
+  assert.equal(off.posts[0].m.length, 1, 'the picture is');
+
+  const html = widget.render(db, w, { feed_id: feed.id, show_text: false }, { origin: 'https://st.example' }).html;
+  assert.ok(!html.includes('caption that would get in the way'), 'not in the seeded page either');
+  assert.match(html, /"showText":false/);
+});
+
+test('show_play off: a video keeps its picture but loses the play badge, which a sign cannot honour', async () => {
+  const db = freshDb();
+  const feed = mkFeed(db);
+  await ingest(db, feed, [post('r', 'a reel', { media: ['https://cdn.example/r.jpg'], is_video: true })]);
+  const w = { id: 'w3', workspace_id: 'ws1', updated_at: 1, config: '{}' };
+  assert.equal(widget.displayOptions({}).show_play, true, 'on by default: existing walls are unchanged');
+  assert.equal(widget.payload(db, w, { feed_id: feed.id }).posts[0].v, true);
+  const off = widget.payload(db, w, { feed_id: feed.id, show_play: false });
+  assert.equal(off.posts[0].v, false, 'the screen is not even told it is a video');
+  assert.equal(off.posts[0].m.length, 1, 'its picture is still shown');
+  assert.match(widget.render(db, w, { feed_id: feed.id, show_play: false }, { origin: 'https://st.example' }).html, /"showPlay":false/);
+});

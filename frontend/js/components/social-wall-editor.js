@@ -28,6 +28,8 @@ export async function mountSocialEditor(host, config, { apiGet }) {
     </div>
     <div class="form-group"><label>${esc(t('social.w_title'))}</label><input id="swTitle" class="input" value="${esc(c.title || '')}" placeholder="${esc(t('social.w_title_ph'))}"></div>
     <label style="display:flex;gap:8px;font-size:13px"><input type="checkbox" id="swAuthor" ${c.show_author !== false ? 'checked' : ''}> ${esc(t('social.w_show_author'))}</label>
+    <label style="display:flex;gap:8px;font-size:13px;margin-top:4px"><input type="checkbox" id="swText" ${c.show_text !== false ? 'checked' : ''}> ${esc(t('social.w_show_text'))}</label>
+    <label style="display:flex;gap:8px;font-size:13px;margin-top:4px"><input type="checkbox" id="swPlay" ${c.show_play !== false ? 'checked' : ''}> ${esc(t('social.w_show_play'))}</label>
     <label style="display:flex;gap:8px;font-size:13px;margin-top:4px"><input type="checkbox" id="swTime" ${c.show_time !== false ? 'checked' : ''}> ${esc(t('social.w_show_time'))}</label>
     <div style="font-size:12px;color:var(--text-muted);margin-top:6px">${esc(t('social.w_hint'))}</div>`;
 }
@@ -38,6 +40,6 @@ export function readSocialConfig() {
   return {
     feed_id: v('swFeed'), layout: v('swLayout') || 'carousel', interval_sec: parseInt(v('swInterval'), 10) || 10,
     columns: parseInt(v('swColumns'), 10) || 0, theme: v('swTheme') || 'dark', accent: v('swAccent'), title: v('swTitle').trim(),
-    show_author: chk('swAuthor'), show_time: chk('swTime'),
+    show_author: chk('swAuthor'), show_text: chk('swText'), show_play: chk('swPlay'), show_time: chk('swTime'),
   };
 }
