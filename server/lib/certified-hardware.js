@@ -52,6 +52,21 @@ const GROUPS = [
     certified: false,
   },
   {
+    status: 'compatible-per-manufacturer',
+    heading: 'Compatible per manufacturer',
+    blurb: 'The manufacturer lists these models as able to run apps like the ScreenTinker player '
+      + '(Amazon\'s list of Fire OS devices). ScreenTinker has not tested them and keeps no unit. '
+      + 'These are NOT Certified Hardware and carry no support commitment.',
+    certified: false,
+    // A long list from one source: one row per model, not a full card each. Rows keep their ids, so
+    // every model still has a deep link.
+    compact: true,
+    source: {
+      label: 'Amazon, Identify Fire TV Devices (Amazon Fire Device Specifications)',
+      url: 'https://developer.amazon.com/docs/device-specs/identify-fire-tv-devices.html',
+    },
+  },
+  {
     status: 'known-issues',
     heading: 'Known issues',
     blurb: 'Runs, but something is broken. What is broken is stated on each entry.',
@@ -143,8 +158,46 @@ ${notes}
       </article>`;
 }
 
+/*
+ * One row per model for a compact group. Only what the source actually says: name, model code and
+ * any entry-specific note. Everything a card would show as "Not recorded" is left out rather than
+ * repeated ninety times.
+ */
+// Short labels for the compact rows, where a full category name wraps over three lines.
+const COMPACT_CATEGORY = { 'soc-display': 'TV / display', 'streaming-player': 'Streaming player', 'media-player': 'Media player' };
+
+function compactRow(d) {
+  const notes = (d.notes || []).length
+    ? `<div class="row-note">${d.notes.map(esc).join(' ')}</div>` : '';
+  const buy = d.buy_url
+    ? `<a href="${esc(d.buy_url)}" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span>`
+    : '';
+  return `          <tr id="${esc(d.id)}"><td><a class="anchor" href="#${esc(d.id)}" aria-label="Link to ${esc(d.name)}">#</a>${esc(d.name)}${notes}</td>`
+    + `<td>${value(d.model_numbers)}</td><td>${esc(COMPACT_CATEGORY[d.category] || CATEGORY_LABELS[d.category] || d.category)}</td>`
+    + `<td class="buy">${buy}</td></tr>`;
+}
+
+function compactTable(group, devices) {
+  return `      <div class="compact-wrap"><table class="compact-list">
+        <thead><tr><th>Model</th><th>Model number</th><th>Type</th><th>Where to buy</th></tr></thead>
+        <tbody>
+${devices.map(compactRow).join('\n')}
+        </tbody>
+      </table></div>`;
+}
+
 function groupSection(group, devices) {
   if (!devices.length) return '';
+  if (group.compact) {
+    const source = group.source
+      ? `\n      <p class="group-blurb">Source: <a href="${esc(group.source.url)}" rel="noopener">${esc(group.source.label)}</a>.</p>`
+      : '';
+    return `    <section class="status-group status-${esc(group.status)}">
+      <h2>${esc(group.heading)} <span class="count">(${devices.length})</span></h2>
+      <p class="group-blurb">${esc(group.blurb)}</p>${source}
+${compactTable(group, devices)}
+    </section>`;
+  }
   return `    <section class="status-group status-${esc(group.status)}">
       <h2>${esc(group.heading)} <span class="count">(${devices.length})</span></h2>
       <p class="group-blurb">${esc(group.blurb)}</p>
@@ -223,6 +276,15 @@ function render(data) {
     .buy-link { margin: 8px 0 0; font-size: 14px; }
     .buy-link .affiliate-tag { color: var(--dim); font-size: 12px; }
     .affiliate-notice { color: var(--muted); font-size: 13px; margin: 20px 0 0; }
+    .compact-wrap { overflow-x: auto; }
+    .compact-list { width: 100%; border-collapse: collapse; font-size: 14px; }
+    .compact-list th, .compact-list td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .compact-list th { color: var(--dim); font-weight: 600; }
+    .compact-list td:nth-child(2) { font-family: monospace; white-space: nowrap; }
+    .compact-list .anchor { margin-right: 6px; }
+    .compact-list tr:target { background: rgba(59,130,246,.12); }
+    .compact-list td:nth-child(3), .compact-list td.buy { white-space: nowrap; }
+    .compact-list .row-note { color: var(--muted); font-size: 12px; margin-top: 2px; }
     .unknown { color: var(--dim); font-style: italic; }
     .callout { background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--accent);
       border-radius: 8px; padding: 18px 20px; margin: 24px 0; }
@@ -281,8 +343,8 @@ function render(data) {
         <strong>Certified</strong> or <strong>Certified with limits</strong> are Certified Hardware
         under ScreenTinker agreements. ScreenTinker has tested those models, keeps a unit of each in its
         test lab, and support obligations attach to them.</p>
-      <p><strong>What it does not mean.</strong> Entries listed as Community reported, Known issues
-        or Not supported are <strong>not</strong> Certified Hardware and carry
+      <p><strong>What it does not mean.</strong> Entries listed as Community reported, Compatible per
+        manufacturer, Known issues or Not supported are <strong>not</strong> Certified Hardware and carry
         <strong>no support commitment</strong>. They are published because knowing what other people
         have run, and what does not work, is useful when you are choosing what to buy.</p>
       <p>ScreenTinker is open source and runs on far more hardware than this list. Certification is a
@@ -291,9 +353,10 @@ function render(data) {
     </div>
 
     <p class="affiliate-notice"><strong>Affiliate links.</strong> Some device cards below include a
-      "Buy this device" link that is an affiliate link. If you buy through one, ScreenTinker may earn a
+      "Buy this device" or "Buy" link that is an affiliate link. If you buy through one, ScreenTinker may earn a
       commission at no extra cost to you. This has no bearing on what gets certified or how it is
-      tested: certification is decided on the bench, never by whether a link earns anything.</p>
+      tested: certification is decided on the bench, never by whether a link earns anything.
+      As an Amazon Associate, ScreenTinker earns from qualifying purchases.</p>
 
 ${sections}
 

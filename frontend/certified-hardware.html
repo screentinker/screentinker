@@ -54,6 +54,15 @@
     .buy-link { margin: 8px 0 0; font-size: 14px; }
     .buy-link .affiliate-tag { color: var(--dim); font-size: 12px; }
     .affiliate-notice { color: var(--muted); font-size: 13px; margin: 20px 0 0; }
+    .compact-wrap { overflow-x: auto; }
+    .compact-list { width: 100%; border-collapse: collapse; font-size: 14px; }
+    .compact-list th, .compact-list td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .compact-list th { color: var(--dim); font-weight: 600; }
+    .compact-list td:nth-child(2) { font-family: monospace; white-space: nowrap; }
+    .compact-list .anchor { margin-right: 6px; }
+    .compact-list tr:target { background: rgba(59,130,246,.12); }
+    .compact-list td:nth-child(3), .compact-list td.buy { white-space: nowrap; }
+    .compact-list .row-note { color: var(--muted); font-size: 12px; margin-top: 2px; }
     .unknown { color: var(--dim); font-style: italic; }
     .callout { background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--accent);
       border-radius: 8px; padding: 18px 20px; margin: 24px 0; }
@@ -101,7 +110,7 @@
     <h1>Certified Hardware</h1>
     <p class="lead">The device models ScreenTinker has tested with ScreenTinker, what each one actually
       does, and which ones to avoid.</p>
-    <p class="updated">Last updated 2026-10-08. 6 devices currently certified.</p>
+    <p class="updated">Last updated 2026-10-09. 7 devices currently certified.</p>
 
     <p style="margin:20px 0 4px">
       <a href="/certified-hardware/submit" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Report hardware that works</a>
@@ -112,8 +121,8 @@
         <strong>Certified</strong> or <strong>Certified with limits</strong> are Certified Hardware
         under ScreenTinker agreements. ScreenTinker has tested those models, keeps a unit of each in its
         test lab, and support obligations attach to them.</p>
-      <p><strong>What it does not mean.</strong> Entries listed as Community reported, Known issues
-        or Not supported are <strong>not</strong> Certified Hardware and carry
+      <p><strong>What it does not mean.</strong> Entries listed as Community reported, Compatible per
+        manufacturer, Known issues or Not supported are <strong>not</strong> Certified Hardware and carry
         <strong>no support commitment</strong>. They are published because knowing what other people
         have run, and what does not work, is useful when you are choosing what to buy.</p>
       <p>ScreenTinker is open source and runs on far more hardware than this list. Certification is a
@@ -122,12 +131,13 @@
     </div>
 
     <p class="affiliate-notice"><strong>Affiliate links.</strong> Some device cards below include a
-      "Buy this device" link that is an affiliate link. If you buy through one, ScreenTinker may earn a
+      "Buy this device" or "Buy" link that is an affiliate link. If you buy through one, ScreenTinker may earn a
       commission at no extra cost to you. This has no bearing on what gets certified or how it is
-      tested: certification is decided on the bench, never by whether a link earns anything.</p>
+      tested: certification is decided on the bench, never by whether a link earns anything.
+      As an Amazon Associate, ScreenTinker earns from qualifying purchases.</p>
 
     <section class="status-group status-certified">
-      <h2>Certified <span class="count">(5)</span></h2>
+      <h2>Certified <span class="count">(6)</span></h2>
       <p class="group-blurb">Tested by ScreenTinker, works, and supported under ScreenTinker agreements. A unit of each is kept in the ScreenTinker test lab for regression testing.</p>
       <article class="device" id="fire-tv-stick-4k-max">
         <h3><a class="anchor" href="#fire-tv-stick-4k-max" aria-label="Link to Amazon Fire TV Stick 4K Max">#</a>Amazon Fire TV Stick 4K Max</h3>
@@ -151,6 +161,31 @@
         </ul>
         <p class="setup-link"><a href="/guides/digital-signage-android-tv.html">Setup guide for this device</a></p>
         <p class="buy-link"><a href="https://amzn.to/4A422nY" rel="sponsored nofollow" target="_blank">Buy this device</a> <span class="affiliate-tag">(affiliate link)</span></p>
+      </article>
+      <article class="device" id="fire-tv-cube-3rd-gen">
+        <h3><a class="anchor" href="#fire-tv-cube-3rd-gen" aria-label="Link to Amazon Fire TV Cube (3rd Gen)">#</a>Amazon Fire TV Cube (3rd Gen)</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd>Amazon</dd>
+          <dt>Model numbers</dt><dd>AFTGAZL</dd>
+          <dt>Category</dt><dd>Streaming player</dd>
+          <dt>Operating system</dt><dd>Fire OS 7 (Android 9)</dd>
+          <dt>ScreenTinker player</dt><dd>Android player (APK)</dd>
+          <dt>Maximum resolution</dt><dd>1920x1080</dd>
+          <dt>Validated on</dt><dd>2026-10-09</dd>
+          <dt>Validated by</dt><dd>ScreenTinker</dd>
+          <dt>Tested against</dt><dd>2.5.0</dd>
+          <dt>Minimum ScreenTinker version</dt><dd>2.5.0</dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>Has an HDMI input. From 2.5.0 a playlist item can show it live: fullscreen or in a zone, with other zones drawn on top.</li>
+          <li>The live HDMI picture cannot be captured: screenshots, the dashboard preview and view-only viewers show that area black. This is the device&#39;s hardware video plane, not a ScreenTinker setting.</li>
+          <li>Copy-protected (HDCP) sources such as cable boxes on the HDMI input have not been tested.</li>
+          <li>Validated at 1920x1080. The device supports higher output, but 4K signage playback has not been validated and is not covered.</li>
+          <li>Drives a commercial display over HDMI. The display itself needs no certification.</li>
+        </ul>
+        <p class="setup-link"><a href="/guides/digital-signage-android-tv.html">Setup guide for this device</a></p>
+        <p class="buy-link"><a href="https://www.amazon.com/dp/B09BZZ3MM7?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy this device</a> <span class="affiliate-tag">(affiliate link)</span></p>
       </article>
       <article class="device" id="brightsign-series-5">
         <h3><a class="anchor" href="#brightsign-series-5" aria-label="Link to BrightSign Series 5">#</a>BrightSign Series 5</h3>
@@ -376,6 +411,105 @@
         <figure class="device-photo"><img src="/assets/hardware/led-wall-watterott.jpg" alt="A ScreenTinker advert running on a large outdoor LED video wall mounted on an industrial building" loading="lazy" decoding="async"><figcaption>Photo: <a href="https://www.watterott.com" rel="noopener">Watterott electronic GmbH</a></figcaption></figure>
         <p class="setup-link"><a href="/guides/led-wall-digital-signage.html">Setup guide for this device</a></p>
       </article>
+    </section>
+
+    <section class="status-group status-compatible-per-manufacturer">
+      <h2>Compatible per manufacturer <span class="count">(88)</span></h2>
+      <p class="group-blurb">The manufacturer lists these models as able to run apps like the ScreenTinker player (Amazon&#39;s list of Fire OS devices). ScreenTinker has not tested them and keeps no unit. These are NOT Certified Hardware and carry no support commitment.</p>
+      <p class="group-blurb">Source: <a href="https://developer.amazon.com/docs/device-specs/identify-fire-tv-devices.html" rel="noopener">Amazon, Identify Fire TV Devices (Amazon Fire Device Specifications)</a>.</p>
+      <div class="compact-wrap"><table class="compact-list">
+        <thead><tr><th>Model</th><th>Model number</th><th>Type</th><th>Where to buy</th></tr></thead>
+        <tbody>
+          <tr id="fire-os-aftti"><td><a class="anchor" href="#fire-os-aftti" aria-label="Link to Fire TV 4-Series">#</a>Fire TV 4-Series</td><td>AFTTI</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-afta"><td><a class="anchor" href="#fire-os-afta" aria-label="Link to Fire TV Cube">#</a>Fire TV Cube</td><td>AFTA</td><td>Streaming player</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftr"><td><a class="anchor" href="#fire-os-aftr" aria-label="Link to Fire TV Cube (2nd Gen)">#</a>Fire TV Cube (2nd Gen)</td><td>AFTR</td><td>Streaming player</td><td class="buy"></td></tr>
+          <tr id="fire-os-afteuff014"><td><a class="anchor" href="#fire-os-afteuff014" aria-label="Link to Fire TV Edition - Grundig OLED (2019)">#</a>Fire TV Edition - Grundig OLED (2019)</td><td>AFTEUFF014</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-afteu011"><td><a class="anchor" href="#fire-os-afteu011" aria-label="Link to Fire TV Edition - Grundig Vision 6 (2019)">#</a>Fire TV Edition - Grundig Vision 6 (2019)</td><td>AFTEU011</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-afteu014"><td><a class="anchor" href="#fire-os-afteu014" aria-label="Link to Fire TV Edition - Grundig Vision 7 (2019)">#</a>Fire TV Edition - Grundig Vision 7 (2019)</td><td>AFTEU014</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftjmst12"><td><a class="anchor" href="#fire-os-aftjmst12" aria-label="Link to Fire TV Edition - Insignia 4K (2018)">#</a>Fire TV Edition - Insignia 4K (2018)</td><td>AFTJMST12</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-afteamr311"><td><a class="anchor" href="#fire-os-afteamr311" aria-label="Link to Fire TV Edition - Insignia HD (2018)">#</a>Fire TV Edition - Insignia HD (2018)</td><td>AFTEAMR311</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftso001"><td><a class="anchor" href="#fire-os-aftso001" aria-label="Link to Fire TV Edition - JVC 4K UHD Smart (2019)">#</a>Fire TV Edition - JVC 4K UHD Smart (2019)</td><td>AFTSO001</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftmm"><td><a class="anchor" href="#fire-os-aftmm" aria-label="Link to Fire TV Edition - Nebula D3000 Soundbar (2019)">#</a>Fire TV Edition - Nebula D3000 Soundbar (2019)<div class="row-note">Amazon lists AFTMM for both the Fire TV Stick 4K and the Nebula D3000 soundbar.</div></td><td>AFTMM</td><td>Media player</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftle"><td><a class="anchor" href="#fire-os-aftle" aria-label="Link to Fire TV Edition - Onida HD/FHD (2019)">#</a>Fire TV Edition - Onida HD/FHD (2019)</td><td>AFTLE</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-afttiff55"><td><a class="anchor" href="#fire-os-afttiff55" aria-label="Link to Fire TV Edition - Onida/AKAI HD/FHD (2020)">#</a>Fire TV Edition - Onida/AKAI HD/FHD (2020)</td><td>AFTTIFF55</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftkmst12"><td><a class="anchor" href="#fire-os-aftkmst12" aria-label="Link to Fire TV Edition - Toshiba 4K (2018)">#</a>Fire TV Edition - Toshiba 4K (2018)</td><td>AFTKMST12</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftbamr311"><td><a class="anchor" href="#fire-os-aftbamr311" aria-label="Link to Fire TV Edition - Toshiba HD (2018)">#</a>Fire TV Edition - Toshiba HD (2018)</td><td>AFTBAMR311</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-afttiff"><td><a class="anchor" href="#fire-os-afttiff" aria-label="Link to Fire TV Omni Series">#</a>Fire TV Omni Series</td><td>AFTTIFF</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftmm-fire-tv-stick-4k"><td><a class="anchor" href="#fire-os-aftmm-fire-tv-stick-4k" aria-label="Link to Fire TV Stick 4K">#</a>Fire TV Stick 4K<div class="row-note">Amazon lists AFTMM for both the Fire TV Stick 4K and the Nebula D3000 soundbar.</div></td><td>AFTMM</td><td>Streaming player</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftwi001"><td><a class="anchor" href="#fire-os-aftwi001" aria-label="Link to OK UHD - Fire TV Smart TV (2020)">#</a>OK UHD - Fire TV Smart TV (2020)</td><td>AFTWI001</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftdct31"><td><a class="anchor" href="#fire-os-aftdct31" aria-label="Link to Toshiba 4K UHD Smart TV – Fire TV Edition">#</a>Toshiba 4K UHD Smart TV – Fire TV Edition</td><td>AFTDCT31</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftbu001"><td><a class="anchor" href="#fire-os-aftbu001" aria-label="Link to Fire TV Edition - AB/Croma HD/FHD (2020)">#</a>Fire TV Edition - AB/Croma HD/FHD (2020)</td><td>AFTBU001</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftpr001"><td><a class="anchor" href="#fire-os-aftpr001" aria-label="Link to Fire TV Edition - AB/AKAI/Croma UHD (2020)">#</a>Fire TV Edition - AB/AKAI/Croma UHD (2020)</td><td>AFTPR001</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftss"><td><a class="anchor" href="#fire-os-aftss" aria-label="Link to Fire TV Stick Lite">#</a>Fire TV Stick Lite</td><td>AFTSS</td><td>Streaming player</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftsss"><td><a class="anchor" href="#fire-os-aftsss" aria-label="Link to Fire TV Stick (3rd Gen)">#</a>Fire TV Stick (3rd Gen)</td><td>AFTSSS</td><td>Streaming player</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftwmst22"><td><a class="anchor" href="#fire-os-aftwmst22" aria-label="Link to Fire TV Edition - JVC Smart HD/FHD (2020)">#</a>Fire TV Edition - JVC Smart HD/FHD (2020)</td><td>AFTWMST22</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftgro001"><td><a class="anchor" href="#fire-os-aftgro001" aria-label="Link to ONIDA 4K - Fire TV Smart TV (2022)">#</a>ONIDA 4K - Fire TV Smart TV (2022)</td><td>AFTGRO001</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftha001"><td><a class="anchor" href="#fire-os-aftha001" aria-label="Link to Toshiba 4K UHD Smart TV - Fire TV Edition (2021)">#</a>Toshiba 4K UHD Smart TV - Fire TV Edition (2021)</td><td>AFTHA001</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftha003"><td><a class="anchor" href="#fire-os-aftha003" aria-label="Link to Toshiba M550 Smart Fire TV">#</a>Toshiba M550 Smart Fire TV</td><td>AFTHA003</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftha002"><td><a class="anchor" href="#fire-os-aftha002" aria-label="Link to Toshiba V35 Fire TV">#</a>Toshiba V35 Fire TV</td><td>AFTHA002</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftanna0"><td><a class="anchor" href="#fire-os-aftanna0" aria-label="Link to OK UHD Fire TV Smart TV(2021) / Xiaomi F2 4K - Fire TV Smart TV (2022) / Panasonic MX800 series 4K – Fire TV Smart TV (2023)">#</a>OK UHD Fire TV Smart TV(2021) / Xiaomi F2 4K - Fire TV Smart TV (2022) / Panasonic MX800 series 4K – Fire TV Smart TV (2023)</td><td>AFTANNA0</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftjuli1"><td><a class="anchor" href="#fire-os-aftjuli1" aria-label="Link to Fire TV Edition - Vestel T31 - 4K UHD FVP (2021/2022)">#</a>Fire TV Edition - Vestel T31 - 4K UHD FVP (2021/2022)</td><td>AFTJULI1</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftka"><td><a class="anchor" href="#fire-os-aftka" aria-label="Link to Fire TV Stick 4K Max">#</a>Fire TV Stick 4K Max<div class="row-note">The Fire TV Stick 4K Max is also Certified (above). That entry does not record which generation was tested.</div></td><td>AFTKA</td><td>Streaming player</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftka002"><td><a class="anchor" href="#fire-os-aftka002" aria-label="Link to Fire TV 2-Series">#</a>Fire TV 2-Series</td><td>AFTKA002</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftkauk001"><td><a class="anchor" href="#fire-os-aftkauk001" aria-label="Link to Fire TV 4-Series">#</a>Fire TV 4-Series</td><td>AFTKAUK001</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftkauk002"><td><a class="anchor" href="#fire-os-aftkauk002" aria-label="Link to Fire TV 2-Series">#</a>Fire TV 2-Series</td><td>AFTKAUK002</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftkade001"><td><a class="anchor" href="#fire-os-aftkade001" aria-label="Link to Fire TV Omni QLED Series">#</a>Fire TV Omni QLED Series</td><td>AFTKADE001</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftmon001"><td><a class="anchor" href="#fire-os-aftmon001" aria-label="Link to Funai 4K - Fire TV Edition (2022)">#</a>Funai 4K - Fire TV Edition (2022)</td><td>AFTMON001</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftmon002"><td><a class="anchor" href="#fire-os-aftmon002" aria-label="Link to Funai HD - Fire TV Edition (2022)">#</a>Funai HD - Fire TV Edition (2022)</td><td>AFTMON002</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aeohy"><td><a class="anchor" href="#fire-os-aeohy" aria-label="Link to Echo Show 15 with Fire TV built in">#</a>Echo Show 15 with Fire TV built in</td><td>AEOHY</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftbtx4"><td><a class="anchor" href="#fire-os-aftbtx4" aria-label="Link to Redmi 108cm (43 inches) 4K Ultra HD smart LED Fire TV">#</a>Redmi 108cm (43 inches) 4K Ultra HD smart LED Fire TV</td><td>AFTBTX4</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftalmo"><td><a class="anchor" href="#fire-os-aftalmo" aria-label="Link to Fire TV Edition – Insignia and Pioneer 2K (2022)">#</a>Fire TV Edition – Insignia and Pioneer 2K (2022)</td><td>AFTALMO</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftman001"><td><a class="anchor" href="#fire-os-aftman001" aria-label="Link to ONIDA 2K - Fire TV Smart TV (2022)">#</a>ONIDA 2K - Fire TV Smart TV (2022)</td><td>AFTMAN001</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftha004"><td><a class="anchor" href="#fire-os-aftha004" aria-label="Link to Toshiba Class C350LU Series LED 4K UHD Smart Fire TV">#</a>Toshiba Class C350LU Series LED 4K UHD Smart Fire TV</td><td>AFTHA004</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftmv00"><td><a class="anchor" href="#fire-os-aftmv00" aria-label="Link to Redmi HD Ready Smart LED Fire TV (2023)">#</a>Redmi HD Ready Smart LED Fire TV (2023)</td><td>AFTMV00</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftshn01"><td><a class="anchor" href="#fire-os-aftshn01" aria-label="Link to TCL HD Ready Smart LED Fire TV (2023)/Xiaomi TV F2 HD (2023)">#</a>TCL HD Ready Smart LED Fire TV (2023)/Xiaomi TV F2 HD (2023)</td><td>AFTSHN01</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftnev001"><td><a class="anchor" href="#fire-os-aftnev001" aria-label="Link to Funai 4K - Fire TV F560 Series">#</a>Funai 4K - Fire TV F560 Series</td><td>AFTNEV001</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftmd001"><td><a class="anchor" href="#fire-os-aftmd001" aria-label="Link to TCL Class Q Series 4K QLED HDR Smart TV with Fire TV/TCL Class S4 4K LED Smart TV with Fire TV">#</a>TCL Class Q Series 4K QLED HDR Smart TV with Fire TV/TCL Class S4 4K LED Smart TV with Fire TV</td><td>AFTMD001</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftcon001"><td><a class="anchor" href="#fire-os-aftcon001" aria-label="Link to Panasonic 4K Fire TV(2024) US FF">#</a>Panasonic 4K Fire TV(2024) US FF</td><td>AFTCON001</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftmd002"><td><a class="anchor" href="#fire-os-aftmd002" aria-label="Link to TCL Class S3 1080p LED Smart TV with Fire TV">#</a>TCL Class S3 1080p LED Smart TV with Fire TV</td><td>AFTMD002</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftkrt"><td><a class="anchor" href="#fire-os-aftkrt" aria-label="Link to Fire TV Stick 4K Max (2nd Gen)">#</a>Fire TV Stick 4K Max (2nd Gen)<div class="row-note">The Fire TV Stick 4K Max is also Certified (above). That entry does not record which generation was tested.</div></td><td>AFTKRT</td><td>Streaming player</td><td class="buy"><a href="https://www.amazon.com/dp/B0BP9SNVH9?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aftkm"><td><a class="anchor" href="#fire-os-aftkm" aria-label="Link to Fire TV Stick 4K (2nd Gen)">#</a>Fire TV Stick 4K (2nd Gen)</td><td>AFTKM</td><td>Streaming player</td><td class="buy"></td></tr>
+          <tr id="fire-os-afttor001"><td><a class="anchor" href="#fire-os-afttor001" aria-label="Link to Panasonic 4K Fire TV(2024) JP FF">#</a>Panasonic 4K Fire TV(2024) JP FF</td><td>AFTTOR001</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftgold01"><td><a class="anchor" href="#fire-os-aftgold01" aria-label="Link to Panasonic 4K Fire TV(2024) EU/APAC">#</a>Panasonic 4K Fire TV(2024) EU/APAC</td><td>AFTGOLD01</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftlas01"><td><a class="anchor" href="#fire-os-aftlas01" aria-label="Link to Panasonic 4K Fire TV(2024) US">#</a>Panasonic 4K Fire TV(2024) US</td><td>AFTLAS01</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aft6e0fa"><td><a class="anchor" href="#fire-os-aft6e0fa" aria-label="Link to Toshiba 32WF2F53DB HD Ready Smart Fire TV / Panasonic S50|S55 Series with Fire TV">#</a>Toshiba 32WF2F53DB HD Ready Smart Fire TV / Panasonic S50|S55 Series with Fire TV</td><td>AFT6E0FA</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftomna003"><td><a class="anchor" href="#fire-os-aftomna003" aria-label="Link to Amazon Fire TV Omni Mini-LED Series NA">#</a>Amazon Fire TV Omni Mini-LED Series NA</td><td>AFTOMNA003</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0C1TQYNWX?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aftge224"><td><a class="anchor" href="#fire-os-aftge224" aria-label="Link to Amazon Fire TV Omni Mini-LED Series UK">#</a>Amazon Fire TV Omni Mini-LED Series UK</td><td>AFTGE224</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftgoldff"><td><a class="anchor" href="#fire-os-aftgoldff" aria-label="Link to Panasonic 4K Fire TV(2024) EU/APAC FF">#</a>Panasonic 4K Fire TV(2024) EU/APAC FF</td><td>AFTGOLDFF</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftwym01"><td><a class="anchor" href="#fire-os-aftwym01" aria-label="Link to Panasonic 4K Fire TV(2024) JP">#</a>Panasonic 4K Fire TV(2024) JP</td><td>AFTWYM01</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftgzj01"><td><a class="anchor" href="#fire-os-aftgzj01" aria-label="Link to Funai HD - Fire TV Edition (2024)">#</a>Funai HD - Fire TV Edition (2024)</td><td>AFTGZJ01</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aeocy"><td><a class="anchor" href="#fire-os-aeocy" aria-label="Link to Echo Show 15 (Gen 2)">#</a>Echo Show 15 (Gen 2)</td><td>AEOCY</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0C5DPSW5Y?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aftdec012e"><td><a class="anchor" href="#fire-os-aftdec012e" aria-label="Link to TCL 4K UHD HDR LED Smart TV with Fire TV">#</a>TCL 4K UHD HDR LED Smart TV with Fire TV</td><td>AFTDEC012E</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0D4NWLQN3?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aeosy"><td><a class="anchor" href="#fire-os-aeosy" aria-label="Link to Echo Show 21">#</a>Echo Show 21</td><td>AEOSY</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0CDWWS127?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aftsh3f7ef"><td><a class="anchor" href="#fire-os-aftsh3f7ef" aria-label="Link to Panasonic 4K-60hz FireTV EU 2024">#</a>Panasonic 4K-60hz FireTV EU 2024</td><td>AFTSH3F7EF</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftma475b1"><td><a class="anchor" href="#fire-os-aftma475b1" aria-label="Link to TCL 43PF650 43-inch 4K Ultra HD Fire TV, HDR TV, Smart LED Fire TV">#</a>TCL 43PF650 43-inch 4K Ultra HD Fire TV, HDR TV, Smart LED Fire TV</td><td>AFTMA475B1</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftpof46a5"><td><a class="anchor" href="#fire-os-aftpof46a5" aria-label="Link to Panasonic TV-55Z80AEY Smart TV with Fire TV built-in - OLED 55&#39;&#39;, with Alexa">#</a>Panasonic TV-55Z80AEY Smart TV with Fire TV built-in - OLED 55&#39;&#39;, with Alexa</td><td>AFTPOF46A5</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftolcbc82"><td><a class="anchor" href="#fire-os-aftolcbc82" aria-label="Link to Toshiba C350 / Toshiba M550 / Hisense QD6QF / Hisense QD7QF">#</a>Toshiba C350 / Toshiba M550 / Hisense QD6QF / Hisense QD7QF</td><td>AFTOLCBC82</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0DZ85VYD5?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aftac786a3"><td><a class="anchor" href="#fire-os-aftac786a3" aria-label="Link to Panasonic W70B LED 4K TV">#</a>Panasonic W70B LED 4K TV</td><td>AFTAC786A3</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0DW3V53B7?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aftcu864a2"><td><a class="anchor" href="#fire-os-aftcu864a2" aria-label="Link to Amazon Fire TV 2-Series">#</a>Amazon Fire TV 2-Series</td><td>AFTCU864A2</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0F758GJFX?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aftcud6595"><td><a class="anchor" href="#fire-os-aftcud6595" aria-label="Link to Amazon Fire TV 2-Series EU">#</a>Amazon Fire TV 2-Series EU</td><td>AFTCUD6595</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftpoc9bd3"><td><a class="anchor" href="#fire-os-aftpoc9bd3" aria-label="Link to Amazon Fire TV Omni QLED Series">#</a>Amazon Fire TV Omni QLED Series</td><td>AFTPOC9BD3</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0DD2P7YVW?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aftpo9d4d7"><td><a class="anchor" href="#fire-os-aftpo9d4d7" aria-label="Link to Amazon Fire TV Omni QLED Series EU">#</a>Amazon Fire TV Omni QLED Series EU</td><td>AFTPO9D4D7</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftna1322d"><td><a class="anchor" href="#fire-os-aftna1322d" aria-label="Link to Amazon Fire TV 4-Series">#</a>Amazon Fire TV 4-Series</td><td>AFTNA1322D</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0DFNPK1D3?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aftna67200"><td><a class="anchor" href="#fire-os-aftna67200" aria-label="Link to Amazon Fire TV 4-Series EU">#</a>Amazon Fire TV 4-Series EU</td><td>AFTNA67200</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftcibfbd1"><td><a class="anchor" href="#fire-os-aftcibfbd1" aria-label="Link to Hisense 4K (2025)">#</a>Hisense 4K (2025)</td><td>AFTCIBFBD1</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-afthu71990"><td><a class="anchor" href="#fire-os-afthu71990" aria-label="Link to Hisense A4NF">#</a>Hisense A4NF</td><td>AFTHU71990</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0DYR36T7Q?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aftha78451"><td><a class="anchor" href="#fire-os-aftha78451" aria-label="Link to Fire TV Edition – Hisense U7">#</a>Fire TV Edition – Hisense U7</td><td>AFTHA78451</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0GHZXKT1T?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aftma08c15"><td><a class="anchor" href="#fire-os-aftma08c15" aria-label="Link to Fire TV Stick 4K Plus">#</a>Fire TV Stick 4K Plus</td><td>AFTMA08C15</td><td>Streaming player</td><td class="buy"><a href="https://www.amazon.com/dp/B0F7Z4QZTT?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aftche92d8"><td><a class="anchor" href="#fire-os-aftche92d8" aria-label="Link to TCL QM64L Premium QD-Mini LED TV">#</a>TCL QM64L Premium QD-Mini LED TV</td><td>AFTCHE92D8</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0GP972QP1?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aftne4e43f"><td><a class="anchor" href="#fire-os-aftne4e43f" aria-label="Link to Xiaomi FX Pro Series 4K UHD smart QLED Fire TV / Xiaomi FX Series 4K UHD smart LED Fire TV">#</a>Xiaomi FX Pro Series 4K UHD smart QLED Fire TV / Xiaomi FX Series 4K UHD smart LED Fire TV</td><td>AFTNE4E43F</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-afthy7abba"><td><a class="anchor" href="#fire-os-afthy7abba" aria-label="Link to Insignia 4K FTV (2025)">#</a>Insignia 4K FTV (2025)</td><td>AFTHY7ABBA</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftar04b9a"><td><a class="anchor" href="#fire-os-aftar04b9a" aria-label="Link to Onida 4K Smart Fire TV">#</a>Onida 4K Smart Fire TV</td><td>AFTAR04B9A</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftma2857f"><td><a class="anchor" href="#fire-os-aftma2857f" aria-label="Link to Xiaomi 2K LED/QLED">#</a>Xiaomi 2K LED/QLED</td><td>AFTMA2857F</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftde70dfc"><td><a class="anchor" href="#fire-os-aftde70dfc" aria-label="Link to Xiaomi F series HD smart LED Fire TV">#</a>Xiaomi F series HD smart LED Fire TV</td><td>AFTDE70DFC</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftbr92d74"><td><a class="anchor" href="#fire-os-aftbr92d74" aria-label="Link to Xiaomi 4K60Hz LED/QLED">#</a>Xiaomi 4K60Hz LED/QLED</td><td>AFTBR92D74</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftcu9343b"><td><a class="anchor" href="#fire-os-aftcu9343b" aria-label="Link to Hisense_AmazonFireTV_QD6_2026">#</a>Hisense_AmazonFireTV_QD6_2026</td><td>AFTCU9343B</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftboe497a"><td><a class="anchor" href="#fire-os-aftboe497a" aria-label="Link to Amazon Ember Artline">#</a>Amazon Ember Artline</td><td>AFTBOE497A</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0FXNKVYDD?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+          <tr id="fire-os-aftboef7da"><td><a class="anchor" href="#fire-os-aftboef7da" aria-label="Link to Amazon Ember Artline EU">#</a>Amazon Ember Artline EU</td><td>AFTBOEF7DA</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-afthy90e56"><td><a class="anchor" href="#fire-os-afthy90e56" aria-label="Link to Hisense Class A4 Series Smart Fire TV A4NF 2026">#</a>Hisense Class A4 Series Smart Fire TV A4NF 2026</td><td>AFTHY90E56</td><td>TV / display</td><td class="buy"></td></tr>
+          <tr id="fire-os-aftti947bc"><td><a class="anchor" href="#fire-os-aftti947bc" aria-label="Link to Toshiba G700">#</a>Toshiba G700</td><td>AFTTI947BC</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0H7WFWB8Y?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
+        </tbody>
+      </table></div>
     </section>
 
     <section class="status-group status-not-supported">
