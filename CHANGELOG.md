@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed (server)
+
+- **Grafana dashboards on screens showed Grafana's own sidebar and toolbar** (and, on a fresh
+  Grafana 13, an announcement dialog over the dashboard). ScreenTinker asked for kiosk mode as
+  `kiosk=` with an empty value, which Grafana does not treat as kiosk mode; it now sends a bare
+  `kiosk`. Single-panel widgets were not affected. Found filming the 2.5 release video against
+  Grafana 13.0.
+
 ## 2.5.0
 
 Thanks to the people whose reports this release fixes: @xela1978, JackyL, Mr. Car [MHA], J.O. and
