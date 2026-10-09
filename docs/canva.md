@@ -51,8 +51,8 @@ field empty to keep the current secret.
 
 ## Connect your Canva account
 
-In **Content**, the Canva card says **Connect Canva**. Sign in to Canva and allow access, and you
-come back to the library connected. Each person connects their own Canva account. ScreenTinker
+In **Content**, choose **Add content → Canva**, then **Connect Canva**. Sign in to Canva and allow
+access, and you come back to the library connected. Each person connects their own Canva account. ScreenTinker
 sees only the designs that account can see in Canva.
 
 **Disconnect** revokes the access at Canva. Items you already imported stay in the library, but

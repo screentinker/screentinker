@@ -523,7 +523,7 @@ function renderDetailContent(container, playlist) {
         <button class="btn btn-secondary" id="previewPlaylistBtn">${t('widget.preview')}</button>
         ${playlist.smart_rules
           ? `<button class="btn btn-primary" id="editRulesBtn">${t('smart.edit_rules')}</button>`
-          : `<button class="btn btn-primary" id="addItemBtn">${t('playlist.add_content')}</button>`}
+          : `<button class="btn btn-secondary" id="addHoldBtn">${esc(t('playlist.add_hold'))}</button><button class="btn btn-primary" id="addItemBtn">${t('playlist.add_content')}</button>`}
         ${corpMode === 'corporate' ? `<button class="btn btn-secondary" id="addSlotBtn" style="display:none">+ ${esc(t('corp.hq.add_slot'))}</button>` : ''}
       </div>
     </div>
@@ -613,6 +613,7 @@ function renderDetailContent(container, playlist) {
   document.getElementById('playlistDesc').addEventListener('click', () => inlineEdit(playlist, 'description'));
 
   document.getElementById('addItemBtn')?.addEventListener('click', () => showAddItemModal(playlist.id));
+  document.getElementById('addHoldBtn')?.addEventListener('click', (e) => showAddHoldModal(playlist.id, e.currentTarget));
   document.getElementById('editRulesBtn')?.addEventListener('click', () => {
     openSmartRulesModal({
       title: t('smart.title_edit', { name: playlist.name }),
@@ -1650,7 +1651,7 @@ async function mountCorporateEditor(container, playlist) {
     if (!ed.canAuthor) {
       // Approve-but-not-publish (R11): a reviewer here can approve; only an admin can publish.
       if (publishBtn) publishBtn.replaceWith(Object.assign(document.createElement('span'), { className: 'corp-help', textContent: t('corp.hq.waiting_admin') }));
-      ['addItemBtn', 'deletePlaylistBtn', 'discardDraftBtn'].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+      ['addItemBtn', 'addHoldBtn', 'deletePlaylistBtn', 'discardDraftBtn'].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
       // The name and description are head office's too: a click explains instead of opening an edit.
       ['playlistTitle', 'playlistDesc'].forEach((id) => {
         const el = document.getElementById(id);
@@ -1880,6 +1881,58 @@ function showAddItemModal(playlistId, opts = {}) {
       showToast(t('playlist.toast.item_replaced'));
     },
     onChanged: () => refreshAfterMutation(),
+  });
+}
+
+/*
+ * A hold screen is a playlist STEP (lib/hold-item.js): for its duration the screen shows nothing new —
+ * the last frame frozen, or blank — which is how screens take turns. Added here, where it belongs,
+ * rather than from the Content Library. A hold is a content row with no bytes; one per mode is
+ * reused, so adding holds does not fill the library with copies.
+ */
+async function showAddHoldModal(playlistId, trigger) {
+  const { openDialog } = await import('../components/library/dialog.js');
+  const d = openDialog({
+    title: t('playlist.hold.title'),
+    returnFocus: trigger,
+    html: `<p class="lib-field-help" style="margin:0">${esc(t('content.hold_desc'))}</p>
+      <fieldset class="lib-choice"><legend class="lib-visually-hidden">${esc(t('playlist.hold.mode'))}</legend>
+        <label class="lib-choice-opt"><input type="radio" name="holdMode" value="freeze" checked><span><strong>${esc(t('content.hold_freeze'))}</strong><span class="lib-field-help">${esc(t('playlist.hold.freeze_desc'))}</span></span></label>
+        <label class="lib-choice-opt"><input type="radio" name="holdMode" value="blank"><span><strong>${esc(t('content.hold_blank'))}</strong><span class="lib-field-help">${esc(t('playlist.hold.blank_desc'))}</span></span></label>
+      </fieldset>
+      <div class="lib-field"><label for="holdSeconds">${esc(t('playlist.hold.seconds'))}</label>
+        <input id="holdSeconds" class="input" type="number" min="1" max="86400" step="1" value="10" inputmode="numeric" aria-describedby="holdSeconds-err">
+        <div class="lib-field-err" id="holdSeconds-err" role="alert"></div></div>
+      <p class="lib-field-help" style="margin:0">${esc(t('playlist.hold.players'))}</p>
+      <div class="lib-dialog-actions"><span class="lib-form-error" role="alert" data-err></span>
+        <button type="button" class="btn btn-secondary" data-cancel>${esc(t('common.cancel'))}</button>
+        <button type="button" class="btn btn-primary" data-ok>${esc(t('playlist.hold.add'))}</button></div>`,
+  });
+  d.root.querySelector('[data-cancel]').addEventListener('click', () => d.close());
+  d.root.querySelector('[data-ok]').addEventListener('click', async (e) => {
+    const mode = d.root.querySelector('input[name="holdMode"]:checked').value;
+    const secs = Math.round(Number(d.root.querySelector('#holdSeconds').value));
+    if (!Number.isFinite(secs) || secs < 1 || secs > 86400) {
+      d.root.querySelector('#holdSeconds-err').textContent = t('playlist.hold.err_seconds');
+      d.root.querySelector('#holdSeconds').focus();
+      return;
+    }
+    e.currentTarget.disabled = true;
+    try {
+      const page = await api.getLibraryPage({ type: 'hold', limit: 100 });
+      const rows = Array.isArray(page) ? page : (page.items || []);
+      let hold = rows.find((c) => c.remote_url === `hold://${mode}`);
+      if (!hold) hold = await api.addHoldContent(mode);
+      await api.addPlaylistItem(playlistId, { content_id: hold.id, duration_sec: secs });
+      d.close();
+      showToast(t('content.toast.hold_added'), 'success');
+      // The editor re-renders; put focus back on the button the dialog was opened from.
+      await refreshAfterMutation();
+      document.getElementById('addHoldBtn')?.focus();
+    } catch (err) {
+      d.root.querySelector('[data-err]').textContent = err.message;
+      e.currentTarget.disabled = false;
+    }
   });
 }
 

@@ -51,8 +51,8 @@ A **hold** shows nothing new for its duration:
 - **Freeze** keeps the last frame of the item before it, paused.
 - **Blank** clears to the zone's background colour.
 
-Add one from **Content → Hold**, or **+ Hold** on a zone in the wall editor. Holds work everywhere,
-not only on walls: full screen, in zones and in synced groups.
+Add one from a playlist with **Add hold screen**, or **+ Hold** on a zone in the wall editor. Holds
+work everywhere, not only on walls: full screen, in zones and in synced groups.
 
 ## Watching a wall
 

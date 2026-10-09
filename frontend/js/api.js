@@ -480,6 +480,26 @@ export const api = {
     body: JSON.stringify({ ids, folder_id: folderId || null })
   }),
 
+  // The Content Library page (server lib/content-library.js): one page of results with the real
+  // total and each row's usage. `opts` are the page's own state; only set values are sent.
+  // folderId: undefined = the whole workspace ("All content"), null = the root, <id> = that folder.
+  getLibraryPage: (opts = {}, signal) => {
+    const p = new URLSearchParams({ envelope: '1' });
+    const q = (opts.q || '').trim();
+    if (!q && opts.folderId !== undefined) p.set('folder_id', opts.folderId === null ? 'root' : opts.folderId);
+    if (q) p.set('q', q);
+    for (const k of ['type', 'status', 'usage', 'scope', 'sort']) if (opts[k] && opts[k] !== 'all') p.set(k, opts[k]);
+    p.set('limit', String(opts.limit || 48));
+    p.set('offset', String(opts.offset || 0));
+    return request(`/content?${p.toString()}`, signal ? { signal } : undefined);
+  },
+  getLibrarySummary: () => request('/content/library-summary'),
+  getContentUsage: (id) => request(`/content/${id}/usage`),
+  batchTagContent: (ids, add, remove) => request('/content/batch/tags', {
+    method: 'POST',
+    body: JSON.stringify({ ids, ...(add && add.length ? { add } : {}), ...(remove && remove.length ? { remove } : {}) })
+  }),
+
   // Folders
   getFolders: () => request('/folders'),
   createFolder: (name, parentId) => request('/folders', {
@@ -596,21 +616,22 @@ export const api = {
     return wasBatch ? out : out[0];
   },
 
-  addRemoteContent: (url, name, mime_type) => request('/content/remote', {
+  // folderId (optional, the library's destination): the new item is filed there instead of the root.
+  addRemoteContent: (url, name, mime_type, folderId) => request('/content/remote', {
     method: 'POST',
-    body: JSON.stringify({ url, name, mime_type })
+    body: JSON.stringify({ url, name, mime_type, ...(folderId ? { folder_id: folderId } : {}) })
   }),
 
-  addYoutubeContent: (url, name) => request('/content/youtube', {
+  addYoutubeContent: (url, name, folderId) => request('/content/youtube', {
     method: 'POST',
-    body: JSON.stringify({ url, name })
+    body: JSON.stringify({ url, name, ...(folderId ? { folder_id: folderId } : {}) })
   }),
 
   // IPTV: add a live HLS stream (the player opens the .m3u8 on its LAN; the server never fetches it).
-  addHoldContent: (mode, name) => request('/content/hold', { method: 'POST', body: JSON.stringify({ mode, name }) }),
-  addHlsContent: (url, name) => request('/content/hls', {
+  addHoldContent: (mode, name, folderId) => request('/content/hold', { method: 'POST', body: JSON.stringify({ mode, name, ...(folderId ? { folder_id: folderId } : {}) }) }),
+  addHlsContent: (url, name, folderId) => request('/content/hls', {
     method: 'POST',
-    body: JSON.stringify({ url, name })
+    body: JSON.stringify({ url, name, ...(folderId ? { folder_id: folderId } : {}) })
   }),
 
   // Assignments

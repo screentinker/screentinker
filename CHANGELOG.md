@@ -2,6 +2,63 @@
 
 ## Unreleased
 
+### Changed
+
+- **The Content Library is rebuilt around the content.** A populated library now opens on its
+  content, not on a stack of forms.
+  - **Navigation:** All content, Recently added (the last 7 days) and Unused, each with a count, and
+    the folder tree. A folder still shows the items filed directly in it, and a search still spans
+    the whole workspace.
+  - **Toolbar:** search, type, status and usage filters (removable chips, Clear filters), sort, and
+    a grid or list view. The view is remembered in this browser.
+  - **One result set:** the grid and the table share the results, the selection and the open item,
+    and are paged by the server ("Showing 1–48 of 312 items").
+  - **Table:** sortable Name, Type, Duration and Dimensions headers, with direction shown.
+  - **Content details:** opening an item shows a side panel with its preview, status, name, folder
+    and tags (saved with an explicit Save, with a warning before unsaved changes are dropped), its
+    real details, and the playlists that use it, each a link.
+    - **Replace file** keeps the item's identity, so every playlist keeps it. It is offered only for
+      stored files.
+    - On a narrow screen the panel becomes a drawer.
+  - **Add content:** one button opens a modal with the upload zone and a tile for every source the
+    server supports: Media URL, YouTube, Google / Microsoft (one document, or a SharePoint/OneDrive
+    folder sync), Live stream, HDMI input and Canva. Canva shows only where it is set up or can be,
+    and still connects and disconnects.
+    - Each tile opens its form in the modal, with Back. Values are kept, typed input is not lost
+      without a warning, and links are checked inline the same way the server checks them.
+    - The footer shows the **destination** folder, which every form and upload uses.
+    - A PDF says, before it starts, which folder and playlist it will create.
+  - **Uploads:** files are uploaded one at a time with their own progress: uploading, processing,
+    then ready or failed with the reason, plus Retry and Cancel. One bad file no longer stops the
+    rest. Uploads keep going while you browse.
+    - Dropping files anywhere on the results uploads them to the folder you are in. An empty library
+      keeps a large upload invitation.
+  - **Bulk actions:** checked items can be moved, tagged (new bulk tag endpoint), added to a
+    playlist (items that could not be added are listed with the reason) or deleted. The delete
+    confirmation lists what each item is used in. Changing the folder or the search clears the
+    selection, and says so.
+  - Edit, Delete, History, preview, the expiry date, Canva sync and the other per-item actions are
+    in each item's menu. They are no longer buttons on every card.
+- **Hold screens are added from the playlist they belong to:** a playlist's new **Add hold screen**
+  adds a freeze or blank step of the length you choose, reusing one hold per mode. The library no
+  longer has a Hold card. Existing holds are untouched and can be filtered for.
+
+### Added (server)
+
+- `GET /api/content?envelope=1` returns `{ items, total }`. The plain array is unchanged for every
+  other caller.
+  - Each item carries its playlist count and whether anything at all uses it.
+  - New `scope`, `usage` and `status` filters, and more sorts, each ending on the id so pages never
+    swap equal items.
+  - `GET /api/content/library-summary` gives the navigation counts. `GET /api/content/:id/usage`
+    lists the playlists that use an item, plus counts of its walls, schedules, screen defaults,
+    corporate fallbacks, widgets and slide decks.
+  - "Unused" means none of those, not merely "in no playlist".
+- `POST /api/content/batch/tags` adds or removes tags on up to 500 items, all or nothing, like batch
+  move and delete.
+- `POST /content/remote`, `/youtube`, `/hls` and `/hold` accept a `folder_id` in the same
+  workspace.
+
 ### Fixed (server)
 
 - **Grafana dashboards on screens showed Grafana's own sidebar and toolbar** (and, on a fresh
@@ -9,6 +66,8 @@
   `kiosk=` with an empty value, which Grafana does not treat as kiosk mode; it now sends a bare
   `kiosk`. Single-panel widgets were not affected. Found filming the 2.5 release video against
   Grafana 13.0.
+- The **Videos** type filter no longer includes HDMI inputs, and **Web / remote** no longer includes
+  holds or HDMI inputs.
 
 ## 2.5.0
 

@@ -85,7 +85,8 @@ export async function mountCanvaCard(el, { onImported } = {}) {
   });
 }
 
-export function openCanvaPicker({ onImported } = {}) {
+// folderId: the library's destination; imported pages are filed there (server checks the workspace).
+export function openCanvaPicker({ onImported, folderId = null } = {}) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
@@ -183,6 +184,7 @@ export function openCanvaPicker({ onImported } = {}) {
       if (!chosen.length) { showToast(t('canva.choose_pages'), 'error'); return; }
       const body = { design_id: id, pages: chosen, format: step.querySelector('[name=canvaFmt]:checked').value };
       if (mk.checked) body.playlist_name = step.querySelector('#canvaPlName').value.trim() || info.design.title;
+      if (folderId) body.folder_id = folderId;
       e.target.disabled = true;
       const busy = step.querySelector('#canvaBusy');
       busy.textContent = t('canva.importing');

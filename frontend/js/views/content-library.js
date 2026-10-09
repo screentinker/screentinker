@@ -1,13 +1,35 @@
 import { api, assertLocalCallAllowed } from '../api.js';
-import { uploadFilesResumable } from '../lib/chunked-upload.js';
 import * as gettingStarted from '../components/getting-started.js';
 import { showToast } from '../components/toast.js';
 import { esc, hydrateAuthImages } from '../utils.js';
 import { t } from '../i18n.js';
 import { openHistoryModal } from '../components/history-modal.js';
-import { renderApprovalBar } from '../components/approval-actions.js';
 import { isPdf, renderPdfToPages, baseName } from '../components/pdf-pages.js';
-import { mountCanvaCard, reportConnectResult, loadCanvaLinks, syncCanvaLink } from '../components/canva-import.js';
+import { reportConnectResult, loadCanvaLinks, syncCanvaLink, openCanvaPicker } from '../components/canva-import.js';
+import { openDialog, confirmDialog } from '../components/library/dialog.js';
+import { openMenu, closeMenu } from '../components/library/menu.js';
+import { openAddContent, treeOrder } from '../components/library/add-content.js';
+import { createInspector } from '../components/library/inspector.js';
+import * as uploads from '../components/library/upload-queue.js';
+import {
+  typeOf, statusOf, durationOf, dimensionsOf, detailLine, usageText, thumbOf, typeIcon, isStoredFile,
+} from '../components/library/content-meta.js';
+
+/*
+ * The Content Library.
+ *
+ *   nav        All content · Recently added · Unused, then the folder tree (one location at a time)
+ *   header     the title, the result count, one "Add content" button (components/library/add-content.js)
+ *   toolbar    search, grouped filters (type, status, usage), sort, grid/list
+ *   results    one result set and one selection, shown as a grid or a table; paged by the server
+ *   inspector  "Content details" for the item opened (components/library/inspector.js)
+ *
+ * Folder semantics are the server's, unchanged: a folder shows the items filed DIRECTLY in it, and a
+ * search spans the whole workspace (routes/content.js #214). "All content" is the whole workspace —
+ * what its count says — and new items made there go to the root.
+ *
+ * State lives at module scope, so leaving the page and coming back keeps the place, as before.
+ */
 
 /* The mime lib/html-bundle.js stamps on an uploaded HTML bundle. Kept as a constant rather than
  * spelled out at each site: it is compared in three places here, and a typo in one of them is a
@@ -22,27 +44,8 @@ const SUBTITLE_LANGS = [
   ['ko', '한국어'], ['zh', '中文'],
 ];
 
-function formatFileSize(bytes) {
-  if (!bytes) return '--';
-  if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)} GB`;
-  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${bytes} B`;
-}
-
-// #157: classify a content item's expiry state for the card. `expired` when the server
-// deactivated it (is_active===0) or its expires_at has passed; `dateLabel` is the local
-// expiry date/time (present whenever expires_at is set, past or future).
-function expiryInfo(c) {
-  const hasExpiry = c.expires_at != null && c.expires_at !== '';
-  const ts = hasExpiry ? Number(c.expires_at) * 1000 : null;
-  const past = ts != null && ts <= Date.now();
-  const expired = c.is_active === 0 || past;
-  const dateLabel = ts != null
-    ? new Date(ts).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-    : '';
-  return { expired, dateLabel };
-}
+const PAGE_SIZE = 48;
+const VIEW_KEY = 'st.library.view';
 
 // Epoch seconds -> a <input type="datetime-local"> value in the viewer's LOCAL wall-clock
 // (YYYY-MM-DDTHH:MM). Empty string for no expiry.
@@ -58,168 +61,145 @@ function metaToLines(meta) {
   return Object.entries(meta).map(([k, v]) => `${k}=${v}`).join('\n');
 }
 
+function readView() { try { return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid'; } catch (_) { return 'grid'; } }
+function writeView(v) { try { localStorage.setItem(VIEW_KEY, v); } catch (_) { /* private mode */ } }
+
+// The server enforces every write; this only hides controls a read-only member could not use.
+function canWrite() {
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || 'null');
+    if (!u) return true;
+    return !(u.current_workspace_role === 'workspace_viewer' && !u.acting_as);
+  } catch (_) { return true; }
+}
+
+// View state. Module scope so the router's re-render (and a return visit) keeps the place.
+const state = {
+  location: { kind: 'all', folderId: null },   // all | recent | unused | folder
+  q: '',
+  type: 'all',
+  status: 'all',
+  usage: 'all',
+  sort: 'date_desc',
+  view: readView(),
+  offset: 0,
+  items: [],
+  total: 0,
+  loading: false,
+  error: null,
+  legacy: false,          // the server answered with a bare array (an older remote node)
+  summary: null,
+  folders: [],
+  expanded: new Set(),
+  selected: new Map(),    // id -> row, across pages, cleared when the scope changes
+  lastClickedId: null,
+  canvaLinks: new Map(),
+  openId: null,
+  pendingDraft: null,     // unsaved inspector edits kept across leaving the page
+};
+let reqSeq = 0;
+let inflight = null;
+let searchTimer = null;
+let inspector = null;
+let unsubscribeUploads = null;
+let reloadTimer = null;
+let navFoldersOpen = false;   // narrow screens only: is the folder tree unfolded
+
+const TYPE_FILTERS = [
+  ['all', 'content.filter_type_all'], ['image', 'content.filter_type_image'], ['video', 'content.filter_type_video'],
+  ['audio', 'library.filter.audio'], ['youtube', 'content.filter_type_youtube'], ['live', 'content.filter_type_live'],
+  ['hdmi', 'library.filter.hdmi'], ['web', 'content.filter_type_web'], ['bundle', 'content.filter_type_bundle'], ['hold', 'library.filter.hold'],
+];
+const STATUS_FILTERS = [['all', 'library.filter.status_all'], ['ready', 'library.status.ready'], ['review', 'library.status.review'], ['attention', 'library.status.attention'], ['expired', 'library.status.expired']];
+const USAGE_FILTERS = [['all', 'library.filter.usage_all'], ['used', 'library.filter.used'], ['unused', 'library.usage.unused']];
+const SORTS = [
+  ['date_desc', 'content.sort_newest'], ['date_asc', 'content.sort_oldest'], ['name', 'content.sort_name'], ['name_desc', 'library.sort.name_desc'],
+  ['size', 'content.sort_size'], ['size_asc', 'library.sort.size_asc'], ['duration_desc', 'library.sort.duration_desc'], ['duration', 'library.sort.duration_asc'],
+  ['type', 'library.sort.type'], ['dims_desc', 'library.sort.dims_desc'],
+];
+// Table headers and the sort each one toggles between (first click = the first of the pair).
+const COLUMN_SORTS = { name: ['name', 'name_desc'], type: ['type', 'type_desc'], duration: ['duration', 'duration_desc'], dimensions: ['dims', 'dims_desc'] };
+
+const folderById = () => new Map(state.folders.map((f) => [f.id, f]));
+const rootLabel = () => t('library.root');
+
+// Build a "Parent / Child / Leaf" path for a folder. Exported for the components.
+function folderPathOf(f) { return folderPath(f, state.folders); }
+
+function destination() {
+  if (state.location.kind === 'folder') {
+    const f = folderById().get(state.location.folderId);
+    if (f) return { folderId: f.id, label: folderPathOf(f) };
+  }
+  return { folderId: null, label: rootLabel() };
+}
+
+function locationLabel() {
+  const l = state.location;
+  if (l.kind === 'recent') return t('library.nav.recent');
+  if (l.kind === 'unused') return t('library.nav.unused');
+  if (l.kind === 'folder') { const f = folderById().get(l.folderId); return f ? f.name : t('library.nav.all'); }
+  return t('library.nav.all');
+}
+
+const filtersActive = () => state.type !== 'all' || state.status !== 'all' || state.usage !== 'all';
+
+const $ = (sel) => document.querySelector(sel);
+function announce(msg) { const el = $('#libLive'); if (el) { el.textContent = ''; setTimeout(() => { el.textContent = msg; }, 30); } }
+
 export function render(container) {
   container.innerHTML = `
-    <div class="page-header">
-      <div>
-        <h1>${t('content.title')} <span class="help-tip" data-tip="${t('content.help_tip')}">?</span></h1>
-        <div class="subtitle">${t('content.subtitle')}</div>
-      </div>
-    </div>
-
-    <!-- The checklist follows the user here. Arriving from its "Add content" step and finding
-         nothing that mentions it is how someone loses the thread. -->
-    <div id="gettingStarted"></div>
-
-    <div class="content-toolbar">
-      <div class="upload-area" id="uploadArea">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-          <polyline points="17 8 12 3 7 8"/>
-          <line x1="12" y1="3" x2="12" y2="15"/>
-        </svg>
-        <p>${t('content.drop')}</p>
-        <p class="upload-hint">${t('content.upload_hint')}</p>
-        <input type="file" id="fileInput" style="display:none" multiple accept="video/*,image/*,audio/*,.zip,.wgt,.pdf,application/pdf">
-        <div class="upload-progress" id="uploadProgress" style="display:none">
-          <div class="upload-progress-bar">
-            <div class="upload-progress-fill" id="uploadProgressFill" style="width:0%"></div>
+    <div class="lib" id="libRoot">
+      <!-- The checklist follows the user here, above everything: arriving from its "Add content"
+           step and finding nothing that mentions it is how someone loses the thread. It hides
+           itself once the account has nothing left to do. -->
+      <div class="lib-gs" id="gettingStarted"></div>
+      <div class="lib-layout">
+        <nav class="lib-nav" id="libNav" aria-label="${esc(t('library.nav.label'))}"></nav>
+        <div class="lib-main" id="libMain">
+          <header class="lib-header">
+            <div>
+              <h1 class="lib-h1">${esc(t('content.title'))}</h1>
+              <div class="lib-count" id="libCount" aria-live="polite"></div>
+            </div>
+            <button type="button" class="btn btn-primary lib-add-btn" id="libAddBtn" ${canWrite() ? '' : 'hidden'}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              ${esc(t('library.add_content'))}
+            </button>
+          </header>
+          <div class="lib-toolbar" role="search" aria-label="${esc(t('library.toolbar_label'))}">
+            <div class="lib-search">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <label for="contentSearch" class="lib-visually-hidden">${esc(t('library.search_label'))}</label>
+              <input type="search" id="contentSearch" class="input" placeholder="${esc(t('library.search_placeholder'))}" value="${esc(state.q)}" autocomplete="off">
+            </div>
+            <div class="lib-filters" role="group" aria-label="${esc(t('library.filters_label'))}">
+              ${selectHtml('libType', 'library.filter.type_label', TYPE_FILTERS, state.type)}
+              ${selectHtml('libStatus', 'library.filter.status_label', STATUS_FILTERS, state.status)}
+              ${selectHtml('libUsage', 'library.filter.usage_label', USAGE_FILTERS, state.usage)}
+            </div>
+            ${selectHtml('libSort', 'library.sort.label', SORTS.concat(SORTS.some((s) => s[0] === state.sort) ? [] : [[state.sort, sortLabelKey(state.sort)]]), state.sort)}
+            <div class="lib-viewtoggle" role="group" aria-label="${esc(t('library.view_label'))}">
+              <button type="button" class="lib-icon-btn" data-view="grid" aria-pressed="${state.view === 'grid'}" aria-label="${esc(t('library.view_grid'))}">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+              </button>
+              <button type="button" class="lib-icon-btn" data-view="list" aria-pressed="${state.view === 'list'}" aria-label="${esc(t('library.view_list'))}">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
+              </button>
+            </div>
           </div>
-          <p style="font-size:12px;color:var(--text-secondary);margin-top:6px" id="uploadProgressText">${t('content.upload_progress')}</p>
+          <div class="lib-chiprow" id="libChips"></div>
+          <div class="lib-crumbrow" id="folderBreadcrumb"></div>
+          <div class="lib-bulkbar" id="batchToolbar" hidden></div>
+          <div class="lib-results" id="contentGrid" aria-busy="true"></div>
+          <div class="lib-pager" id="libPager"></div>
+          <div class="lib-drop-overlay" id="libDropOverlay" hidden><div class="lib-drop-card">${typeIcon('image', 40)}<div id="libDropText"></div></div></div>
         </div>
+        <aside class="lib-inspector" id="libInspector" hidden></aside>
       </div>
-      <div class="content-source" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
-        <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-          </svg>
-          ${t('content.remote_url')}
-        </div>
-        <p style="font-size:12px;color:var(--text-muted)">${t('content.remote_desc')}</p>
-        <input type="text" id="remoteUrlInput" class="input" placeholder="${t('content.remote_url_placeholder')}">
-        <input type="text" id="remoteNameInput" class="input" placeholder="${t('content.remote_name_placeholder')}">
-        <select id="remoteMimeType" class="input" style="background:var(--bg-input)">
-          <option value="video/mp4">${t('content.mime.video_mp4')}</option>
-          <option value="video/webm">${t('content.mime.video_webm')}</option>
-          <option value="image/jpeg">${t('content.mime.image_jpeg')}</option>
-          <option value="image/png">${t('content.mime.image_png')}</option>
-          <option value="audio/mpeg">${t('content.mime.audio_mpeg')}</option>
-          <option value="audio/wav">${t('content.mime.audio_wav')}</option>
-        </select>
-        <button class="btn btn-primary" id="addRemoteBtn">${t('content.remote_add_btn')}</button>
-      </div>
-      <div class="content-source" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
-        <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19.13C5.12 19.56 12 19.56 12 19.56s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.43z"/>
-            <polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"/>
-          </svg>
-          ${t('content.youtube')}
-        </div>
-        <p style="font-size:12px;color:var(--text-muted)">${t('content.youtube_desc')}</p>
-        <input type="text" id="youtubeUrlInput" class="input" placeholder="${t('content.youtube_url_placeholder')}">
-        <input type="text" id="youtubeNameInput" class="input" placeholder="${t('content.youtube_name_placeholder')}">
-        <button class="btn btn-primary" id="addYoutubeBtn">${t('content.youtube_add_btn')}</button>
-      </div>
-      <div class="content-source" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
-        <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-          </svg>
-          ${t('content.cloud_docs')}
-        </div>
-        <p style="font-size:12px;color:var(--text-muted)">${t('content.cloud_docs_desc')}</p>
-        <input type="text" id="cloudDocUrlInput" class="input" placeholder="${t('content.cloud_docs_url_placeholder')}">
-        <input type="text" id="cloudDocNameInput" class="input" placeholder="${t('content.cloud_docs_name_placeholder')}">
-        <button class="btn btn-primary" id="addCloudDocBtn">${t('content.cloud_docs_add_btn')}</button>
-        <button class="btn btn-secondary" id="cloudFoldersBtn">${t('content.cloud_folders_btn')}</button>
-      </div>
-      <div class="content-source" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
-        <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polygon points="23 7 16 12 23 17 23 7"/>
-            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-          </svg>
-          ${t('content.hls')}
-        </div>
-        <p style="font-size:12px;color:var(--text-muted)">${t('content.hls_desc')}</p>
-        <input type="text" id="hlsUrlInput" class="input" placeholder="${t('content.hls_url_placeholder')}">
-        <input type="text" id="hlsNameInput" class="input" placeholder="${t('content.hls_name_placeholder')}">
-        <button class="btn btn-primary" id="addHlsBtn">${t('content.hls_add_btn')}</button>
-      </div>
-      <div class="content-source" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
-        <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="7" width="20" height="10" rx="2"/>
-            <path d="M6 11h12M8 14h8"/>
-          </svg>
-          ${t('content.hdmi_in')}
-        </div>
-        <p style="font-size:12px;color:var(--text-muted)">${t('content.hdmi_in_desc')}</p>
-        <select id="hdmiInPort" class="input">
-          <option value="">${t('content.hdmi_in_first')}</option>
-          <option value="1">HDMI 1</option>
-          <option value="2">HDMI 2</option>
-          <option value="3">HDMI 3</option>
-          <option value="4">HDMI 4</option>
-        </select>
-        <input type="text" id="hdmiInName" class="input" placeholder="${t('content.hdmi_in_name_placeholder')}">
-        <button class="btn btn-primary" id="addHdmiInBtn">${t('content.hdmi_in_add_btn')}</button>
-      </div>
-      <div class="content-source" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:12px">
-        <div style="display:flex;align-items:center;gap:8px;color:var(--text-primary);font-weight:500">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
-          </svg>
-          ${t('content.hold')}
-        </div>
-        <p style="font-size:12px;color:var(--text-muted)">${t('content.hold_desc')}</p>
-        <select id="holdMode" class="input">
-          <option value="freeze">${t('content.hold_freeze')}</option>
-          <option value="blank">${t('content.hold_blank')}</option>
-        </select>
-        <button class="btn btn-primary" id="addHoldBtn">${t('content.hold_add_btn')}</button>
-      </div>
-      <!-- Canva (components/canva-import.js): hidden until /api/canva/status answers. -->
-      <div id="canvaCard" class="content-source" style="display:none;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;flex-direction:column;gap:12px"></div>
-    </div>
-    </div>
-
-    <div style="display:flex;gap:12px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
-      <input type="text" id="contentSearch" class="input" placeholder="${t('content.search_placeholder')}" style="max-width:250px;width:100%" value="${esc(state.search)}">
-      <select id="contentTypeFilter" class="input btn-sm" style="width:auto;background:var(--bg-input)">
-        <option value="all" ${state.type === 'all' ? 'selected' : ''}>${t('content.filter_type_all')}</option>
-        <option value="video" ${state.type === 'video' ? 'selected' : ''}>${t('content.filter_type_video')}</option>
-        <option value="image" ${state.type === 'image' ? 'selected' : ''}>${t('content.filter_type_image')}</option>
-        <option value="youtube" ${state.type === 'youtube' ? 'selected' : ''}>${t('content.filter_type_youtube')}</option>
-        <option value="live" ${state.type === 'live' ? 'selected' : ''}>${t('content.filter_type_live')}</option>
-        <option value="web" ${state.type === 'web' ? 'selected' : ''}>${t('content.filter_type_web')}</option>
-        <option value="bundle" ${state.type === 'bundle' ? 'selected' : ''}>${t('content.filter_type_bundle')}</option>
-      </select>
-      <select id="contentSort" class="input btn-sm" style="width:auto;background:var(--bg-input)">
-        <option value="date_desc" ${state.sort === 'date_desc' ? 'selected' : ''}>${t('content.sort_newest')}</option>
-        <option value="date_asc" ${state.sort === 'date_asc' ? 'selected' : ''}>${t('content.sort_oldest')}</option>
-        <option value="name" ${state.sort === 'name' ? 'selected' : ''}>${t('content.sort_name')}</option>
-        <option value="size" ${state.sort === 'size' ? 'selected' : ''}>${t('content.sort_size')}</option>
-      </select>
-      <span id="contentResultCount" style="font-size:13px;color:var(--text-muted)"></span>
-      <button class="btn btn-secondary btn-sm" id="newFolderBtn">${t('content.new_folder_btn')}</button>
-      <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);cursor:pointer;margin-left:auto">
-        <input type="checkbox" id="showExpiredToggle" ${state.showExpired ? 'checked' : ''}> ${t('content.show_expired')}
-      </label>
-    </div>
-    <div id="folderBreadcrumb" style="display:flex;gap:6px;align-items:center;margin-bottom:12px;font-size:13px;flex-wrap:wrap"></div>
-    <div id="batchToolbar" style="display:none"></div>
-    <div id="folderGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:16px"></div>
-    <div class="content-grid" id="contentGrid">
-      <div class="empty-state" style="grid-column:1/-1"><h3>${t('common.loading')}</h3></div>
-    </div>
-  `;
-
-  // File upload handling
-  const uploadArea = document.getElementById('uploadArea');
-  const fileInput = document.getElementById('fileInput');
+      <input type="file" id="fileInput" hidden multiple accept="video/*,image/*,audio/*,.zip,.wgt,.pdf,application/pdf">
+      <div class="lib-visually-hidden" id="libLive" role="status" aria-live="polite"></div>
+    </div>`;
 
   /*
    * The checklist, if this account still has one. Fire-and-forget: it fetches devices and
@@ -228,287 +208,995 @@ export function render(container) {
    */
   gettingStarted.mount(document.getElementById('gettingStarted'), {
     // Step 2 points at this page, so its button must DO something here rather than re-navigate to
-    // the page it is already on. Clicking the upload area is the page's own path to the file
-    // picker — and it stays inside the user's click, which is what the browser requires to open one.
+    // the page it is already on: it opens Add content, inside the user's click.
     onAction: (a) => {
-      if (a === 'add-content') { document.getElementById('uploadArea')?.click(); return true; }
+      if (a === 'add-content') { openAdd(); return true; }
       return false;
     },
   }).catch(() => {});
 
-  uploadArea.addEventListener('click', () => fileInput.click());
-
   reportConnectResult();
-  {
-    const canvaCard = document.getElementById('canvaCard');
-    mountCanvaCard(canvaCard, { onImported: () => loadContent() }).then(() => {
-      if (canvaCard && canvaCard.style.display !== 'none') canvaCard.style.display = 'flex';
-    });
+
+  inspector = createInspector(document.getElementById('libInspector'), {
+    folders: () => state.folders,
+    folderPath: folderPathOf,
+    rootLabel: rootLabel(),
+    canWrite,
+    menuItems: (c, anchor, o) => itemMenu(c, anchor, o),
+    onSaved: () => { scheduleReload(); },
+    onReplaced: () => { scheduleReload(); },
+    onClose: () => { state.openId = null; markOpen(); },
+    onPreviewBundle: (c) => showPreview(c),
+  });
+
+  // PDFs: the queue hands them back here (pages → folder → playlist, below).
+  uploads.setPdfImporter(importPdf);
+  if (unsubscribeUploads) unsubscribeUploads();
+  unsubscribeUploads = uploads.onUploaded(() => scheduleReload());
+
+  wireToolbar();
+  wireDrop();
+  const fileInput = document.getElementById('fileInput');
+  fileInput.addEventListener('change', () => {
+    const files = [...fileInput.files];
+    fileInput.value = '';
+    handleFiles(files, destination());
+  });
+  document.getElementById('libAddBtn').addEventListener('click', () => openAdd());
+
+  renderNav();
+  renderChrome();
+  loadContent();
+  loadNav();
+}
+
+function selectHtml(id, labelKey, options, value) {
+  return `<div class="lib-select">
+    <label for="${id}" class="lib-visually-hidden">${esc(t(labelKey))}</label>
+    <select id="${id}" class="input">${options.map(([v, k]) => `<option value="${v}" ${v === value ? 'selected' : ''}>${esc(t(k))}</option>`).join('')}</select>
+  </div>`;
+}
+function sortLabelKey(s) {
+  return ({ type_desc: 'library.sort.type_desc', dims: 'library.sort.dims_asc' })[s] || 'content.sort_newest';
+}
+
+/* ================================ loading ================================ */
+
+async function loadNav() {
+  try {
+    const [folders, summary] = await Promise.all([api.getFolders(), api.getLibrarySummary().catch(() => null)]);
+    state.folders = folders || [];
+    state.summary = summary;
+  } catch (_) { /* the nav keeps what it had */ }
+  // A folder that no longer exists (deleted elsewhere) returns the page to All content.
+  if (state.location.kind === 'folder' && !folderById().has(state.location.folderId)) {
+    state.location = { kind: 'all', folderId: null };
+    loadContent();
+  }
+  renderNav();
+  renderChrome();
+}
+
+/**
+ * One page of results for the current scope. Newer requests win: an older answer that arrives late
+ * (a slow search overtaken by the next keystroke) is aborted, and ignored if it lands anyway.
+ */
+async function loadContent() {
+  const grid = document.getElementById('contentGrid');
+  if (!grid) return;
+  const my = ++reqSeq;
+  if (inflight) inflight.abort();
+  inflight = new AbortController();
+  state.loading = true;
+  state.error = null;
+  grid.setAttribute('aria-busy', 'true');
+  if (!state.items.length) renderResults();
+  const l = state.location;
+  const query = {
+    q: state.q,
+    folderId: l.kind === 'folder' ? l.folderId : undefined,
+    scope: l.kind === 'recent' || l.kind === 'unused' ? l.kind : undefined,
+    type: state.type, status: state.status, usage: state.usage, sort: state.sort,
+    limit: PAGE_SIZE, offset: state.offset,
+  };
+  try {
+    const [page, links] = await Promise.all([api.getLibraryPage(query, inflight.signal), loadCanvaLinks().catch(() => new Map())]);
+    if (my !== reqSeq) return;
+    if (Array.isArray(page)) { state.items = page; state.total = page.length; state.legacy = true; }
+    else { state.items = page.items || []; state.total = page.total || 0; state.legacy = false; }
+    state.canvaLinks = links;
+    // Asked past the end (the last item on the last page was deleted): go back a page.
+    if (!state.items.length && state.offset > 0 && state.total > 0) {
+      state.offset = Math.max(0, Math.floor((state.total - 1) / PAGE_SIZE) * PAGE_SIZE);
+      state.loading = false;
+      return loadContent();
+    }
+  } catch (err) {
+    if (my !== reqSeq || (err && err.name === 'AbortError')) return;
+    state.error = err.message || t('content.failed_to_load');
+  } finally {
+    if (my === reqSeq) { state.loading = false; inflight = null; }
+  }
+  if (my !== reqSeq) return;
+  grid.setAttribute('aria-busy', 'false');
+  // Keep the selected rows current (a rename or a move shows in the bulk bar too).
+  for (const c of state.items) if (state.selected.has(c.id)) state.selected.set(c.id, c);
+  renderChrome();
+  renderResults();
+  if (inspector && state.openId) {
+    const open = state.items.find((c) => c.id === state.openId);
+    if (inspector.openId === state.openId) inspector.refresh(open);
+    else reopenInspector(open);
   }
 
-  uploadArea.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    uploadArea.classList.add('dragover');
-  });
+  // #313/checklist: adding content ticks a step, and this is the one path every add
+  // (file, remote URL, YouTube) already goes through.
+  gettingStarted.refresh().catch(() => {});
+}
 
-  uploadArea.addEventListener('dragleave', () => {
-    uploadArea.classList.remove('dragover');
-  });
+// Back on the page with an item open: open it again (from this page, or fetched), with any
+// unsaved edits it had when the page was left.
+async function reopenInspector(onPage) {
+  let c = onPage;
+  if (!c) { try { c = await api.getContentItem(state.openId); } catch (_) { c = null; } }
+  if (!c || !inspector) { state.openId = null; state.pendingDraft = null; markOpen(); return; }
+  const restoreDraft = state.pendingDraft;
+  state.pendingDraft = null;
+  await inspector.open(c, { focus: false, restoreDraft });
+  markOpen();
+}
 
-  uploadArea.addEventListener('drop', (e) => {
-    e.preventDefault();
-    uploadArea.classList.remove('dragover');
-    handleFiles(e.dataTransfer.files);
-  });
+// Several things finishing at once (a batch of uploads) reload once.
+function scheduleReload() {
+  clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(() => { loadContent(); loadNav(); }, 250);
+}
 
-  fileInput.addEventListener('change', () => {
-    handleFiles(fileInput.files);
-    fileInput.value = '';
-  });
-
-  // Remote URL handling
-  // Google / Office documents become a cloud-doc WIDGET (lib/cloud-docs.js): the screen shows the
-  // provider's own embed, so there is no file to store. The server rebuilds and checks the link.
-  document.getElementById('addCloudDocBtn')?.addEventListener('click', async () => {
-    const url = document.getElementById('cloudDocUrlInput').value.trim();
-    const name = document.getElementById('cloudDocNameInput').value.trim() || t('content.cloud_docs_default_name');
-    if (!url) { showToast(t('content.cloud_docs_need_url'), 'error'); return; }
-    try {
-      await api.post('/widgets', { widget_type: 'cloud-doc', name, config: { url } });
-      document.getElementById('cloudDocUrlInput').value = '';
-      document.getElementById('cloudDocNameInput').value = '';
-      showToast(t('content.cloud_docs_added'), 'success');
-    } catch (err) { showToast(err.message, 'error'); }
-  });
-  document.getElementById('cloudFoldersBtn')?.addEventListener('click', async () => {
-    const { openCloudFolders } = await import('../components/m365-settings.js');
-    openCloudFolders({ onChange: () => loadContent() });
-  });
-
-  document.getElementById('addRemoteBtn').addEventListener('click', async () => {
-    const url = document.getElementById('remoteUrlInput').value.trim();
-    const name = document.getElementById('remoteNameInput').value.trim();
-    const mimeType = document.getElementById('remoteMimeType').value;
-    if (!url) {
-      showToast(t('content.error_enter_url'), 'error');
-      return;
-    }
-    try {
-      await api.addRemoteContent(url, name, mimeType);
-      showToast(t('content.toast.remote_added'), 'success');
-      document.getElementById('remoteUrlInput').value = '';
-      document.getElementById('remoteNameInput').value = '';
-      loadContent();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-
-  // YouTube URL handling
-  document.getElementById('addYoutubeBtn').addEventListener('click', async () => {
-    const url = document.getElementById('youtubeUrlInput').value.trim();
-    const name = document.getElementById('youtubeNameInput').value.trim();
-    if (!url) {
-      showToast(t('content.error_enter_youtube_url'), 'error');
-      return;
-    }
-    try {
-      await api.addYoutubeContent(url, name);
-      showToast(t('content.toast.youtube_added'), 'success');
-      document.getElementById('youtubeUrlInput').value = '';
-      document.getElementById('youtubeNameInput').value = '';
-      loadContent();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-
-  // IPTV: add a live HLS stream. The screen opens the URL itself (it may be a LAN
-  // address); ScreenTinker never pulls the video, so the private-URL error from the
-  // server-fetched remote path never applies here.
-  document.getElementById('addHlsBtn').addEventListener('click', async () => {
-    const url = document.getElementById('hlsUrlInput').value.trim();
-    const name = document.getElementById('hlsNameInput').value.trim();
-    if (!url) {
-      showToast(t('content.error_enter_hls_url'), 'error');
-      return;
-    }
-    try {
-      await api.addHlsContent(url, name);
-      showToast(t('content.toast.hls_added'), 'success');
-      document.getElementById('hlsUrlInput').value = '';
-      document.getElementById('hlsNameInput').value = '';
-      loadContent();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-
-  // Live input: the screen's own HDMI IN. Same route as a live stream — the server classifies
-  // hdmi://<port> — and the same rule: only a screen that has an input is ever sent it.
-  document.getElementById('addHdmiInBtn').addEventListener('click', async () => {
-    const port = document.getElementById('hdmiInPort').value;
-    const name = document.getElementById('hdmiInName').value.trim();
-    try {
-      await api.addHlsContent('hdmi://' + port, name || (port ? 'HDMI ' + port : 'HDMI input'));
-      showToast(t('content.toast.hdmi_in_added'), 'success');
-      document.getElementById('hdmiInName').value = '';
-      loadContent();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-
-  // A hold: nothing new for its duration (freeze or blank) — how screens take turns (lib/hold-item.js).
-  document.getElementById('addHoldBtn').addEventListener('click', async () => {
-    try {
-      await api.addHoldContent(document.getElementById('holdMode').value);
-      showToast(t('content.toast.hold_added'), 'success');
-      loadContent();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-
-  // #214: search/type/sort now query the server so results span the whole workspace,
-  // not just the items already rendered on the current page. Search is debounced to
-  // avoid a request per keystroke.
-  let searchTimer = null;
-  document.getElementById('contentSearch').oninput = (e) => {
-    clearTimeout(searchTimer);
-    const v = e.target.value;
-    searchTimer = setTimeout(() => { state.search = v.trim(); loadContent(); }, 300);
-  };
-  document.getElementById('contentTypeFilter').onchange = (e) => { state.type = e.target.value; loadContent(); };
-  document.getElementById('contentSort').onchange = (e) => { state.sort = e.target.value; loadContent(); };
-
-  // #157: "Show expired" — reloads the grid including deactivated / past-expiry items so
-  // they can be inspected and restored (clear/extend expiry in the edit modal).
-  document.getElementById('showExpiredToggle').onchange = (e) => {
-    state.showExpired = e.target.checked;
-    loadContent();
-  };
-
-  // Create folder in the current folder.
-  document.getElementById('newFolderBtn').onclick = async () => {
-    const name = prompt(t('content.prompt_folder_name'));
-    if (!name || !name.trim()) return;
-    try {
-      await api.createFolder(name.trim(), state.currentFolderId);
-      showToast(t('content.toast.folder_created_named', { name }), 'success');
-      loadContent();
-    } catch (err) { showToast(err.message, 'error'); }
-  };
-
+/**
+ * The scope changed (location, query or a filter): back to page one, and the selection is cleared —
+ * out loud, because checked items silently vanishing from a bulk action is worse than either.
+ */
+function scopeChanged() {
+  state.offset = 0;
+  if (state.selected.size) {
+    state.selected.clear();
+    state.lastClickedId = null;
+    announce(t('library.selection_cleared'));
+  }
+  renderNav();
+  renderChrome();
   loadContent();
 }
 
-// View state — current folder navigation. Lives at module scope so the back button
-// and other handlers can read it without threading it through every callback.
-const state = {
-  currentFolderId: null, // null = root
-  folders: [],           // all folders for this user (flat tree)
-  showExpired: false,    // #157: include is_active=0 / past-expiry items in the library view
-  search: '',            // #214: server-side text search (spans the whole workspace)
-  type: 'all',           // #214: type filter — all | video | image | youtube | web
-  sort: 'date_desc',     // #214: sort order — date_desc | date_asc | name | size
-  selected: new Set(),   // #213: ids selected for batch operations (scoped to the current view)
-  lastClickedId: null,   // #213: anchor for shift-click range selection
-};
+async function goLocation(loc) {
+  state.location = loc;
+  if (loc.kind === 'folder') {
+    // Open the path to it in the tree.
+    const byId = folderById();
+    for (let f = byId.get(loc.folderId); f && f.parent_id; f = byId.get(f.parent_id)) state.expanded.add(f.parent_id);
+  }
+  scopeChanged();
+}
 
-async function handleFiles(files) {
-  const all = Array.from(files);
-  if (all.length === 0) return;
-  const progress = document.getElementById('uploadProgress');
-  const progressFill = document.getElementById('uploadProgressFill');
-  const progressText = document.getElementById('uploadProgressText');
+/* ================================ navigation ================================ */
 
-  // A PDF is not uploaded as a PDF. It is rendered to one PNG per page in this browser and those
-  // go up as ordinary images, into a folder and a playlist named after the document. The server
-  // never sees the PDF and does not accept one — see components/pdf-pages.js for why.
-  const pdfs = all.filter(isPdf);
-  const list = all.filter((f) => !isPdf(f));
+function renderNav() {
+  const nav = document.getElementById('libNav');
+  if (!nav) return;
+  const s = state.summary;
+  const l = state.location;
+  const item = (kind, icon, label, count) => `
+    <li><button type="button" class="lib-nav-item${l.kind === kind ? ' is-current' : ''}" data-nav="${kind}" ${l.kind === kind ? 'aria-current="page"' : ''}>
+      ${icon}<span class="lib-nav-label">${esc(label)}</span>${count != null ? `<span class="lib-nav-count">${count}</span>` : ''}
+    </button></li>`;
+  const icons = {
+    all: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+    recent: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>',
+    unused: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"/></svg>',
+  };
+  const tree = treeOrder(state.folders);
+  const hasKids = new Set(state.folders.map((f) => f.parent_id).filter(Boolean));
+  const visible = tree.filter((f) => {
+    const byId = folderById();
+    for (let p = f.parent_id && byId.get(f.parent_id); p; p = p.parent_id && byId.get(p.parent_id)) if (!state.expanded.has(p.id)) return false;
+    return true;
+  });
+  nav.innerHTML = `
+    <ul class="lib-nav-list">
+      ${item('all', icons.all, t('library.nav.all'), s ? s.all : null)}
+      ${item('recent', icons.recent, t('library.nav.recent'), s ? s.recent : null)}
+      ${item('unused', icons.unused, t('library.nav.unused'), s ? s.unused : null)}
+    </ul>
+    ${s ? `<p class="lib-nav-note">${esc(t('library.nav.recent_note', { days: s.recent_days || 7 }))}</p>` : ''}
+    <h2 class="lib-nav-heading" id="libFoldersHeading">${esc(t('library.nav.folders'))}</h2>
+    <!-- Narrow screens: the tree folds away behind this, so the content comes first. -->
+    <button type="button" class="lib-nav-folders-btn" id="libFoldersToggle" aria-expanded="${navFoldersOpen}" aria-controls="libTree">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><polyline points="${navFoldersOpen ? '6 9 12 15 18 9' : '9 6 15 12 9 18'}"/></svg>
+      ${esc(t('library.nav.folders'))}${l.kind === 'folder' ? `<span class="lib-muted"> · ${esc(locationLabel())}</span>` : ''}
+    </button>
+    <div class="lib-nav-folders${navFoldersOpen ? ' is-open' : ''}" id="libTree">
+    <ul class="lib-tree" aria-labelledby="libFoldersHeading">
+      ${visible.map((f) => {
+        const current = l.kind === 'folder' && l.folderId === f.id;
+        const open = state.expanded.has(f.id);
+        return `<li class="lib-tree-row" style="--depth:${f.depth}">
+          ${hasKids.has(f.id) ? `<button type="button" class="lib-tree-toggle" data-toggle="${esc(f.id)}" aria-expanded="${open}" aria-label="${esc(t(open ? 'library.nav.collapse' : 'library.nav.expand', { name: f.name }))}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><polyline points="${open ? '6 9 12 15 18 9' : '9 6 15 12 9 18'}"/></svg></button>` : '<span class="lib-tree-spacer"></span>'}
+          <button type="button" class="lib-nav-item lib-folder${current ? ' is-current' : ''}" data-folder="${esc(f.id)}" ${current ? 'aria-current="page"' : ''} title="${esc(folderPathOf(f))}">
+            ${icons.all}<span class="lib-nav-label">${esc(f.name)}</span>
+          </button>
+        </li>`;
+      }).join('')}
+    </ul>
+    ${canWrite() ? `<button type="button" class="lib-nav-new" id="newFolderBtn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      ${esc(t('library.nav.new_folder'))}</button>` : ''}
+    </div>`;
 
-  // #212: send all selected files in a single request with aggregate progress, instead
-  // of one sequential XHR per file.
-  progress.style.display = 'block';
-  progressFill.style.width = '0%';
+  nav.querySelectorAll('[data-nav]').forEach((b) => b.addEventListener('click', () => goLocation({ kind: b.dataset.nav, folderId: null })));
+  nav.querySelectorAll('[data-folder]').forEach((b) => {
+    b.addEventListener('click', () => goLocation({ kind: 'folder', folderId: b.dataset.folder }));
+    folderDropTarget(b, b.dataset.folder);
+  });
+  nav.querySelectorAll('[data-toggle]').forEach((b) => b.addEventListener('click', () => {
+    const id = b.dataset.toggle;
+    if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);
+    renderNav();
+    nav.querySelector(`[data-toggle="${CSS.escape(id)}"]`)?.focus();
+  }));
+  nav.querySelector('#newFolderBtn')?.addEventListener('click', (e) => newFolder(e.currentTarget));
+  nav.querySelector('#libFoldersToggle').addEventListener('click', () => { navFoldersOpen = !navFoldersOpen; renderNav(); document.getElementById('libFoldersToggle')?.focus(); });
+  // "All content" also takes a drop: it files the item at the root.
+  const allBtn = nav.querySelector('[data-nav="all"]');
+  if (allBtn) folderDropTarget(allBtn, null);
+}
 
-  try {
-    for (const pdf of pdfs) await importPdf(pdf, progressFill, progressText);
-    if (list.length) {
-      const label = list.length === 1 ? list[0].name : t('content.upload_progress_count', { count: list.length });
-      progressText.textContent = label;
-      /*
-       * ⚠️ RESUMABLE, ONE FILE AT A TIME — this replaces #212's single all-or-nothing request.
-       *
-       * That request had to finish inside the shortest timeout between the browser and the server,
-       * which on prod is Cloudflare's 125 seconds. Measured: seven consecutive failures from one
-       * customer at 125.008-125.012s while his successful uploads peaked at 114.2s. Selecting
-       * several files made it certain, because the bytes scaled and the 125 seconds did not — and
-       * the aggregate bar sat near 1% the whole time, which is exactly how he reported it.
-       *
-       * The bar still aggregates across the whole selection; it is now fed by bytes rather than by
-       * one XHR's progress, so it means the same thing without betting everything on one request.
-       */
-      await uploadFilesResumable(list, {
-        folderId: state.currentFolderId,
-        onProgress: (sent, total, file) => {
-          const pct = total ? Math.round((sent / total) * 100) : 0;
-          progressFill.style.width = pct + '%';
-          progressText.textContent = list.length === 1
-            ? `${label} — ${pct}%`
-            : `${label} — ${pct}% (${file ? file.name : ''})`;
-        },
-        // Offered only when a PREVIOUS visit left bytes on the server for this exact file.
-        onResumeOffer: ({ offset, total }) => window.confirm(
-          t('content.upload_resume_prompt', {
-            name: list.length === 1 ? list[0].name : t('content.upload_progress_count', { count: list.length }),
-            done: Math.round((offset / total) * 100),
-          })
-        ),
-      });
-      showToast(
-        list.length === 1
-          ? t('content.toast.uploaded_named', { name: list[0].name })
-          : t('content.toast.uploaded_count', { count: list.length }),
-        'success'
-      );
-    }
-  } catch (err) {
-    const label = all.length === 1 ? all[0].name : t('content.upload_progress_count', { count: all.length });
-    showToast(t('content.toast.upload_failed_named', { name: label, error: err.message }), 'error');
+// Dragging a card or row onto a folder moves it (and every other selected item, if it is selected).
+function folderDropTarget(el, folderId) {
+  el.addEventListener('dragover', (e) => {
+    if (![...e.dataTransfer.types].includes('text/content-id')) return;
+    e.preventDefault();
+    el.classList.add('is-droptarget');
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('is-droptarget'));
+  el.addEventListener('drop', async (e) => {
+    el.classList.remove('is-droptarget');
+    const id = e.dataTransfer.getData('text/content-id');
+    if (!id) return;
+    e.preventDefault();
+    const ids = state.selected.has(id) ? [...state.selected.keys()] : [id];
+    try {
+      await api.batchMoveContent(ids, folderId);
+      showToast(folderId ? t('library.bulk.moved', { count: ids.length, folder: folderPathOf(folderById().get(folderId)) }) : t('library.bulk.moved_root', { count: ids.length }), 'success');
+      if (ids.length > 1) state.selected.clear();
+      scheduleReload();
+    } catch (err) { showToast(err.message, 'error'); }
+  });
+}
+
+/* ================================ toolbar ================================ */
+
+function wireToolbar() {
+  // #214: search queries the server so results span the whole workspace. Debounced; the newest
+  // request wins (loadContent aborts the one before).
+  const box = document.getElementById('contentSearch');
+  box.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    const v = box.value;
+    searchTimer = setTimeout(() => { if (v.trim() !== state.q) { state.q = v.trim(); scopeChanged(); } }, 300);
+  });
+  box.addEventListener('keydown', (e) => { if (e.key === 'Escape' && box.value) { e.preventDefault(); box.value = ''; state.q = ''; scopeChanged(); } });
+  const bind = (id, key) => document.getElementById(id).addEventListener('change', (e) => { state[key] = e.target.value; scopeChanged(); });
+  bind('libType', 'type');
+  bind('libStatus', 'status');
+  bind('libUsage', 'usage');
+  // Sorting reorders the same set: page one again, the selection stays.
+  document.getElementById('libSort').addEventListener('change', (e) => { state.sort = e.target.value; state.offset = 0; loadContent(); });
+  document.querySelectorAll('.lib-viewtoggle [data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+}
+
+function setView(v) {
+  if (state.view === v) return;
+  state.view = v;
+  writeView(v);
+  document.querySelectorAll('.lib-viewtoggle [data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === v)));
+  renderResults();
+}
+
+/* ================================ chrome: count, chips, breadcrumb, bulk bar, pager ================================ */
+
+function renderChrome() {
+  // The signed-in user may arrive after the first render (app.js refreshCurrentUser).
+  const addBtn = document.getElementById('libAddBtn');
+  if (addBtn) addBtn.hidden = !canWrite();
+  const count = document.getElementById('libCount');
+  if (count) {
+    count.textContent = state.loading && !state.items.length ? t('common.loading')
+      : t(state.total === 1 ? 'library.count_one' : 'library.count_other', { count: state.total });
+  }
+  // The sort select shows a header-chosen sort too.
+  const sortSel = document.getElementById('libSort');
+  if (sortSel && sortSel.value !== state.sort) {
+    if (![...sortSel.options].some((o) => o.value === state.sort)) sortSel.insertAdjacentHTML('beforeend', `<option value="${state.sort}">${esc(t(sortLabelKey(state.sort)))}</option>`);
+    sortSel.value = state.sort;
+  }
+  for (const [id, key] of [['libType', 'type'], ['libStatus', 'status'], ['libUsage', 'usage']]) { const el = document.getElementById(id); if (el) el.value = state[key]; }
+
+  // Active filters as removable chips.
+  const chips = document.getElementById('libChips');
+  if (chips) {
+    const label = (list, v) => t((list.find((x) => x[0] === v) || [, ''])[1]);
+    const active = [
+      state.q ? ['q', t('library.chip.search', { q: state.q })] : null,
+      state.type !== 'all' ? ['type', t('library.chip.type', { v: label(TYPE_FILTERS, state.type) })] : null,
+      state.status !== 'all' ? ['status', t('library.chip.status', { v: label(STATUS_FILTERS, state.status) })] : null,
+      state.usage !== 'all' ? ['usage', t('library.chip.usage', { v: label(USAGE_FILTERS, state.usage) })] : null,
+    ].filter(Boolean);
+    chips.hidden = !active.length;
+    chips.innerHTML = active.length ? `<ul class="lib-chips" aria-label="${esc(t('library.chip.label'))}">${active.map(([k, text]) => `<li class="lib-chip">${esc(text)}<button type="button" class="lib-chip-x" data-clear="${k}" aria-label="${esc(t('library.chip.remove', { what: text }))}">×</button></li>`).join('')}</ul>
+      <button type="button" class="lib-link-btn" data-clear="all">${esc(t('library.clear_filters'))}</button>` : '';
+    chips.querySelectorAll('[data-clear]').forEach((b) => b.addEventListener('click', () => {
+      const k = b.dataset.clear;
+      if (k === 'q' || k === 'all') { state.q = ''; const box = document.getElementById('contentSearch'); if (box) box.value = ''; }
+      if (k === 'type' || k === 'all') state.type = 'all';
+      if (k === 'status' || k === 'all') state.status = 'all';
+      if (k === 'usage' || k === 'all') state.usage = 'all';
+      scopeChanged();
+      document.getElementById('contentSearch')?.focus();
+    }));
   }
 
-  progress.style.display = 'none';
-  loadContent();
+  // Breadcrumb: the real current location, and what a search does to it.
+  const crumb = document.getElementById('folderBreadcrumb');
+  if (crumb) {
+    const l = state.location;
+    const parts = [{ label: t('library.nav.all'), nav: { kind: 'all' } }];
+    if (l.kind === 'recent' || l.kind === 'unused') parts.push({ label: locationLabel() });
+    if (l.kind === 'folder') {
+      const byId = folderById();
+      const path = [];
+      for (let f = byId.get(l.folderId); f; f = f.parent_id ? byId.get(f.parent_id) : null) path.unshift(f);
+      for (const f of path) parts.push({ label: f.name, nav: { kind: 'folder', folderId: f.id } });
+    }
+    const last = parts.length - 1;
+    crumb.innerHTML = `
+      <nav aria-label="${esc(t('library.breadcrumb'))}"><ol class="lib-crumbs">${parts.map((p, i) => `<li>${i === last
+        ? `<span aria-current="location">${esc(p.label)}</span>`
+        : `<button type="button" class="lib-crumb" data-crumb="${i}">${esc(p.label)}</button>`}</li>`).join('')}</ol></nav>
+      ${state.q && l.kind === 'folder' ? `<span class="lib-muted">${esc(t('library.search_all_note'))}</span>` : ''}
+      ${l.kind === 'folder' && canWrite() ? `<button type="button" class="lib-icon-btn" id="libFolderMenu" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(t('library.folder.actions', { name: locationLabel() }))}">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>` : ''}`;
+    crumb.querySelectorAll('[data-crumb]').forEach((b) => {
+      const p = parts[Number(b.dataset.crumb)];
+      b.addEventListener('click', () => goLocation({ kind: p.nav.kind, folderId: p.nav.folderId || null }));
+      if (p.nav.kind === 'all' || p.nav.kind === 'folder') folderDropTarget(b, p.nav.folderId || null);
+    });
+    crumb.querySelector('#libFolderMenu')?.addEventListener('click', (e) => openMenu(e.currentTarget, [
+      { label: t('library.folder.new_sub'), onSelect: () => newFolder(e.currentTarget, l.folderId) },
+      { label: t('library.folder.rename'), onSelect: () => renameFolder(l.folderId) },
+      { label: t('library.folder.delete'), danger: true, separatorBefore: true, onSelect: () => deleteFolder(l.folderId) },
+    ], { label: t('library.folder.actions', { name: locationLabel() }) }));
+  }
+
+  renderBulkBar();
+  renderPager();
+}
+
+function renderPager() {
+  const el = document.getElementById('libPager');
+  if (!el) return;
+  if (!state.items.length) { el.innerHTML = ''; return; }
+  const from = state.offset + 1, to = state.offset + state.items.length;
+  const pages = state.legacy ? 1 : Math.max(1, Math.ceil(state.total / PAGE_SIZE));
+  const page = Math.floor(state.offset / PAGE_SIZE) + 1;
+  const nums = [];
+  for (let p = 1; p <= pages; p++) if (p === 1 || p === pages || Math.abs(p - page) <= 1) nums.push(p); else if (nums[nums.length - 1] !== '…') nums.push('…');
+  el.innerHTML = `
+    <span class="lib-pager-text">${esc(state.total === 1 ? t('library.showing_one') : t('library.showing', { from, to, total: state.total }))}</span>
+    ${pages > 1 ? `<nav class="lib-pages" aria-label="${esc(t('library.pages'))}">
+      <button type="button" class="lib-page-btn" data-page="${page - 1}" ${page === 1 ? 'disabled' : ''} aria-label="${esc(t('library.prev_page'))}">‹</button>
+      ${nums.map((n) => n === '…' ? '<span class="lib-page-gap" aria-hidden="true">…</span>'
+        : `<button type="button" class="lib-page-btn${n === page ? ' is-current' : ''}" data-page="${n}" ${n === page ? 'aria-current="page"' : ''} aria-label="${esc(t('library.page_n', { n }))}">${n}</button>`).join('')}
+      <button type="button" class="lib-page-btn" data-page="${page + 1}" ${page === pages ? 'disabled' : ''} aria-label="${esc(t('library.next_page'))}">›</button>
+    </nav>` : ''}`;
+  el.querySelectorAll('[data-page]').forEach((b) => b.addEventListener('click', () => {
+    state.offset = (Number(b.dataset.page) - 1) * PAGE_SIZE;
+    loadContent().then(() => { document.getElementById('libMain')?.scrollIntoView({ block: 'start' }); document.getElementById('contentGrid')?.focus(); });
+  }));
+}
+
+function renderBulkBar() {
+  const bar = document.getElementById('batchToolbar');
+  if (!bar) return;
+  const n = state.selected.size;
+  if (!n) { bar.hidden = true; bar.innerHTML = ''; return; }
+  const pageIds = state.items.map((c) => c.id);
+  const allOnPage = pageIds.length > 0 && pageIds.every((id) => state.selected.has(id));
+  const w = canWrite();
+  bar.hidden = false;
+  bar.innerHTML = `
+    <strong class="lib-bulk-count" aria-live="polite">${esc(t(n === 1 ? 'library.bulk.selected_one' : 'library.bulk.selected_other', { count: n }))}</strong>
+    ${!allOnPage ? `<button type="button" class="lib-link-btn" data-bulk="page">${esc(t('library.bulk.select_page', { count: pageIds.length }))}</button>` : ''}
+    <div class="lib-bulk-actions">
+      ${w ? `<button type="button" class="btn btn-secondary btn-sm" data-bulk="move">${esc(t('library.bulk.move'))}</button>
+      <button type="button" class="btn btn-secondary btn-sm" data-bulk="tag">${esc(t('library.bulk.tag'))}</button>
+      <button type="button" class="btn btn-secondary btn-sm" data-bulk="playlist">${esc(t('library.bulk.add_playlist'))}</button>
+      <button type="button" class="btn btn-secondary btn-sm lib-danger-text" data-bulk="delete">${esc(t('library.bulk.delete'))}</button>` : ''}
+      <button type="button" class="btn btn-secondary btn-sm" data-bulk="clear">${esc(t('library.bulk.clear'))}</button>
+    </div>`;
+  const act = {
+    page: () => { for (const c of state.items) state.selected.set(c.id, c); syncSelection(); },
+    clear: () => { state.selected.clear(); state.lastClickedId = null; syncSelection(); announce(t('library.selection_cleared')); document.getElementById('contentSearch')?.focus(); },
+    move: () => moveDialog([...state.selected.values()]),
+    tag: () => tagDialog([...state.selected.values()]),
+    playlist: () => playlistDialog([...state.selected.values()]),
+    delete: () => deleteDialog([...state.selected.values()]),
+  };
+  bar.querySelectorAll('[data-bulk]').forEach((b) => b.addEventListener('click', () => act[b.dataset.bulk]()));
+}
+
+/* ================================ results ================================ */
+
+function renderResults() {
+  const grid = document.getElementById('contentGrid');
+  if (!grid) return;
+  grid.tabIndex = -1;
+  const filtering = !!state.q || filtersActive();
+  if (state.error && !state.items.length) {
+    grid.innerHTML = `<div class="lib-state" role="alert"><h2>${esc(t('content.failed_to_load'))}</h2><p>${esc(state.error)}</p>
+      <button type="button" class="btn btn-secondary" data-retry>${esc(t('library.retry'))}</button></div>`;
+    grid.querySelector('[data-retry]').addEventListener('click', () => loadContent());
+    return;
+  }
+  if (state.loading && !state.items.length) { grid.innerHTML = `<div class="lib-state"><p>${esc(t('common.loading'))}</p></div>`; return; }
+  if (!state.items.length) {
+    const l = state.location;
+    const libraryEmpty = state.summary && state.summary.all === 0 && l.kind === 'all' && !filtering;
+    if (libraryEmpty) {
+      // An empty library keeps a large upload invitation (a populated one has none: see wireDrop).
+      grid.innerHTML = `<div class="lib-empty-invite">
+        ${typeIcon('image', 48)}
+        <h2>${esc(t('content.no_content'))}</h2>
+        <p>${esc(t('library.empty.lede'))}</p>
+        ${canWrite() ? `<div class="lib-empty-actions"><button type="button" class="btn btn-primary" data-act="upload">${esc(t('library.empty.upload'))}</button>
+        <button type="button" class="btn btn-secondary" data-act="add">${esc(t('library.add_content'))}</button></div>
+        <p class="lib-muted">${esc(t('library.empty.drop'))}</p>` : ''}
+      </div>`;
+      grid.querySelector('[data-act="upload"]')?.addEventListener('click', () => document.getElementById('fileInput').click());
+      grid.querySelector('[data-act="add"]')?.addEventListener('click', () => openAdd());
+      return;
+    }
+    const [title, text] = filtering ? [t('library.empty.no_match'), t('library.empty.no_match_desc')]
+      : l.kind === 'folder' ? [t('content.empty_folder_title'), t('library.empty.folder_desc')]
+        : l.kind === 'unused' ? [t('library.empty.unused'), t('library.empty.unused_desc')]
+          : l.kind === 'recent' ? [t('library.empty.recent'), t('library.empty.recent_desc', { days: (state.summary && state.summary.recent_days) || 7 })]
+            : [t('content.no_content'), t('library.empty.lede')];
+    grid.innerHTML = `<div class="lib-state"><h2>${esc(title)}</h2><p>${esc(text)}</p>
+      ${filtering ? `<button type="button" class="btn btn-secondary" data-clear-all>${esc(t('library.clear_filters'))}</button>` : ''}</div>`;
+    grid.querySelector('[data-clear-all]')?.addEventListener('click', () => document.querySelector('#libChips [data-clear="all"]')?.click());
+    return;
+  }
+  grid.innerHTML = state.view === 'list' ? tableHtml() : gridHtml();
+  hydrateAuthImages(grid);
+  wireResults(grid);
+  markOpen();
+}
+
+const checkbox = (c) => `<input type="checkbox" class="lib-check content-select" data-select="${esc(c.id)}" ${state.selected.has(c.id) ? 'checked' : ''} aria-label="${esc(t('library.select_item', { name: c.filename }))}">`;
+const moreBtn = (c) => `<button type="button" class="lib-icon-btn lib-more" data-more="${esc(c.id)}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc(t('library.actions_for', { name: c.filename }))}">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>`;
+const statusHtml = (c) => { const s = statusOf(c); return `<span class="lib-status"><span class="lib-dot is-${s.tone}" aria-hidden="true"></span>${esc(s.label)}</span>`; };
+function thumbHtml(c, size) {
+  const th = thumbOf(c);
+  const ty = typeOf(c).key;
+  if (!th) return `<span class="lib-thumb-icon is-${ty}">${typeIcon(ty, size)}</span>`;
+  return th.auth ? `<img data-auth-src="${esc(th.src)}" alt="" loading="lazy">` : `<img src="${esc(th.src)}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
+}
+
+function gridHtml() {
+  return `<ul class="lib-grid" aria-label="${esc(t('library.results_label', { where: locationLabel() }))}">${state.items.map((c) => {
+    const ty = typeOf(c);
+    const dur = durationOf(c);
+    const sel = state.selected.has(c.id);
+    return `<li class="lib-card${sel ? ' is-selected' : ''}" data-id="${esc(c.id)}" draggable="${canWrite()}">
+      <div class="lib-card-thumb">
+        <button type="button" class="lib-card-open" data-open="${esc(c.id)}" tabindex="-1" aria-hidden="true">${thumbHtml(c, 36)}</button>
+        <span class="lib-badge">${esc(ty.label)}</span>
+        ${dur ? `<span class="lib-duration">${esc(dur)}</span>` : ''}
+        <label class="lib-card-check">${checkbox(c)}</label>
+      </div>
+      <div class="lib-card-body">
+        <button type="button" class="lib-card-name" data-open="${esc(c.id)}" title="${esc(c.filename)}">${esc(c.filename)}</button>
+        <div class="lib-card-meta">${esc(detailLine(c) || ty.label)}${state.canvaLinks.has(c.id) ? ` · ${esc(t('canva.linked_badge'))}` : ''}</div>
+        <div class="lib-card-foot">${statusHtml(c)}<span class="lib-card-usage">${esc(usageText(c))}</span>${moreBtn(c)}</div>
+      </div>
+    </li>`;
+  }).join('')}</ul>`;
+}
+
+function tableHtml() {
+  const head = (key, label) => {
+    const pair = COLUMN_SORTS[key];
+    if (!pair || state.legacy) return `<th scope="col">${esc(label)}</th>`;
+    const dir = state.sort === pair[0] ? 'ascending' : state.sort === pair[1] ? 'descending' : null;
+    // A column sorts ascending first, except the two whose natural first look is "biggest".
+    return `<th scope="col" aria-sort="${dir || 'none'}"><button type="button" class="lib-sort" data-sort="${key}">${esc(label)}<span class="lib-sort-ind" aria-hidden="true">${dir === 'ascending' ? '↑' : dir === 'descending' ? '↓' : ''}</span></button></th>`;
+  };
+  const pageIds = state.items.map((c) => c.id);
+  const selCount = pageIds.filter((id) => state.selected.has(id)).length;
+  return `<div class="lib-table-wrap"><table class="lib-table">
+    <caption class="lib-visually-hidden">${esc(t('library.results_label', { where: locationLabel() }))}</caption>
+    <thead><tr>
+      <th scope="col" class="lib-col-check"><input type="checkbox" class="lib-check" data-select-page ${selCount && selCount === pageIds.length ? 'checked' : ''} aria-label="${esc(t('library.bulk.select_page', { count: pageIds.length }))}"></th>
+      ${head('name', t('library.col.name'))}${head('type', t('library.col.type')).replace('<th scope="col"', '<th scope="col" class="lib-col-type"')}
+      <th scope="col" class="lib-col-opt" aria-sort="${state.sort === 'duration' ? 'ascending' : state.sort === 'duration_desc' ? 'descending' : 'none'}">${state.legacy ? esc(t('library.col.duration')) : `<button type="button" class="lib-sort" data-sort="duration">${esc(t('library.col.duration'))}<span class="lib-sort-ind" aria-hidden="true">${state.sort === 'duration' ? '↑' : state.sort === 'duration_desc' ? '↓' : ''}</span></button>`}</th>
+      <th scope="col" class="lib-col-opt" aria-sort="${state.sort === 'dims' ? 'ascending' : state.sort === 'dims_desc' ? 'descending' : 'none'}">${state.legacy ? esc(t('library.col.dimensions')) : `<button type="button" class="lib-sort" data-sort="dimensions">${esc(t('library.col.dimensions'))}<span class="lib-sort-ind" aria-hidden="true">${state.sort === 'dims' ? '↑' : state.sort === 'dims_desc' ? '↓' : ''}</span></button>`}</th>
+      <th scope="col">${esc(t('library.col.status'))}</th>
+      <th scope="col">${esc(t('library.col.used_in'))}</th>
+      <th scope="col" class="lib-col-actions"><span class="lib-visually-hidden">${esc(t('library.col.actions'))}</span></th>
+    </tr></thead>
+    <tbody>${state.items.map((c) => {
+      const ty = typeOf(c);
+      return `<tr class="lib-row${state.selected.has(c.id) ? ' is-selected' : ''}" data-id="${esc(c.id)}" draggable="${canWrite()}">
+        <td class="lib-col-check">${checkbox(c)}</td>
+        <td class="lib-col-name"><button type="button" class="lib-row-open" data-open="${esc(c.id)}" title="${esc(c.filename)}"><span class="lib-row-thumb">${thumbHtml(c, 20)}</span><span class="lib-row-name">${esc(c.filename)}</span></button></td>
+        <td class="lib-col-type">${esc(ty.label)}</td>
+        <td class="lib-col-opt">${esc(durationOf(c) || '—')}</td>
+        <td class="lib-col-opt">${esc(dimensionsOf(c) || '—')}</td>
+        <td>${statusHtml(c)}</td>
+        <td>${c.usage && c.usage.playlists > 0 ? `<button type="button" class="lib-link-btn" data-open="${esc(c.id)}" data-focus-usage>${esc(usageText(c))}</button>` : esc(usageText(c) || '—')}</td>
+        <td class="lib-col-actions">${moreBtn(c)}</td>
+      </tr>`;
+    }).join('')}</tbody></table></div>`;
+}
+
+function wireResults(grid) {
+  grid.onclick = (e) => {
+    const more = e.target.closest('[data-more]');
+    if (more) { const c = state.items.find((x) => x.id === more.dataset.more); if (c) openMenu(more, itemMenu(c, more), { label: t('library.actions_for', { name: c.filename }) }); return; }
+    const sortBtn = e.target.closest('[data-sort]');
+    if (sortBtn) {
+      const pair = COLUMN_SORTS[sortBtn.dataset.sort];
+      state.sort = state.sort === pair[0] ? pair[1] : pair[0];
+      state.offset = 0;
+      loadContent().then(() => document.querySelector(`[data-sort="${sortBtn.dataset.sort}"]`)?.focus());
+      return;
+    }
+    const open = e.target.closest('[data-open]');
+    if (open) {
+      const c = state.items.find((x) => x.id === open.dataset.open);
+      // The thumbnail is a mouse target only; the visible name button is the one the keyboard reaches.
+      const trigger = open.classList.contains('lib-card-open') ? open.closest('.lib-card').querySelector('.lib-card-name') : open;
+      if (c) openItem(c, trigger);
+    }
+  };
+  grid.onchange = (e) => {
+    const cb = e.target.closest('[data-select]');
+    if (cb) { toggleSelect(cb.dataset.select, cb.checked, e.shiftKey); return; }
+    if (e.target.matches('[data-select-page]')) {
+      const on = e.target.checked;
+      for (const c of state.items) { if (on) state.selected.set(c.id, c); else state.selected.delete(c.id); }
+      syncSelection();
+    }
+  };
+  // Shift-click range (#213): the click carries shiftKey, the change event does not.
+  grid.addEventListener('click', (e) => { const cb = e.target.closest('[data-select]'); if (cb) cb.dataset.shift = e.shiftKey ? '1' : ''; }, true);
+  grid.querySelectorAll('[draggable="true"]').forEach((el) => el.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/content-id', el.dataset.id);
+    e.dataTransfer.effectAllowed = 'move';
+  }));
+}
+
+function toggleSelect(id, on) {
+  const cb = document.querySelector(`[data-select="${CSS.escape(id)}"]`);
+  const shift = cb && cb.dataset.shift === '1';
+  const order = state.items.map((c) => c.id);
+  if (shift && state.lastClickedId && order.includes(state.lastClickedId)) {
+    const a = order.indexOf(state.lastClickedId), b = order.indexOf(id);
+    const [lo, hi] = a < b ? [a, b] : [b, a];
+    for (let i = lo; i <= hi; i++) { if (on) state.selected.set(order[i], state.items[i]); else state.selected.delete(order[i]); }
+  } else if (on) state.selected.set(id, state.items.find((c) => c.id === id));
+  else state.selected.delete(id);
+  state.lastClickedId = id;
+  syncSelection();
+}
+
+// Selection changes restyle in place: re-rendering would move focus off the checkbox just used.
+function syncSelection() {
+  document.querySelectorAll('#contentGrid [data-id]').forEach((el) => {
+    const on = state.selected.has(el.dataset.id);
+    el.classList.toggle('is-selected', on);
+    const cb = el.querySelector('[data-select]');
+    if (cb) cb.checked = on;
+  });
+  const pageBox = document.querySelector('[data-select-page]');
+  if (pageBox) {
+    const n = state.items.filter((c) => state.selected.has(c.id)).length;
+    pageBox.checked = n > 0 && n === state.items.length;
+    pageBox.indeterminate = n > 0 && n < state.items.length;
+  }
+  renderBulkBar();
+}
+
+function markOpen() {
+  document.querySelectorAll('#contentGrid [data-id]').forEach((el) => el.classList.toggle('is-open', el.dataset.id === state.openId));
+  document.getElementById('libRoot')?.classList.toggle('has-inspector', !!state.openId);
+}
+
+async function openItem(c, trigger) {
+  const ok = await inspector.open(c, { trigger, focus: true });
+  if (!ok) return;
+  state.openId = c.id;
+  markOpen();
+}
+
+/* ================================ per-item actions ================================ */
+
+function itemMenu(c, anchor, { fromInspector = false } = {}) {
+  const w = canWrite();
+  const ty = typeOf(c).key;
+  const link = state.canvaLinks.get(c.id);
+  return [
+    !fromInspector ? { label: t('library.menu.details'), onSelect: () => openItem(c, anchor) } : null,
+    ['image', 'video', 'youtube', 'bundle'].includes(ty) ? { label: t('library.menu.preview'), onSelect: () => showPreview(c) } : null,
+    w ? { label: t('library.menu.edit'), onSelect: () => showEditModal(c, () => scheduleReload()) } : null,
+    w ? { label: t('library.menu.expiry'), onSelect: () => showEditModal(c, () => scheduleReload(), { focus: '#editExpiresAt' }) } : null,
+    w ? { label: t('library.menu.add_playlist'), onSelect: () => playlistDialog([c]) } : null,
+    w ? { label: t('library.menu.move'), onSelect: () => moveDialog([c]) } : null,
+    link && w ? { label: t('canva.sync_now'), hint: link.last_error ? t('canva.sync_problem') : '', onSelect: () => canvaSync(c) } : null,
+    { label: t('history.button'), onSelect: () => openHistoryModal('content', c.id, { name: c.filename, onChanged: () => scheduleReload() }) },
+    w ? { label: t('library.menu.delete'), danger: true, separatorBefore: true, onSelect: () => deleteDialog([c]) } : null,
+  ].filter(Boolean);
+}
+// data-history-content: history is per item, from its menu (components/history-modal.js).
+
+async function canvaSync(c) {
+  try {
+    const r = await syncCanvaLink(c.id);
+    if (r.errors) showToast(t('canva.sync_failed'), 'error');
+    else showToast(r.replaced ? t('canva.synced') : t('canva.up_to_date'), 'success');
+  } catch (err) { showToast(err.message, 'error'); }
+  scheduleReload();
+}
+
+const nameList = (items, max = 6) => {
+  const shown = items.slice(0, max).map((c) => `<li>${esc(c.filename)}</li>`).join('');
+  return `<ul class="lib-confirm-list">${shown}${items.length > max ? `<li class="lib-muted">${esc(t('library.and_more', { count: items.length - max }))}</li>` : ''}</ul>`;
+};
+
+function afterBulk(clear = true) {
+  if (clear) { state.selected.clear(); state.lastClickedId = null; }
+  scheduleReload();
+}
+
+async function deleteDialog(items) {
+  // Impact first: what each item is used in, from the same usage the list shows.
+  const used = items.filter((c) => c.usage && (c.usage.playlists > 0 || c.usage.in_use));
+  const impact = used.length ? `<p>${esc(t('library.delete.impact', { count: used.length }))}</p>
+    <ul class="lib-confirm-list">${used.slice(0, 8).map((c) => `<li><strong>${esc(c.filename)}</strong> — ${esc(usageText(c))}</li>`).join('')}${used.length > 8 ? `<li class="lib-muted">${esc(t('library.and_more', { count: used.length - 8 }))}</li>` : ''}</ul>`
+    : `<p>${esc(t('library.delete.no_impact'))}</p>`;
+  const ok = await confirmDialog({
+    title: t(items.length === 1 ? 'library.delete.title_one' : 'library.delete.title_other', { count: items.length, name: items[0].filename }),
+    bodyHtml: `${items.length > 1 ? nameList(items) : ''}${impact}<p class="lib-muted">${esc(t('library.delete.permanent'))}</p>`,
+    confirmLabel: t(items.length === 1 ? 'library.delete.confirm_one' : 'library.delete.confirm_other', { count: items.length }),
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const ids = items.map((c) => c.id);
+    const r = ids.length === 1 ? await api.deleteContent(ids[0]) : await api.batchDeleteContent(ids);
+    const devices = (r && r.affectedDevices) ? r.affectedDevices.length : 0;
+    showToast(t(ids.length === 1 ? 'library.delete.done_one' : 'library.delete.done_other', { count: ids.length }) + (devices ? ' ' + t('library.delete.devices', { count: devices }) : ''), 'success');
+    if (inspector.openId && ids.includes(inspector.openId)) inspector.close({ force: true });
+    for (const id of ids) state.selected.delete(id);
+    afterBulk(false);
+  } catch (err) {
+    // The batch is all-or-nothing (routes/content.js): name the item it stopped on.
+    showToast(t('library.bulk.failed_none', { error: nameForError(err.message, items) }), 'error');
+  }
+}
+
+// "Access denied for content: <uuid>" reads better with the item's name.
+function nameForError(msg, items) {
+  let out = String(msg || '');
+  for (const c of items) if (out.includes(c.id)) out = out.replace(c.id, `“${c.filename}”`);
+  return out;
+}
+
+function folderRadios(name, selectedId) {
+  const opts = [{ id: '', name: rootLabel(), depth: 0 }, ...treeOrder(state.folders).map((f) => ({ ...f, depth: f.depth + 1 }))];
+  return `<fieldset class="lib-dest-list"><legend class="lib-visually-hidden">${esc(t('library.move.legend'))}</legend>
+    ${opts.map((o) => `<label class="lib-dest-opt" style="padding-left:${12 + o.depth * 18}px"><input type="radio" name="${name}" value="${esc(o.id)}" ${(selectedId || '') === o.id ? 'checked' : ''}><span>${esc(o.name)}</span></label>`).join('')}
+  </fieldset>`;
+}
+
+function moveDialog(items) {
+  const current = items.length === 1 ? items[0].folder_id || '' : null;
+  const d = openDialog({
+    title: t(items.length === 1 ? 'library.move.title_one' : 'library.move.title_other', { count: items.length, name: items[0].filename }),
+    html: `${folderRadios('libMoveTo', current)}
+      <div class="lib-dialog-actions"><span class="lib-form-error" role="alert" data-err></span>
+        <button type="button" class="btn btn-secondary" data-cancel>${esc(t('common.cancel'))}</button>
+        <button type="button" class="btn btn-primary" data-ok>${esc(t('library.move.ok'))}</button></div>`,
+  });
+  d.root.querySelector('[data-cancel]').addEventListener('click', () => d.close());
+  d.root.querySelector('[data-ok]').addEventListener('click', async (e) => {
+    const v = d.root.querySelector('input[name="libMoveTo"]:checked');
+    if (!v) { d.root.querySelector('[data-err]').textContent = t('library.move.choose'); return; }
+    e.target.disabled = true;
+    try {
+      await api.batchMoveContent(items.map((c) => c.id), v.value || null);
+      const f = folderById().get(v.value);
+      showToast(f ? t('library.bulk.moved', { count: items.length, folder: folderPathOf(f) }) : t('library.bulk.moved_root', { count: items.length }), 'success');
+      d.close();
+      afterBulk(items.length > 1);
+    } catch (err) { d.root.querySelector('[data-err]').textContent = t('library.bulk.failed_none', { error: nameForError(err.message, items) }); e.target.disabled = false; }
+  });
+}
+
+function tagDialog(items) {
+  const existing = [...new Set(items.flatMap((c) => Array.isArray(c.tags) ? c.tags : []))].sort();
+  const d = openDialog({
+    title: t('library.tag.title', { count: items.length }),
+    html: `<div class="lib-field"><label for="libTagAdd">${esc(t('library.tag.add_label'))}</label>
+        <input id="libTagAdd" class="input" placeholder="${esc(t('content.tags_placeholder'))}" autocomplete="off" aria-describedby="libTagAdd-help">
+        <div class="lib-field-help" id="libTagAdd-help">${esc(t('content.tags_hint'))}</div></div>
+      ${existing.length ? `<fieldset class="lib-field"><legend>${esc(t('library.tag.remove_label'))}</legend>
+        <div class="lib-tag-remove">${existing.map((tg) => `<label class="lib-check-label"><input type="checkbox" value="${esc(tg)}" data-remove> #${esc(tg)}</label>`).join('')}</div></fieldset>` : ''}
+      <div class="lib-dialog-actions"><span class="lib-form-error" role="alert" data-err></span>
+        <button type="button" class="btn btn-secondary" data-cancel>${esc(t('common.cancel'))}</button>
+        <button type="button" class="btn btn-primary" data-ok>${esc(t('library.tag.ok'))}</button></div>`,
+  });
+  d.root.querySelector('[data-cancel]').addEventListener('click', () => d.close());
+  d.root.querySelector('[data-ok]').addEventListener('click', async (e) => {
+    const add = d.root.querySelector('#libTagAdd').value.split(/[,;\n]/).map((s) => s.trim()).filter(Boolean);
+    const remove = [...d.root.querySelectorAll('[data-remove]:checked')].map((x) => x.value);
+    if (!add.length && !remove.length) { d.root.querySelector('[data-err]').textContent = t('library.tag.nothing'); d.root.querySelector('#libTagAdd').focus(); return; }
+    e.target.disabled = true;
+    try {
+      await api.batchTagContent(items.map((c) => c.id), add, remove);
+      showToast(t('library.tag.done', { count: items.length }), 'success');
+      d.close();
+      afterBulk(false);
+    } catch (err) { d.root.querySelector('[data-err]').textContent = t('library.bulk.failed_none', { error: nameForError(err.message, items) }); e.target.disabled = false; }
+  });
+}
+
+async function playlistDialog(items) {
+  const d = openDialog({ title: t('library.playlist.title', { count: items.length }), html: `<p>${esc(t('common.loading'))}</p>` });
+  let playlists;
+  try { playlists = await api.getPlaylists(); } catch (err) { d.body.innerHTML = `<p role="alert">${esc(err.message)}</p>`; return; }
+  if (d.closed) return;
+  // Smart playlists choose their own content (the bulk route refuses them); auto-generated ones are
+  // a screen's own and are not offered either.
+  const choices = (playlists || []).filter((p) => !p.smart_rules && !p.is_auto_generated)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  if (!choices.length) { d.body.innerHTML = `<p>${esc(t('library.playlist.none'))}</p><div class="lib-dialog-actions"><a class="btn btn-primary" href="#/playlists">${esc(t('library.playlist.go'))}</a></div>`; d.body.querySelector('a').addEventListener('click', () => d.close()); return; }
+  d.body.innerHTML = `
+    <div class="lib-field"><label for="libPlFilter">${esc(t('library.playlist.filter'))}</label><input id="libPlFilter" class="input" type="search" autocomplete="off"></div>
+    <fieldset class="lib-dest-list" style="max-height:320px;overflow:auto"><legend class="lib-visually-hidden">${esc(t('library.playlist.legend'))}</legend>
+      ${choices.map((p) => `<label class="lib-dest-opt" data-name="${esc(p.name.toLowerCase())}"><input type="radio" name="libPl" value="${esc(p.id)}"><span>${esc(p.name)}</span></label>`).join('')}
+    </fieldset>
+    <p class="lib-field-help">${esc(t('library.playlist.note'))}</p>
+    <div class="lib-dialog-actions"><span class="lib-form-error" role="alert" data-err></span>
+      <button type="button" class="btn btn-secondary" data-cancel>${esc(t('common.cancel'))}</button>
+      <button type="button" class="btn btn-primary" data-ok>${esc(t('library.playlist.ok'))}</button></div>`;
+  d.body.querySelector('#libPlFilter').focus();
+  d.body.querySelector('#libPlFilter').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    d.body.querySelectorAll('[data-name]').forEach((el) => { el.hidden = !!q && !el.dataset.name.includes(q); });
+  });
+  d.body.querySelector('[data-cancel]').addEventListener('click', () => d.close());
+  d.body.querySelector('[data-ok]').addEventListener('click', async (e) => {
+    const v = d.body.querySelector('input[name="libPl"]:checked');
+    if (!v) { d.body.querySelector('[data-err]').textContent = t('library.playlist.choose'); return; }
+    const pl = choices.find((p) => p.id === v.value);
+    e.target.disabled = true;
+    try {
+      let r;
+      try { r = await api.addPlaylistItemsBulk(pl.id, items.map((c) => c.id)); }
+      catch (err) {
+        // Nothing could be added: the route answers 400 with the same per-item reasons
+        // (routes/playlists.js items/bulk), which are worth more than "Request failed".
+        if (err.body && Array.isArray(err.body.skipped) && err.body.skipped.length) r = err.body; else throw err;
+      }
+      const skipped = (r && r.skipped) || [];
+      const added = (r && r.added ? r.added.length : 0);
+      d.close();
+      if (skipped.length) {
+        // Partial: say which items were left out and why, one line each.
+        const byId = new Map(items.map((c) => [c.id, c]));
+        const rd = openDialog({
+          title: t('library.playlist.partial_title', { added, playlist: pl.name }),
+          html: `<p>${esc(t('library.playlist.partial_text', { count: skipped.length }))}</p>
+            <ul class="lib-confirm-list">${skipped.map((s) => `<li><strong>${esc((byId.get(s.content_id) || {}).filename || s.content_id)}</strong> — ${esc(s.reason)}</li>`).join('')}</ul>
+            <div class="lib-dialog-actions"><button type="button" class="btn btn-primary" data-ok>${esc(t('common.close'))}</button></div>`,
+        });
+        rd.root.querySelector('[data-ok]').addEventListener('click', () => rd.close());
+      } else {
+        showToast(t('library.playlist.done', { count: added, playlist: pl.name }), 'success');
+      }
+      afterBulk(items.length > 1);
+    } catch (err) {
+      d.body.querySelector('[data-err]').textContent = t('library.playlist.failed', { error: nameForError(err.message, items) });
+      e.target.disabled = false;
+    }
+  });
+}
+
+/* ================================ folders ================================ */
+
+function textPrompt({ title, label, value = '', ok, extraHtml = '' }) {
+  return new Promise((resolve) => {
+    let result = null;
+    const d = openDialog({
+      title, size: 'sm',
+      html: `<form novalidate data-form><div class="lib-field"><label for="libPromptInput">${esc(label)}</label>
+        <input id="libPromptInput" class="input" value="${esc(value)}" maxlength="100" autocomplete="off" aria-describedby="libPromptInput-err">
+        <div class="lib-field-err" id="libPromptInput-err" role="alert"></div></div>${extraHtml}
+        <div class="lib-dialog-actions"><button type="button" class="btn btn-secondary" data-cancel>${esc(t('common.cancel'))}</button>
+        <button type="submit" class="btn btn-primary">${esc(ok)}</button></div></form>`,
+      initialFocus: '#libPromptInput',
+      onRequestClose: () => { resolve(result); return true; },
+    });
+    d.root.querySelector('[data-cancel]').addEventListener('click', () => d.requestClose('cancel'));
+    d.root.querySelector('[data-form]').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const v = d.root.querySelector('#libPromptInput').value.trim();
+      if (!v) { d.root.querySelector('#libPromptInput-err').textContent = t('library.folder.err_name'); return; }
+      const parent = d.root.querySelector('[name="libParent"]');
+      result = { value: v, parent: parent ? parent.value : null };
+      d.requestClose('ok');
+    });
+  });
+}
+
+async function newFolder(trigger, parentId = state.location.kind === 'folder' ? state.location.folderId : null) {
+  const parentSel = `<div class="lib-field"><label for="libParent">${esc(t('library.folder.inside'))}</label>
+    <select id="libParent" name="libParent" class="input"><option value="">${esc(rootLabel())}</option>
+    ${treeOrder(state.folders).map((f) => `<option value="${esc(f.id)}" ${f.id === parentId ? 'selected' : ''}>${esc(folderPathOf(f))}</option>`).join('')}</select></div>`;
+  const r = await textPrompt({ title: t('library.folder.new_title'), label: t('library.folder.name'), ok: t('library.folder.create'), extraHtml: parentSel });
+  if (!r) return;
+  try {
+    const f = await api.createFolder(r.value, r.parent || null);
+    showToast(t('content.toast.folder_created_named', { name: r.value }), 'success');
+    if (r.parent) state.expanded.add(r.parent);
+    await loadNav();
+    if (f && f.id) goLocation({ kind: 'folder', folderId: f.id });
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function renameFolder(id) {
+  const f = folderById().get(id);
+  if (!f) return;
+  const r = await textPrompt({ title: t('library.folder.rename_title'), label: t('library.folder.name'), value: f.name, ok: t('library.folder.rename_ok') });
+  if (!r || r.value === f.name) return;
+  try {
+    await api.renameFolder(id, r.value);
+    showToast(t('content.toast.folder_renamed'), 'success');
+    await loadNav();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function deleteFolder(id) {
+  const f = folderById().get(id);
+  if (!f) return;
+  const ok = await confirmDialog({
+    title: t('library.folder.delete_title', { name: f.name }),
+    bodyHtml: esc(t('content.confirm_delete_folder')),
+    confirmLabel: t('library.folder.delete'),
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api.deleteFolder(id);
+    showToast(t('content.toast.folder_deleted'), 'success');
+    state.location = f.parent_id ? { kind: 'folder', folderId: f.parent_id } : { kind: 'all', folderId: null };
+    await loadNav();
+    scopeChanged();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+/* ================================ adding content ================================ */
+
+function openAdd() {
+  if (!canWrite()) return;
+  openAddContent({
+    destination: destination(),
+    folders: state.folders,
+    folderPath: folderPathOf,
+    rootLabel: rootLabel(),
+    onFiles: (files, dest) => handleFiles(files, dest),
+    onCreated: (item) => {
+      scheduleReload();
+      // A no-bytes item lands where its destination is; open it so the operator sees it there.
+      if (item && item.id) setTimeout(() => { const c = state.items.find((x) => x.id === item.id); if (c) openItem(c, document.getElementById('libAddBtn')); }, 600);
+    },
+    onOpenCloudFolders: async () => {
+      const { openCloudFolders } = await import('../components/m365-settings.js');
+      openCloudFolders({ onChange: () => scheduleReload() });
+    },
+    onOpenCanva: (dest) => openCanvaPicker({ onImported: () => scheduleReload(), folderId: dest.folderId }),
+  });
+}
+
+/*
+ * Drop files anywhere on the results to upload them into the current destination. A populated
+ * library has no permanent drop zone; the overlay appears only while files are dragged over it.
+ * A card being dragged to a folder (text/content-id) and a dragged text selection are not uploads.
+ */
+function wireDrop() {
+  const main = document.getElementById('libMain');
+  const overlay = document.getElementById('libDropOverlay');
+  let depth = 0;
+  const isFiles = (e) => { const ty = [...(e.dataTransfer?.types || [])]; return ty.includes('Files') && !ty.includes('text/content-id'); };
+  main.addEventListener('dragenter', (e) => {
+    if (!isFiles(e) || !canWrite()) return;
+    e.preventDefault();
+    depth++;
+    document.getElementById('libDropText').textContent = t('library.drop_to', { folder: destination().label });
+    overlay.hidden = false;
+  });
+  main.addEventListener('dragover', (e) => { if (isFiles(e) && canWrite()) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+  main.addEventListener('dragleave', (e) => { if (!isFiles(e)) return; depth = Math.max(0, depth - 1); if (!depth) overlay.hidden = true; });
+  main.addEventListener('drop', (e) => {
+    if (!isFiles(e) || !canWrite()) return;
+    e.preventDefault();
+    depth = 0;
+    overlay.hidden = true;
+    handleFiles([...e.dataTransfer.files], destination());
+  });
+}
+
+/**
+ * Start uploads into `dest`. A PDF is not uploaded as a PDF: it is rendered to one image per page in
+ * this browser, and those go into a folder and a playlist named after it (components/pdf-pages.js),
+ * so that is said — with the names — before anything starts. Resolves false if the user stops.
+ */
+async function handleFiles(files, dest) {
+  const all = Array.from(files || []);
+  if (all.length === 0) return false;
+  const pdfs = all.filter(isPdf);
+  const list = all.filter((f) => !isPdf(f));
+  if (pdfs.length) {
+    const ok = await confirmDialog({
+      title: t(pdfs.length === 1 ? 'library.pdf.title_one' : 'library.pdf.title_other', { count: pdfs.length }),
+      bodyHtml: `<p>${esc(t('library.pdf.explain'))}</p><ul class="lib-confirm-list">${pdfs.map((f) => {
+        const base = baseName(f.name).slice(0, 100);
+        return `<li><strong>${esc(f.name)}</strong> → ${esc(t('library.pdf.result', { folder: base, playlist: base, where: dest.label }))}</li>`;
+      }).join('')}</ul>${list.length ? `<p class="lib-muted">${esc(t('library.pdf.others', { count: list.length }))}</p>` : ''}`,
+      confirmLabel: t('library.pdf.ok'),
+    });
+    if (!ok) return false;
+  }
+  uploads.enqueue([...pdfs, ...list], { folderId: dest.folderId, folderLabel: dest.label });
+  announce(t('library.upload.started', { count: all.length, folder: dest.label }));
+  return true;
 }
 
 /**
  * One PDF → a folder of page images + a playlist that plays them in order.
  *
- * Rendering is the first half of the progress bar, uploading the second. The folder is a
- * nicety and the playlist is the feature, so a folder that cannot be created (no workspace, or
- * the per-workspace folder cap) falls back to the current folder rather than failing the import,
- * and a playlist that cannot be created after the pages are up reports THAT rather than pretending
- * the upload failed — the images exist and the user should know it.
+ * Rendering is the first half of the progress, uploading the second. The folder is a nicety and the
+ * playlist is the feature, so a folder that cannot be created (no workspace, or the per-workspace
+ * folder cap) falls back to the destination rather than failing the import, and a playlist that
+ * cannot be created after the pages are up reports THAT rather than pretending the upload failed —
+ * the images exist and the user should know it.
  */
-async function importPdf(file, progressFill, progressText) {
+async function importPdf(file, parentFolderId, report) {
   const base = baseName(file.name).slice(0, 100);
-  progressText.textContent = t('content.pdf.rendering', { name: base, done: 0, total: '…' });
+  report(0, t('content.pdf.rendering', { name: base, done: 0, total: '…' }));
   const pages = await renderPdfToPages(file, (done, total) => {
-    progressFill.style.width = Math.round((done / total) * 50) + '%';
-    progressText.textContent = t('content.pdf.rendering', { name: base, done, total });
+    report(Math.round((done / total) * 50), t('content.pdf.rendering', { name: base, done, total }));
   });
 
-  let folderId = state.currentFolderId;
+  let folderId = parentFolderId;
   try {
-    folderId = (await api.createFolder(base, state.currentFolderId)).id;
-  } catch (_) { /* fall through: pages land in the current folder instead */ }
+    folderId = (await api.createFolder(base, parentFolderId)).id;
+  } catch (_) { /* fall through: pages land in the destination instead */ }
 
   const uploaded = await api.uploadContent(pages, (pct) => {
-    progressFill.style.width = (50 + Math.round(pct / 2)) + '%';
-    progressText.textContent = t('content.pdf.uploading', { name: base, pct });
+    report(50 + Math.round(pct / 2), t('content.pdf.uploading', { name: base, pct }));
   }, folderId);
   const items = Array.isArray(uploaded) ? uploaded : [uploaded];
 
@@ -520,460 +1208,11 @@ async function importPdf(file, progressFill, progressText) {
   } catch (err) {
     showToast(t('content.toast.pdf_playlist_failed', { name: base, count: items.length, error: err.message }), 'error');
   }
+  return items;
 }
 
-async function loadContent() {
-  const grid = document.getElementById('contentGrid');
-  const folderGrid = document.getElementById('folderGrid');
-  const breadcrumb = document.getElementById('folderBreadcrumb');
-  if (!grid || !folderGrid || !breadcrumb) return;
-
-  try {
-    const [content, folders, canvaLinks] = await Promise.all([
-      api.getContent(state.currentFolderId === null ? null : state.currentFolderId, state.showExpired, {
-        q: state.search, type: state.type, sort: state.sort,
-      }),
-      api.getFolders(),
-      loadCanvaLinks(),
-    ]);
-    state.folders = folders;
-
-    // #214: while a search or type filter is active, results span the whole workspace,
-    // so surface a count and note the folder scope no longer applies.
-    const countEl = document.getElementById('contentResultCount');
-    if (countEl) {
-      const filtering = state.search || (state.type && state.type !== 'all');
-      countEl.textContent = filtering
-        ? t('content.result_count', { count: content.length })
-        : '';
-    }
-
-    // Breadcrumb path: walk parent_id chain from current folder up to root.
-    const folderById = new Map(folders.map(f => [f.id, f]));
-    const path = [];
-    let cursor = state.currentFolderId ? folderById.get(state.currentFolderId) : null;
-    while (cursor) {
-      path.unshift(cursor);
-      cursor = cursor.parent_id ? folderById.get(cursor.parent_id) : null;
-    }
-    breadcrumb.innerHTML = `
-      <a href="#" data-folder-nav="" style="color:var(--text-secondary);text-decoration:none">${t('content.breadcrumb_root')}</a>
-      ${path.map(f => `
-        <span style="color:var(--text-muted)">/</span>
-        <a href="#" data-folder-nav="${f.id}" style="color:var(--text-primary);text-decoration:none">${esc(f.name)}</a>
-      `).join('')}
-      ${state.currentFolderId ? `
-        <button class="btn btn-secondary btn-sm" id="renameFolderBtn" style="margin-left:auto">${t('content.rename_btn')}</button>
-        <button class="btn btn-danger btn-sm" id="deleteFolderBtn">${t('content.delete_folder_btn')}</button>
-      ` : ''}
-    `;
-    breadcrumb.querySelectorAll('[data-folder-nav]').forEach(a => {
-      a.addEventListener('click', (e) => {
-        e.preventDefault();
-        const id = a.dataset.folderNav;
-        state.currentFolderId = id || null;
-        loadContent();
-      });
-      // Make breadcrumb segments drop targets too — otherwise the only way to move
-      // a file out of a folder is via the edit modal. Dropping on "All Content"
-      // moves to root; dropping on a parent name moves there.
-      a.addEventListener('dragover', (e) => {
-        if (!e.dataTransfer.types.includes('text/content-id')) return;
-        e.preventDefault();
-        a.style.background = 'var(--primary)';
-        a.style.color = '#fff';
-        a.style.padding = '2px 8px';
-        a.style.borderRadius = '4px';
-      });
-      a.addEventListener('dragleave', () => {
-        a.style.background = '';
-        a.style.color = '';
-        a.style.padding = '';
-        a.style.borderRadius = '';
-      });
-      a.addEventListener('drop', async (e) => {
-        e.preventDefault();
-        a.style.background = ''; a.style.color = ''; a.style.padding = ''; a.style.borderRadius = '';
-        const contentId = e.dataTransfer.getData('text/content-id');
-        if (!contentId) return;
-        const targetFolderId = a.dataset.folderNav || null; // empty string = root
-        try {
-          await api.moveContent(contentId, targetFolderId);
-          showToast(targetFolderId ? t('content.toast.moved') : t('content.toast.moved_to_root'), 'success');
-          loadContent();
-        } catch (err) { showToast(err.message, 'error'); }
-      });
-    });
-    const renameBtn = breadcrumb.querySelector('#renameFolderBtn');
-    if (renameBtn) renameBtn.onclick = async () => {
-      const current = folderById.get(state.currentFolderId);
-      const name = prompt(t('content.prompt_rename_folder'), current?.name || '');
-      if (!name || !name.trim() || name === current?.name) return;
-      try {
-        await api.renameFolder(state.currentFolderId, name.trim());
-        showToast(t('content.toast.folder_renamed'), 'success');
-        loadContent();
-      } catch (err) { showToast(err.message, 'error'); }
-    };
-    const deleteBtn = breadcrumb.querySelector('#deleteFolderBtn');
-    if (deleteBtn) deleteBtn.onclick = async () => {
-      if (!confirm(t('content.confirm_delete_folder'))) return;
-      try {
-        const parentId = folderById.get(state.currentFolderId)?.parent_id || null;
-        await api.deleteFolder(state.currentFolderId);
-        showToast(t('content.toast.folder_deleted'), 'success');
-        state.currentFolderId = parentId;
-        loadContent();
-      } catch (err) { showToast(err.message, 'error'); }
-    };
-
-    // Render subfolders of the current folder.
-    const subfolders = folders.filter(f => (f.parent_id || null) === state.currentFolderId);
-    folderGrid.innerHTML = subfolders.map(f => `
-      <div class="folder-card" data-folder-id="${f.id}" data-name="${esc(f.name)}"
-           style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px;cursor:pointer;display:flex;align-items:center;gap:10px"
-           data-drop-folder="${f.id}">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-        </svg>
-        <div style="font-size:14px;font-weight:500;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</div>
-      </div>
-    `).join('');
-    folderGrid.querySelectorAll('.folder-card').forEach(card => {
-      card.addEventListener('click', () => {
-        state.currentFolderId = card.dataset.folderId;
-        loadContent();
-      });
-      // Drop target for dragging content items into this folder.
-      card.addEventListener('dragover', (e) => { e.preventDefault(); card.style.outline = '2px solid var(--primary)'; });
-      card.addEventListener('dragleave', () => { card.style.outline = ''; });
-      card.addEventListener('drop', async (e) => {
-        e.preventDefault();
-        card.style.outline = '';
-        const contentId = e.dataTransfer.getData('text/content-id');
-        if (!contentId) return;
-        try {
-          await api.moveContent(contentId, card.dataset.folderId);
-          showToast(t('content.toast.moved'), 'success');
-          loadContent();
-        } catch (err) { showToast(err.message, 'error'); }
-      });
-    });
-
-    if (!content.length) {
-      grid.innerHTML = subfolders.length ? '' : `
-        <div class="empty-state" style="grid-column:1/-1">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
-            <polyline points="13 2 13 9 20 9"/>
-          </svg>
-          <h3>${state.currentFolderId ? t('content.empty_folder_title') : t('content.no_content')}</h3>
-          <p>${state.currentFolderId ? t('content.empty_folder_desc') : t('content.no_content_desc')}</p>
-        </div>
-      `;
-      return;
-    }
-
-    grid.innerHTML = content.map(c => {
-      const exp = expiryInfo(c);
-      return `
-      <div class="content-item" draggable="true" data-content-id="${c.id}" data-folder="${esc(c.folder || '')}" style="position:relative;${state.selected.has(c.id) ? 'outline:2px solid var(--primary,#3B82F6);outline-offset:-2px;' : ''}${exp.expired ? 'opacity:.55' : ''}">
-        <label class="content-select-wrap" style="position:absolute;top:6px;left:6px;z-index:2;background:rgba(0,0,0,.55);border-radius:4px;padding:3px;display:flex;cursor:pointer">
-          <input type="checkbox" class="content-select" data-content-id="${c.id}" ${state.selected.has(c.id) ? 'checked' : ''} style="width:16px;height:16px;margin:0;cursor:pointer">
-        </label>
-        <div class="content-item-preview">
-          ${c.mime_type === 'video/youtube'
-            ? `<div style="position:relative;width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center">
-                <img src="${c.thumbnail_path}" alt="${esc(c.filename)}" loading="lazy" style="width:100%;height:100%;object-fit:cover">
-                <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">
-                  <svg width="40" height="40" viewBox="0 0 24 24" fill="red" stroke="none">
-                    <path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19.13C5.12 19.56 12 19.56 12 19.56s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.43z"/>
-                    <polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02" fill="white"/>
-                  </svg>
-                </div>
-              </div>`
-          : c.mime_type === BUNDLE_MIME
-            ? `<div class="video-icon" style="flex-direction:column;gap:4px">
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>
-                </svg>
-                <span style="font-size:10px;color:var(--text-muted)">${t('content.type_bundle_short')}</span>
-              </div>`
-          : c.mime_type === 'application/x-st-hold'
-            ? `<div class="video-icon" style="flex-direction:column;gap:4px">
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
-                </svg>
-                <span style="font-size:10px;color:var(--text-muted)">${c.remote_url === 'hold://freeze' ? t('content.hold_freeze') : t('content.hold_blank')}</span>
-              </div>`
-          : c.mime_type === 'video/hdmi-in'
-            ? `<div class="video-icon" style="flex-direction:column;gap:4px">
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 11h12M8 14h8"/>
-                </svg>
-                <span style="font-size:10px;color:var(--text-muted)">${t('content.type_hdmi_in')}</span>
-              </div>`
-          : c.remote_url
-            ? `<div class="video-icon" style="flex-direction:column;gap:4px">
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-                </svg>
-                <span style="font-size:10px;color:var(--text-muted)">${t('content.type_remote_short')}</span>
-              </div>`
-            : c.thumbnail_path
-              ? `<img data-auth-src="/api/content/${c.id}/thumbnail" alt="${esc(c.filename)}" style="background:var(--bg-secondary)">`
-              : c.mime_type?.startsWith('video/')
-                ? `<div class="video-icon">
-                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                      <polygon points="5 3 19 12 5 21 5 3"/>
-                    </svg>
-                  </div>`
-                : `<img data-auth-src="/api/content/${c.id}/file" alt="${esc(c.filename)}" style="background:var(--bg-secondary)">`
-          }
-        </div>
-        <div class="content-item-body">
-          <div class="content-item-name" title="${esc(c.filename)}">${esc(c.filename)}</div>
-          ${Array.isArray(c.tags) && c.tags.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">${c.tags.map((tg) => `<span data-tag="${esc(tg)}" style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--bg-input);color:var(--text-muted);cursor:pointer">#${esc(tg)}</span>`).join('')}</div>` : ''}
-          <div class="content-item-size">
-            ${c.mime_type === 'application/x-st-hold' ? t('content.type_hold') : c.mime_type === 'video/hdmi-in' ? t('content.type_hdmi_in') : c.mime_type === 'video/hls' || c.mime_type === 'video/rtsp' ? t('content.type_live') : c.mime_type === 'video/youtube' ? t('content.type_youtube') : c.mime_type === BUNDLE_MIME ? t('content.type_bundle') : c.remote_url ? t('content.type_remote') : (c.mime_type?.startsWith('video/') ? t('content.type_video') : t('content.type_image'))}
-            ${c.duration_sec ? ` &middot; ${Math.floor(c.duration_sec / 60)}:${String(Math.floor(c.duration_sec % 60)).padStart(2, '0')}` : ''}
-            ${c.file_size ? ' &middot; ' + formatFileSize(c.file_size) : ''}
-            ${c.width && c.height ? ` &middot; ${c.width}x${c.height}` : ''}
-          </div>
-          ${canvaLinks.has(c.id) ? (() => {
-            const l = canvaLinks.get(c.id);
-            return `<div style="font-size:11px;margin-top:4px;color:${l.last_error ? 'var(--danger,#e5484d)' : 'var(--text-muted)'}" title="${esc(l.last_error || '')}">${esc(t('canva.linked_badge'))}${l.last_error ? ` &middot; ${esc(t('canva.sync_problem'))}` : ''}
-              <button class="btn btn-secondary btn-sm" data-canva-sync="${c.id}" style="margin-left:4px;padding:1px 6px;font-size:11px">${esc(t('canva.sync_now'))}</button></div>`;
-          })() : ''}
-          ${exp.expired
-            ? `<div style="font-size:11px;color:var(--danger,#e5484d);font-weight:600;margin-top:4px">${t('content.expired_badge')}${exp.dateLabel ? ` &middot; ${exp.dateLabel}` : ''}</div>`
-            : (exp.dateLabel ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.expires_label', { date: exp.dateLabel })}</div>` : '')}
-        </div>
-        <div class="content-item-actions">
-          <button class="btn btn-secondary btn-sm btn-icon-only" data-history-content="${c.id}" title="${t('history.button')}" aria-label="${t('history.button')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg></button>
-          <button class="btn btn-secondary btn-sm" data-edit-content="${c.id}" title="${t('content.btn_edit')}">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-            </svg>
-            ${t('content.btn_edit')}
-          </button>
-          <button class="btn btn-danger btn-sm btn-icon-only" data-delete-content="${c.id}" title="${t('content.btn_delete')}" aria-label="${t('content.btn_delete')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
-        </div>
-      </div>
-    `;
-    }).join('');
-    hydrateAuthImages(grid);
-
-    // Drag-to-move: each content item exposes its id; folder cards are the drop targets.
-    grid.querySelectorAll('.content-item').forEach(item => {
-      item.addEventListener('dragstart', (e) => {
-        e.dataTransfer.setData('text/content-id', item.dataset.contentId);
-        e.dataTransfer.effectAllowed = 'move';
-      });
-    });
-
-    // #213: selection checkboxes (with shift-click range). `content` is the current page's
-    // ordered list, so a range fills between the anchor and the clicked item.
-    grid.querySelectorAll('.content-select').forEach(cb => {
-      cb.addEventListener('click', (e) => {
-        const id = cb.dataset.contentId;
-        if (e.shiftKey && state.lastClickedId) {
-          const order = content.map(c => c.id);
-          const a = order.indexOf(state.lastClickedId);
-          const b = order.indexOf(id);
-          if (a !== -1 && b !== -1) {
-            const [lo, hi] = a < b ? [a, b] : [b, a];
-            const on = cb.checked; // apply the clicked box's new state across the range
-            for (let i = lo; i <= hi; i++) { if (on) state.selected.add(order[i]); else state.selected.delete(order[i]); }
-          }
-        } else if (cb.checked) {
-          state.selected.add(id);
-        } else {
-          state.selected.delete(id);
-        }
-        state.lastClickedId = id;
-        loadContent(); // re-render to reflect range + selection outlines + toolbar
-      });
-    });
-
-    // Delete handler via event delegation
-    grid.onclick = async (e) => {
-      const syncBtn = e.target.closest('[data-canva-sync]');
-      if (syncBtn) {
-        syncBtn.disabled = true;
-        syncBtn.textContent = t('canva.syncing');
-        try {
-          const r = await syncCanvaLink(syncBtn.dataset.canvaSync);
-          if (r.errors) showToast(t('canva.sync_failed'), 'error');
-          else showToast(r.replaced ? t('canva.synced') : t('canva.up_to_date'), 'success');
-        } catch (err) { showToast(err.message, 'error'); }
-        loadContent();
-        return;
-      }
-      const histBtn = e.target.closest('[data-history-content]');
-      if (histBtn) {
-        const c = content.find(x => x.id === histBtn.dataset.historyContent);
-        openHistoryModal('content', histBtn.dataset.historyContent, { name: c?.name || c?.filename, onChanged: () => loadContent() });
-        return;
-      }
-      // #213: ignore clicks originating on a selection checkbox (handled above).
-      if (e.target.closest('.content-select-wrap')) return;
-      // Preview on click (not on delete button)
-      const previewTarget = e.target.closest('.content-item-preview');
-      if (previewTarget) {
-        const item = previewTarget.closest('.content-item');
-        const id = item?.dataset.contentId;
-        if (id) {
-          const c = content.find(x => x.id === id);
-          if (c) showPreview(c);
-        }
-        return;
-      }
-
-      // Edit button
-      const tagEl = e.target.closest('[data-tag]');
-      if (tagEl) {
-        state.search = '#' + tagEl.dataset.tag;
-        const box = document.getElementById('contentSearch');
-        if (box) box.value = state.search;
-        loadContent();
-        return;
-      }
-      const editBtn = e.target.closest('[data-edit-content]');
-      if (editBtn) {
-        const id = editBtn.dataset.editContent;
-        const c = content.find(x => x.id === id);
-        if (c) showEditModal(c, loadContent);
-        return;
-      }
-
-      const btn = e.target.closest('[data-delete-content]');
-      if (!btn) return;
-      e.stopPropagation();
-      const id = btn.dataset.deleteContent;
-
-      // If already confirming, do the delete
-      if (btn.dataset.confirming === 'true') {
-        try {
-          btn.disabled = true;
-          btn.textContent = t('content.btn_deleting');
-          await api.deleteContent(id);
-          showToast(t('content.toast.deleted'), 'success');
-          loadContent();
-        } catch (err) {
-          showToast(err.message, 'error');
-          btn.disabled = false;
-          btn.textContent = t('content.btn_delete');
-          btn.dataset.confirming = 'false';
-        }
-        return;
-      }
-
-      // First click - show confirm state
-      btn.dataset.confirming = 'true';
-      btn.innerHTML = t('content.btn_confirm_delete');
-      btn.style.background = 'var(--danger)';
-      btn.style.color = 'white';
-      // Reset after 3 seconds if not clicked
-      setTimeout(() => {
-        if (btn.dataset.confirming === 'true') {
-          btn.dataset.confirming = 'false';
-          btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> ${t('content.btn_delete')}`;
-          btn.style.background = '';
-          btn.style.color = '';
-        }
-      }, 3000);
-    };
-
-    // #213: batch-operations toolbar reflects the current selection.
-    renderBatchToolbar(content);
-
-  } catch (err) {
-    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><h3>${t('content.failed_to_load')}</h3><p>${esc(err.message)}</p></div>`;
-  }
-
-  // #313/checklist: adding content ticks a step, and this is the one path every add
-  // (file, remote URL, YouTube) already goes through.
-  gettingStarted.refresh().catch(() => {});
-}
-
-// #213: the batch toolbar — shown only when something is selected. `visible` is the current
-// page's items, used by "select all". Actions validate/act atomically server-side; on success
-// the selection is cleared and the grid reloaded.
-function renderBatchToolbar(visible) {
-  const bar = document.getElementById('batchToolbar');
-  if (!bar) return;
-  const count = state.selected.size;
-  if (count === 0) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
-
-  const allVisibleSelected = visible.length > 0 && visible.every(c => state.selected.has(c.id));
-  bar.style.display = 'flex';
-  bar.style.cssText = 'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg)';
-  bar.innerHTML = `
-    <strong style="font-size:13px">${t('content.batch_selected', { count })}</strong>
-    <button class="btn btn-secondary btn-sm" id="batchSelectAll">${allVisibleSelected ? t('content.batch_select_none') : t('content.batch_select_all')}</button>
-    <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
-      <select id="batchMoveFolder" class="input btn-sm" style="width:auto;background:var(--bg-input)">
-        <option value="">${t('content.batch_move_placeholder')}</option>
-        <option value="__root__">${t('content.folder_root_option')}</option>
-        ${state.folders.map(f => `<option value="${f.id}">${esc(folderPath(f, state.folders))}</option>`).join('')}
-      </select>
-      <button class="btn btn-danger btn-sm" id="batchDelete">${t('content.batch_delete', { count })}</button>
-    </div>
-  `;
-
-  bar.querySelector('#batchSelectAll').onclick = () => {
-    if (allVisibleSelected) visible.forEach(c => state.selected.delete(c.id));
-    else visible.forEach(c => state.selected.add(c.id));
-    loadContent();
-  };
-
-  bar.querySelector('#batchMoveFolder').onchange = async (e) => {
-    const val = e.target.value;
-    if (!val) return;
-    const folderId = val === '__root__' ? null : val;
-    const ids = [...state.selected];
-    try {
-      await api.batchMoveContent(ids, folderId);
-      showToast(t('content.toast.batch_moved', { count: ids.length }), 'success');
-      state.selected.clear();
-      state.lastClickedId = null;
-      loadContent();
-    } catch (err) {
-      showToast(err.message, 'error');
-      e.target.value = '';
-    }
-  };
-
-  const delBtn = bar.querySelector('#batchDelete');
-  delBtn.onclick = async () => {
-    const ids = [...state.selected];
-    if (delBtn.dataset.confirming !== 'true') {
-      delBtn.dataset.confirming = 'true';
-      delBtn.textContent = t('content.batch_delete_confirm', { count: ids.length });
-      setTimeout(() => { if (delBtn.dataset.confirming === 'true') { delBtn.dataset.confirming = 'false'; delBtn.textContent = t('content.batch_delete', { count: ids.length }); } }, 3000);
-      return;
-    }
-    try {
-      delBtn.disabled = true;
-      await api.batchDeleteContent(ids);
-      showToast(t('content.toast.batch_deleted', { count: ids.length }), 'success');
-      state.selected.clear();
-      state.lastClickedId = null;
-      loadContent();
-    } catch (err) {
-      showToast(err.message, 'error');
-      delBtn.disabled = false;
-      delBtn.dataset.confirming = 'false';
-      delBtn.textContent = t('content.batch_delete', { count: ids.length });
-    }
-  };
-}
-
-function showEditModal(contentItem, onSave) {
+function showEditModal(contentItem, onSave, { focus = null } = {}) {
+  const opener = document.activeElement;
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.style.display = 'flex';
@@ -1097,9 +1336,20 @@ function showEditModal(contentItem, onSave) {
   `;
 
   document.body.appendChild(overlay);
-  overlay.querySelector('#closeEditModal').onclick = () => overlay.remove();
-  overlay.querySelector('#cancelEditBtn').onclick = () => overlay.remove();
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  // Escape closes, focus starts inside (on the field asked for) and goes back to the opener.
+  const modalEl = overlay.querySelector('.modal');
+  modalEl.setAttribute('role', 'dialog');
+  modalEl.setAttribute('aria-modal', 'true');
+  modalEl.querySelector('h3').id = 'editModalTitle';
+  modalEl.setAttribute('aria-labelledby', 'editModalTitle');
+  overlay.querySelector('#closeEditModal').setAttribute('aria-label', t('common.close'));
+  const closeEdit = () => { overlay.remove(); document.removeEventListener('keydown', onEditKey, true); if (opener && document.contains(opener)) opener.focus(); };
+  const onEditKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); closeEdit(); } };
+  document.addEventListener('keydown', onEditKey, true);
+  (overlay.querySelector(focus || '#editFilename') || overlay.querySelector('#editFilename')).focus();
+  overlay.querySelector('#closeEditModal').onclick = () => closeEdit();
+  overlay.querySelector('#cancelEditBtn').onclick = () => closeEdit();
+  overlay.onclick = (e) => { if (e.target === overlay) closeEdit(); };
 
   overlay.querySelector('#saveEditBtn').onclick = async () => {
     const filename = overlay.querySelector('#editFilename').value.trim();
@@ -1211,7 +1461,7 @@ function showEditModal(contentItem, onSave) {
         if (!sr.ok) throw new Error(sb.error || t('content.error_update_failed'));
       }
 
-      overlay.remove();
+      closeEdit();
       showToast(pendingReview ? t('review.toast.saved_as_draft') : t('content.toast.updated'), 'success');
       if (onSave) onSave();
     } catch (err) {
@@ -1312,4 +1562,13 @@ function folderPath(folder, all) {
   return parts.join(' / ');
 }
 
-export function cleanup() {}
+export function cleanup() {
+  closeMenu();
+  clearTimeout(searchTimer);
+  clearTimeout(reloadTimer);
+  if (inflight) inflight.abort();
+  if (unsubscribeUploads) { unsubscribeUploads(); unsubscribeUploads = null; }
+  // Unsaved inspector edits are kept, not dropped: they come back, still marked unsaved, next visit.
+  if (inspector) { state.pendingDraft = inspector.takeDraft(); inspector.close({ force: true, silent: true }); inspector = null; }
+  // The upload queue and its tray live on <body> and keep going.
+}
