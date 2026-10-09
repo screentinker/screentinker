@@ -6,6 +6,11 @@ Thanks to the people whose reports this release fixes: @PowerSprout and カタ�
 
 ### Added
 
+- **`/player/check`: which player can this screen run?** Open it on a screen whose browser shows an
+  empty setup page or never shows a pairing code. It runs on very old browsers, lists what this one
+  supports, and names the address to use: `/player`, `/player/legacy`, or neither (use a player box on
+  HDMI instead). Added as a troubleshooting step to the README and the Samsung and LG guides. Prompted
+  by a Samsung DM48E (SSSP 3) whose URL Launcher showed an empty page.
 - **Watch a display from any browser, without pairing it (view-only access).** A display's page has a
   new **View-only access** card on Device Info. A workspace admin turns it on and gets a share link
   (`/view/…`). Anyone holding the link sees what that display shows, in step with it: no controls, no

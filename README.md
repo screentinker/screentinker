@@ -1009,6 +1009,12 @@ keytool -genkey -v -keystore android/release-key.jks -keyalg RSA -keysize 2048 -
    - **Any browser**: Open `https://your-instance/player` in kiosk/fullscreen mode
 4. Enter the pairing code shown on the device
 
+**A browser screen shows an empty setup page, or never shows a pairing code?** Open
+`https://your-instance/player/check` on that screen. It runs on very old browsers and says which
+player this one can run: `/player`, `/player/legacy` (older smart TVs and signage panels), or
+neither. Point the screen at the address it gives. If it says the browser is too old for both,
+use an Android TV box, Fire TV or Raspberry Pi on HDMI instead.
+
 ### Raspberry Pi notes
 
 **Run it with `sudo`.** The script installs packages and writes systemd units, so it refuses to
