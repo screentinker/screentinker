@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 2.5.1
+
+Thanks to the people whose reports this release fixes: @PowerSprout and カタカナ.
 
 ### Added
 

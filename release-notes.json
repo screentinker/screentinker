@@ -14,6 +14,18 @@
   ],
   "releases": [
     {
+      "version": "2.5.1",
+      "date": "2026-10-09",
+      "notes": [
+        "The Content Library is rebuilt: browse folders, recent and unused content, search and filter, switch between grid and list, open an item's details beside the list, and add anything from one Add content button. Uploads show each file's progress, and one bad file no longer stops the rest.",
+        "Hold screens are now added from a playlist with Add hold screen.",
+        "Meeting-room displays: ending a meeting frees the room on screen at once, and the display speaks the screen's language (ten languages, or pick one in the widget).",
+        "Social walls can show pictures only, and the play icon on videos can be turned off.",
+        "Platform admins can edit plans from the dashboard, with each price checked against the Stripe price it charges.",
+        "Grafana dashboards on screens no longer show Grafana's own sidebar and toolbar."
+      ]
+    },
+    {
       "version": "2.5.0",
       "date": "2026-10-09",
       "notes": [
