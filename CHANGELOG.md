@@ -6,6 +6,22 @@ Thanks to the people whose reports this release fixes: @PowerSprout and カタ�
 
 ### Added
 
+- **Watch a display from any browser, without pairing it (view-only access).** A display's page has a
+  new **View-only access** card on Device Info. A workspace admin turns it on and gets a share link
+  (`/view/…`). Anyone holding the link sees what that display shows, in step with it: no controls, no
+  device details, nothing else from the workspace. A viewer is not a display: it never pairs, never
+  counts toward your plan and never appears in the displays list. Off for every display until an
+  admin turns it on.
+  - **Regenerate link** revokes the old link at once. Turning access off disconnects every open viewer
+    within a few seconds, with "This view is no longer available".
+  - **Allowed networks** (optional) let devices on your own ranges (e.g. `192.168.1.0/24`) open the
+    display's network address with no link at all. Ranges are validated. Behind a reverse proxy, set
+    `VIEW_TRUSTED_PROXIES`, otherwise only the real connecting address counts.
+  - Turning it on or off, creating or regenerating the link and changing networks are recorded in the
+    activity log. Editors, viewers and API tokens cannot change it.
+  - `VIEW_ONLY_ENABLED=false` removes the feature from a server. On by default for self-hosted.
+  - Pairing, `/player`, `/player/legacy` and the vMix web-player URL work exactly as before. Old
+    browsers get the ES5 build with `?legacy=1`.
 - **Social walls can show pictures only.** A new **Show the post text** option sits next to **Show the
   author**. Turned off, captions are not shown (or even sent to the screen), posts without a picture
   are skipped, and the ticker shows each post's picture instead of its text. That suits an Instagram

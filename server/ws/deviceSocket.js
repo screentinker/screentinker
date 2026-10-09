@@ -10,6 +10,7 @@ const bootDefer = require('../lib/boot-defer');   // 2.0.1 first-boot player def
 const enrolKey = require('../lib/enrol-key');     // #313 URL-carried display identity
 const liveness = require('../lib/liveness'); // v4 core pass: pure ack/liveness/identity helpers
 const commandQueue = require('../lib/command-queue');
+const nowPlaying = require('../lib/now-playing');
 const reconnectThrottle = require('../lib/reconnect-throttle');
 const contentAckLimiter = require('../lib/content-ack-limiter');
 const statusLogWriter = require('../lib/status-log-writer');
@@ -1731,6 +1732,9 @@ const EVENT_APPLIERS = Object.freeze({
     if (device_id !== deviceId) return;
     try {
       if (event === 'play_start') {
+        // View-only viewers join the screen where it is (lib/now-playing.js). Before the throttle:
+        // a viewer needs every start, proof-of-play does not.
+        nowPlaying.noteStart(device_id, { content_id, widget_id, zone_id }, eventTimeMs(data, ctx));
         // Throttle proof-of-play inserts per device so a runaway player
         // (0-second items) can't flood play_logs. Skipped cycles simply
         // don't create a row; the dashboard progress event below still fires.

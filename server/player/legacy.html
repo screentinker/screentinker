@@ -661,7 +661,14 @@ const HOST = (() => {
   }
   return h;
 })();
-const SCREEN_SUFFIX = (() => {
+const VIEWER = window.__playerConfig && window.__playerConfig.viewer || null;
+const VIEWER_MODE = !!VIEWER;
+let viewerRev = null;
+let viewerTimer = null;
+let viewerEnded = false;
+let viewerLastAnchor = null;
+let viewerJoin = null;
+const SCREEN_SUFFIX = VIEWER_MODE ? "__view" : (() => {
   try {
     return BS ? BS.storageSuffix() || "" : "";
   } catch (e) {
@@ -1474,6 +1481,7 @@ let userHasInteracted = false;
 let advanceTimer = null;
 function scheduleAdvance(fn, ms) {
   if (advanceTimer) clearTimeout(advanceTimer);
+  if (typeof VIEWER_MODE !== "undefined" && VIEWER_MODE) ms = viewerAdvanceMs(fn, ms);
   advanceTimer = setTimeout(fn, ms);
   return advanceTimer;
 }
@@ -2038,7 +2046,9 @@ function connectBtnFunc() {
 }
 ;
 const _previewQS = new URLSearchParams(location.search);
-if (_previewQS.get("preview") === "1" && (_previewQS.get("playlist") || _previewQS.get("device"))) {
+if (VIEWER_MODE) {
+  bootViewer(VIEWER);
+} else if (_previewQS.get("preview") === "1" && (_previewQS.get("playlist") || _previewQS.get("device"))) {
   bootPreview(_previewQS);
 } else {
   if (!config.serverUrl) {
@@ -2166,8 +2176,120 @@ function renderPreviewFromUrl(url) {
     }
   });
 }
+function bootViewer(v) {
+  PREVIEW_MODE = true;
+  config.serverUrl = window.location.origin;
+  const setup = document.getElementById("setupScreen");
+  if (setup) setup.style.display = "none";
+  viewerPoll(v, true);
+}
+function viewerPoll(v, first) {
+  if (viewerEnded) return;
+  const url = v.payload_url + (viewerRev ? "?rev=" + encodeURIComponent(viewerRev) : "");
+  const sentAt = Date.now();
+  fetch(url, { cache: "no-store", credentials: "omit" }).then(function(res) {
+    if (res.status === 404 || res.status === 403 || res.status === 410) {
+      viewerEnd(first);
+      return null;
+    }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }).then(function(body) {
+    if (!body || viewerEnded) return;
+    if (body.server_ms) ingestClockSample(body.server_ms, sentAt);
+    if (body.payload) {
+      viewerRev = body.rev;
+      handlePlaylistUpdate(body.payload);
+      viewerLastAnchor = null;
+    }
+    viewerAlign(body.now_playing);
+  }).catch(function(e) {
+    console.warn("[viewer] poll failed", e && e.message);
+  }).then(function() {
+    if (viewerEnded) return;
+    clearTimeout(viewerTimer);
+    viewerTimer = setTimeout(function() {
+      viewerPoll(v, false);
+    }, Math.max(2e3, Number(v.poll_ms) || 4e3));
+  });
+}
+function viewerAlign(list) {
+  if (!Array.isArray(list) || !playlist.length) return;
+  let a = null;
+  for (let i = 0; i < list.length; i++) if (list[i] && !list[i].zone_id) a = list[i];
+  if (!a) a = list[0];
+  if (!a || !a.started_ms) return;
+  const key = (a.content_id || "") + "|" + (a.widget_id || "") + "|" + a.started_ms;
+  if (key === viewerLastAnchor) return;
+  viewerLastAnchor = key;
+  let idx = -1;
+  for (let i = 0; i < playlist.length; i++) {
+    const it = playlist[i];
+    if (a.widget_id && it.widget_id === a.widget_id || a.content_id && (it.content_id === a.content_id || it.widget_id === a.content_id)) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx === -1) return;
+  const offsetMs = Math.max(0, syncedNow() - a.started_ms);
+  const dur = (Number(playlist[idx].duration_sec) || 0) * 1e3;
+  if (dur && offsetMs >= dur) return;
+  if (idx === currentIndex && Math.abs(Date.now() - currentItemStartedAt - offsetMs) < 1500) return;
+  viewerJoin = { index: idx, offsetMs, until: Date.now() + 5e3 };
+  clearTimeout(scheduleRetryTimer);
+  currentIndex = idx;
+  isPlaying = true;
+  playCurrentItem();
+  viewerSeekVideo(offsetMs);
+}
+function viewerSeekVideo(offsetMs) {
+  if (offsetMs < 1e3) return;
+  setTimeout(function() {
+    const container = document.getElementById("playerContainer");
+    const vid = container && container.querySelector("video");
+    if (!vid) return;
+    const seek = function() {
+      try {
+        if (vid.duration && offsetMs / 1e3 < vid.duration) vid.currentTime = offsetMs / 1e3;
+      } catch (e) {
+      }
+    };
+    if (vid.readyState >= 1) seek();
+    else vid.addEventListener("loadedmetadata", seek, { once: true });
+  }, 0);
+}
+function viewerAdvanceMs(fn, ms) {
+  const j = viewerJoin;
+  if (!VIEWER_MODE || !j || fn !== nextItem) return ms;
+  viewerJoin = null;
+  if (j.index !== currentIndex || Date.now() > j.until) return ms;
+  return Math.max(500, ms - j.offsetMs);
+}
+function viewerEnd(first) {
+  viewerEnded = true;
+  clearTimeout(viewerTimer);
+  isPlaying = false;
+  try {
+    teardownCurrentMedia();
+  } catch (e) {
+  }
+  try {
+    clearTimeout(advanceTimer);
+  } catch (e) {
+  }
+  const pc = document.getElementById("playerContainer");
+  if (pc) {
+    pc.innerHTML = "";
+    pc.style.display = "none";
+  }
+  const div = document.createElement("div");
+  div.id = "viewerEnded";
+  div.style.cssText = "position:fixed;top:0;right:0;bottom:0;left:0;display:flex;align-items:center;justify-content:center;color:#e5e7eb;background:#111827;font:18px sans-serif;z-index:4000;text-align:center;padding:24px";
+  div.textContent = first ? "This view is not available." : "This view is no longer available.";
+  document.body.appendChild(div);
+}
 function renderPreviewBanner() {
-  if (!PREVIEW_MODE) return;
+  if (!PREVIEW_MODE || typeof VIEWER_MODE !== "undefined" && VIEWER_MODE) return;
   const lines = [previewBannerParts.layout, previewBannerParts.orphans].filter(Boolean);
   let el = document.getElementById("previewBanner");
   if (!lines.length) {
@@ -7015,7 +7137,7 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("offline", () => {
   if (disconnectedAt) linkLostDuringGap = true;
 });
-if ("serviceWorker" in navigator) {
+if ("serviceWorker" in navigator && !VIEWER_MODE) {
   const serviceWorkerUrl = IS_LEGACY_PLAYER ? "/sw-legacy.js" : "/sw.js";
   navigator.serviceWorker.register(serviceWorkerUrl).then((reg) => {
     console.log("Service Worker registered");

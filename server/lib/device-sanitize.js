@@ -8,6 +8,9 @@
 function stripDeviceSecrets(d) {
   if (!d || typeof d !== 'object') return d;
   delete d.device_token;
+  // View-only share link: only its own admin route reveals it (routes/devices.js GET /:id/view).
+  delete d.view_token_hash;
+  delete d.view_token_enc;
   return d;
 }
 

@@ -126,8 +126,17 @@ test('only a preview instance can be steered', () => {
   const nav = PLAYER.slice(PLAYER.indexOf('function previewNavigate('));
   assert.match(nav.slice(0, 200), /if \(!PREVIEW_MODE\) return;/,
     'previewNavigate must refuse to act outside preview mode');
-  assert.equal((PLAYER.match(/PREVIEW_MODE = true;/g) || []).length, 1,
-    'preview mode should have exactly one assignment — the preview boot path');
+  // Exactly two assignments: the ?preview=1 boot path, and the view-only viewer (bootViewer), which is
+  // reachable only from the server-injected __playerConfig.viewer and never installs the control channel.
+  const sites = [];
+  const re = /PREVIEW_MODE = true;/g;
+  let m;
+  while ((m = re.exec(PLAYER))) sites.push(PLAYER.lastIndexOf('function ', m.index));
+  assert.equal(sites.length, 2, 'preview mode is set only by the preview boot path and the viewer boot path');
+  const owners = sites.map((i) => PLAYER.slice(i, i + 40).match(/function (\w+)/)[1]).sort();
+  assert.deepEqual(owners, ['bootViewer', 'renderPreviewFromUrl']);
+  const viewerBody = PLAYER.slice(PLAYER.indexOf('function bootViewer('), PLAYER.indexOf('function viewerPoll('));
+  assert.doesNotMatch(viewerBody, /installPreviewControlChannel/, 'a viewer can never be steered');
 });
 
 test('the message listener exists only in preview mode and only for our own origin', () => {
