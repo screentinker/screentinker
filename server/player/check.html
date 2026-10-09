@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<!--
+  /player/check — which web player can this screen's browser run?
+
+  Opened on the screen itself (a Samsung URL Launcher, an old webOS or BrightSign browser, a
+  kiosk browser), it reports the browser and every capability the two web players need, then says
+  which address to use. A photo of it is enough to diagnose a screen nobody can attach a debugger to.
+
+  ⚠️ WRITTEN IN ES3 ON PURPOSE: var, function, string concatenation, no arrow functions, no let/const,
+  no template literals, no JSON-less code paths. The screens this exists for cannot parse modern
+  syntax, and a page that dies on its first line is exactly the symptom it is meant to explain
+  (a Samsung DM48E on SSSP 3.0 drew the player's setup screen with its fields empty). Every modern
+  feature is only ever TESTED, inside new Function() + try/catch, never used.
+
+  The verdict mirrors what each build needs:
+    /player         the source as written (ES2020: optional chaining, ??, async/await, classes …)
+    /player/legacy  scripts/build-legacy-player.js lowers it to Chrome 53 (ES2015 + generators),
+                    but does NOT polyfill: Promise, fetch, URL, URLSearchParams, Set must exist.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ScreenTinker — player check</title>
+<style>
+  body { margin: 0; padding: 3vw 4vw; background: #0f172a; color: #f1f5f9; font-family: Arial, Helvetica, sans-serif; font-size: 2.2vw; line-height: 1.35; }
+  h1 { margin: 0 0 1vw; font-size: 4vw; color: #93c5fd; }
+  .verdict { margin: 1.5vw 0 2vw; padding: 2vw; border-radius: 1vw; font-size: 3.2vw; font-weight: bold; }
+  .ok { background: #14532d; } .warn { background: #713f12; } .bad { background: #7f1d1d; }
+  .ua { margin: 0 0 2vw; padding: 1.2vw 1.5vw; background: #1e293b; border-radius: .8vw; font-family: monospace; font-size: 1.9vw; word-wrap: break-word; }
+  table { border-collapse: collapse; width: 100%; font-size: 1.9vw; }
+  td { padding: .35vw .8vw; border-bottom: 1px solid #334155; }
+  td.y { color: #4ade80; font-weight: bold; } td.n { color: #f87171; font-weight: bold; }
+  .cols { overflow: hidden; } .col { float: left; width: 48%; margin-right: 2%; }
+  .small { color: #94a3b8; font-size: 1.7vw; margin-top: 1.5vw; }
+</style>
+</head>
+<body>
+<h1>ScreenTinker player check</h1>
+<div id="verdict" class="verdict bad">Checking… (if this text stays, the browser could not run even this page's script)</div>
+<div class="ua" id="ua"></div>
+<div class="cols"><div class="col"><table id="t1"></table></div><div class="col"><table id="t2"></table></div></div>
+<div class="small" id="foot"></div>
+<script>
+(function () {
+  function syntax(src) { try { new Function(src); return true; } catch (e) { return false; } }
+  function has(fn) { try { return !!fn(); } catch (e) { return false; } }
+  var checks = [];
+  function add(group, name, ok) { checks.push({ group: group, name: name, ok: !!ok }); return !!ok; }
+
+  // Syntax: the legacy build needs ES2015 (+ generators, which esbuild lowers async/await to).
+  var es2015 = true, es2020 = true;
+  es2015 = add('ES2015', 'let / const', syntax('let a = 1; const b = 2;')) && es2015;
+  es2015 = add('ES2015', 'arrow functions', syntax('var f = (a) => a + 1;')) && es2015;
+  es2015 = add('ES2015', 'template strings', syntax('var s = `a${1}`;')) && es2015;
+  es2015 = add('ES2015', 'classes', syntax('class A { m() { return 1; } }')) && es2015;
+  es2015 = add('ES2015', 'destructuring', syntax('var { a, b } = { a: 1, b: 2 }; var [c] = [1];')) && es2015;
+  es2015 = add('ES2015', 'spread / rest', syntax('function f(...a) { return [...a]; }')) && es2015;
+  es2015 = add('ES2015', 'generators', syntax('function* g() { yield 1; }')) && es2015;
+  es2020 = add('Newer', 'async / await', syntax('async function f() { await 1; }')) && es2020;
+  es2020 = add('Newer', 'optional chaining ?.', syntax('var a = {}; var b = a?.x?.y;')) && es2020;
+  es2020 = add('Newer', 'nullish ??', syntax('var a = null ?? 1;')) && es2020;
+  es2020 = add('Newer', 'object spread', syntax('var a = { ...{ b: 1 } };')) && es2020;
+
+  // APIs: not polyfilled by either build.
+  var apis = true;
+  apis = add('APIs', 'Promise', has(function () { return window.Promise && Promise.resolve; })) && apis;
+  apis = add('APIs', 'fetch', has(function () { return window.fetch; })) && apis;
+  apis = add('APIs', 'URL', has(function () { return new URL('http://a/b?c=1').searchParams; })) && apis;
+  apis = add('APIs', 'URLSearchParams', has(function () { return new URLSearchParams('a=1').get('a') === '1'; })) && apis;
+  apis = add('APIs', 'Set / Map', has(function () { return new Set([1]).has(1) && new Map().set(1, 2).get(1) === 2; })) && apis;
+  apis = add('APIs', 'WebSocket', has(function () { return window.WebSocket; })) && apis;
+  apis = add('APIs', 'JSON', has(function () { return JSON.parse('{"a":1}').a === 1; })) && apis;
+  // Nice to have: the player degrades without these.
+  add('Extras', 'localStorage', has(function () { localStorage.setItem('st_check', '1'); localStorage.removeItem('st_check'); return true; }));
+  add('Extras', 'IndexedDB', has(function () { return window.indexedDB; }));
+  add('Extras', 'Service worker', has(function () { return navigator.serviceWorker; }));
+  add('Extras', 'MediaSource (HLS)', has(function () { return window.MediaSource; }));
+  add('Extras', 'Blob', has(function () { return new Blob(['a']).size === 1; }));
+  var v = document.createElement('video');
+  add('Video', 'MP4 / H.264', has(function () { return v.canPlayType && v.canPlayType('video/mp4; codecs="avc1.42E01E"'); }));
+  add('Video', 'WebM / VP9', has(function () { return v.canPlayType && v.canPlayType('video/webm; codecs="vp9"'); }));
+
+  var ua = navigator.userAgent || '(no user agent)';
+  document.getElementById('ua').innerHTML = esc(ua) + '<br>Screen ' + screen.width + ' × ' + screen.height +
+    ' · window ' + (window.innerWidth || '?') + ' × ' + (window.innerHeight || '?') +
+    (window.devicePixelRatio ? ' · pixel ratio ' + window.devicePixelRatio : '');
+
+  var verdict = document.getElementById('verdict');
+  if (es2015 && es2020 && apis) {
+    verdict.className = 'verdict ok';
+    verdict.innerHTML = 'This browser can run the normal player: use <u>' + esc(base()) + '/player</u>';
+  } else if (es2015 && apis) {
+    verdict.className = 'verdict warn';
+    verdict.innerHTML = 'Too old for the normal player, but it can run the legacy one: use <u>' + esc(base()) + '/player/legacy</u>';
+  } else {
+    verdict.className = 'verdict bad';
+    verdict.innerHTML = 'This browser is too old for both web players. Please send a photo of this page to your ScreenTinker contact.';
+  }
+
+  var rows = '';
+  var half = Math.ceil(checks.length / 2), t1 = '', t2 = '';
+  for (var i = 0; i < checks.length; i++) {
+    var c = checks[i];
+    var row = '<tr><td>' + esc(c.group) + '</td><td>' + esc(c.name) + '</td><td class="' + (c.ok ? 'y' : 'n') + '">' + (c.ok ? 'yes' : 'NO') + '</td></tr>';
+    if (i < half) t1 += row; else t2 += row;
+  }
+  void rows;
+  document.getElementById('t1').innerHTML = t1;
+  document.getElementById('t2').innerHTML = t2;
+  document.getElementById('foot').innerHTML = 'Checked ' + esc(String(new Date())) + ' · ' + esc(location.host);
+
+  function base() { return location.protocol + '//' + location.host; }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+})();
+</script>
+</body>
+</html>

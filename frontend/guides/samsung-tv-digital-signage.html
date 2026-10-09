@@ -116,6 +116,15 @@
     <h2>Step 3: Pair the screen</h2>
     <p>The player loads full screen and shows a <strong>6-digit pairing code</strong>. In your dashboard, click <strong>+ Add Display</strong> and enter it. The Samsung screen appears in your device list immediately, online and under your control.</p>
 
+    <h2 id="troubleshooting">If the screen stays on an empty setup page</h2>
+    <p>Older Samsung signage firmware (SSSP 3 and earlier) has a browser too old to run the standard player. It loads, but the setup page stays empty and no pairing code appears. To find out what the panel can run:</p>
+    <ol>
+      <li>Point the URL Launcher at <code>https://screentinker.com/player/check</code> (self-hosted: your address followed by <code>/player/check</code>).</li>
+      <li>The page lists what the browser supports and names the player to use: <code>/player</code>, or <code>/player/legacy</code> for older browsers.</li>
+      <li>Set the URL Launcher to the address it recommends and pair as in Step 3.</li>
+    </ol>
+    <p>If it says the browser is too old for both, use an Android TV box, a Fire TV or a Raspberry Pi on the panel's HDMI input instead. Asking for help? A photo of the check page tells us exactly what the panel's browser can do.</p>
+
     <h2>Step 4: Push content</h2>
     <ol>
       <li>Upload media in the <strong>Content Library</strong></li>

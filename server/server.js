@@ -714,6 +714,13 @@ app.get(['/player/legacy', '/player/legacy/', '/player/legacy/index.html', '/pla
   sendPlayer(res, 'legacy.html');
 });
 
+// Which web player can this screen's browser run? (player/check.html — ES3 on purpose, so it runs
+// on the very browsers that cannot run the player, and a photo of it diagnoses the screen.)
+app.get(['/player/check', '/player/check/'], (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'player', 'check.html'));
+});
+
 // #74/#75: serve the canonical schedule evaluator to the web player from the
 // single source (server/lib/schedule-eval.js) so it can never drift from the
 // server/Node-test copy. Registered before the static handler so it wins.
