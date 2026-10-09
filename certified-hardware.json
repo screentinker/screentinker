@@ -59,7 +59,7 @@
     "",
     "Order within a status group is the order of this array. Groups are ordered by the list above."
   ],
-  "last_updated": "2026-09-24",
+  "last_updated": "2026-10-08",
   "devices": [
     {
       "id": "fire-tv-stick-4k-max",
@@ -188,6 +188,35 @@
         "Point the browser at /player on your server. Nothing is installed.",
         "No minimum browser version has been established.",
         "There is no ScreenTinker version floor either. The browser has been a supported display since the first release, and it is re-tested with the current one."
+      ],
+      "eol": null
+    },
+    {
+      "id": "raspberry-pi-4-model-b",
+      "name": "Raspberry Pi 4 Model B",
+      "manufacturer": "Raspberry Pi",
+      "model_numbers": null,
+      "category": "sbc",
+      "os": "Raspberry Pi OS (64-bit), Debian 13 \"Trixie\": the Lite image, and the Desktop image of 2026-10-06",
+      "player": "Native player (the screentinker-pi package), installed by the setup script with --native. On Lite it runs as a system service drawing straight to the screen; on Desktop it runs full screen in the desktop session.",
+      "status": "certified-with-limits",
+      "max_resolution": "1920x1200 at 60 Hz, the highest tested. 4K has not been tested.",
+      "validated_on": "2026-10-08",
+      "validated_by": "ScreenTinker",
+      "player_version": "2.5.0",
+      "min_version": "2.5.0",
+      "provisioning_url": "/guides/raspberry-pi-digital-signage.html",
+      "buy_url": null,
+      "photo": null,
+      "notes": [
+        "⚠️ Limit: needs a power supply that holds 5.1 V at 3 A over USB-C, such as the official Raspberry Pi supply. On a weaker one the board reported under-voltage, rebooted under load and lost its saved Wi-Fi settings.",
+        "⚠️ Limit: tested on one screen, on the HDMI port next to the USB-C power socket. Two screens, 4K and video walls have not been tested on this board.",
+        "Tested unit: 4 GB, board revision 1.1. Other memory sizes have not been tested.",
+        "2.5.0 is the floor. Earlier builds played no sound on Lite and sent the Desktop's sound to the headphone jack only, skipped every transition on Lite, and could show a black frame as each video started.",
+        "Sound plays on HDMI and the headphone jack at the same time, so whichever has a speaker plays it.",
+        "H.264 video plays on the hardware decoder. Other codecs have not been tested.",
+        "Tested: images, video with sound, shader transitions (fullscreen and inside layout zones), multi-zone layouts, and portrait rotation.",
+        "The time zone is set at setup from where screentinker.com sees the screen, or from the browser that pairs it. Pi OS otherwise defaults to UK time."
       ],
       "eol": null
     },
