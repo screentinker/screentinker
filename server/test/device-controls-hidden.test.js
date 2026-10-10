@@ -85,6 +85,7 @@ function render(device, telemetry) {
     isLinuxDevice: (d) => !!d && (d.client_type === 'pi' || String(d.platform || '').toLowerCase().startsWith('linux/')),
     // Mirrors isWindowsDevice() / isNativeDevice() / terminalPresets() in device-detail.js.
     isWindowsDevice: (d) => !!d && (d.client_type === 'win' || String(d.platform || '').toLowerCase().startsWith('windows/')),
+    isEmbeddedDevice: (d) => !!d && (d.client_type === 'embedded' || String(d.platform || '').toLowerCase().includes('embedded')),
     isNativeDevice: (d) => !!d && (d.client_type === 'pi' || d.client_type === 'win' || d.client_type === 'mac'
       || /^(linux|windows|macos)\//.test(String(d.platform || '').toLowerCase())),
     terminalPresets: (d) => {
@@ -803,6 +804,25 @@ test('the shipped isWindowsDevice / terminalPresets agree with the harness stubs
   // And the real Windows presets are PowerShell, including the helper-service check.
   const presets = SRC.slice(SRC.indexOf('const WINDOWS_TERMINAL_PRESETS'), SRC.indexOf('];', SRC.indexOf('const WINDOWS_TERMINAL_PRESETS')));
   for (const cmd of ['Get-ComputerInfo', 'Get-PSDrive C', 'Get-Service ScreenTinkerHelper', 'Get-WinEvent']) assert.ok(presets.includes(cmd), cmd);
+});
+
+test('the shipped isEmbeddedDevice agrees with embedded display checks', () => {
+  const grab = (name) => {
+    const i = SRC.indexOf(`function ${name}(device) {`);
+    assert.ok(i > 0, `${name} missing from device-detail.js`);
+    let depth = 0;
+    for (let k = SRC.indexOf('{', i); k < SRC.length; k++) {
+      if (SRC[k] === '{') depth++;
+      else if (SRC[k] === '}' && --depth === 0) return SRC.slice(i, k + 1);
+    }
+    return null;
+  };
+  const ctx = {};
+  vm.runInNewContext(grab('isEmbeddedDevice') + '\nthis.isEmbeddedDevice = isEmbeddedDevice;', ctx);
+  assert.equal(ctx.isEmbeddedDevice({ client_type: 'embedded' }), true);
+  assert.equal(ctx.isEmbeddedDevice({ platform: 'embedded/esp32s3' }), true);
+  assert.equal(ctx.isEmbeddedDevice({ client_type: 'apk' }), false);
+  assert.equal(ctx.isEmbeddedDevice(null), false);
 });
 
 /*
