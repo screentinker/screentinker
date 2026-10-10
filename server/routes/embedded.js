@@ -114,8 +114,18 @@ function resolveDevice(req, res) {
   return device;
 }
 
+/*
+ * One call per REQUEST, however many times a handler reaches it. /render touches early (so a
+ * device with no playlist still shows as alive) and the render path touches again once it knows
+ * the item; without this guard every poll wrote two device_telemetry rows and pruned twice.
+ */
+const HEARTBEAT_DONE = Symbol('embeddedHeartbeat');
+
 function touchDeviceHeartbeat(device, req) {
+  if (req[HEARTBEAT_DONE] !== undefined) return req[HEARTBEAT_DONE];
   const clientIp = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || '').replace(/^::ffff:/, '');
+  req[HEARTBEAT_DONE] = clientIp;
+  noteNextCallOnFinish(device, req);
 
   // Extract optional telemetry headers reported by MCU/embedded devices
   const batteryHeader = req.headers['x-st-device-battery'] || req.headers['x-st-battery'];
@@ -151,12 +161,15 @@ function touchDeviceHeartbeat(device, req) {
       WHERE id = ?
     `).run(clientIp, clientIp, appVersion, device.id);
 
-    // If telemetry headers were provided, record a row in device_telemetry
+    // If telemetry headers were provided, record a row in device_telemetry.
+    // ⚠️ local_ip stays NULL: it means the screen's LAN address (the dashboard prints it as "Local
+    // IP"), and all we have here is the address the request came from — the public NAT/proxy one,
+    // already kept in devices.ip_address.
     if (batteryLevel !== null || wifiRssi !== null) {
       db.prepare(`
         INSERT INTO device_telemetry (device_id, battery_level, wifi_rssi, local_ip, reported_at)
-        VALUES (?, ?, ?, ?, strftime('%s','now'))
-      `).run(device.id, batteryLevel, wifiRssi, clientIp || null);
+        VALUES (?, ?, ?, NULL, strftime('%s','now'))
+      `).run(device.id, batteryLevel, wifiRssi);
 
       if (typeof pruneTelemetry === 'function') {
         pruneTelemetry(device.id);
@@ -166,6 +179,32 @@ function touchDeviceHeartbeat(device, req) {
     // non-fatal
   }
   return clientIp;
+}
+
+/**
+ * When the response goes out, remember when this device said it will call next: X-ST-Expires-In is
+ * the deep-sleep the MCU takes before polling again. The heartbeat sweep and the offline alerts
+ * measure lateness from that instant (devices.heartbeat_expected_by), so a panel sleeping through a
+ * power-schedule night is not reported offline every evening.
+ *
+ * ⚠️ Not for a dashboard preview or an ?item= override: those are an operator looking, not the
+ * panel being told when to wake, and recording them would hide a genuinely dead screen.
+ */
+function noteNextCallOnFinish(device, req) {
+  const res = req.res;
+  if (!res || typeof res.once !== 'function') return;
+  if (req.query?.preview === '1' || req.query?.item !== undefined) return;
+  res.once('finish', () => {
+    try {
+      if (res.statusCode >= 400) return;
+      const secs = Number(res.getHeader('X-ST-Expires-In'));
+      if (!Number.isFinite(secs) || secs <= 0) return;
+      db.prepare(`UPDATE devices SET heartbeat_expected_by = CAST(strftime('%s','now') AS INTEGER) + ? WHERE id = ?`)
+        .run(Math.round(secs), device.id);
+    } catch {
+      // non-fatal: without it the device is merely judged by its last call, as before
+    }
+  });
 }
 
 /**

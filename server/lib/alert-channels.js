@@ -290,14 +290,18 @@ async function tick({ db = dbOf(), now = Math.floor(Date.now() / 1000), localRow
     const events = parseEvents(ch.events);
     const thresh = (ch.offline_minutes || 5) * 60;
     if (events.includes('device_offline')) {
-      const rows = db.prepare(`SELECT d.id, d.name, d.last_heartbeat FROM devices d
+      // Measured from when the screen was due: an embedded display asleep until its next scheduled
+      // call (heartbeat_expected_by) is not late before then. The outage KEY stays last_heartbeat.
+      const rows = db.prepare(`SELECT d.id, d.name, d.last_heartbeat,
+          MAX(d.last_heartbeat, COALESCE(d.heartbeat_expected_by, 0)) AS overdue_since FROM devices d
         WHERE d.workspace_id = ? AND d.status = 'offline' AND d.last_heartbeat IS NOT NULL AND ${localRowsSql('d')}
-          AND (? - d.last_heartbeat) > ? AND (? - d.last_heartbeat) < 86400`).all(ch.workspace_id, now, thresh, now);
+          AND (? - MAX(d.last_heartbeat, COALESCE(d.heartbeat_expected_by, 0))) > ?
+          AND (? - MAX(d.last_heartbeat, COALESCE(d.heartbeat_expected_by, 0))) < 86400`).all(ch.workspace_id, now, thresh, now);
       for (const d of rows) {
         if (!inScope(db, ch.id, d.id)) continue;
         const del = db.prepare('SELECT * FROM alert_deliveries WHERE channel_id = ? AND device_id = ? AND outage = ?').get(ch.id, d.id, d.last_heartbeat);
         if (del && (del.offline_sent_at || del.attempts >= MAX_ATTEMPTS)) continue;
-        const minutes = Math.floor((now - d.last_heartbeat) / 60);
+        const minutes = Math.floor((now - d.overdue_since) / 60);
         const r = await deliver(buildMessage(ch, { event: 'device_offline', device: d, minutes, workspace: { name: nameOf(ch.workspace_id) }, dashboardUrl: url,
           dedupKey: `screentinker-${d.id}-${d.last_heartbeat}`, nowIso: new Date(now * 1000).toISOString() }));
         db.prepare(`INSERT INTO alert_deliveries (channel_id, device_id, outage, offline_sent_at, attempts) VALUES (?, ?, ?, ?, 1)

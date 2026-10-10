@@ -135,3 +135,29 @@ test('one alert per outage still logs one activity row, not one per tick', async
     .get(id).c;
   assert.equal(n, 1, 'the activity feed reflects the outage once');
 });
+
+/*
+ * Embedded e-paper panels poll over HTTP and deep-sleep for as long as X-ST-Expires-In says —
+ * overnight under a power schedule that is many hours. heartbeat_expected_by is when it was due
+ * back; lateness (the 5-minute threshold and the 24h first-alert cutoff) counts from there.
+ */
+test('an embedded panel asleep on our instruction is not alerted until it is late from its due time', async () => {
+  const id = mkDevice('EpaperNight', 9 * HOUR);
+  const due = (agoSec) => db.prepare('UPDATE devices SET heartbeat_expected_by = ? WHERE id = ?').run(now() - agoSec, id);
+
+  due(60);                                   // due back a minute ago: not late yet
+  await __test.checkOfflineDevices();
+  assert.equal(mailFor('EpaperNight'), 0);
+
+  due(10 * 60);                              // ten minutes overdue: a real outage
+  __test.alertLastSent.clear();
+  await __test.checkOfflineDevices();
+  assert.equal(mailFor('EpaperNight'), 1);
+});
+
+test('a weekend-long scheduled sleep that then fails still alerts (the 24h cutoff counts from due time)', async () => {
+  const id = mkDevice('EpaperWeekend', 62 * HOUR);
+  db.prepare('UPDATE devices SET heartbeat_expected_by = ? WHERE id = ?').run(now() - 20 * 60, id);
+  await __test.checkOfflineDevices();
+  assert.equal(mailFor('EpaperWeekend'), 1);
+});

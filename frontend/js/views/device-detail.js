@@ -969,7 +969,7 @@ async function loadDevice(deviceId, activeTab = null) {
           ` : `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.player_type')}</div>
-            <div class="info-card-value small">${isEmbeddedDevice(device) ? (device.screen_profile === 'seeed-reterminal-sticky' ? 'Seeed reTerminal Sticky (E-Paper)' : 'Embedded Display (MCU)') : isBrightSignDevice(device) ? t('device.info.brightsign_player') : isLinuxDevice(device) ? t('device.info.linux_player') : isWindowsDevice(device) ? t('device.info.windows_player') : t('device.info.web_player')}</div>
+            <div class="info-card-value small">${isEmbeddedDevice(device) ? (String(device.screen_profile || '').includes('seeed-reterminal-sticky') ? t('device.info.reterminal_sticky_player') : t('device.info.embedded_player')) : isBrightSignDevice(device) ? t('device.info.brightsign_player') : isLinuxDevice(device) ? t('device.info.linux_player') : isWindowsDevice(device) ? t('device.info.windows_player') : t('device.info.web_player')}</div>
           </div>
           ${device.hardware_model ? `
           <div class="info-card">

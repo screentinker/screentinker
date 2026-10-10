@@ -74,7 +74,7 @@ function startHeartbeatChecker(io) {
     accrueUsage(now).catch(() => {});
 
     // Check database for devices that should be offline
-    const onlineDevices = db.prepare(`SELECT id, last_heartbeat FROM devices WHERE status = 'online' AND ${LOCAL_ROWS_SQL('devices')}`).all();
+    const onlineDevices = db.prepare(`SELECT id, last_heartbeat, heartbeat_expected_by FROM devices WHERE status = 'online' AND ${LOCAL_ROWS_SQL('devices')}`).all();
 
     for (const device of onlineDevices) {
       const conn = deviceConnections.get(device.id);
@@ -89,7 +89,11 @@ function startHeartbeatChecker(io) {
       // through to the timeout below.
       if (conn && deviceNs.sockets.has(conn.socketId)) continue;
 
-      const lastBeat = conn ? conn.lastHeartbeat : (device.last_heartbeat ? device.last_heartbeat * 1000 : 0);
+      let lastBeat = conn ? conn.lastHeartbeat : (device.last_heartbeat ? device.last_heartbeat * 1000 : 0);
+      // An embedded display that was told to sleep until T is not late until T. Timing out from
+      // that instant instead of from its last call keeps the same 45s grace for a missed wake-up,
+      // so a dead panel is still caught — just not one that is merely doing what we asked.
+      if (!conn && device.heartbeat_expected_by) lastBeat = Math.max(lastBeat, device.heartbeat_expected_by * 1000);
 
       if (now - lastBeat > config.heartbeatTimeout) {
         // #148 Item 2: marking a device offline MUST also close any socket we still hold for
