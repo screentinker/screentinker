@@ -49,6 +49,8 @@ const { sixDigitCode }      = require('../lib/numeric-code');
 const ScheduleEval          = require('../lib/schedule-eval');
 const PlayOrder             = require('../lib/play-order');
 const { effectiveDeviceTz } = require('../lib/device-timezone');
+const PowerWindow           = require('../lib/power-window');
+const { powerScheduleForDevice } = require('../lib/device-power-schedule');
 
 // ─── Auth helper ───────────────────────────────────────────────────────────────
 
@@ -166,6 +168,43 @@ function touchDeviceHeartbeat(device, req) {
   return clientIp;
 }
 
+/**
+ * Evaluate the effective power schedule for an embedded device.
+ *
+ * Checks device-beats-group power schedule inheritance via powerScheduleForDevice.
+ * If scheduled off, computes the sleep duration until the morning 'on' edge,
+ * giving microcontrollers the exact duration to deep-sleep.
+ *
+ * @param {object} device
+ * @param {Date|number} [now]
+ * @returns {{
+ *   schedule: object|null,
+ *   isOff: boolean,
+ *   state: 'on'|'scheduled_off',
+ *   nextEdge: { at: string, to: 'on'|'scheduled_off', minutes_until: number }|null,
+ *   sleepSeconds: number|null,
+ * }}
+ */
+function evaluateDevicePower(device, now = Date.now()) {
+  try {
+    const schedule = powerScheduleForDevice(db, device.id);
+    if (!schedule || !schedule.enabled) {
+      return { schedule: null, isOff: false, state: 'on', nextEdge: null, sleepSeconds: null };
+    }
+    const isOff = PowerWindow.isOff(schedule, now);
+    const state = PowerWindow.stateOf(schedule, now);
+    const nextEdge = PowerWindow.nextEdge(schedule, now);
+    let sleepSeconds = null;
+    if (isOff) {
+      sleepSeconds = (nextEdge && nextEdge.to === 'on')
+        ? Math.max(60, nextEdge.minutes_until * 60)
+        : 3600;
+    }
+    return { schedule, isOff, state, nextEdge, sleepSeconds };
+  } catch (_) {
+    return { schedule: null, isOff: false, state: 'on', nextEdge: null, sleepSeconds: null };
+  }
+}
 
 // ─── Item cursor helpers ────────────────────────────────────────────────────────
 
@@ -640,15 +679,24 @@ router.get('/info', resolveAuth, (req, res) => {
 
   touchDeviceHeartbeat(device, req);
   const profile = parseProfile(device.screen_profile);
+  const power = evaluateDevicePower(device);
   // /info is metadata (MCU negotiation / debugging / monitors). It must NOT advance the panel's
   // cursor, or a poll that lands after the current item's dwell would make the real render skip an item.
   const resolved = resolveCurrentItem(device.id, req.query.item, { advance: false });
+  const expiresIn = (power.isOff && power.sleepSeconds)
+    ? power.sleepSeconds
+    : (resolved ? resolved.expiresIn : null);
 
   res.json({
     device_id: device.id,
     device_name: device.name,
     screen_profile: profile,
     presets: listPresets(),
+    power_schedule: power.schedule ? {
+      enabled: power.schedule.enabled,
+      state: power.state,
+      next_edge: power.nextEdge,
+    } : null,
     playlist: resolved
       ? { item_count: resolved.total, current_index: resolved.itemIndex }
       : null,
@@ -657,7 +705,7 @@ router.get('/info', resolveAuth, (req, res) => {
           index: resolved.itemIndex,
           content_id: resolved.content?.content_id || null,
           content_type: resolved.item?.widget_id ? 'widget' : (resolved.content?.mime_type || null),
-          expires_in_seconds: resolved.expiresIn,
+          expires_in_seconds: expiresIn,
         }
       : null,
     server_time_utc: new Date().toISOString(),
@@ -766,6 +814,26 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
 
   const forceIndex = req.query.item !== undefined ? req.query.item : null;
   const isPreview = req.query.preview === '1';
+
+  // ── Power Schedule check ──────────────────────────────────────────────────
+  const power = (!isPreview && forceIndex === null)
+    ? evaluateDevicePower(device)
+    : { isOff: false, state: 'on', nextEdge: null, sleepSeconds: null };
+
+  // If the device already holds a frame and is scheduled OFF, answer 304 immediately with deep-sleep duration
+  if (!isPreview && req.headers['if-none-match'] && power.isOff) {
+    const clientIp = touchDeviceHeartbeat(device, req);
+    console.log(`[embedded] Device '${device.name}' (${device.id}) is scheduled OFF [sleep=${power.sleepSeconds}s] from ${clientIp}`);
+    res.set({
+      'ETag': req.headers['if-none-match'],
+      'Cache-Control': 'no-store',
+      'X-ST-Device-Id': device.id,
+      'X-ST-Expires-In': String(power.sleepSeconds),
+      'X-ST-Power-State': 'scheduled_off',
+    }).status(304).end();
+    return;
+  }
+
   // A dashboard preview must not advance the real device's cursor (an ?item= override already never
   // does). A genuine device render still advances, time-gated by the current item's dwell.
   const resolved = resolveCurrentItem(device.id, forceIndex, { advance: !isPreview });
@@ -775,7 +843,14 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
   }
 
   const clientIp = touchDeviceHeartbeat(device, req);
-  const { item, content, itemIndex, expiresIn, total } = resolved;
+  const { item, content, itemIndex, total } = resolved;
+  let expiresIn = resolved.expiresIn;
+  if (power.isOff && power.sleepSeconds) {
+    expiresIn = power.sleepSeconds;
+  } else if (!power.isOff && power.nextEdge && power.nextEdge.to === 'scheduled_off') {
+    const secondsUntilOff = Math.max(1, power.nextEdge.minutes_until * 60);
+    expiresIn = Math.min(expiresIn, secondsUntilOff);
+  }
 
   console.log(`[embedded] Device '${device.name}' (${device.id}) requested frame [item=${itemIndex + 1}/${total}] from ${clientIp}`);
 
@@ -799,6 +874,7 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
     'X-ST-Expires-In': String(expiresIn),
     'X-ST-Item-Index': String(itemIndex),
     'X-ST-Total-Items': String(total),
+    'X-ST-Power-State': power.state,
   };
   if (opts.isFallback) {
     headers['X-ST-Layout-Fallback'] = '1';
@@ -904,9 +980,35 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
     }
   }
 
-  const clientIp = touchDeviceHeartbeat(device, req);
-  const { layout, zoneEntries, expiresIn, dynamicRev } = resolved;
   const isPreview = req.query.preview === '1';
+
+  // ── Power Schedule check ──────────────────────────────────────────────────
+  const power = (!isPreview && forceIndex === null)
+    ? evaluateDevicePower(device)
+    : { isOff: false, state: 'on', nextEdge: null, sleepSeconds: null };
+
+  if (!isPreview && req.headers['if-none-match'] && power.isOff) {
+    const clientIp = touchDeviceHeartbeat(device, req);
+    console.log(`[embedded] Device '${device.name}' (${device.id}) is scheduled OFF [layout sleep=${power.sleepSeconds}s] from ${clientIp}`);
+    res.set({
+      'ETag': req.headers['if-none-match'],
+      'Cache-Control': 'no-store',
+      'X-ST-Device-Id': device.id,
+      'X-ST-Expires-In': String(power.sleepSeconds),
+      'X-ST-Power-State': 'scheduled_off',
+    }).status(304).end();
+    return;
+  }
+
+  const clientIp = touchDeviceHeartbeat(device, req);
+  const { layout, zoneEntries, dynamicRev } = resolved;
+  let expiresIn = resolved.expiresIn;
+  if (power.isOff && power.sleepSeconds) {
+    expiresIn = power.sleepSeconds;
+  } else if (!power.isOff && power.nextEdge && power.nextEdge.to === 'scheduled_off') {
+    const secondsUntilOff = Math.max(1, power.nextEdge.minutes_until * 60);
+    expiresIn = Math.min(expiresIn, secondsUntilOff);
+  }
 
   console.log(`[embedded] Device '${device.name}' (${device.id}) requested multi-zone frame [layout=${layout.name || layout.id}] from ${clientIp}`);
 
@@ -927,6 +1029,7 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
     'X-ST-Expires-In': String(expiresIn),
     'X-ST-Item-Index': '0',
     'X-ST-Total-Zones': String(zoneEntries.length),
+    'X-ST-Power-State': power.state,
   };
 
   if (!isPreview && isNotModified(key, req.headers['if-none-match'])) {
