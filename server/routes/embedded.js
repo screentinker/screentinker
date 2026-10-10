@@ -770,7 +770,8 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
   // does). A genuine device render still advances, time-gated by the current item's dwell.
   const resolved = resolveCurrentItem(device.id, forceIndex, { advance: !isPreview });
   if (!resolved) {
-    return res.status(404).json({ error: 'No playlist assigned or no active items for this device.' });
+    res.set('X-ST-Device-Name', device.name || '');
+    return res.status(404).json({ error: 'No playlist assigned or no active items for this device.', device_name: device.name || '' });
   }
 
   const clientIp = touchDeviceHeartbeat(device, req);
@@ -793,6 +794,7 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
     'ETag': toETag(key),
     'Cache-Control': 'no-store',
     'X-ST-Device-Id': device.id,
+    'X-ST-Device-Name': device.name || '',
     'X-ST-Content-Id': content?.content_id || '',
     'X-ST-Expires-In': String(expiresIn),
     'X-ST-Item-Index': String(itemIndex),
