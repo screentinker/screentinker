@@ -1194,22 +1194,15 @@ async function loadDevice(deviceId, activeTab = null) {
               </div>
             </div>
             ${(device.client_type === 'embedded' || Boolean(device.screen_profile)) ? `
-            <div style="margin:16px 0;padding:14px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px">
-              <h4 style="font-size:13px;margin:0 0 10px 0;display:flex;align-items:center;gap:6px">
-                <span>&#128220;</span> E-Paper &amp; Embedded Display Profile
-              </h4>
-              <div style="display:flex;gap:12px;flex-wrap:wrap">
-                <div class="form-group" style="flex:1;min-width:220px;margin:0">
-                  <label>Dithering Algorithm</label>
-                  <select id="epdDither" class="input" style="background:var(--bg-input)">
-                    <option value="floyd-steinberg" ${String(device.screen_profile || '').includes('"dither":"none"') || String(device.screen_profile || '').includes('"dither":"atkinson"') ? '' : 'selected'}>Floyd–Steinberg (Standard / Photographs)</option>
-                    <option value="atkinson" ${String(device.screen_profile || '').includes('"dither":"atkinson"') ? 'selected' : ''}>Atkinson (Lighter Halftone / Crisp Text)</option>
-                    <option value="none" ${String(device.screen_profile || '').includes('"dither":"none"') ? 'selected' : ''}>None / Threshold (Snaps dark grays to solid black)</option>
-                  </select>
-                  <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
-                    Use &ldquo;None / Threshold&rdquo; if your slides have dark backgrounds (e.g. #1B2029) and you want them to snap to pure solid black without stippling dots.
-                  </div>
-                </div>
+            <div class="form-group">
+              <label>Dithering</label>
+              <select id="epdDither" class="input" style="background:var(--bg-input)">
+                <option value="floyd-steinberg" ${String(device.screen_profile || '').includes('"dither":"none"') || String(device.screen_profile || '').includes('"dither":"atkinson"') ? '' : 'selected'}>Floyd–Steinberg</option>
+                <option value="atkinson" ${String(device.screen_profile || '').includes('"dither":"atkinson"') ? 'selected' : ''}>Atkinson</option>
+                <option value="none" ${String(device.screen_profile || '').includes('"dither":"none"') ? 'selected' : ''}>None (Threshold)</option>
+              </select>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:4px">
+                Choose &ldquo;None&rdquo; for pure solid black backgrounds without error-diffusion dots.
               </div>
             </div>
             ` : ''}
