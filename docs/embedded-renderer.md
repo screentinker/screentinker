@@ -124,6 +124,9 @@ Fetches the pre-rendered image for the current playlist item.
 - **`Authorization`**: `Bearer <device_token>` *(device authentication)* or `Bearer st_...` *(API token)*
 - **`device_id`** *(query, required)*: The UUID of the device.
 - **`If-None-Match`** *(header, optional)*: ETag received in previous request.
+- **`X-ST-Device-Battery`** *(header, optional)*: Battery level as an integer percentage (`0`–`100`). Automatically stored in `device_telemetry` and displayed on the device health card.
+- **`X-ST-Device-RSSI`** *(header, optional)*: Wi-Fi signal strength in dBm (e.g. `-65`). Stored in `device_telemetry`.
+- **`X-ST-Firmware-Version`** *(header, optional)*: Firmware / client version string (e.g. `1.2.0`). Updates `devices.app_version`.
 - **`format`** *(query, optional)*: Override output format (`x-epd-packed`, `png`, `jpeg`, `bmp`, `raw`).
 - **`dither`** *(query, optional)*: Override dithering algorithm (`floyd-steinberg`, `atkinson`, `none`).
 - **`mode`** *(query, optional)*: `layout` (forces multi-zone layout rendering), `single` (forces single-item rendering). When omitted, automatically renders in multi-zone layout mode if the device has an assigned multi-zone layout (`zones.length > 1`), or single-item mode otherwise.
