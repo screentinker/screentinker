@@ -676,6 +676,8 @@ router.get('/render', resolveAuth, async (req, res) => {
   const device = resolveDevice(req, res);
   if (!device) return;
 
+  touchDeviceHeartbeat(device, req);
+
   const profile = parseProfile(device.screen_profile);
   if (!profile) {
     return res.status(400).json({
@@ -726,6 +728,8 @@ router.get('/render', resolveAuth, async (req, res) => {
 router.get('/render-layout', resolveAuth, async (req, res) => {
   const device = resolveDevice(req, res);
   if (!device) return;
+
+  touchDeviceHeartbeat(device, req);
 
   const profile = parseProfile(device.screen_profile);
   if (!profile) {
