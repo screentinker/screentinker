@@ -142,10 +142,24 @@ function _resetForTests() {
   stopSweep();
 }
 
+function popPendingCommands(deviceId) {
+  if (!deviceId) return [];
+  pruneDevice(deviceId);
+  const cmds = pendingCommands.get(deviceId);
+  if (!cmds || cmds.size === 0) return [];
+  pendingCommands.delete(deviceId);
+  const out = [];
+  for (const [type, entry] of cmds) {
+    out.push({ type, payload: entry.payload });
+  }
+  return out;
+}
+
 module.exports = {
   queueOrEmitPlaylistUpdate,
   queueCommand,
   flushQueue,
+  popPendingCommands,
   getQueueDepth,
   startSweep,
   stopSweep,

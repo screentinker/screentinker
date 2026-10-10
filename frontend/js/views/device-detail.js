@@ -915,7 +915,7 @@ async function loadDevice(deviceId, activeTab = null) {
             </svg>
             ${t('device.ctl.clear_update_cache')}
           </button>` : ''}
-          ${can('system.reboot') ? `
+          ${can('system.reboot') && !isEmbeddedDevice(device) ? `
           <button class="btn btn-danger btn-sm" id="shutdownBtn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>
@@ -1162,7 +1162,7 @@ async function loadDevice(deviceId, activeTab = null) {
           </div>
         </div>
 
-        ${(!isEmbeddedDevice(device) || device.power_source === 'usb') ? `
+        ${!isEmbeddedDevice(device) ? `
         ${renderTriggerConfig(device)}
         ${renderTriggerDiagnostics(device)}
         ` : ''}
@@ -1255,6 +1255,7 @@ async function loadDevice(deviceId, activeTab = null) {
             <label>${t('device.form.notes_label')}</label>
             <textarea id="deviceNotes" class="input" rows="3" placeholder="${t('device.form.notes_placeholder')}" style="resize:vertical">${esc(device.notes || '')}</textarea>
           </div>
+          ${!isEmbeddedDevice(device) ? `
           <div style="margin:12px 0">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
               <input type="checkbox" id="otaToggle" ${device.ota_enabled === 0 ? '' : 'checked'}> ${t('device.ota.toggle')}
@@ -1264,7 +1265,7 @@ async function loadDevice(deviceId, activeTab = null) {
                 <input type="checkbox" id="otaBetaToggle" ${device.ota_beta === 1 ? 'checked' : ''}> ${t('device.ota.beta')}
               </label>
               <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 24px">${t('device.ota.beta_hint')}</div>
-          </div>
+          </div>` : ''}
           ${liveVideoAvailable ? `
           <div style="margin:12px 0">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
@@ -1285,6 +1286,7 @@ async function loadDevice(deviceId, activeTab = null) {
           </div>
         </div>
 
+        ${!isEmbeddedDevice(device) ? `
         <div style="margin-top:20px">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
             <input type="checkbox" id="debugLogToggle"> ${t('device.debug.toggle')}
@@ -1302,6 +1304,7 @@ async function loadDevice(deviceId, activeTab = null) {
           </div>
           <div id="debugLogPanel" style="display:none;margin-top:8px;background:#0b0f1a;border:1px solid var(--border);border-radius:6px;padding:8px;height:220px;overflow-y:auto;font-family:monospace;font-size:11px;line-height:1.45;color:#cbd5e1"></div>
         </div>
+        ` : ''}
 
 
         <!-- #109: PiP overlay tester. Pushes device:pip-show/clear via POST /api/pip

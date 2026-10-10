@@ -51,6 +51,16 @@ const PlayOrder             = require('../lib/play-order');
 const { effectiveDeviceTz } = require('../lib/device-timezone');
 const PowerWindow           = require('../lib/power-window');
 const { powerScheduleForDevice } = require('../lib/device-power-schedule');
+const { popPendingCommands }     = require('../lib/command-queue');
+
+function getPendingCommand(deviceId) {
+  if (!deviceId) return null;
+  const cmds = popPendingCommands(deviceId);
+  if (!cmds || cmds.length === 0) return null;
+  const reboot = cmds.find(c => c.type === 'reboot');
+  if (reboot) return 'reboot';
+  return cmds[0].type;
+}
 
 // ─── Auth helper ───────────────────────────────────────────────────────────────
 
@@ -806,12 +816,16 @@ router.get('/render', resolveAuth, async (req, res) => {
     }
   }
 
+  const isPreview = req.query.preview === '1';
+  const pendingCmd = !isPreview ? getPendingCommand(device.id) : null;
+  const renderOpts = { pendingCmd };
+
   // Query mode overrides
   if (req.query.mode === 'single') {
-    return handleRenderStandard(req, res, device, profile);
+    return handleRenderStandard(req, res, device, profile, renderOpts);
   }
   if (req.query.mode === 'layout') {
-    return handleRenderLayout(req, res, device, profile, { explicitMode: true });
+    return handleRenderLayout(req, res, device, profile, { ...renderOpts, explicitMode: true });
   }
 
   // Automatic multi-zone layout detection
@@ -821,12 +835,12 @@ router.get('/render', resolveAuth, async (req, res) => {
   if (layoutResolved && layoutResolved.zoneEntries.length > 1) {
     const isImageOnly = isLayoutImageOnly(layoutResolved.zoneEntries);
     if (!isImageOnly && !isBrowserAvailable()) {
-      return handleRenderStandard(req, res, device, profile, { isFallback: true });
+      return handleRenderStandard(req, res, device, profile, { ...renderOpts, isFallback: true });
     }
-    return handleRenderLayout(req, res, device, profile, { explicitMode: false, preResolved: layoutResolved });
+    return handleRenderLayout(req, res, device, profile, { ...renderOpts, explicitMode: false, preResolved: layoutResolved });
   }
 
-  return handleRenderStandard(req, res, device, profile);
+  return handleRenderStandard(req, res, device, profile, renderOpts);
 });
 
 // ─── GET /api/embedded/render-layout ────────────────────────────────────────────
@@ -858,7 +872,9 @@ router.get('/render-layout', resolveAuth, async (req, res) => {
     }
   }
 
-  return handleRenderLayout(req, res, device, profile, { explicitMode: true });
+  const isPreview = req.query.preview === '1';
+  const pendingCmd = !isPreview ? getPendingCommand(device.id) : null;
+  return handleRenderLayout(req, res, device, profile, { pendingCmd, explicitMode: true });
 });
 
 async function handleRenderStandard(req, res, device, profile, opts = {}) {
@@ -882,13 +898,17 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
   if (!isPreview && req.headers['if-none-match'] && power.isOff) {
     const clientIp = touchDeviceHeartbeat(device, req);
     console.log(`[embedded] Device '${device.name}' (${device.id}) is scheduled OFF [sleep=${power.sleepSeconds}s] from ${clientIp}`);
-    res.set({
+    const offHeaders = {
       'ETag': req.headers['if-none-match'],
       'Cache-Control': 'no-store',
       'X-ST-Device-Id': device.id,
       'X-ST-Expires-In': String(power.sleepSeconds),
       'X-ST-Power-State': 'scheduled_off',
-    }).status(304).end();
+    };
+    if (opts.pendingCmd) {
+      offHeaders['X-ST-Command'] = opts.pendingCmd;
+    }
+    res.set(offHeaders).status(304).end();
     return;
   }
 
@@ -896,7 +916,9 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
   // does). A genuine device render still advances, time-gated by the current item's dwell.
   const resolved = resolveCurrentItem(device.id, forceIndex, { advance: !isPreview });
   if (!resolved) {
-    res.set('X-ST-Device-Name', device.name || '');
+    const errHeaders = { 'X-ST-Device-Name': device.name || '' };
+    if (opts.pendingCmd) errHeaders['X-ST-Command'] = opts.pendingCmd;
+    res.set(errHeaders);
     return res.status(404).json({ error: 'No playlist assigned or no active items for this device.', device_name: device.name || '' });
   }
 
@@ -934,6 +956,9 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
     'X-ST-Total-Items': String(total),
     'X-ST-Power-State': power.state,
   };
+  if (opts.pendingCmd) {
+    headers['X-ST-Command'] = opts.pendingCmd;
+  }
   if (opts.isFallback) {
     headers['X-ST-Layout-Fallback'] = '1';
   }
@@ -976,6 +1001,7 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
   }
 
   if (!renderResult || renderResult.unsupported) {
+    if (opts.pendingCmd) res.set('X-ST-Command', opts.pendingCmd);
     return res.status(501).json({
       error: 'Content type not yet supported by Phase 1 renderer.',
       detail: renderResult?.reason || 'No renderable items in playlist',
@@ -1048,13 +1074,17 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
   if (!isPreview && req.headers['if-none-match'] && power.isOff) {
     const clientIp = touchDeviceHeartbeat(device, req);
     console.log(`[embedded] Device '${device.name}' (${device.id}) is scheduled OFF [layout sleep=${power.sleepSeconds}s] from ${clientIp}`);
-    res.set({
+    const offHeaders = {
       'ETag': req.headers['if-none-match'],
       'Cache-Control': 'no-store',
       'X-ST-Device-Id': device.id,
       'X-ST-Expires-In': String(power.sleepSeconds),
       'X-ST-Power-State': 'scheduled_off',
-    }).status(304).end();
+    };
+    if (opts.pendingCmd) {
+      offHeaders['X-ST-Command'] = opts.pendingCmd;
+    }
+    res.set(offHeaders).status(304).end();
     return;
   }
 
@@ -1089,6 +1119,9 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
     'X-ST-Total-Zones': String(zoneEntries.length),
     'X-ST-Power-State': power.state,
   };
+  if (opts.pendingCmd) {
+    headers['X-ST-Command'] = opts.pendingCmd;
+  }
 
   if (!isPreview && isNotModified(key, req.headers['if-none-match'])) {
     res.set(headers).status(304).end();

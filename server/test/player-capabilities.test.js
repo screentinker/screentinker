@@ -150,9 +150,9 @@ test('embedded display capabilities adapt to power source', () => {
   const usbDev = { client_type: 'embedded', power_source: 'usb' };
   assert.ok(caps.supports(usbDev, 'playback.image'));
   assert.ok(caps.supports(usbDev, 'offline.cache'));
-  assert.ok(caps.supports(usbDev, 'playback.pip'));
+  assert.equal(caps.supports(usbDev, 'playback.pip'), false);
   assert.ok(caps.supports(usbDev, 'system.reboot'));
-  assert.ok(caps.supports(usbDev, 'system.self_update'));
+  assert.equal(caps.supports(usbDev, 'system.self_update'), false);
   assert.equal(caps.supports(usbDev, 'audio.volume'), false);
 
   const profileDev = { screen_profile: 'seeed-reterminal-sticky' };

@@ -850,6 +850,49 @@ describe('Embedded HTTP Route & Fallback Handling', () => {
     assert.ok(v >= before + 3600 && v <= before + 3600 + 5, `expected ~now+3600, got ${v - before}s`);
     db.prepare("DELETE FROM display_power_schedules WHERE id = 'sched-wake'").run();
   });
+
+  test('queued reboot command is delivered via X-ST-Command header and cleared', async () => {
+    const { queueCommand } = require('../lib/command-queue');
+    const tmpUpload = path.join(require('../config').contentDir);
+    fs.mkdirSync(tmpUpload, { recursive: true });
+    const imgPath = path.join(tmpUpload, 'reboot-test.png');
+    const img = new Jimp({ width: 200, height: 100, color: 0x00FF00FF });
+    fs.writeFileSync(imgPath, await img.getBuffer('image/png'));
+
+    const plId = 'pl-reboot-test';
+    const devId = 'dev-reboot-test';
+    const token = 'tok-reboot-test';
+
+    db.prepare("INSERT INTO playlists (id, workspace_id, name, status) VALUES (?, 'ws-1', 'Reboot PL', 'published')").run(plId);
+    db.prepare("INSERT INTO content (id, workspace_id, type, mime_type, filepath, is_active) VALUES ('c-rb-1', 'ws-1', 'image', 'image/png', 'reboot-test.png', 1)").run();
+    db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id, sort_order, duration_sec) VALUES ('pi-rb-1', ?, 'c-rb-1', 0, 30)").run(plId);
+    publishPlaylist(plId);
+    db.prepare("INSERT INTO devices (id, name, workspace_id, playlist_id, device_token, screen_profile) VALUES (?, 'Reboot Dev', 'ws-1', ?, ?, '{\"preset\":\"seeed-reterminal-sticky\"}')").run(devId, plId, token);
+
+    // Queue a reboot command
+    queueCommand(devId, 'reboot', { initiated_by: 'operator' });
+
+    // 1. Preview request must NOT pop or return the command
+    const previewRes = await fetch(`${baseUrl}/render?device_id=${devId}&preview=1`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(previewRes.headers.get('x-st-command'), null);
+
+    // 2. Real device request receives X-ST-Command: reboot
+    const renderRes = await fetch(`${baseUrl}/render?device_id=${devId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(renderRes.headers.get('x-st-command'), 'reboot');
+    assert.equal(renderRes.status, 200);
+
+    // 3. Subsequent request has no pending command (popped)
+    const subsequentRes = await fetch(`${baseUrl}/render?device_id=${devId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(subsequentRes.headers.get('x-st-command'), null);
+
+    try { fs.unlinkSync(imgPath); } catch (_) {}
+  });
 });
 
 

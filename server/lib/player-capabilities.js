@@ -571,9 +571,7 @@ function capabilitiesFor(device) {
     if (power === 'usb' || power === 'mains' || power === 'external') {
       return [
         'playback.image',
-        'playback.pip',
         'system.reboot',
-        'system.self_update',
         'offline.cache',
       ];
     }

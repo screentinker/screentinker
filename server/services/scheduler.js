@@ -163,7 +163,14 @@ function maybeRebootDevice(device, now, deviceNs) {
   // work out why a panel never came back.
   if (!playerCapabilities.supports(device, 'system.reboot')) return;
   db.prepare('UPDATE devices SET reboot_last_date = ? WHERE id = ?').run(today, device.id);
-  deviceNs.to(device.id).emit('device:command', { type: 'reboot', payload: { scheduled: true } });
+  const sockets = deviceNs && deviceNs.adapter && deviceNs.adapter.rooms ? deviceNs.adapter.rooms.get(device.id) : null;
+  if (sockets && sockets.size > 0) {
+    deviceNs.to(device.id).emit('device:command', { type: 'reboot', payload: { scheduled: true } });
+  } else {
+    try {
+      require('../lib/command-queue').queueCommand(device.id, 'reboot', { scheduled: true });
+    } catch { /* best effort */ }
+  }
   console.log(`[reboot] scheduled reboot fired for device ${device.id} (${device.name || 'unnamed'}) at local ${today}`);
 }
 
