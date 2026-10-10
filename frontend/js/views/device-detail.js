@@ -697,6 +697,16 @@ async function loadDevice(deviceId, activeTab = null) {
     const latestTelemetry = device.telemetry?.[0] || {};
     const diagWidget = (device.assignments || []).find(a => a && a.widget_type === 'diag-smoothness');
 
+    const currentDither = (() => {
+      if (!device.screen_profile) return 'floyd-steinberg';
+      if (typeof device.screen_profile === 'object') return device.screen_profile.dither || 'floyd-steinberg';
+      try {
+        const p = JSON.parse(device.screen_profile);
+        if (p && p.dither) return p.dither;
+      } catch (_) {}
+      return 'floyd-steinberg';
+    })();
+
     contentEl.innerHTML = `
       <div class="device-header">
         <div class="device-header-left">
@@ -1167,7 +1177,11 @@ async function loadDevice(deviceId, activeTab = null) {
           <div id="incidentsPanel"></div>
         </div>
 
-        <div style="margin-top:20px">
+        <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <h4 style="font-size:14px;font-weight:600;margin:0">${t('nav.settings')}</h4>
+            <button class="btn btn-primary btn-sm" id="saveSettingsTopBtn">${t('device.form.save_settings')}</button>
+          </div>
           <div style="display:flex;gap:12px;margin-bottom:12px">
             <div class="form-group" style="flex:1;margin:0">
               <label>${t('device.form.orientation_label')}</label>
@@ -1197,9 +1211,9 @@ async function loadDevice(deviceId, activeTab = null) {
             <div class="form-group">
               <label>Dithering</label>
               <select id="epdDither" class="input" style="background:var(--bg-input)">
-                <option value="floyd-steinberg" ${String(device.screen_profile || '').includes('"dither":"none"') || String(device.screen_profile || '').includes('"dither":"atkinson"') ? '' : 'selected'}>Floyd–Steinberg</option>
-                <option value="atkinson" ${String(device.screen_profile || '').includes('"dither":"atkinson"') ? 'selected' : ''}>Atkinson</option>
-                <option value="none" ${String(device.screen_profile || '').includes('"dither":"none"') ? 'selected' : ''}>None (Threshold)</option>
+                <option value="floyd-steinberg" ${currentDither === 'floyd-steinberg' ? 'selected' : ''}>Floyd–Steinberg</option>
+                <option value="atkinson" ${currentDither === 'atkinson' ? 'selected' : ''}>Atkinson</option>
+                <option value="none" ${currentDither === 'none' ? 'selected' : ''}>None (Threshold)</option>
               </select>
               <div style="font-size:12px;color:var(--text-muted);margin-top:4px">
                 Choose &ldquo;None&rdquo; for pure solid black backgrounds without error-diffusion dots.
@@ -1249,8 +1263,10 @@ async function loadDevice(deviceId, activeTab = null) {
             <input type="time" id="rebootSchedule" class="input" style="background:var(--bg-input)" value="${esc(device.reboot_schedule || '')}">
             <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 0">${t('device.reboot_schedule.hint')}</div>
           </div>
-          <button class="btn btn-secondary btn-sm" id="saveNotesBtn">${t('device.form.save_settings')}</button>
-          <button class="btn btn-secondary btn-sm" id="reAdoptBtn" style="margin-left:8px" title="${t('device.readopt.button_hint')}">${t('device.readopt.button')}</button>
+          <div style="margin-top:16px;display:flex;gap:8px;align-items:center">
+            <button class="btn btn-primary" id="saveNotesBtn">${t('device.form.save_settings')}</button>
+            <button class="btn btn-secondary btn-sm" id="reAdoptBtn" title="${t('device.readopt.button_hint')}">${t('device.readopt.button')}</button>
+          </div>
         </div>
 
         <div style="margin-top:20px">
@@ -2531,6 +2547,9 @@ function setupActions(device) {
   });
 
   wireLocationSearch();
+  document.getElementById('saveSettingsTopBtn')?.addEventListener('click', () => {
+    document.getElementById('saveNotesBtn')?.click();
+  });
   document.getElementById('saveNotesBtn')?.addEventListener('click', async () => {
     try {
   // #325: "Use the default" clears the override. A colour input cannot be empty, so the intent is
