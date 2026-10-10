@@ -513,6 +513,11 @@ function isNativeDevice(device) {
   return isLinuxDevice(device) || isWindowsDevice(device) || isMacDevice(device);
 }
 
+function isEmbeddedDevice(device) {
+  if (!device) return false;
+  return device.client_type === 'embedded' || String(device.platform || '').toLowerCase().includes('embedded');
+}
+
 // The one-shot shell's presets and wording, per native OS. Android keeps TERMINAL_PRESETS.
 function terminalPresets(device) {
   if (isWindowsDevice(device)) return WINDOWS_TERMINAL_PRESETS;
@@ -951,7 +956,7 @@ async function loadDevice(deviceId, activeTab = null) {
             <div class="info-card-label">${t('device.info.local_ip6')}</div>
             <div class="info-card-value small" id="telLocalIp6">${esc(device.local_ip6)}</div>
           </div>` : ''}
-          ${device.android_version && !device.android_version.startsWith('Web/') ? `
+          ${(device.android_version && !device.android_version.startsWith('Web/')) || latestTelemetry.battery_level != null ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.battery')}</div>
             <div class="info-card-value" id="telBattery">${latestTelemetry.battery_level != null ? latestTelemetry.battery_level + '%' : '--'}</div>
@@ -960,7 +965,8 @@ async function loadDevice(deviceId, activeTab = null) {
               <div class="progress-bar-fill ${latestTelemetry.battery_level > 50 ? 'success' : latestTelemetry.battery_level > 20 ? 'warning' : 'danger'}"
                    style="width:${latestTelemetry.battery_level}%"></div>
             </div>` : ''}
-          </div>
+          </div>` : ''}
+          ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.storage')}</div>
             <div class="info-card-value small" id="telStorage">${latestTelemetry.storage_free_mb ? t('device.info.size_free', { size: formatBytes(latestTelemetry.storage_free_mb) }) : '--'}</div>
@@ -973,7 +979,7 @@ async function loadDevice(deviceId, activeTab = null) {
           ` : `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.player_type')}</div>
-            <div class="info-card-value small">${isBrightSignDevice(device) ? t('device.info.brightsign_player') : isLinuxDevice(device) ? t('device.info.linux_player') : isWindowsDevice(device) ? t('device.info.windows_player') : t('device.info.web_player')}</div>
+            <div class="info-card-value small">${isEmbeddedDevice(device) ? (String(device.screen_profile || '').includes('seeed-reterminal-sticky') ? t('device.info.reterminal_sticky_player') : t('device.info.embedded_player')) : isBrightSignDevice(device) ? t('device.info.brightsign_player') : isLinuxDevice(device) ? t('device.info.linux_player') : isWindowsDevice(device) ? t('device.info.windows_player') : t('device.info.web_player')}</div>
           </div>
           ${device.hardware_model ? `
           <div class="info-card">
@@ -1046,7 +1052,7 @@ async function loadDevice(deviceId, activeTab = null) {
               ${device.edid.checksumValid === false ? `<br><span style="color:var(--warning,#f59e0b)">${t('device.info.edid_checksum_bad')}</span>` : ''}
             </div>
           </div>` : ''}
-          ${(device.android_version && !device.android_version.startsWith('Web/')) || (isNativeDevice(device) && latestTelemetry.wifi_rssi != null) ? `
+          ${(device.android_version && !device.android_version.startsWith('Web/')) || (isNativeDevice(device) && latestTelemetry.wifi_rssi != null) || latestTelemetry.wifi_rssi != null ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.wifi')}</div>
             <!-- ⚠️ The network NAME is deliberately gone (Phase −1). An SSID is geolocatable

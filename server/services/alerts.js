@@ -38,12 +38,14 @@ async function checkOfflineDevices(io) {
   // rows that come back are genuinely un-alerted outages.
   const offlineDevices = db.prepare(`
     SELECT d.id, d.name, d.user_id, d.workspace_id, d.last_heartbeat, d.status,
+           MAX(d.last_heartbeat, COALESCE(d.heartbeat_expected_by, 0)) AS overdue_since,
            u.email as owner_email, u.name as owner_name, u.email_alerts
     FROM devices d
     LEFT JOIN users u ON d.user_id = u.id
     WHERE d.status = 'offline' AND d.last_heartbeat IS NOT NULL
     AND ${LOCAL_ROWS_SQL('d')}
-    AND (? - d.last_heartbeat) > ?
+    -- An embedded display asleep on our instruction is not late until it was due back.
+    AND (? - MAX(d.last_heartbeat, COALESCE(d.heartbeat_expected_by, 0))) > ?
     AND (d.offline_alert_heartbeat IS NULL OR d.offline_alert_heartbeat != d.last_heartbeat)
   `).all(now, threshold);
 
@@ -55,7 +57,7 @@ async function checkOfflineDevices(io) {
     // dark for >24h when we first saw it - it's not news. This no longer bounds
     // repeats (the per-outage marker does that); it bounds the FIRST alert, which is
     // what stops a restart from mailing about long-abandoned devices.
-    const offlineHours = (now - device.last_heartbeat) / 3600;
+    const offlineHours = (now - device.overdue_since) / 3600;
     if (offlineHours > 24) continue;
 
     if (device.owner_email) {
@@ -73,7 +75,7 @@ async function checkOfflineDevices(io) {
       db.prepare('UPDATE devices SET offline_alert_heartbeat = ? WHERE id = ?')
         .run(device.last_heartbeat, device.id);
 
-      const offlineMinutes = Math.floor((now - device.last_heartbeat) / 60);
+      const offlineMinutes = Math.floor((now - device.overdue_since) / 60);
       const subject = `Display Offline: ${device.name}`;
       const body = `Your display "${device.name}" has been offline for ${offlineMinutes} minutes.\n\nLast heartbeat: ${new Date(device.last_heartbeat * 1000).toLocaleString()}\n\nCheck your device and network connection.\n\n- ScreenTinker`;
 

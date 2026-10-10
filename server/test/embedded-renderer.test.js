@@ -30,7 +30,13 @@ db.exec(`
     device_token TEXT, blocked INTEGER DEFAULT 0, screen_profile TEXT,
     playlist_id TEXT, playlist_source TEXT, layout_id TEXT,
     timezone TEXT, reported_timezone TEXT, background_color TEXT DEFAULT '#000000',
-    default_content_id TEXT
+    default_content_id TEXT, last_heartbeat INTEGER, ip_address TEXT,
+    app_version TEXT, updated_at INTEGER, heartbeat_expected_by INTEGER
+  );
+  CREATE TABLE device_telemetry (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT, battery_level INTEGER, wifi_rssi INTEGER,
+    local_ip TEXT, reported_at INTEGER
   );
   CREATE TABLE playlists (
     id TEXT PRIMARY KEY, workspace_id TEXT, name TEXT, status TEXT DEFAULT 'published',
@@ -84,6 +90,16 @@ db.exec(`
   CREATE VIEW device_resolved_playlist AS
   SELECT d.id AS device_id, d.playlist_id, 'device' AS source, d.layout_id
   FROM devices d;
+  CREATE TABLE IF NOT EXISTS display_power_schedules (
+    id TEXT PRIMARY KEY, workspace_id TEXT, name TEXT, device_id TEXT, group_id TEXT,
+    timezone TEXT, enabled INTEGER NOT NULL DEFAULT 1, windows TEXT, set_by_org_admin INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS device_groups (
+    id TEXT PRIMARY KEY, workspace_id TEXT, name TEXT
+  );
+  CREATE TABLE IF NOT EXISTS device_group_members (
+    group_id TEXT, device_id TEXT, workspace_id TEXT, PRIMARY KEY(group_id, device_id)
+  );
 `);
 
 require.cache[require.resolve('../db/database')] = { id: require.resolve('../db/database'), loaded: true, exports: { db } };
@@ -691,6 +707,147 @@ describe('Embedded HTTP Route & Fallback Handling', () => {
 
     try { fs.unlinkSync(imgPath); } catch (_) {}
   });
+
+  test('power schedule: GET /api/embedded/info reports power_schedule and calculates sleep duration when scheduled off', async () => {
+    const plId = 'pl-power-info';
+    const devId = 'dev-power-info';
+    const token = 'tok-power-info';
+    db.prepare("INSERT INTO playlists (id, workspace_id, name, status) VALUES (?, 'ws-1', 'Power PL', 'published')").run(plId);
+    db.prepare("INSERT INTO content (id, workspace_id, type, mime_type, filepath, is_active) VALUES ('c-p-1', 'ws-1', 'image', 'image/png', 'power-test.png', 1)").run();
+    db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id, sort_order, duration_sec) VALUES ('pi-p-1', ?, 'c-p-1', 0, 30)").run(plId);
+    publishPlaylist(plId);
+    db.prepare("INSERT INTO devices (id, name, workspace_id, playlist_id, device_token, screen_profile, timezone) VALUES (?, 'Power Info Dev', 'ws-1', ?, ?, '{\"preset\":\"seeed-reterminal-sticky\"}', 'UTC')").run(devId, plId, token);
+
+    // Create a 24/7 OFF power schedule covering this device (Sun-Sat 00:00 - 24:00)
+    const schedId = 'sched-p-info';
+    const windows = JSON.stringify([{ days: [0, 1, 2, 3, 4, 5, 6], start: '00:00', end: '24:00' }]);
+    db.prepare("INSERT INTO display_power_schedules (id, workspace_id, name, device_id, enabled, timezone, windows) VALUES (?, 'ws-1', 'Always Off', ?, 1, 'UTC', ?)").run(schedId, devId, windows);
+
+    const res = await fetch(`${baseUrl}/info?device_id=${devId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.power_schedule);
+    assert.equal(body.power_schedule.enabled, true);
+    assert.equal(body.power_schedule.state, 'scheduled_off');
+    // When always off with no edge inside 8 days, fallback is 3600 seconds
+    assert.equal(body.current_item.expires_in_seconds, 3600);
+
+    // Clean up schedule
+    db.prepare("DELETE FROM display_power_schedules WHERE id = ?").run(schedId);
+  });
+
+  test('power schedule: GET /api/embedded/render returns 304 with X-ST-Power-State: scheduled_off and sleep X-ST-Expires-In on If-None-Match', async () => {
+    const plId = 'pl-power-render';
+    const devId = 'dev-power-render';
+    const token = 'tok-power-render';
+    db.prepare("INSERT INTO playlists (id, workspace_id, name, status) VALUES (?, 'ws-1', 'Power Render PL', 'published')").run(plId);
+    db.prepare("INSERT INTO content (id, workspace_id, type, mime_type, filepath, is_active) VALUES ('c-pr-1', 'ws-1', 'image', 'image/png', 'power-render.png', 1)").run();
+    db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id, sort_order, duration_sec) VALUES ('pi-pr-1', ?, 'c-pr-1', 0, 30)").run(plId);
+    publishPlaylist(plId);
+    db.prepare("INSERT INTO devices (id, name, workspace_id, playlist_id, device_token, screen_profile, timezone) VALUES (?, 'Power Render Dev', 'ws-1', ?, ?, '{\"preset\":\"seeed-reterminal-sticky\"}', 'UTC')").run(devId, plId, token);
+
+    // Create 24/7 OFF schedule
+    const schedId = 'sched-p-render';
+    const windows = JSON.stringify([{ days: [0, 1, 2, 3, 4, 5, 6], start: '00:00', end: '24:00' }]);
+    db.prepare("INSERT INTO display_power_schedules (id, workspace_id, name, device_id, enabled, timezone, windows) VALUES (?, 'ws-1', 'Always Off', ?, 1, 'UTC', ?)").run(schedId, devId, windows);
+
+    // Send conditional request
+    const res = await fetch(`${baseUrl}/render?device_id=${devId}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'If-None-Match': '"existing-etag-123"',
+      },
+    });
+    assert.equal(res.status, 304);
+    assert.equal(res.headers.get('x-st-power-state'), 'scheduled_off');
+    assert.equal(res.headers.get('x-st-expires-in'), '3600');
+    assert.equal(res.headers.get('x-st-device-id'), devId);
+
+    // Clean up schedule
+    db.prepare("DELETE FROM display_power_schedules WHERE id = ?").run(schedId);
+  });
+
+  test('power schedule: preview (?preview=1) bypasses scheduled_off sleep gate', async () => {
+    const plId = 'pl-power-preview';
+    const devId = 'dev-power-preview';
+    const token = 'tok-power-preview';
+    const tmpUpload = path.join(require('../config').contentDir);
+    fs.mkdirSync(tmpUpload, { recursive: true });
+    const imgPath = path.join(tmpUpload, 'power-preview.png');
+    const img = new Jimp({ width: 200, height: 100, color: 0x00FF00FF });
+    fs.writeFileSync(imgPath, await img.getBuffer('image/png'));
+
+    db.prepare("INSERT INTO playlists (id, workspace_id, name, status) VALUES (?, 'ws-1', 'Power Preview PL', 'published')").run(plId);
+    db.prepare("INSERT INTO content (id, workspace_id, type, mime_type, filepath, is_active) VALUES ('c-prev-1', 'ws-1', 'image', 'image/png', 'power-preview.png', 1)").run();
+    db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id, sort_order, duration_sec) VALUES ('pi-prev-1', ?, 'c-prev-1', 0, 30)").run(plId);
+    publishPlaylist(plId);
+    db.prepare("INSERT INTO devices (id, name, workspace_id, playlist_id, device_token, screen_profile, timezone) VALUES (?, 'Power Prev Dev', 'ws-1', ?, ?, '{\"preset\":\"seeed-reterminal-sticky\"}', 'UTC')").run(devId, plId, token);
+
+    // Schedule 24/7 OFF
+    const schedId = 'sched-p-preview';
+    const windows = JSON.stringify([{ days: [0, 1, 2, 3, 4, 5, 6], start: '00:00', end: '24:00' }]);
+    db.prepare("INSERT INTO display_power_schedules (id, workspace_id, name, device_id, enabled, timezone, windows) VALUES (?, 'ws-1', 'Always Off', ?, 1, 'UTC', ?)").run(schedId, devId, windows);
+
+    // Request with ?preview=1
+    const res = await fetch(`${baseUrl}/render?device_id=${devId}&preview=1`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('x-st-power-state'), 'on', 'preview should bypass scheduled_off');
+
+    try { fs.unlinkSync(imgPath); } catch (_) {}
+    db.prepare("DELETE FROM display_power_schedules WHERE id = ?").run(schedId);
+  });
+
+  test('one /render poll writes ONE telemetry row, however many times the handler touches the heartbeat', async () => {
+    const plId = 'pl-once', devId = 'dev-once', token = 'tok-once';
+    db.prepare("INSERT INTO playlists (id, workspace_id, name, status) VALUES (?, 'ws-1', 'Once PL', 'published')").run(plId);
+    db.prepare("INSERT INTO content (id, workspace_id, type, mime_type, filepath, is_active) VALUES ('c-once-1', 'ws-1', 'image', 'image/png', 'once.png', 1)").run();
+    db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id, sort_order, duration_sec) VALUES ('pi-once-1', ?, 'c-once-1', 0, 30)").run(plId);
+    publishPlaylist(plId);
+    db.prepare("INSERT INTO devices (id, name, workspace_id, playlist_id, device_token, screen_profile, timezone) VALUES (?, 'Once Dev', 'ws-1', ?, ?, '{\"preset\":\"seeed-reterminal-sticky\"}', 'UTC')").run(devId, plId, token);
+
+    // 24/7 off, so the request takes the scheduled_off 304 path: the early touch in the route AND
+    // the touch inside handleRenderStandard both run on it.
+    const windows = JSON.stringify([{ days: [0, 1, 2, 3, 4, 5, 6], start: '00:00', end: '24:00' }]);
+    db.prepare("INSERT INTO display_power_schedules (id, workspace_id, name, device_id, enabled, timezone, windows) VALUES ('sched-once', 'ws-1', 'Always Off', ?, 1, 'UTC', ?)").run(devId, windows);
+
+    const res = await fetch(`${baseUrl}/render?device_id=${devId}`, {
+      headers: { Authorization: `Bearer ${token}`, 'If-None-Match': '"e"', 'X-ST-Device-Battery': '50' },
+    });
+    assert.equal(res.status, 304);
+    const n = db.prepare('SELECT COUNT(*) c FROM device_telemetry WHERE device_id = ?').get(devId).c;
+    assert.equal(n, 1);
+    db.prepare("DELETE FROM display_power_schedules WHERE id = 'sched-once'").run();
+  });
+
+  test('a scheduled-off sleep is recorded as heartbeat_expected_by, so the sweep does not call the panel offline', async () => {
+    const plId = 'pl-wake', devId = 'dev-wake', token = 'tok-wake';
+    db.prepare("INSERT INTO playlists (id, workspace_id, name, status) VALUES (?, 'ws-1', 'Wake PL', 'published')").run(plId);
+    db.prepare("INSERT INTO content (id, workspace_id, type, mime_type, filepath, is_active) VALUES ('c-wake-1', 'ws-1', 'image', 'image/png', 'wake.png', 1)").run();
+    db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id, sort_order, duration_sec) VALUES ('pi-wake-1', ?, 'c-wake-1', 0, 30)").run(plId);
+    publishPlaylist(plId);
+    db.prepare("INSERT INTO devices (id, name, workspace_id, playlist_id, device_token, screen_profile, timezone) VALUES (?, 'Wake Dev', 'ws-1', ?, ?, '{\"preset\":\"seeed-reterminal-sticky\"}', 'UTC')").run(devId, plId, token);
+    const windows = JSON.stringify([{ days: [0, 1, 2, 3, 4, 5, 6], start: '00:00', end: '24:00' }]);
+    db.prepare("INSERT INTO display_power_schedules (id, workspace_id, name, device_id, enabled, timezone, windows) VALUES ('sched-wake', 'ws-1', 'Always Off', ?, 1, 'UTC', ?)").run(devId, windows);
+
+    // A dashboard preview is an operator looking, not the panel being told to sleep.
+    await fetch(`${baseUrl}/render?device_id=${devId}&preview=1`, { headers: { Authorization: `Bearer ${token}` } });
+    await new Promise((r) => setImmediate(r));
+    assert.equal(db.prepare('SELECT heartbeat_expected_by v FROM devices WHERE id = ?').get(devId).v, null);
+
+    const before = Math.floor(Date.now() / 1000);
+    const res = await fetch(`${baseUrl}/render?device_id=${devId}`, {
+      headers: { Authorization: `Bearer ${token}`, 'If-None-Match': '"e"' },
+    });
+    assert.equal(res.status, 304);
+    await new Promise((r) => setImmediate(r));   // 'finish' fires as the response is flushed
+    const v = db.prepare('SELECT heartbeat_expected_by v FROM devices WHERE id = ?').get(devId).v;
+    assert.ok(v >= before + 3600 && v <= before + 3600 + 5, `expected ~now+3600, got ${v - before}s`);
+    db.prepare("DELETE FROM display_power_schedules WHERE id = 'sched-wake'").run();
+  });
 });
 
 
@@ -1075,6 +1232,66 @@ describe('Issue #337 Follow-ups: Robustness, Parity & Deduplication', () => {
 
     const pDefault = parseProfile('seeed-reterminal-sticky');
     assert.equal(pDefault.dither, 'floyd-steinberg');
+  });
+});
+
+describe('Embedded Device Liveness & Telemetry Ingestion', () => {
+  const { touchDeviceHeartbeat } = embeddedRouter;
+  const devId = 'dev-telemetry-test';
+
+  db.prepare(`
+    INSERT OR REPLACE INTO devices (id, name, workspace_id, status, last_heartbeat, app_version)
+    VALUES (?, 'Telemetry Test Screen', 'ws-1', 'offline', 0, '1.0.0')
+  `).run(devId);
+
+  test('touchDeviceHeartbeat marks device online and updates last_heartbeat', () => {
+    const req = {
+      headers: {},
+      socket: { remoteAddress: '192.168.1.50' },
+    };
+    const clientIp = touchDeviceHeartbeat({ id: devId }, req);
+    assert.equal(clientIp, '192.168.1.50');
+
+    const dev = db.prepare('SELECT status, last_heartbeat, ip_address FROM devices WHERE id = ?').get(devId);
+    assert.equal(dev.status, 'online');
+    assert.ok(dev.last_heartbeat > 0);
+    assert.equal(dev.ip_address, '192.168.1.50');
+  });
+
+  test('touchDeviceHeartbeat records battery, RSSI, and app_version', () => {
+    const req = {
+      headers: {
+        'x-st-device-battery': '88',
+        'x-st-device-rssi': '-65',
+        'x-st-firmware-version': '1.2.0',
+      },
+      socket: { remoteAddress: '192.168.1.51' },
+    };
+    touchDeviceHeartbeat({ id: devId }, req);
+
+    const dev = db.prepare('SELECT app_version FROM devices WHERE id = ?').get(devId);
+    assert.equal(dev.app_version, '1.2.0');
+
+    const telemetry = db.prepare('SELECT battery_level, wifi_rssi, local_ip FROM device_telemetry WHERE device_id = ? ORDER BY id DESC LIMIT 1').get(devId);
+    assert.ok(telemetry);
+    assert.equal(telemetry.battery_level, 88);
+    assert.equal(telemetry.wifi_rssi, -65);
+    // The request's source address is NOT the screen's LAN address — see touchDeviceHeartbeat.
+    assert.equal(telemetry.local_ip, null);
+  });
+
+  test('touchDeviceHeartbeat ignores invalid/out-of-range telemetry gracefully', () => {
+    const req = {
+      headers: {
+        'x-st-device-battery': '999', // out of 0..100 range
+        'x-st-device-rssi': '10',    // out of 0..-120 dBm range
+      },
+      socket: { remoteAddress: '192.168.1.52' },
+    };
+    const prevCount = db.prepare('SELECT COUNT(*) c FROM device_telemetry WHERE device_id = ?').get(devId).c;
+    touchDeviceHeartbeat({ id: devId }, req);
+    const newCount = db.prepare('SELECT COUNT(*) c FROM device_telemetry WHERE device_id = ?').get(devId).c;
+    assert.equal(newCount, prevCount, 'no invalid telemetry row inserted');
   });
 });
 

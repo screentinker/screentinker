@@ -25,8 +25,10 @@ Instead of requiring the display hardware to run a full web browser or render HT
 
 ### Autonomy & Efficiency
 - **Zero local state needed:** The server maintains playlist timing and cursor progression (`embedded_cursor` table).
-- **Deep sleep coordination:** The server sends the `X-ST-Expires-In` header telling the MCU exactly how many seconds to deep sleep before waking for the next frame.
-- **Battery preservation via HTTP 304:** When content hasn't changed, the server returns `304 Not Modified` on matching `If-None-Match: <etag>`, allowing the MCU to skip power-intensive E-Paper refreshes and SPI transfers.
+- **Deep sleep coordination:** The server sends the `X-ST-Expires-In` header telling the MCU exactly how many seconds to deep sleep before waking for the next frame. When a screen is in an off-window under its Display Power Schedule, `X-ST-Expires-In` automatically reflects the duration until the morning 'on' edge, allowing devices to sleep for hours uninterrupted.
+- **Battery preservation via HTTP 304:** When content hasn't changed or the device is in a scheduled-off window, the server returns `304 Not Modified` on matching `If-None-Match: <etag>`, allowing the MCU to skip power-intensive E-Paper refreshes and SPI transfers.
+- **Power schedule coordination:** Fully integrates with weekly Display Power Schedules (`X-ST-Power-State: on` vs `scheduled_off`). Devices sleep through off-hours without wasting battery or causing display wear.
+- **Online status while asleep:** Every render answer records when the device is due back (now + `X-ST-Expires-In`). The dashboard and offline alerts count lateness from that moment, so a panel sleeping through a scheduled-off night stays online and only alerts if it misses its wake-up. Firmware should therefore sleep no longer than `X-ST-Expires-In`.
 
 ---
 
@@ -124,6 +126,9 @@ Fetches the pre-rendered image for the current playlist item.
 - **`Authorization`**: `Bearer <device_token>` *(device authentication)* or `Bearer st_...` *(API token)*
 - **`device_id`** *(query, required)*: The UUID of the device.
 - **`If-None-Match`** *(header, optional)*: ETag received in previous request.
+- **`X-ST-Device-Battery`** *(header, optional)*: Battery level as an integer percentage (`0`–`100`). Automatically stored in `device_telemetry` and displayed on the device health card.
+- **`X-ST-Device-RSSI`** *(header, optional)*: Wi-Fi signal strength in dBm (e.g. `-65`). Stored in `device_telemetry`.
+- **`X-ST-Firmware-Version`** *(header, optional)*: Firmware / client version string (e.g. `1.2.0`). Updates `devices.app_version`.
 - **`format`** *(query, optional)*: Override output format (`x-epd-packed`, `png`, `jpeg`, `bmp`, `raw`).
 - **`dither`** *(query, optional)*: Override dithering algorithm (`floyd-steinberg`, `atkinson`, `none`).
 - **`mode`** *(query, optional)*: `layout` (forces multi-zone layout rendering), `single` (forces single-item rendering). When omitted, automatically renders in multi-zone layout mode if the device has an assigned multi-zone layout (`zones.length > 1`), or single-item mode otherwise.
@@ -135,7 +140,8 @@ Fetches the pre-rendered image for the current playlist item.
   - Content-Type: `application/octet-stream` (for `x-epd-packed` or `raw`), `image/png`, `image/jpeg`, or `image/bmp`.
   - Response Headers:
     - `ETag`: `"sha256-hash..."`
-    - `X-ST-Expires-In`: Seconds until the current item ends (sleep timer for MCU).
+    - `X-ST-Expires-In`: Seconds until the current item ends, or seconds until morning 'on' window if display power schedule is off (sleep timer for MCU).
+    - `X-ST-Power-State`: `'on'` or `'scheduled_off'` according to the device's weekly Display Power Schedule.
     - `X-ST-Item-Index`: Current playlist item index (0-based) in single mode or `'0'` in layout mode.
     - `X-ST-Total-Items`: Total active items in playlist (in single-item mode).
     - `X-ST-Total-Zones`: Total zones in the layout (in multi-zone layout mode).
