@@ -4299,7 +4299,7 @@ export default {
   'device.trigcfg.accept_udp': 'Accept UDP',
   'device.trigcfg.group_ph': 'multicast group (239.x.x.x)',
   'device.trigcfg.clear_all_ph': 'clear-all token',
-  'device.trigcfg.save': 'Save settings',
+  'device.trigcfg.save': 'Save trigger settings',
   'device.trigcfg.secret': 'Shared secret',
   'device.trigcfg.secret_unset': 'not set — triggers cannot fire',
   'device.trigcfg.secret_note': 'The integrator types this into their control system. Anything on this LAN that knows it can change what this screen shows.',

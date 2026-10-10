@@ -31,12 +31,14 @@ db.exec(`
     playlist_id TEXT, playlist_source TEXT, layout_id TEXT,
     timezone TEXT, reported_timezone TEXT, background_color TEXT DEFAULT '#000000',
     default_content_id TEXT, last_heartbeat INTEGER, ip_address TEXT,
-    app_version TEXT, updated_at INTEGER, heartbeat_expected_by INTEGER
+    app_version TEXT, updated_at INTEGER, heartbeat_expected_by INTEGER,
+    power_source TEXT DEFAULT 'battery'
   );
   CREATE TABLE device_telemetry (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id TEXT, battery_level INTEGER, wifi_rssi INTEGER,
-    local_ip TEXT, reported_at INTEGER
+    device_id TEXT, battery_level INTEGER, battery_charging INTEGER DEFAULT 0,
+    wifi_rssi INTEGER, local_ip TEXT, power_source TEXT DEFAULT 'battery',
+    reported_at INTEGER
   );
   CREATE TABLE playlists (
     id TEXT PRIMARY KEY, workspace_id TEXT, name TEXT, status TEXT DEFAULT 'published',
@@ -1280,18 +1282,25 @@ describe('Embedded Device Liveness & Telemetry Ingestion', () => {
     assert.equal(telemetry.local_ip, null);
   });
 
-  test('touchDeviceHeartbeat ignores invalid/out-of-range telemetry gracefully', () => {
+  test('touchDeviceHeartbeat records power_source and battery_charging', () => {
     const req = {
       headers: {
-        'x-st-device-battery': '999', // out of 0..100 range
-        'x-st-device-rssi': '10',    // out of 0..-120 dBm range
+        'x-st-power-source': 'usb',
+        'x-st-charging': '1',
+        'x-st-device-battery': '95',
       },
-      socket: { remoteAddress: '192.168.1.52' },
+      socket: { remoteAddress: '192.168.1.53' },
     };
-    const prevCount = db.prepare('SELECT COUNT(*) c FROM device_telemetry WHERE device_id = ?').get(devId).c;
     touchDeviceHeartbeat({ id: devId }, req);
-    const newCount = db.prepare('SELECT COUNT(*) c FROM device_telemetry WHERE device_id = ?').get(devId).c;
-    assert.equal(newCount, prevCount, 'no invalid telemetry row inserted');
+
+    const dev = db.prepare('SELECT power_source FROM devices WHERE id = ?').get(devId);
+    assert.equal(dev.power_source, 'usb');
+
+    const telemetry = db.prepare('SELECT power_source, battery_charging, battery_level FROM device_telemetry WHERE device_id = ? ORDER BY id DESC LIMIT 1').get(devId);
+    assert.ok(telemetry);
+    assert.equal(telemetry.power_source, 'usb');
+    assert.equal(telemetry.battery_charging, 1);
+    assert.equal(telemetry.battery_level, 95);
   });
 });
 

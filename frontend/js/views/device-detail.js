@@ -515,7 +515,7 @@ function isNativeDevice(device) {
 
 function isEmbeddedDevice(device) {
   if (!device) return false;
-  return device.client_type === 'embedded' || String(device.platform || '').toLowerCase().includes('embedded');
+  return device.client_type === 'embedded' || String(device.platform || '').toLowerCase().includes('embedded') || Boolean(device.screen_profile);
 }
 
 // The one-shot shell's presets and wording, per native OS. Android keeps TERMINAL_PRESETS.
@@ -956,10 +956,16 @@ async function loadDevice(deviceId, activeTab = null) {
             <div class="info-card-label">${t('device.info.local_ip6')}</div>
             <div class="info-card-value small" id="telLocalIp6">${esc(device.local_ip6)}</div>
           </div>` : ''}
-          ${(device.android_version && !device.android_version.startsWith('Web/')) || latestTelemetry.battery_level != null ? `
+          ${(device.android_version && !device.android_version.startsWith('Web/')) || latestTelemetry.battery_level != null || (isEmbeddedDevice(device) && device.power_source) ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.battery')}</div>
-            <div class="info-card-value" id="telBattery">${latestTelemetry.battery_level != null ? latestTelemetry.battery_level + '%' : '--'}</div>
+            <div class="info-card-value" id="telBattery">${
+              latestTelemetry.battery_charging
+                ? (latestTelemetry.battery_level != null ? `${latestTelemetry.battery_level}% (Charging)` : 'Charging')
+                : (device.power_source === 'usb' || latestTelemetry.power_source === 'usb')
+                  ? (latestTelemetry.battery_level != null ? `${latestTelemetry.battery_level}% (Mains)` : 'Mains (USB)')
+                  : (latestTelemetry.battery_level != null ? `${latestTelemetry.battery_level}%` : '--')
+            }</div>
             ${latestTelemetry.battery_level != null ? `
             <div class="progress-bar">
               <div class="progress-bar-fill ${latestTelemetry.battery_level > 50 ? 'success' : latestTelemetry.battery_level > 20 ? 'warning' : 'danger'}"
@@ -1156,8 +1162,10 @@ async function loadDevice(deviceId, activeTab = null) {
           </div>
         </div>
 
+        ${(!isEmbeddedDevice(device) || device.power_source === 'usb') ? `
         ${renderTriggerConfig(device)}
         ${renderTriggerDiagnostics(device)}
+        ` : ''}
 
         <div id="viewAccessCard"></div>
 
@@ -1264,11 +1272,13 @@ async function loadDevice(deviceId, activeTab = null) {
             </label>
             <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 24px">${t('device.live_video.hint')}</div>
           </div>` : ''}
+          ${(!isEmbeddedDevice(device) || device.power_source === 'usb') ? `
           <div class="form-group" style="max-width:280px">
             <label>${t('device.reboot_schedule.label')}</label>
             <input type="time" id="rebootSchedule" class="input" style="background:var(--bg-input)" value="${esc(device.reboot_schedule || '')}">
             <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 0">${t('device.reboot_schedule.hint')}</div>
           </div>
+          ` : ''}
           <div style="margin-top:16px;display:flex;gap:8px;align-items:center">
             <button class="btn btn-primary" id="saveNotesBtn">${t('device.form.save_settings')}</button>
             <button class="btn btn-secondary btn-sm" id="reAdoptBtn" title="${t('device.readopt.button_hint')}">${t('device.readopt.button')}</button>
@@ -1296,6 +1306,7 @@ async function loadDevice(deviceId, activeTab = null) {
 
         <!-- #109: PiP overlay tester. Pushes device:pip-show/clear via POST /api/pip
              (real triggers are external via the API token; this is for testing). -->
+        ${can('playback.pip') ? `
         <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
           <div style="font-weight:600;margin-bottom:8px">Overlay (PiP) — test</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -1316,6 +1327,7 @@ async function loadDevice(deviceId, activeTab = null) {
             <button class="btn btn-secondary btn-sm" id="clearPipBtn">Clear overlay</button>
           </div>
         </div>
+        ` : ''}
       </div>
 
       ${(can('remote.stream') || can('remote.input') || can('remote.screenshot')) ? `
@@ -2610,8 +2622,8 @@ function setupActions(device) {
           ? '' : (document.getElementById('devBackground')?.value || ''),
         default_content_id: document.getElementById('deviceDefaultContent').value || null,
         ota_enabled: document.getElementById('otaToggle')?.checked ? 1 : 0,
-        ota_beta: document.getElementById('otaBetaToggle')?.checked ? 1 : 0,
-        reboot_schedule: document.getElementById('rebootSchedule')?.value || null,
+        ...(document.getElementById('rebootSchedule')
+          ? { reboot_schedule: document.getElementById('rebootSchedule').value || null } : {}),
         // Only present when the live-video toggle rendered (server master on); otherwise omitted so
         // a save never flips a flag the operator could not see.
         ...(document.getElementById('liveVideoToggle')
@@ -3627,7 +3639,17 @@ function updateTelemetryDisplay(telemetry) {
     const el = document.getElementById(id);
     if (el) el.textContent = val;
   };
-  if (telemetry.battery_level != null) update('telBattery', telemetry.battery_level + '%');
+  if (telemetry.battery_level != null || telemetry.power_source || telemetry.battery_charging) {
+    let text = '--';
+    if (telemetry.battery_charging) {
+      text = telemetry.battery_level != null ? `${telemetry.battery_level}% (Charging)` : 'Charging';
+    } else if (telemetry.power_source === 'usb' || currentDevice?.power_source === 'usb') {
+      text = telemetry.battery_level != null ? `${telemetry.battery_level}% (Mains)` : 'Mains (USB)';
+    } else if (telemetry.battery_level != null) {
+      text = telemetry.battery_level + '%';
+    }
+    update('telBattery', text);
+  }
   if (telemetry.storage_free_mb) update('telStorage', t('device.info.size_free', { size: formatBytes(telemetry.storage_free_mb) }));
   if (telemetry.local_ip) update('telLocalIp', telemetry.local_ip);
   // update() no-ops when the card is absent, which is the case for a v4-only panel — a screen that

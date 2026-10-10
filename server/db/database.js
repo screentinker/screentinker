@@ -3747,6 +3747,11 @@ migrationStep('device tags and dynamic groups', () => {
   try { db.prepare('ALTER TABLE device_settings ADD COLUMN tags TEXT').run(); } catch (_) { /* present */ }
 });
 
+migrationStep('device power source', () => {
+  try { db.prepare("ALTER TABLE devices ADD COLUMN power_source TEXT DEFAULT 'battery'").run(); } catch (_) { /* present */ }
+  try { db.prepare("ALTER TABLE device_telemetry ADD COLUMN power_source TEXT DEFAULT 'battery'").run(); } catch (_) { /* present */ }
+});
+
 migrationStep('CAP feeds', () => {
   // CAP emergency feeds (lib/cap/feeds.js). Workspace-owned and FK-cascaded, so deleting a
   // workspace takes its feeds, scopes and seen alerts with it.

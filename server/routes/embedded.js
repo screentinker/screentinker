@@ -128,9 +128,11 @@ function touchDeviceHeartbeat(device, req) {
   noteNextCallOnFinish(device, req);
 
   // Extract optional telemetry headers reported by MCU/embedded devices
-  const batteryHeader = req.headers['x-st-device-battery'] || req.headers['x-st-battery'];
-  const rssiHeader    = req.headers['x-st-device-rssi']    || req.headers['x-st-rssi'];
-  const fwHeader      = req.headers['x-st-firmware-version'] || req.headers['x-st-app-version'] || req.headers['x-st-version'];
+  const batteryHeader     = req.headers['x-st-device-battery'] || req.headers['x-st-battery'];
+  const rssiHeader        = req.headers['x-st-device-rssi']    || req.headers['x-st-rssi'];
+  const fwHeader          = req.headers['x-st-firmware-version'] || req.headers['x-st-app-version'] || req.headers['x-st-version'];
+  const powerSourceHeader = req.headers['x-st-power-source'];
+  const chargingHeader    = req.headers['x-st-charging'] || req.headers['x-st-battery-charging'];
 
   let batteryLevel = null;
   if (batteryHeader !== undefined) {
@@ -150,6 +152,22 @@ function touchDeviceHeartbeat(device, req) {
 
   const appVersion = typeof fwHeader === 'string' ? fwHeader.trim().slice(0, 64) || null : null;
 
+  let powerSource = null;
+  if (powerSourceHeader === 'usb' || powerSourceHeader === 'mains' || powerSourceHeader === 'external') {
+    powerSource = 'usb';
+  } else if (powerSourceHeader === 'battery') {
+    powerSource = 'battery';
+  }
+
+  let batteryCharging = 0;
+  if (chargingHeader !== undefined) {
+    batteryCharging = (chargingHeader === '1' || chargingHeader === 'true') ? 1 : 0;
+  }
+
+  if (powerSource) {
+    device.power_source = powerSource;
+  }
+
   try {
     db.prepare(`
       UPDATE devices
@@ -157,19 +175,20 @@ function touchDeviceHeartbeat(device, req) {
           last_heartbeat = strftime('%s','now'),
           ip_address = CASE WHEN ? != '' THEN ? ELSE ip_address END,
           app_version = COALESCE(?, app_version),
+          power_source = COALESCE(?, power_source),
           updated_at = strftime('%s','now')
       WHERE id = ?
-    `).run(clientIp, clientIp, appVersion, device.id);
+    `).run(clientIp, clientIp, appVersion, powerSource, device.id);
 
     // If telemetry headers were provided, record a row in device_telemetry.
     // ⚠️ local_ip stays NULL: it means the screen's LAN address (the dashboard prints it as "Local
     // IP"), and all we have here is the address the request came from — the public NAT/proxy one,
     // already kept in devices.ip_address.
-    if (batteryLevel !== null || wifiRssi !== null) {
+    if (batteryLevel !== null || wifiRssi !== null || powerSource !== null) {
       db.prepare(`
-        INSERT INTO device_telemetry (device_id, battery_level, wifi_rssi, local_ip, reported_at)
-        VALUES (?, ?, ?, NULL, strftime('%s','now'))
-      `).run(device.id, batteryLevel, wifiRssi);
+        INSERT INTO device_telemetry (device_id, battery_level, battery_charging, wifi_rssi, local_ip, power_source, reported_at)
+        VALUES (?, ?, ?, ?, NULL, ?, strftime('%s','now'))
+      `).run(device.id, batteryLevel, batteryCharging, wifiRssi, powerSource);
 
       if (typeof pruneTelemetry === 'function') {
         pruneTelemetry(device.id);

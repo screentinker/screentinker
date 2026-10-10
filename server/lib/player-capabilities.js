@@ -522,6 +522,7 @@ function platformFamily(device) {
   const platform = String((device && device.platform) || '').toLowerCase();
   const android = String((device && device.android_version) || '');
   const clientType = (device && device.client_type) || '';
+  if (clientType === 'embedded' || platform.includes('embedded') || (device && device.screen_profile)) return 'embedded';
   if (platform.includes('brightsign')) return 'brightsign';
   if (platform.includes('tizen')) return 'tizen';
   // Before the Web/ Android test. A Vega stick's android_version is "Web/...", because the
@@ -564,7 +565,24 @@ function platformFamily(device) {
 function capabilitiesFor(device) {
   const declared = parseDeclared(device && device.capabilities);
   if (declared) return declared;
-  return (BASELINE[platformFamily(device)] || BASELINE.web).slice();
+  const family = platformFamily(device);
+  if (family === 'embedded') {
+    const power = (device && device.power_source) || 'battery';
+    if (power === 'usb' || power === 'mains' || power === 'external') {
+      return [
+        'playback.image',
+        'playback.pip',
+        'system.reboot',
+        'system.self_update',
+        'offline.cache',
+      ];
+    }
+    return [
+      'playback.image',
+      'offline.cache',
+    ];
+  }
+  return (BASELINE[family] || BASELINE.web).slice();
 }
 
 /**
