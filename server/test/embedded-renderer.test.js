@@ -30,7 +30,13 @@ db.exec(`
     device_token TEXT, blocked INTEGER DEFAULT 0, screen_profile TEXT,
     playlist_id TEXT, playlist_source TEXT, layout_id TEXT,
     timezone TEXT, reported_timezone TEXT, background_color TEXT DEFAULT '#000000',
-    default_content_id TEXT
+    default_content_id TEXT, last_heartbeat INTEGER, ip_address TEXT,
+    app_version TEXT, updated_at INTEGER
+  );
+  CREATE TABLE device_telemetry (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT, battery_level INTEGER, wifi_rssi INTEGER,
+    local_ip TEXT, reported_at INTEGER
   );
   CREATE TABLE playlists (
     id TEXT PRIMARY KEY, workspace_id TEXT, name TEXT, status TEXT DEFAULT 'published',
@@ -1062,6 +1068,65 @@ describe('Issue #337 Follow-ups: Robustness, Parity & Deduplication', () => {
     assert.equal(color, 0xFFFFFFFF);
 
     try { fs.unlinkSync(imgPath); } catch (_) {}
+  });
+});
+
+describe('Embedded Device Liveness & Telemetry Ingestion', () => {
+  const { touchDeviceHeartbeat } = embeddedRouter;
+  const devId = 'dev-telemetry-test';
+
+  db.prepare(`
+    INSERT OR REPLACE INTO devices (id, name, workspace_id, status, last_heartbeat, app_version)
+    VALUES (?, 'Telemetry Test Screen', 'ws-1', 'offline', 0, '1.0.0')
+  `).run(devId);
+
+  test('touchDeviceHeartbeat marks device online and updates last_heartbeat', () => {
+    const req = {
+      headers: {},
+      socket: { remoteAddress: '192.168.1.50' },
+    };
+    const clientIp = touchDeviceHeartbeat({ id: devId }, req);
+    assert.equal(clientIp, '192.168.1.50');
+
+    const dev = db.prepare('SELECT status, last_heartbeat, ip_address FROM devices WHERE id = ?').get(devId);
+    assert.equal(dev.status, 'online');
+    assert.ok(dev.last_heartbeat > 0);
+    assert.equal(dev.ip_address, '192.168.1.50');
+  });
+
+  test('touchDeviceHeartbeat records battery, RSSI, and app_version', () => {
+    const req = {
+      headers: {
+        'x-st-device-battery': '88',
+        'x-st-device-rssi': '-65',
+        'x-st-firmware-version': '1.2.0',
+      },
+      socket: { remoteAddress: '192.168.1.51' },
+    };
+    touchDeviceHeartbeat({ id: devId }, req);
+
+    const dev = db.prepare('SELECT app_version FROM devices WHERE id = ?').get(devId);
+    assert.equal(dev.app_version, '1.2.0');
+
+    const telemetry = db.prepare('SELECT battery_level, wifi_rssi, local_ip FROM device_telemetry WHERE device_id = ? ORDER BY id DESC LIMIT 1').get(devId);
+    assert.ok(telemetry);
+    assert.equal(telemetry.battery_level, 88);
+    assert.equal(telemetry.wifi_rssi, -65);
+    assert.equal(telemetry.local_ip, '192.168.1.51');
+  });
+
+  test('touchDeviceHeartbeat ignores invalid/out-of-range telemetry gracefully', () => {
+    const req = {
+      headers: {
+        'x-st-device-battery': '999', // out of 0..100 range
+        'x-st-device-rssi': '10',    // out of 0..-120 dBm range
+      },
+      socket: { remoteAddress: '192.168.1.52' },
+    };
+    const prevCount = db.prepare('SELECT COUNT(*) c FROM device_telemetry WHERE device_id = ?').get(devId).c;
+    touchDeviceHeartbeat({ id: devId }, req);
+    const newCount = db.prepare('SELECT COUNT(*) c FROM device_telemetry WHERE device_id = ?').get(devId).c;
+    assert.equal(newCount, prevCount, 'no invalid telemetry row inserted');
   });
 });
 

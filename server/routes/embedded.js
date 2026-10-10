@@ -35,7 +35,7 @@ const express = require('express');
 const router  = express.Router();
 const crypto  = require('crypto');
 
-const { db }                = require('../db/database');
+const { db, pruneTelemetry }  = require('../db/database');
 const { deviceTokenAuth }   = require('../middleware/deviceTokenAuth');
 const { bearerAuth }        = require('../middleware/apiToken');
 const { resolveTenancy }    = require('../lib/tenancy');
@@ -114,15 +114,52 @@ function resolveDevice(req, res) {
 
 function touchDeviceHeartbeat(device, req) {
   const clientIp = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || '').replace(/^::ffff:/, '');
+
+  // Extract optional telemetry headers reported by MCU/embedded devices
+  const batteryHeader = req.headers['x-st-device-battery'] || req.headers['x-st-battery'];
+  const rssiHeader    = req.headers['x-st-device-rssi']    || req.headers['x-st-rssi'];
+  const fwHeader      = req.headers['x-st-firmware-version'] || req.headers['x-st-app-version'] || req.headers['x-st-version'];
+
+  let batteryLevel = null;
+  if (batteryHeader !== undefined) {
+    const parsed = parseInt(batteryHeader, 10);
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 100) {
+      batteryLevel = parsed;
+    }
+  }
+
+  let wifiRssi = null;
+  if (rssiHeader !== undefined) {
+    const parsed = parseInt(rssiHeader, 10);
+    if (Number.isFinite(parsed) && parsed <= 0 && parsed >= -120) {
+      wifiRssi = parsed;
+    }
+  }
+
+  const appVersion = typeof fwHeader === 'string' ? fwHeader.trim().slice(0, 64) || null : null;
+
   try {
     db.prepare(`
       UPDATE devices
       SET status = 'online',
           last_heartbeat = strftime('%s','now'),
           ip_address = CASE WHEN ? != '' THEN ? ELSE ip_address END,
+          app_version = COALESCE(?, app_version),
           updated_at = strftime('%s','now')
       WHERE id = ?
-    `).run(clientIp, clientIp, device.id);
+    `).run(clientIp, clientIp, appVersion, device.id);
+
+    // If telemetry headers were provided, record a row in device_telemetry
+    if (batteryLevel !== null || wifiRssi !== null) {
+      db.prepare(`
+        INSERT INTO device_telemetry (device_id, battery_level, wifi_rssi, local_ip, reported_at)
+        VALUES (?, ?, ?, ?, strftime('%s','now'))
+      `).run(device.id, batteryLevel, wifiRssi, clientIp || null);
+
+      if (typeof pruneTelemetry === 'function') {
+        pruneTelemetry(device.id);
+      }
+    }
   } catch {
     // non-fatal
   }
@@ -961,6 +998,7 @@ module.exports.resolveLayoutItems = resolveLayoutItems;
 module.exports.resolveDevicePlaylist = resolveDevicePlaylist;
 module.exports.resolvedLayoutId = resolvedLayoutId;
 module.exports.resolveDeviceContext = resolveDeviceContext;
+module.exports.touchDeviceHeartbeat = touchDeviceHeartbeat;
 module.exports.dynamicRevFor = dynamicRevFor;
 
 
