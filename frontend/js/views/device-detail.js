@@ -1186,14 +1186,34 @@ async function loadDevice(deviceId, activeTab = null) {
                 </div>
                 <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('device.form.background_hint')}</div>
               </div>
-            <div class="form-group" style="flex:1;margin:0">
-              <label>${t('device.form.default_content_label')}</label>
-              <select id="deviceDefaultContent" class="input" style="background:var(--bg-input)">
-                <option value="">${t('device.form.default_content_none')}</option>
-              </select>
+              <div class="form-group" style="flex:1;margin:0">
+                <label>${t('device.form.default_content_label')}</label>
+                <select id="deviceDefaultContent" class="input" style="background:var(--bg-input)">
+                  <option value="">${t('device.form.default_content_none')}</option>
+                </select>
+              </div>
             </div>
-          </div>
-          <div class="form-group">
+            ${(device.client_type === 'embedded' || Boolean(device.screen_profile)) ? `
+            <div style="margin:16px 0;padding:14px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px">
+              <h4 style="font-size:13px;margin:0 0 10px 0;display:flex;align-items:center;gap:6px">
+                <span>&#128220;</span> E-Paper &amp; Embedded Display Profile
+              </h4>
+              <div style="display:flex;gap:12px;flex-wrap:wrap">
+                <div class="form-group" style="flex:1;min-width:220px;margin:0">
+                  <label>Dithering Algorithm</label>
+                  <select id="epdDither" class="input" style="background:var(--bg-input)">
+                    <option value="floyd-steinberg" ${String(device.screen_profile || '').includes('"dither":"none"') || String(device.screen_profile || '').includes('"dither":"atkinson"') ? '' : 'selected'}>Floyd–Steinberg (Standard / Photographs)</option>
+                    <option value="atkinson" ${String(device.screen_profile || '').includes('"dither":"atkinson"') ? 'selected' : ''}>Atkinson (Lighter Halftone / Crisp Text)</option>
+                    <option value="none" ${String(device.screen_profile || '').includes('"dither":"none"') ? 'selected' : ''}>None / Threshold (Snaps dark grays to solid black)</option>
+                  </select>
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+                    Use &ldquo;None / Threshold&rdquo; if your slides have dark backgrounds (e.g. #1B2029) and you want them to snap to pure solid black without stippling dots.
+                  </div>
+                </div>
+              </div>
+            </div>
+            ` : ''}
+            <div class="form-group">
             <label>${t('device.form.tags_label')}</label>
             <input id="deviceTags" class="input" value="${esc((Array.isArray(device.tags) ? device.tags : []).join(', '))}" placeholder="${t('device.form.tags_placeholder')}">
             <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('device.form.tags_hint')}</div>
@@ -2538,6 +2558,29 @@ function setupActions(device) {
         ? (loc.dataset.lat ? { latitude: Number(loc.dataset.lat), longitude: Number(loc.dataset.lon), location_label: loc.value.trim() || null }
           : { latitude: null, longitude: null, location_label: null })
         : {};
+
+      let epdProfileUpdate = undefined;
+      const ditherEl = document.getElementById('epdDither');
+      if (ditherEl) {
+        let existingPreset = 'seeed-reterminal-sticky';
+        try {
+          if (typeof device.screen_profile === 'string') {
+            if (device.screen_profile.startsWith('{')) {
+              const p = JSON.parse(device.screen_profile);
+              if (p.preset) existingPreset = p.preset;
+            } else if (device.screen_profile) {
+              existingPreset = device.screen_profile;
+            }
+          } else if (typeof device.screen_profile === 'object' && device.screen_profile?.preset) {
+            existingPreset = device.screen_profile.preset;
+          }
+        } catch (_) {}
+        epdProfileUpdate = {
+          preset: existingPreset,
+          dither: ditherEl.value || 'floyd-steinberg',
+        };
+      }
+
       const saved = await api.updateDevice(device.id, {
         ...locBody,
         tags: document.getElementById('deviceTags')?.value ?? undefined,
@@ -2555,7 +2598,11 @@ function setupActions(device) {
         // a save never flips a flag the operator could not see.
         ...(document.getElementById('liveVideoToggle')
           ? { live_video_enabled: document.getElementById('liveVideoToggle').checked ? 1 : 0 } : {}),
+        ...(epdProfileUpdate !== undefined ? { screen_profile: epdProfileUpdate } : {}),
       });
+      if (saved && saved.screen_profile !== undefined) {
+        device.screen_profile = saved.screen_profile;
+      }
       showToast(t('device.toast.settings_saved'), 'success');
       // A tag change can move the screen into or out of dynamic groups; say which.
       for (const c of (saved && saved.groups_changed) || []) {

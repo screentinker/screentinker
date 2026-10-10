@@ -1063,5 +1063,18 @@ describe('Issue #337 Follow-ups: Robustness, Parity & Deduplication', () => {
 
     try { fs.unlinkSync(imgPath); } catch (_) {}
   });
+
+  test('parseProfile supports dither override on presets', () => {
+    const p1 = parseProfile({ preset: 'seeed-reterminal-sticky', dither: 'none' });
+    assert.equal(p1.dither, 'none');
+    assert.equal(p1.width, 800);
+    assert.equal(p1.height, 480);
+
+    const p2 = parseProfile({ preset: 'seeed-reterminal-sticky', dither: 'atkinson' });
+    assert.equal(p2.dither, 'atkinson');
+
+    const pDefault = parseProfile('seeed-reterminal-sticky');
+    assert.equal(pDefault.dither, 'floyd-steinberg');
+  });
 });
 
