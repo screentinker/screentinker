@@ -28,6 +28,7 @@ Instead of requiring the display hardware to run a full web browser or render HT
 - **Deep sleep coordination:** The server sends the `X-ST-Expires-In` header telling the MCU exactly how many seconds to deep sleep before waking for the next frame. When a screen is in an off-window under its Display Power Schedule, `X-ST-Expires-In` automatically reflects the duration until the morning 'on' edge, allowing devices to sleep for hours uninterrupted.
 - **Battery preservation via HTTP 304:** When content hasn't changed or the device is in a scheduled-off window, the server returns `304 Not Modified` on matching `If-None-Match: <etag>`, allowing the MCU to skip power-intensive E-Paper refreshes and SPI transfers.
 - **Power schedule coordination:** Fully integrates with weekly Display Power Schedules (`X-ST-Power-State: on` vs `scheduled_off`). Devices sleep through off-hours without wasting battery or causing display wear.
+- **Online status while asleep:** Every render answer records when the device is due back (now + `X-ST-Expires-In`). The dashboard and offline alerts count lateness from that moment, so a panel sleeping through a scheduled-off night stays online and only alerts if it misses its wake-up. Firmware should therefore sleep no longer than `X-ST-Expires-In`.
 
 ---
 

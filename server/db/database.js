@@ -124,6 +124,11 @@ const migrations = [
   'ALTER TABLE devices ADD COLUMN offline_reason TEXT',
   'ALTER TABLE devices ADD COLUMN offline_reason_at INTEGER',
   'ALTER TABLE devices ADD COLUMN offline_detail TEXT',
+  // Embedded (HTTP-polling) displays tell us when they will next call: every render answer carries
+  // X-ST-Expires-In, and the MCU deep-sleeps for exactly that long. This is "now + that", in epoch
+  // seconds, so the heartbeat sweep does not call a screen offline while it is asleep on our own
+  // instruction (overnight under a power schedule that is 8+ hours). NULL for socket players.
+  'ALTER TABLE devices ADD COLUMN heartbeat_expected_by INTEGER',
   // Offline-cause log: annotate each historical offline transition with WHY. `reason` = category
   // (transport_close / ping_timeout / heartbeat_timeout / network / crashed / clean_exit / silent);
   // `detail` = human specifics (e.g. "Wi-Fi link lost — SSID Office, -78dBm" or "LAN up, server

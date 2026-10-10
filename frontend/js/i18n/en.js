@@ -2408,6 +2408,8 @@ export default {
   'device.info.brightsign_player': 'BrightSign',
   'device.info.linux_player': 'Raspberry Pi / Linux (native)',
   'device.info.windows_player': 'Windows (native)',
+  'device.info.embedded_player': 'Embedded display (MCU)',
+  'device.info.reterminal_sticky_player': 'Seeed reTerminal Sticky (e-paper)',
   'device.info.wifi': 'WiFi',
   'device.info.uptime': 'Uptime',
   'device.info.android_version': 'Android Version',
