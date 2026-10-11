@@ -597,7 +597,7 @@ router.put('/:id', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
 
-  const { name, notes, timezone, orientation, background_color, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule, live_video_enabled, tags } = req.body;
+  const { name, notes, timezone, orientation, background_color, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule, live_video_enabled, tags, screen_profile } = req.body;
   // Where the screen is (lib/local-conditions.js). Both coordinates or neither; both null clears.
   let locUpdate = null;
   if (req.body.latitude !== undefined || req.body.longitude !== undefined || req.body.location_label !== undefined) {
@@ -682,6 +682,23 @@ router.put('/:id', (req, res) => {
   }
   if (normTags !== undefined) { updates.push('tags = ?'); values.push(JSON.stringify(normTags)); }
   if (locUpdate) for (const [k, v] of Object.entries(locUpdate)) { updates.push(`${k} = ?`); values.push(v); }
+  if (screen_profile !== undefined) {
+    // Only an embedded (server-rendered) panel has a render profile. Anything else would silently
+    // keep it and ignore it, so refuse rather than store a setting nothing reads.
+    if (device.client_type !== 'embedded') {
+      return res.status(400).json({ error: 'screen_profile applies to embedded displays only' });
+    }
+    let profileVal = null;
+    if (screen_profile !== null && screen_profile !== '') {
+      const { parseProfile } = require('../lib/embedded-profiles');
+      const parsed = parseProfile(screen_profile);
+      if (!parsed) {
+        return res.status(400).json({ error: 'Invalid screen_profile' });
+      }
+      profileVal = typeof screen_profile === 'object' ? JSON.stringify(screen_profile) : String(screen_profile);
+    }
+    updates.push('screen_profile = ?'); values.push(profileVal);
+  }
   /*
    * Tags, name and timezone are what dynamic groups match on, so this edit can move the screen into
    * or out of groups. Planned against the NEW values, then written together with the membership

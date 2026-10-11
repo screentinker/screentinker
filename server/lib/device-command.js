@@ -273,7 +273,8 @@ function deliverCommand(deviceNs, device, type, payload, opts = {}) {
    */
   let queued = false;
   try {
-    queued = require('./command-queue').queueCommand(device.id, type, outPayload);
+    const queue = require('./command-queue');
+    queued = queue.queueCommand(device.id, type, outPayload, { ttlMs: queue.ttlForDevice(device) });
   } catch (e) { /* queue module absent — the command is simply lost, and says so */ }
   const out = { status: queued ? 'queued' : 'offline' };
   if (requestId) out.id = requestId;

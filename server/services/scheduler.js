@@ -163,7 +163,18 @@ function maybeRebootDevice(device, now, deviceNs) {
   // work out why a panel never came back.
   if (!playerCapabilities.supports(device, 'system.reboot')) return;
   db.prepare('UPDATE devices SET reboot_last_date = ? WHERE id = ?').run(today, device.id);
-  deviceNs.to(device.id).emit('device:command', { type: 'reboot', payload: { scheduled: true } });
+  if (device.client_type === 'embedded') {
+    // An embedded panel has no socket: it polls, and picks the reboot up as X-ST-Command on its next
+    // call. Queued for as long as it may be asleep (command-queue ttlForDevice). Every other player
+    // keeps the direct emit, unchanged — queueing for them would fire a missed nightly reboot later
+    // when the screen reconnects.
+    try {
+      const queue = require('../lib/command-queue');
+      queue.queueCommand(device.id, 'reboot', { scheduled: true }, { ttlMs: queue.ttlForDevice(device) });
+    } catch { /* best effort */ }
+  } else {
+    deviceNs.to(device.id).emit('device:command', { type: 'reboot', payload: { scheduled: true } });
+  }
   console.log(`[reboot] scheduled reboot fired for device ${device.id} (${device.name || 'unnamed'}) at local ${today}`);
 }
 

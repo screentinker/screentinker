@@ -31,12 +31,14 @@ db.exec(`
     playlist_id TEXT, playlist_source TEXT, layout_id TEXT,
     timezone TEXT, reported_timezone TEXT, background_color TEXT DEFAULT '#000000',
     default_content_id TEXT, last_heartbeat INTEGER, ip_address TEXT,
-    app_version TEXT, updated_at INTEGER, heartbeat_expected_by INTEGER
+    app_version TEXT, updated_at INTEGER, heartbeat_expected_by INTEGER,
+    power_source TEXT
   );
   CREATE TABLE device_telemetry (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id TEXT, battery_level INTEGER, wifi_rssi INTEGER,
-    local_ip TEXT, reported_at INTEGER
+    device_id TEXT, battery_level INTEGER, battery_charging INTEGER,
+    wifi_rssi INTEGER, local_ip TEXT, power_source TEXT,
+    reported_at INTEGER
   );
   CREATE TABLE playlists (
     id TEXT PRIMARY KEY, workspace_id TEXT, name TEXT, status TEXT DEFAULT 'published',
@@ -848,6 +850,49 @@ describe('Embedded HTTP Route & Fallback Handling', () => {
     assert.ok(v >= before + 3600 && v <= before + 3600 + 5, `expected ~now+3600, got ${v - before}s`);
     db.prepare("DELETE FROM display_power_schedules WHERE id = 'sched-wake'").run();
   });
+
+  test('queued reboot command is delivered via X-ST-Command header and cleared', async () => {
+    const { queueCommand } = require('../lib/command-queue');
+    const tmpUpload = path.join(require('../config').contentDir);
+    fs.mkdirSync(tmpUpload, { recursive: true });
+    const imgPath = path.join(tmpUpload, 'reboot-test.png');
+    const img = new Jimp({ width: 200, height: 100, color: 0x00FF00FF });
+    fs.writeFileSync(imgPath, await img.getBuffer('image/png'));
+
+    const plId = 'pl-reboot-test';
+    const devId = 'dev-reboot-test';
+    const token = 'tok-reboot-test';
+
+    db.prepare("INSERT INTO playlists (id, workspace_id, name, status) VALUES (?, 'ws-1', 'Reboot PL', 'published')").run(plId);
+    db.prepare("INSERT INTO content (id, workspace_id, type, mime_type, filepath, is_active) VALUES ('c-rb-1', 'ws-1', 'image', 'image/png', 'reboot-test.png', 1)").run();
+    db.prepare("INSERT INTO playlist_items (id, playlist_id, content_id, sort_order, duration_sec) VALUES ('pi-rb-1', ?, 'c-rb-1', 0, 30)").run(plId);
+    publishPlaylist(plId);
+    db.prepare("INSERT INTO devices (id, name, workspace_id, playlist_id, device_token, screen_profile) VALUES (?, 'Reboot Dev', 'ws-1', ?, ?, '{\"preset\":\"seeed-reterminal-sticky\"}')").run(devId, plId, token);
+
+    // Queue a reboot command
+    queueCommand(devId, 'reboot', { initiated_by: 'operator' });
+
+    // 1. Preview request must NOT pop or return the command
+    const previewRes = await fetch(`${baseUrl}/render?device_id=${devId}&preview=1`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(previewRes.headers.get('x-st-command'), null);
+
+    // 2. Real device request receives X-ST-Command: reboot
+    const renderRes = await fetch(`${baseUrl}/render?device_id=${devId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(renderRes.headers.get('x-st-command'), 'reboot');
+    assert.equal(renderRes.status, 200);
+
+    // 3. Subsequent request has no pending command (popped)
+    const subsequentRes = await fetch(`${baseUrl}/render?device_id=${devId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(subsequentRes.headers.get('x-st-command'), null);
+
+    try { fs.unlinkSync(imgPath); } catch (_) {}
+  });
 });
 
 
@@ -1220,6 +1265,19 @@ describe('Issue #337 Follow-ups: Robustness, Parity & Deduplication', () => {
 
     try { fs.unlinkSync(imgPath); } catch (_) {}
   });
+
+  test('parseProfile supports dither override on presets', () => {
+    const p1 = parseProfile({ preset: 'seeed-reterminal-sticky', dither: 'none' });
+    assert.equal(p1.dither, 'none');
+    assert.equal(p1.width, 800);
+    assert.equal(p1.height, 480);
+
+    const p2 = parseProfile({ preset: 'seeed-reterminal-sticky', dither: 'atkinson' });
+    assert.equal(p2.dither, 'atkinson');
+
+    const pDefault = parseProfile('seeed-reterminal-sticky');
+    assert.equal(pDefault.dither, 'floyd-steinberg');
+  });
 });
 
 describe('Embedded Device Liveness & Telemetry Ingestion', () => {
@@ -1279,6 +1337,34 @@ describe('Embedded Device Liveness & Telemetry Ingestion', () => {
     touchDeviceHeartbeat({ id: devId }, req);
     const newCount = db.prepare('SELECT COUNT(*) c FROM device_telemetry WHERE device_id = ?').get(devId).c;
     assert.equal(newCount, prevCount, 'no invalid telemetry row inserted');
+  });
+
+  test('touchDeviceHeartbeat leaves battery_charging NULL when the panel does not report it', () => {
+    touchDeviceHeartbeat({ id: devId }, { headers: { 'x-st-device-battery': '40' }, socket: { remoteAddress: '192.168.1.54' } });
+    const row = db.prepare('SELECT battery_charging, power_source FROM device_telemetry WHERE device_id = ? ORDER BY id DESC LIMIT 1').get(devId);
+    assert.equal(row.battery_charging, null);
+    assert.equal(row.power_source, null);
+  });
+
+  test('touchDeviceHeartbeat records power_source and battery_charging', () => {
+    const req = {
+      headers: {
+        'x-st-power-source': 'usb',
+        'x-st-charging': '1',
+        'x-st-device-battery': '95',
+      },
+      socket: { remoteAddress: '192.168.1.53' },
+    };
+    touchDeviceHeartbeat({ id: devId }, req);
+
+    const dev = db.prepare('SELECT power_source FROM devices WHERE id = ?').get(devId);
+    assert.equal(dev.power_source, 'usb');
+
+    const telemetry = db.prepare('SELECT power_source, battery_charging, battery_level FROM device_telemetry WHERE device_id = ? ORDER BY id DESC LIMIT 1').get(devId);
+    assert.ok(telemetry);
+    assert.equal(telemetry.power_source, 'usb');
+    assert.equal(telemetry.battery_charging, 1);
+    assert.equal(telemetry.battery_level, 95);
   });
 });
 

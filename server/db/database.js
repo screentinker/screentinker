@@ -3747,6 +3747,13 @@ migrationStep('device tags and dynamic groups', () => {
   try { db.prepare('ALTER TABLE device_settings ADD COLUMN tags TEXT').run(); } catch (_) { /* present */ }
 });
 
+migrationStep('device power source', () => {
+  // NULL = not reported. Only embedded panels send X-ST-Power-Source, and a 'battery' default would
+  // stamp every Android, Pi and Windows row with a power source nobody measured.
+  try { db.prepare('ALTER TABLE devices ADD COLUMN power_source TEXT').run(); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE device_telemetry ADD COLUMN power_source TEXT').run(); } catch (_) { /* present */ }
+});
+
 migrationStep('CAP feeds', () => {
   // CAP emergency feeds (lib/cap/feeds.js). Workspace-owned and FK-cascaded, so deleting a
   // workspace takes its feeds, scopes and seen alerts with it.

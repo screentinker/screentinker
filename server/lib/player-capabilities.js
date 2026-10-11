@@ -522,6 +522,10 @@ function platformFamily(device) {
   const platform = String((device && device.platform) || '').toLowerCase();
   const android = String((device && device.android_version) || '');
   const clientType = (device && device.client_type) || '';
+  // ⚠️ By what the device IS (set at pairing), never by whether it has a screen_profile: a profile
+  // is a setting, and a family inferred from a setting turns any screen with one into an e-ink panel
+  // — no controls, a different OTA family — ahead of every check below.
+  if (clientType === 'embedded' || platform.includes('embedded')) return 'embedded';
   if (platform.includes('brightsign')) return 'brightsign';
   if (platform.includes('tizen')) return 'tizen';
   // Before the Web/ Android test. A Vega stick's android_version is "Web/...", because the
@@ -564,7 +568,22 @@ function platformFamily(device) {
 function capabilitiesFor(device) {
   const declared = parseDeclared(device && device.capabilities);
   if (declared) return declared;
-  return (BASELINE[platformFamily(device)] || BASELINE.web).slice();
+  const family = platformFamily(device);
+  if (family === 'embedded') {
+    const power = (device && device.power_source) || 'battery';
+    if (power === 'usb' || power === 'mains' || power === 'external') {
+      return [
+        'playback.image',
+        'system.reboot',
+        'offline.cache',
+      ];
+    }
+    return [
+      'playback.image',
+      'offline.cache',
+    ];
+  }
+  return (BASELINE[family] || BASELINE.web).slice();
 }
 
 /**
