@@ -659,6 +659,10 @@ function openEditModal(ds, presetType) {
         locale: val('#dsLocaleInput'),
         timezone: val('#dsTzInput'),
         hide_private: $('#dsPrivacyInput').checked,
+        // Settable through the API but not on this form: carried over so saving here keeps them.
+        ...Object.fromEntries(['max_events', 'event_type']
+          .filter((k) => ds && ds.type === 'ical' && cfg[k] != null)
+          .map((k) => [k, cfg[k]])),
       };
     }
     if (type === 'weather') {

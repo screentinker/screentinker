@@ -549,3 +549,74 @@ test('binary assets: never inlined, served by URL from a path-restricted CSP sou
   assert.throws(() => htmlTemplate({ files: { 'big.wasm': Buffer.alloc(pkg.MAX_ASSET_FILE_BYTES + 1) } }), /larger than/);
   assert.doesNotThrow(() => htmlTemplate({ files: { 'big.wasm': Buffer.alloc(3 * 1024 * 1024) } }));
 });
+
+// ─── ST.data bounds (widget.boundedData) ─────────────────────────────────────────────────────────
+const tabular = require('../lib/data-sources/tabular');
+
+function wideTable(rows, cols, { keyColumn } = {}) {
+  const header = Array.from({ length: cols }, (_, c) => (c === 0 ? 'Name' : `Value ${c}`));
+  const body = Array.from({ length: rows }, (_, r) => header.map((_, c) => (c === 0 ? `item ${r + 1}` : String(r * c))));
+  return tabular.flattenTable(tabular.rowsToTable([header, ...body]), { keyColumn, now: new Date('2026-10-10T00:00:00Z') });
+}
+
+test('ST.data: summary keys survive truncation of a wide table; rows are what runs out', () => {
+  // 100 rows x 30 columns = 3000 per-row keys, plus summaries the source emits AFTER the rows.
+  const flat = wideTable(100, 30);
+  const rowKeys = Object.keys(flat).filter((k) => /^row\d+_/.test(k));
+  assert.equal(rowKeys.length, 3000);
+  const out = tplWidget.boundedData(flat);
+  assert.equal(Object.keys(out).length, tplWidget.MAX_TEMPLATE_DATA_KEYS);
+  for (const k of ['row_count', 'column_count', 'columns', 'updated', 'rows_text', 'sum_value_1', 'avg_value_29', 'min_value_5', 'max_value_29']) {
+    assert.ok(Object.prototype.hasOwnProperty.call(out, k), `${k} survived`);
+    assert.equal(out[k], typeof flat[k] === 'string' ? flat[k].slice(0, 2000) : flat[k]);   // rows_text is long
+  }
+  assert.equal(out.row_count, 100);
+  // Rows are kept in order without holes: the first row is complete, the cut is at the end.
+  assert.equal(out.row1_name, 'item 1');
+  assert.equal(out.row1_value_29, '0');
+  assert.ok(!('row100_value_29' in out), 'the LAST row keys are the ones dropped');
+  const kept = Object.keys(out).filter((k) => /^row\d+_/.test(k));
+  assert.deepEqual(kept, rowKeys.slice(0, kept.length));
+});
+
+test('ST.data: lookup keys come before per-row keys too', () => {
+  const flat = wideTable(100, 30, { keyColumn: 'Name' });
+  const out = tplWidget.boundedData(flat);
+  assert.equal(out.item_1_value_3, flat.item_1_value_3);
+  assert.equal(out.item_100_value_29, flat.item_100_value_29, 'the last lookup key survived');
+  assert.equal(out.sum_value_2, flat.sum_value_2);
+});
+
+test('ST.data: key cap is 3000, strings keep the 2000-char cap, odd values are dropped', () => {
+  const big = {};
+  for (let i = 0; i < 5000; i++) big[`k${i}`] = i;
+  assert.equal(Object.keys(tplWidget.boundedData(big)).length, 3000);
+  const out = tplWidget.boundedData({ long: 'x'.repeat(5000), obj: { a: 1 }, arr: [1], ['y'.repeat(65)]: 1, n: null, b: true });
+  assert.equal(out.long.length, tplWidget.MAX_TEMPLATE_DATA_STRING);
+  assert.equal(out.long.length, 2000);
+  assert.deepEqual(Object.keys(out).sort(), ['b', 'long', 'n']);
+  assert.deepEqual(tplWidget.boundedData(null), {});
+});
+
+test('ST.data: worst case (3000 keys x 2000 chars, escaped CJK) is byte-capped and the page still renders', () => {
+  const nasty = '<界&'.repeat(700);           // 3-byte UTF-8 and characters scriptSafeJson escapes to 6 bytes
+  const src = { row_count: 3000, status: 'ok' };
+  for (let i = 1; i <= 3000; i++) src[`row${i}_text`] = nasty;
+  const one = tplWidget.boundedData(src);
+  assert.equal(one.row_count, 3000);
+  assert.equal(one.status, 'ok');
+  const bytes = Buffer.byteLength(render.scriptSafeJson(one));
+  assert.ok(bytes <= tplWidget.MAX_TEMPLATE_DATA_BYTES + 64, `one source serialises to ${bytes} bytes`);
+  assert.ok(Object.keys(one).length < 3000, 'the byte cap, not the key cap, stopped it');
+
+  // Many sources in one render share a document budget, so the page stays under MAX_DOC_BYTES.
+  const budget = { bytes: tplWidget.MAX_TEMPLATE_DATA_DOC_BYTES };
+  const data = {};
+  for (let s = 0; s < 8; s++) data[`ds${s}`] = tplWidget.boundedData(src, budget);
+  assert.ok(budget.bytes >= 0);
+  assert.equal(data.ds7.row_count, 3000, 'even a starved source keeps its small summary keys');
+  const env = pkg.parseEnvelope(pkg.buildEnvelope(htmlTemplate({ manifest: { network: [] } })));
+  const out = render.buildHtmlDocument(env, { title: 'x', bg: '#000' }, { data });
+  assert.ok(Buffer.byteLength(out.html) < render.MAX_DOC_BYTES, `document is ${Buffer.byteLength(out.html)} bytes`);
+  assert.doesNotMatch(out.html, /too large to render/);
+});

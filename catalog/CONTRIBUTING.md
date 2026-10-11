@@ -215,6 +215,12 @@ ST.ready(function () {                 // DOMContentLoaded, or now if already pa
 });
 ```
 
+- `ST.data[param]` is bounded: at most 3000 keys per source, 2000 characters per string, 1 MB per
+  source and 2 MB for all sources together. Summary keys (`row_count`, `sum_*`, lookup keys,
+  `status`, `next_*`, …) are always kept first; per-row keys (`row3_price`, `event_4_title`) are
+  what runs out. Calendar sources also give `event_N_start_iso` / `_end_iso` (UTC ISO 8601) and
+  `event_N_all_day` (`"true"`/`"false"`) — format times from those, not from the display strings.
+  See the server's `docs/templates.md`, "Data in code templates".
 - The document runs with `Content-Security-Policy: sandbox allow-scripts; default-src 'none';
   script-src 'unsafe-inline' data:; style-src 'unsafe-inline' data:; img-src data: blob: <network>;
   font-src data: <network>; media-src data: blob: <network>; connect-src <network or 'none'>;

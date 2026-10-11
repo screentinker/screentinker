@@ -757,3 +757,146 @@ END:VCALENDAR`;
 
 
 
+
+// ─── Machine-readable times for code templates (additive) ────────────────────────────────────────
+
+test('ISO keys: timed events carry UTC start/end instants and all_day "false"', async () => {
+  const now = new Date('2026-09-04T09:30:00Z');
+  const data = await resolveIcalData({ raw_data: SAMPLE_ICS, timezone: 'Europe/Berlin', locale: 'de' }, now);
+  assert.equal(data.event_0_start_iso, '2026-09-04T09:00:00.000Z');
+  assert.equal(data.event_0_end_iso, '2026-09-04T10:00:00.000Z');
+  assert.equal(data.event_0_all_day, 'false');
+  assert.equal(data.event_2_start_iso, '2026-09-05T06:00:00.000Z');
+  assert.equal(data.event_2_end_iso, '2026-09-05T07:00:00.000Z');
+  // current_ / next_
+  assert.equal(data.current_start_iso, '2026-09-04T09:00:00.000Z');
+  assert.equal(data.current_end_iso, '2026-09-04T10:00:00.000Z');
+  assert.equal(data.current_all_day, 'false');
+  assert.equal(data.next_start_iso, '2026-09-04T14:00:00.000Z');
+  assert.equal(data.next_end_iso, '2026-09-04T15:30:00.000Z');
+  assert.equal(data.next_all_day, 'false');
+});
+
+test('ISO keys: empty strings when there is no current / next event', async () => {
+  const data = await resolveIcalData({ raw_data: SAMPLE_ICS, timezone: 'UTC' }, new Date('2026-09-10T12:00:00Z'));
+  assert.equal(data.event_count, 0);
+  for (const k of ['current_start_iso', 'current_end_iso', 'current_all_day', 'next_start_iso', 'next_end_iso', 'next_all_day']) {
+    assert.equal(data[k], '', k);
+  }
+  assert.ok(!('event_0_start_iso' in data));
+});
+
+test('ISO keys: an all-day event is midnight UTC of its calendar dates (end exclusive), whatever the zone', async () => {
+  const ALLDAY_ICS = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//ScreenTinker Test//DE
+BEGIN:VEVENT
+UID:evt-allday-holiday
+SUMMARY:Tag der Arbeit
+DTSTART;VALUE=DATE:20260501
+DTEND;VALUE=DATE:20260502
+END:VEVENT
+BEGIN:VEVENT
+UID:evt-allday-offsite
+SUMMARY:Offsite
+DTSTART;VALUE=DATE:20260504
+DTEND;VALUE=DATE:20260507
+END:VEVENT
+END:VCALENDAR`;
+  const now = new Date('2026-04-20T10:00:00Z');
+  for (const timezone of ['UTC', 'America/New_York', 'Asia/Tokyo', 'Europe/Berlin']) {
+    const data = await resolveIcalData({ raw_data: ALLDAY_ICS, timezone, locale: 'de' }, now);
+    assert.equal(data.event_0_start_iso, '2026-05-01T00:00:00.000Z', timezone);
+    assert.equal(data.event_0_end_iso, '2026-05-02T00:00:00.000Z', timezone);
+    assert.equal(data.event_0_all_day, 'true', timezone);
+    assert.equal(data.event_1_start_iso, '2026-05-04T00:00:00.000Z', timezone);
+    assert.equal(data.event_1_end_iso, '2026-05-07T00:00:00.000Z', timezone);
+    assert.equal(data.next_start_iso, '2026-05-01T00:00:00.000Z', timezone);
+    assert.equal(data.next_all_day, 'true', timezone);
+    // The display strings are unchanged by the new keys.
+    assert.equal(data.event_0_time, 'Ganztägig', timezone);
+  }
+});
+
+test('ISO keys: each occurrence of a recurring series (timed and all-day) gets its own instants', async () => {
+  const now = new Date('2026-09-04T08:15:00Z');
+  const data = await resolveIcalData({ raw_data: RECURRING_ICS, timezone: 'UTC' }, now);
+  assert.equal(data.current_start_iso, '2026-09-04T08:00:00.000Z');
+  assert.equal(data.current_end_iso, '2026-09-04T08:30:00.000Z');
+  assert.equal(data.event_0_start_iso, '2026-09-04T08:00:00.000Z');
+  assert.equal(data.event_1_start_iso, '2026-09-05T08:00:00.000Z');
+  assert.equal(data.event_1_end_iso, '2026-09-05T08:30:00.000Z');
+  assert.equal(data.event_6_start_iso, '2026-09-10T08:00:00.000Z');
+  assert.equal(data.event_6_all_day, 'false');
+  assert.ok(!('event_7_start_iso' in data), 'COUNT=10 from Sep 1 ends on Sep 10');
+  assert.equal(data.next_start_iso, '2026-09-05T08:00:00.000Z');
+
+  const WEEKLY_ALLDAY = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//ScreenTinker Test//EN
+BEGIN:VEVENT
+UID:evt-bins
+SUMMARY:Bin day
+DTSTART;VALUE=DATE:20260901
+DTEND;VALUE=DATE:20260902
+RRULE:FREQ=WEEKLY;COUNT=6
+END:VEVENT
+END:VCALENDAR`;
+  const w = await resolveIcalData({ raw_data: WEEKLY_ALLDAY, timezone: 'America/Los_Angeles' }, new Date('2026-09-03T12:00:00Z'));
+  assert.equal(w.event_0_start_iso, '2026-09-08T00:00:00.000Z');
+  assert.equal(w.event_0_end_iso, '2026-09-09T00:00:00.000Z');
+  assert.equal(w.event_0_all_day, 'true');
+  assert.equal(w.event_1_start_iso, '2026-09-15T00:00:00.000Z');
+  assert.equal(w.event_1_time, 'All day');
+});
+
+test('max_events: ceiling is 200 (was 50); default stays 10', async () => {
+  const { MAX_EVENTS_CEILING } = require('../lib/data-sources/ical-resolver');
+  assert.equal(MAX_EVENTS_CEILING, 200);
+  const base = Date.parse('2026-09-04T10:00:00Z');
+  const events = [];
+  for (let i = 0; i < 260; i++) {
+    const s = new Date(base + i * 3600e3).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    const e = new Date(base + i * 3600e3 + 1800e3).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    events.push(`BEGIN:VEVENT\nUID:many-${i}\nSUMMARY:Slot ${i}\nDTSTART:${s}\nDTEND:${e}\nEND:VEVENT`);
+  }
+  const ICS = `BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//ScreenTinker Test//EN\n${events.join('\n')}\nEND:VCALENDAR`;
+  const now = new Date('2026-09-04T09:00:00Z');
+  const two = await resolveIcalData({ raw_data: ICS, timezone: 'UTC', lookahead_days: 30, max_events: 200 }, now);
+  assert.equal(two.event_count, 200);
+  assert.equal(two.event_199_title, 'Slot 199');
+  assert.equal(two.event_199_start_iso, new Date(base + 199 * 3600e3).toISOString());
+  assert.ok(!('event_200_title' in two));
+  assert.equal(two.agenda_text.split('\n').length, 200);
+  const over = await resolveIcalData({ raw_data: ICS, timezone: 'UTC', lookahead_days: 30, max_events: 999 }, now);
+  assert.equal(over.event_count, 200, 'clamped to the ceiling');
+  const mid = await resolveIcalData({ raw_data: ICS, timezone: 'UTC', lookahead_days: 30, max_events: 120 }, now);
+  assert.equal(mid.event_count, 120, 'values between the old 50 and the new 200 are honoured');
+  const dflt = await resolveIcalData({ raw_data: ICS, timezone: 'UTC', lookahead_days: 30 }, now);
+  assert.equal(dflt.event_count, 10);
+});
+
+test('existing keys keep their exact formats (the ISO keys are additive)', async () => {
+  const now = new Date('2026-09-04T09:30:00Z');
+  const data = await resolveIcalData({ raw_data: SAMPLE_ICS, timezone: 'UTC', locale: 'en' }, now);
+  const pick = (re) => Object.fromEntries(Object.entries(data).filter(([k]) => re.test(k)));
+  assert.deepEqual(pick(/^event_0_(title|summary|date|time|location|organizer)$/), {
+    event_0_title: 'Projekt-Sync & Review',
+    event_0_summary: 'Projekt-Sync & Review',
+    event_0_date: 'Today, 09:00 AM',
+    event_0_time: '09:00 AM – 10:00 AM',
+    event_0_location: 'Konferenzraum Berlin',
+    event_0_organizer: '',
+  });
+  assert.equal(data.event_2_date, 'Tomorrow, 06:00 AM');
+  assert.equal(data.current_time, '09:00 AM – 10:00 AM');
+  assert.equal(data.next_time, 'Today, 02:00 PM');
+  assert.equal(data.next_date, 'Today');
+  assert.equal(data.status_detail, 'Busy until 10:00 AM');
+  assert.equal(data.agenda_text, '09:00 AM: Projekt-Sync & Review\n02:00 PM: Kunden-Präsentation\n06:00 AM: Gelber Sack Abholung');
+  // Per event: the six original keys then the three new ones, nothing else.
+  assert.deepEqual(Object.keys(data).filter((k) => k.startsWith('event_1_')), [
+    'event_1_title', 'event_1_summary', 'event_1_date', 'event_1_time', 'event_1_location', 'event_1_organizer',
+    'event_1_start_iso', 'event_1_end_iso', 'event_1_all_day',
+  ]);
+});

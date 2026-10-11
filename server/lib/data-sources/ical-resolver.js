@@ -13,6 +13,9 @@ const { SsrfError, GuardedRequestError, guardedRequest } = require('../ssrf-guar
 const FETCH_TIMEOUT_MS = 10000;
 const MAX_REDIRECTS = 4;
 const MAX_BODY_BYTES = 2 * 1024 * 1024; // refuse calendar feeds larger than 2 MB
+// Most events listed as event_N_* keys. Each event is 9 keys, so 200 events stay well inside the
+// 3000-key cap a code template receives (templates/widget.js) with room for the summary keys.
+const MAX_EVENTS_CEILING = 200;
 
 /**
  * Fetch a calendar feed over HTTPS/HTTP with the project's SSRF guard applied.
@@ -85,7 +88,7 @@ function pickRoomLocale(raw) {
  *   - locale: string ('de', 'en', default 'de')
  *   - timezone: string (IANA timezone, default 'local')
  *   - lookahead_days: number (default 14)
- *   - max_events: number (default 10)
+ *   - max_events: number (default 10, at most MAX_EVENTS_CEILING = 200)
  *   - event_type: 'all' | 'timed' | 'allday' (default 'all')
  *   - filter_text: string (case-insensitive include keyword)
  *   - exclude_text: string (case-insensitive exclude keyword)
@@ -98,7 +101,7 @@ async function resolveIcalData(config = {}, nowRef = new Date()) {
   const locale = pickRoomLocale(config?.locale);
   const L = ROOM_STRINGS[locale];
   const lookaheadDays = Math.max(1, Math.min(365, parseInt(config?.lookahead_days, 10) || 14));
-  const maxEvents = Math.max(1, Math.min(50, parseInt(config?.max_events, 10) || 10));
+  const maxEvents = Math.max(1, Math.min(MAX_EVENTS_CEILING, parseInt(config?.max_events, 10) || 10));
   const eventType = config?.event_type || 'all';
   const filterText = (config?.filter_include || config?.filter_text || '').trim();
   const excludeText = (config?.filter_exclude || config?.exclude_text || '').trim();
@@ -370,6 +373,17 @@ async function resolveIcalData(config = {}, nowRef = new Date()) {
     statusDetail = L.freeAllDay;
   }
 
+  /*
+   * Machine-readable times for code templates, which do their own formatting (the _date/_time
+   * strings above are display text in the source's locale and zone, and stay exactly as they were).
+   * Timed events: the real instants, UTC ISO 8601. All-day events: midnight UTC of the calendar
+   * dates the existing allDay logic already settled on (dayKey/endDayKey, end EXCLUSIVE as in
+   * DTEND), so the date part never shifts with the server's or the screen's zone — read the first
+   * ten characters, do not convert it to local time.
+   */
+  const startIso = (ev) => (ev.isAllDay ? `${ev.dayKey}T00:00:00.000Z` : ev.start.toISOString());
+  const endIso = (ev) => (ev.isAllDay ? `${ev.endDayKey}T00:00:00.000Z` : ev.end.toISOString());
+
   // Build root dictionary payload
   const payload = {
     status,
@@ -395,6 +409,13 @@ async function resolveIcalData(config = {}, nowRef = new Date()) {
     next_date: nextEvent ? formatDate(nextEvent) : '',
     next_organizer: nextEvent ? nextEvent.organizer : '',
 
+    current_start_iso: currentEvent ? startIso(currentEvent) : '',
+    current_end_iso: currentEvent ? endIso(currentEvent) : '',
+    current_all_day: currentEvent ? String(currentEvent.isAllDay) : '',
+    next_start_iso: nextEvent ? startIso(nextEvent) : '',
+    next_end_iso: nextEvent ? endIso(nextEvent) : '',
+    next_all_day: nextEvent ? String(nextEvent.isAllDay) : '',
+
     total_upcoming_count: selectedEvents.length,
     event_count: selectedEvents.length,
     events_today_count: flatEvents.filter(e => e.isAllDay ? (e.dayKey <= todayKey && e.endDayKey > todayKey) : (dateKey(e.start) === todayKey)).length,
@@ -408,6 +429,9 @@ async function resolveIcalData(config = {}, nowRef = new Date()) {
     payload[`event_${idx}_time`] = ev.isAllDay ? L.allDay : `${formatTime(ev.start)} – ${formatTime(ev.end)}`;
     payload[`event_${idx}_location`] = ev.location || '';
     payload[`event_${idx}_organizer`] = ev.organizer || '';
+    payload[`event_${idx}_start_iso`] = startIso(ev);
+    payload[`event_${idx}_end_iso`] = endIso(ev);
+    payload[`event_${idx}_all_day`] = ev.isAllDay ? 'true' : 'false';
   });
 
   // Multi-line formatted agenda text
@@ -420,4 +444,5 @@ async function resolveIcalData(config = {}, nowRef = new Date()) {
 
 module.exports = {
   resolveIcalData,
+  MAX_EVENTS_CEILING,
 };

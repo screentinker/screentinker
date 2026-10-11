@@ -15,6 +15,7 @@ This page is for server administrators. Template authors: see the catalog reposi
 - [Revocation](#revocation)
 - [Air-gapped servers](#air-gapped-servers)
 - [Other catalogs](#other-catalogs)
+- [Data in code templates (`ST.data`)](#data-in-code-templates-stdata)
 - [Settings and environment variables](#settings-and-environment-variables)
 - [Security model, and its limits](#security-model-and-its-limits)
 
@@ -157,6 +158,52 @@ but not removed.
 escapes are accepted). Use it for a private fork of the official catalog, or if the official key is
 ever rotated before you can upgrade. When the key changes, the server drops its cached index and
 resets the serial floor, because the old index was verified under the old key.
+
+## Data in code templates (`ST.data`)
+
+A code template reads each bound data source as `ST.data[param]`: the same flat values a slide
+binds with `{{ds:slug.key}}`, copied into the page when it is rendered. The copy is bounded, because
+all of it travels inside the one HTML document every screen downloads and keeps in memory (and a
+document over 6 MB is replaced by a "too large to render" page):
+
+| Limit | Value |
+| --- | --- |
+| Keys per data source | **3000** (was 300) |
+| Characters per string value | 2000 (longer values are cut) |
+| Bytes per data source, as served | 1 MB |
+| Bytes for all data sources of one template, as served | 2 MB |
+| Key names | at most 64 characters; only string, number, boolean and null values |
+
+**Summary keys are kept first.** When a source has more than fits, per-row keys are what is dropped
+— `row<N>_*` (tables), `item<N>_*` (RSS), `day<N>_*` (weather), `event_<N>_*` (calendars), from the
+last row backwards and never with a hole in the middle. Everything else — `row_count`,
+`column_count`, `columns`, `rows_text`, `sum_/avg_/min_/max_*`, lookup keys, `status`,
+`current_*` / `next_*`, `agenda_text` — is taken before any row. (A table source has its own limits
+before this: 100 rows, 30 columns, 500 characters a cell.)
+
+### Calendar (iCal) keys
+
+| Key | Example | |
+| --- | --- | --- |
+| `status`, `status_detail`, `is_busy` | `BUSY`, `Busy until 10:00 AM`, `true` | room sign, in the source's language |
+| `current_title`, `current_time`, `current_location`, … | `Sprint planning`, `09:00 AM – 10:00 AM` | the meeting in progress |
+| `next_title`, `next_time`, `next_date`, … | `Today, 02:00 PM` | the next one |
+| `event_count`, `events_today_count`, `agenda_text` | | |
+| `event_<N>_title`, `_date`, `_time`, `_location`, `_organizer` | `Tomorrow, 06:00 AM`, `09:00 AM – 10:00 AM` | display text, 0-based |
+| `event_<N>_start_iso`, `event_<N>_end_iso` | `2026-09-04T09:00:00.000Z` | **new** — UTC ISO 8601 |
+| `event_<N>_all_day` | `"true"` / `"false"` | **new** — a string |
+| `current_start_iso`, `current_end_iso`, `current_all_day`, `next_start_iso`, `next_end_iso`, `next_all_day` | | **new** — empty strings when there is no such event |
+
+The `_date`/`_time` strings are display text in the source's language and time zone; they are
+unchanged. The `_iso` keys are for templates that format times themselves:
+`new Date(ST.data.cal.event_0_start_iso)`. For an **all-day** event they are midnight UTC of its
+calendar dates, end **exclusive** as in iCal (a one-day event on 1 May is
+`2026-05-01T00:00:00.000Z` → `2026-05-02T00:00:00.000Z`): use the date part (`.slice(0, 10)`)
+rather than converting it to local time, which would move it a day west of UTC.
+
+A calendar source lists **10 events** by default; `max_events` (set through the API,
+`PUT /api/data-sources/<id>`) raises that to at most **200** (was 50). Each event is nine keys, so
+200 events fit comfortably in the 3000-key limit.
 
 ## The public gallery (`/templates`)
 

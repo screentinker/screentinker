@@ -92,16 +92,63 @@ function readContentImage(contentId, workspaceId) {
   } catch { return null; }
 }
 
-/** Flat, bounded copy of a data source's cached values for an html template. */
-function boundedData(obj) {
+/*
+ * What a code (html) template receives as ST.data[param]: a flat, bounded copy of the source's
+ * cached values. ⚠️ THE CAPS EXIST FOR THE RENDERED DOCUMENT, NOT THE SOURCE. All of it is
+ * serialised into the one self-contained HTML document every screen downloads, parses and keeps in
+ * memory — and render.buildHtmlDocument blanks the WHOLE template ("too large to render") past
+ * render.MAX_DOC_BYTES (6 MB). Keys alone are not a byte bound: 3000 keys x 2000 chars is 6M
+ * characters — up to ~18 MB of UTF-8 and more again after script-safe escaping — so there is a
+ * byte budget too, per source and per document.
+ *
+ * SUMMARY KEYS GO FIRST. Sources emit per-row keys (row3_price, item2_title, day1_high,
+ * event_4_title) alongside the keys a screen needs most (row_count, columns, sum_/avg_*, lookup keys,
+ * status, current_/next_*, agenda_text) — and not always in that order. Everything that is not a
+ * per-row key is taken first, so a wide table runs out of ROWS, never out of its totals.
+ */
+const MAX_TEMPLATE_DATA_KEYS = 3000;                     // per data source
+const MAX_TEMPLATE_DATA_STRING = 2000;                   // characters per string value
+const MAX_TEMPLATE_DATA_BYTES = 1024 * 1024;             // per data source, as serialised into the page
+const MAX_TEMPLATE_DATA_DOC_BYTES = 2 * 1024 * 1024;     // all data sources of one render together
+// Kept back from per-row keys in the shared budget, so a source listed after a huge one still gets
+// its summary keys (row_count, status, …) rather than nothing.
+const DOC_SUMMARY_RESERVE_BYTES = 64 * 1024;
+const PER_ROW_KEY = /^(?:row|item|day)\d+_|^event_\d+_/;
+
+/** Bytes a key/value pair adds to the page's script-safe JSON: both quoted and escaped, plus ":" and ",". */
+function servedBytes(k, v) {
+  return Buffer.byteLength(render.scriptSafeJson(k)) + Buffer.byteLength(render.scriptSafeJson(v)) + 2;
+}
+
+/**
+ * `budget` — optional { bytes } shared by every data source of one render; spent as keys are taken.
+ */
+function boundedData(obj, budget) {
   const out = {};
   if (!obj || typeof obj !== 'object') return out;
-  let n = 0;
+  let keys = 0;
+  let bytes = 0;
+  const take = (k, v, isRow) => {
+    if (keys >= MAX_TEMPLATE_DATA_KEYS) return false;
+    const val = typeof v === 'string' ? v.slice(0, MAX_TEMPLATE_DATA_STRING) : v;
+    const size = servedBytes(k, val);
+    if (bytes + size > MAX_TEMPLATE_DATA_BYTES) return false;
+    if (budget && size > budget.bytes - (isRow ? DOC_SUMMARY_RESERVE_BYTES : 0)) return false;
+    out[k] = val;
+    keys++;
+    bytes += size;
+    if (budget) budget.bytes -= size;
+    return true;
+  };
+  const rows = [];
   for (const [k, v] of Object.entries(obj)) {
-    if (n++ >= 300) break;
-    if (typeof k !== 'string' || k.length > 64) continue;
-    if (v === null || ['string', 'number', 'boolean'].includes(typeof v)) out[k] = typeof v === 'string' ? v.slice(0, 2000) : v;
+    if (k.length > 64) continue;
+    if (!(v === null || ['string', 'number', 'boolean'].includes(typeof v))) continue;
+    if (PER_ROW_KEY.test(k)) { rows.push([k, v]); continue; }
+    take(k, v, false); // a summary value too big to fit is skipped; smaller ones after it still go in
   }
+  // Rows in source order, stopping at the first that does not fit — no holes for a loop over rowN.
+  for (const [k, v] of rows) if (!take(k, v, true)) break;
   return out;
 }
 
@@ -145,6 +192,7 @@ function renderUnsafe(widget, opts) {
 
   const images = {};
   const data = {};
+  const dataBudget = { bytes: MAX_TEMPLATE_DATA_DOC_BYTES };
   let dataMap = null;
   for (const p of env.manifest.params) {
     const v = values[p.name];
@@ -155,15 +203,18 @@ function renderUnsafe(widget, opts) {
     }
     // opts.dataFor: the public gallery's demo render supplies its own values and has no workspace.
     if (p.type === 'data_source' && v && typeof opts.dataFor === 'function') {
-      data[p.name] = boundedData(opts.dataFor(v));
+      data[p.name] = boundedData(opts.dataFor(v), dataBudget);
     } else if (p.type === 'data_source' && v && widget.workspace_id) {
       if (!dataMap) {
         try { dataMap = require('../data-sources/service').getWorkspaceDataMapSync(widget.workspace_id); } catch { dataMap = {}; }
       }
-      data[p.name] = boundedData(dataMap[v]);
+      data[p.name] = boundedData(dataMap[v], dataBudget);
     }
   }
   return render.buildHtmlDocument(env, values, { images, data, origin: opts.origin });
 }
 
-module.exports = { TemplateWidgetError, usable, buildConfig, renderTemplateWidget, readContentImage };
+module.exports = {
+  TemplateWidgetError, usable, buildConfig, renderTemplateWidget, readContentImage, boundedData,
+  MAX_TEMPLATE_DATA_KEYS, MAX_TEMPLATE_DATA_STRING, MAX_TEMPLATE_DATA_BYTES, MAX_TEMPLATE_DATA_DOC_BYTES,
+};
