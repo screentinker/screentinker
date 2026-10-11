@@ -167,6 +167,32 @@ const CAPABILITIES = [
    */
   'room.panel',
 
+  /*
+   * The player has NO time-zone database of its own and asks the server for one: the playlist
+   * payload then carries `tz_table` (lib/tz-table.js) — the UTC offset spans of the screen's
+   * effective zone from a day ago to three days ahead — so schedules, power windows and the clock
+   * follow the zone set in the dashboard rather than whatever the box itself is set to. A Roku is
+   * the reason it exists: roDateTime only knows the device's own setting.
+   *
+   * ⚠️ It changes the PAYLOAD, so it is opt-in by declaration (and the roku baseline): every player
+   * that does not have it receives byte-for-byte what it received before. Not a command; never in
+   * COMMAND_CAPABILITY.
+   */
+  'clock.tz_table',
+  /*
+   * The player cannot run HTML at all and shows browser-only items (widgets, templates, slides, web
+   * pages, HTML bundles, menu boards…) as STILL FRAMES the server renders for it in headless
+   * Chromium: GET /api/player/raster (routes/player-raster.js). It is the door to that endpoint —
+   * the route refuses a device without it, because a render is the most expensive request a screen
+   * can make and no player that runs its own browser has any reason to ask for one.
+   *
+   * ⚠️ A frame is not the item. No animation, no video inside a page, no touch, and it is only as
+   * fresh as its refresh interval (X-ST-Refresh-In). playback.widget on a player with this means
+   * "the widget appears", nothing more. E-ink has its own renderer (/api/embedded) and never
+   * declares it.
+   */
+  'render.server_raster',
+
   // synchronisation
   'sync.clock', 'sync.native',
   // resilience
@@ -484,6 +510,69 @@ const BASELINE = {
     'system.restart_player',
     'sync.clock',
   ],
+  /*
+   * The Roku player (roku/, BrightScript + SceneGraph) — client_type 'roku', platform 'roku'. See
+   * docs/roku-player.md. A Roku app has no HTML engine, no web view and no JavaScript, so it plays
+   * video and images natively and everything else as a server-rendered frame.
+   *
+   * ⚠️ Same knowing exception as BASELINE.linux: no Roku build has been released, so there is no tag
+   * to derive this from, and the player declares on EVERY register, so a real row essentially never
+   * reads this list. It answers only for a row whose capabilities column is NULL for some other
+   * reason, and for that row the floor below is the least-wrong guess. Once a Roku build ships,
+   * re-derive it from that tag and delete this paragraph.
+   *
+   * IN, and why each is honest on any Roku:
+   *   - playback.video / playback.image: the native Video and Poster nodes (hardware decode).
+   *   - playback.widget / playback.bundle: they DO appear, as still frames from /api/player/raster —
+   *     render.server_raster is the capability that says how. Both rather than neither, because
+   *     without them an operator reads "this screen skips widgets", which is false.
+   *   - playback.zones: native zones, one cursor each. playback.transitions: a cross-fade between
+   *     two Poster nodes — the shader transitions are not run; the vocabulary has no finer name, and
+   *     no control is gated on it, so the entry describes rendering rather than offering a button.
+   *   - audio.mute: the Video node's own mute.
+   *   - system.restart_player: `refresh` tears the scene down and re-registers. ⚠️ `launch` rides on
+   *     the same capability (COMMAND_CAPABILITY) and on a Roku it can only mean the same thing: an
+   *     app that is receiving commands is already in the foreground, and nothing can bring a CLOSED
+   *     channel back from the server — a Roku app cannot autostart (docs/roku-player.md).
+   *   - clock.tz_table / render.server_raster: the server's side of a contract, not a device power —
+   *     safe to assume for any Roku, and without them an undeclared row would show the wrong
+   *     time and blank every widget.
+   *
+   * NOT, and why:
+   *   - playback.youtube: the YouTube player is an IFrame API; a Roku has no web view to run it in.
+   *   - playback.pip: one hardware video decoder is what a Roku app may count on; a second Video node
+   *     over the first is not something to promise.
+   *   - playback.slide_audio: the frame is a picture; the slide's voiceover/music bed is not played.
+   *   - playback.web_interactive(_framed): no browser, no touch.
+   *   - audio.volume: an app cannot set the TV's volume, and the Video node has no volume field.
+   *   - display.power: no app can switch the TV or its backlight. The player BLANKS the screen for a
+   *     power window instead (black + video stopped); if it also answers screen_off/screen_on with
+   *     that overlay it declares display.power for itself, as Tizen's overlay does — but the baseline
+   *     cannot assume a handler.
+   *   - display.rotation / display.brightness / display.resolution: not available to apps.
+   *   - remote.screenshot / remote.stream / remote.input / remote.talk / remote.mic: a Roku app
+   *     cannot capture the screen (no API), inject input, or open a microphone stream.
+   *   - system.reboot / system.self_update: no reboot API; channels are updated by the Roku store,
+   *     never by us (so this family is in no OTA rollout either — lib/ota-rollout.js FAMILIES).
+   *   - system.shell / pty / kiosk / time / install_apk / device_owner / brightness /
+   *     screen_timeout: none exists on Roku OS for an app.
+   *   - sync.clock / sync.native (and walls / group sync): not implemented.
+   *   - offline.cache: nothing in the player keeps media across an outage yet.
+   *   - playback.hls / playback.hold / display.power_schedule / remote.set_server_url /
+   *     net.http_request: "in NO baseline — brand new" by this file's own rule. The Roku declares
+   *     playback.hls (the Video node plays HLS) and display.power_schedule (it evaluates the window
+   *     itself against shared/power-window-vectors.json) for itself.
+   *   - playback.rtsp / playback.hdmi_in / audience.camera / room.panel: no such hardware or UI.
+   *     Triggers (the LAN-fired interrupts) are not implemented either; lib/corporate/emergency.js
+   *     says so per screen.
+   */
+  roku: [
+    'playback.video', 'playback.image', 'playback.widget', 'playback.bundle',
+    'playback.zones', 'playback.transitions',
+    'audio.mute',
+    'system.restart_player',
+    'clock.tz_table', 'render.server_raster',
+  ],
   // A browser tab. Deliberately the smallest set: it cannot reboot its host, rotate a panel, or
   // capture anything outside its own document.
   web: [
@@ -533,6 +622,15 @@ function platformFamily(device) {
   // and would miss the CMA capture cap the shell turns on.
   if (platform.includes('vega')) return 'vega';
   if (clientType === 'wgt') return 'tizen';
+  /*
+   * The Roku player. ⚠️ BEFORE THE ANDROID FALLBACK below, which claims ANY non-empty, non-"Web/"
+   * android_version: a Roku build that ever put its OS string ("Roku OS 13.0") there would otherwise
+   * become an Android panel and be offered MediaProjection bootstraps and device-owner provisioning.
+   * Two signals, either sufficient, for the same reason client_type 'wgt' backs up platform for
+   * Tizen. Exact match on platform rather than includes(): 'roku' is a short string, and a
+   * substring test would claim anything that merely mentions it.
+   */
+  if (clientType === 'roku' || platform === 'roku' || platform.startsWith('roku/')) return 'roku';
   /*
    * The native Raspberry Pi player. ⚠️ MUST SIT BEFORE THE ANDROID TEST BELOW, which is a fallback
    * that claims ANY non-empty, non-"Web/" android_version. The Pi sends android_version '' today, so

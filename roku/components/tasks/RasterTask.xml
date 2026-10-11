@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Fetches one server-rendered frame (GET /api/player/raster) to tmp:/ so a Poster can show it.
+
+  ⚠️ WHY NOT JUST GIVE THE POSTER THE URL. The raster route is device-authenticated (Bearer token)
+  and answers 304 when the frame has not changed. A Poster cannot send our header and cannot see
+  a status code or the X-ST-Refresh-In header that says when to ask again. A Task can do all three,
+  and it keeps a slow Chromium render (seconds) off the render thread.
+
+  in:   request  — { url, token, etag, key, seq }   (key names the tmp file; seq echoes back)
+  out:  result   — { seq, key, ok, status, path, etag, refreshIn, error }
+-->
+<component name="RasterTask" extends="Task">
+  <interface>
+    <field id="request" type="assocarray" alwaysNotify="true" />
+    <field id="result" type="assocarray" alwaysNotify="true" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/util.brs" />
+  <script type="text/brightscript" uri="RasterTask.brs" />
+</component>

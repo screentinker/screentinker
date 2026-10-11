@@ -476,6 +476,9 @@ function isAndroidDevice(device) {
   if (device.client_type === 'win' || platform.startsWith('windows/')) return false;
   // And the native macOS player (see isMacDevice below).
   if (device.client_type === 'mac' || platform.startsWith('macos/')) return false;
+  // And the Roku player (see isRokuDevice below): a Roku build that ever reported its OS string as
+  // android_version must not be offered MediaProjection or device-owner provisioning.
+  if (device.client_type === 'roku' || platform === 'roku' || platform.startsWith('roku/')) return false;
   if (device.client_type === 'apk') return true;
   const av = String(device.android_version || '');
   return av !== '' && !av.startsWith('Web/');
@@ -505,6 +508,15 @@ function isMacDevice(device) {
   if (!device) return false;
   if (device.client_type === 'mac') return true;
   return String(device.platform || '').toLowerCase().startsWith('macos/');
+}
+
+// Mirrors the 'roku' arm of platformFamily(): the Roku player (roku/, BrightScript) registers
+// client_type 'roku' and platform 'roku'. Either signal is enough.
+function isRokuDevice(device) {
+  if (!device) return false;
+  if (device.client_type === 'roku') return true;
+  const platform = String(device.platform || '').toLowerCase();
+  return platform === 'roku' || platform.startsWith('roku/');
 }
 
 // Any native player (the shared Python/Qt engine): what they have in common is that they are not
@@ -735,7 +747,7 @@ async function loadDevice(deviceId, activeTab = null) {
           ${can('remote.talk') ? `<button class="btn btn-secondary btn-sm" id="start2wayBtn">🎙️ ${t('device.talk.two_way')}</button>` : ''}
           <button class="btn btn-danger btn-sm" id="stopTalkBtn" style="display:none">${t('device.talk.stop')}</button>
           <button class="btn btn-secondary btn-sm" id="muteTalkBtn" style="display:none">${t('device.talk.mute')}</button>` : ''}
-          ${device.android_version && !device.android_version.startsWith('Web/') && !isNativeDevice(device) ? `
+          ${device.android_version && !device.android_version.startsWith('Web/') && !isNativeDevice(device) && !isRokuDevice(device) ? `
           <button class="btn btn-secondary btn-sm" id="deviceOwnerBtn" title="${t('device.owner_provision.tip')}">${t('device.owner_provision.btn')}</button>` : ''}
           <button class="btn btn-secondary btn-sm" id="moveDeviceBtn">${t('move.button')}</button>
           <button class="btn btn-secondary btn-sm" id="blockDeviceBtn">${device.blocked ? 'Unblock' : 'Block'}</button>
@@ -989,7 +1001,7 @@ async function loadDevice(deviceId, activeTab = null) {
           ` : `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.player_type')}</div>
-            <div class="info-card-value small">${isEmbeddedDevice(device) ? (String(device.screen_profile || '').includes('seeed-reterminal-sticky') ? t('device.info.reterminal_sticky_player') : t('device.info.embedded_player')) : isBrightSignDevice(device) ? t('device.info.brightsign_player') : isLinuxDevice(device) ? t('device.info.linux_player') : isWindowsDevice(device) ? t('device.info.windows_player') : t('device.info.web_player')}</div>
+            <div class="info-card-value small">${isEmbeddedDevice(device) ? (String(device.screen_profile || '').includes('seeed-reterminal-sticky') ? t('device.info.reterminal_sticky_player') : t('device.info.embedded_player')) : isBrightSignDevice(device) ? t('device.info.brightsign_player') : isLinuxDevice(device) ? t('device.info.linux_player') : isWindowsDevice(device) ? t('device.info.windows_player') : isRokuDevice(device) ? t('device.info.roku_player') : t('device.info.web_player')}</div>
           </div>
           ${device.hardware_model ? `
           <div class="info-card">

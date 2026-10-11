@@ -304,24 +304,36 @@ function dynamicRevFor(item, nowSec) {
   // Reading only one set is how an edit stopped invalidating the cache entirely.
   const edited = item.widget_updated_at || item.content_updated_at
     || item.widget_rev || item.content_rev || item.updated_at || 0;
-  const bucket = (label, seconds) => `${label}_${Math.floor(now / seconds)}_${edited}`;
+  const period = dynamicPeriodFor(item);
+  if (period) return `${period.label}_${Math.floor(now / period.seconds)}_${edited}`;
+  return edited;
+}
+
+/*
+ * How often an item's OUTPUT changes on its own, as { label, seconds }, or null for an item that
+ * changes only when someone edits it. The one table behind dynamicRevFor's time buckets — and behind
+ * the player raster's X-ST-Refresh-In (routes/player-raster.js), so a Roku and an e-ink panel agree
+ * on when a frame is stale. Labels are part of the e-ink cache key; do not rename them.
+ */
+function dynamicPeriodFor(item) {
+  if (!item) return null;
   switch (item.widget_type) {
-    case 'clock':   return bucket('clock', 60);
-    case 'weather': return bucket('weather', 600);
+    case 'clock':   return { label: 'clock', seconds: 60 };
+    case 'weather': return { label: 'weather', seconds: 600 };
     // A slide only changes on its own when it binds a data source; a static deck re-rendered
     // in Chrome every minute is pure cost.
-    case 'slide':   return String(item.widget_config || '').includes('{{ds:') ? bucket('slide', 60) : edited;
-    case 'rss':     return bucket('rss', 300);
-    case 'webpage': return bucket('webpage', 300);
-    case 'social':  return bucket('social', 300);
+    case 'slide':   return String(item.widget_config || '').includes('{{ds:') ? { label: 'slide', seconds: 60 } : null;
+    case 'rss':     return { label: 'rss', seconds: 300 };
+    case 'webpage': return { label: 'webpage', seconds: 300 };
+    case 'social':  return { label: 'social', seconds: 300 };
     // The board polls its data every 60s (widgets.js); a 300s bucket showed stale rows.
-    case 'directory-board': return bucket('directory', 60);
+    case 'directory-board': return { label: 'directory', seconds: 60 };
     default: break;
   }
   if (item.remote_url && !looksLikeImage(item.remote_url, item.mime_type)) {
-    return bucket('url', 300);
+    return { label: 'url', seconds: 300 };
   }
-  return edited;
+  return null;
 }
 
 /*
@@ -1200,5 +1212,6 @@ module.exports.resolvedLayoutId = resolvedLayoutId;
 module.exports.resolveDeviceContext = resolveDeviceContext;
 module.exports.touchDeviceHeartbeat = touchDeviceHeartbeat;
 module.exports.dynamicRevFor = dynamicRevFor;
+module.exports.dynamicPeriodFor = dynamicPeriodFor;
 
 

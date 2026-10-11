@@ -54,6 +54,8 @@ test('platform families are recognised from the same fields the rest of the prod
   assert.equal(caps.platformFamily({ client_type: 'apk' }), 'android');
   assert.equal(caps.platformFamily({ android_version: 'Android 12' }), 'android');
   assert.equal(caps.platformFamily({ android_version: 'Web/Safari' }), 'web');
+  assert.equal(caps.platformFamily({ client_type: 'roku' }), 'roku');
+  assert.equal(caps.platformFamily({ platform: 'roku', android_version: 'Roku OS 13' }), 'roku', 'never the Android fallback');
   assert.equal(caps.platformFamily({}), 'web', 'unknown falls back to the most limited set');
 });
 

@@ -19,6 +19,31 @@ own package. Detail and the build steps are in [`vega-player.md`](vega-player.md
 stay not-supported on the certified-hardware page: three crashes on one stick, and a hard-cut that
 has not been re-run there, is not a certification.
 
+**Roku** (`roku/`, BrightScript + SceneGraph; client_type `roku`, platform `roku`) is not a column
+either, because almost every row is a ❌ for the same reason: a Roku app has no HTML engine, no web
+view and no JavaScript, and Roku OS gives an app no reboot, volume, screen-capture, input-injection,
+shell, TV-power or self-update API. It plays video (files, HLS) and images natively, in native zones
+with a cross-fade, with mute; everything browser-only (widgets, templates, slides, web pages, HTML
+bundles, menu boards) is a **still frame** the server renders in headless Chromium
+(`GET /api/player/raster`, capability `render.server_raster`), refreshed on the item's own clock — no
+animation, no video inside a page, no touch. `refresh` works (the scene is rebuilt); `launch` rides
+the same capability and means the same thing. The dashboard's time zone reaches it as an offset table
+in the payload (`clock.tz_table`). A power window blanks the screen; it cannot switch the TV.
+No YouTube, PiP, slide audio, walls, group sync, triggers or offline media cache. The baseline and the
+reason for every omission are in `BASELINE.roku`; the player itself is in
+[`roku-player.md`](roku-player.md). Nothing here has run on a Roku yet.
+
+| capability | Roku baseline |
+|---|---|
+| `playback.video` / `playback.image` / `playback.zones` | ✅ native Video / Poster nodes |
+| `playback.widget` / `playback.bundle` | ⚠️ as server-rendered still frames (`render.server_raster`) |
+| `playback.transitions` | ⚠️ cross-fade only |
+| `audio.mute` | ✅ |
+| `system.restart_player` | ✅ `refresh` rebuilds the scene |
+| `clock.tz_table` / `render.server_raster` | ✅ server-side contracts |
+| `playback.hls` / `display.power_schedule` | declared by the player, in no baseline (brand new) |
+| everything else | ❌ no app API, or not implemented |
+
 **Legend** — ✅ verified in source · ⚠️ partial/conditional (reason given) · ❌ not supported (reason
 given) · 💀 **dead**: the capability is declared or baselined but the control cannot work · ❓
 **unverifiable from source** — needs hardware, and is marked as such rather than asserted.

@@ -1,0 +1,17 @@
+{
+  "name": "screentinker-roku-player",
+  "private": true,
+  "description": "ScreenTinker player for Roku — dev tooling only (compiler, linter, simulator). Not a server dependency.",
+  "license": "MIT",
+  "scripts": {
+    "check": "bsc --project bsconfig.json",
+    "test": "node tests/run-vectors.js",
+    "package": "bsc --project bsconfig.json --createPackage --outFile ../.roku-build/screentinker-roku.zip"
+  },
+  "devDependencies": {
+    "brighterscript": "0.73.6",
+    "@rokucommunity/bslint": "0.8.46",
+    "brs-node": "2.6.0",
+    "brs-scenegraph": "0.6.0"
+  }
+}

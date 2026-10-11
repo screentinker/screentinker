@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Status / info strip along the bottom: connecting, suspended, debug info, "press back again". -->
+<component name="Overlay" extends="Group">
+  <interface>
+    <field id="message" type="string" onChange="onMessage" />
+  </interface>
+  <script type="text/brightscript" uri="Overlay.brs" />
+  <children>
+    <Rectangle id="panel" width="1920" height="84" translation="[0,996]" color="0x0F172ADD" />
+    <Label id="label" width="1824" wrap="true" color="0xE2E8F0FF">
+      <Font role="font" uri="pkg:/fonts/Inter-Regular.ttf" size="34" />
+    </Label>
+  </children>
+</component>

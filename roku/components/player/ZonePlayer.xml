@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  One zone of a layout (or the whole screen): its own playlist cursor, schedule filter and
+  play order, native images and video, and server-rendered frames for everything else.
+
+  in:   items        array of playlist items for this zone (payload.assignments, already split by zone)
+        config       { serverUrl, deviceId, deviceToken, tzTable, playbackOrder, fit, background,
+                       width, height, canVideo, defaultContent }
+        command      "start" | "stop" | "next" | "pause" | "resume"   (alwaysNotify)
+        muteChange   { content_id, muted }                              (alwaysNotify)
+  out:  playEvent    { event: play_start|play_end, item }                (alwaysNotify)
+        playingVideo boolean — true while this zone's Video node is decoding
+        status       short text for the debug overlay
+-->
+<component name="ZonePlayer" extends="Group">
+  <interface>
+    <field id="items" type="array" />
+    <field id="config" type="assocarray" />
+    <field id="command" type="string" alwaysNotify="true" onChange="onCommand" />
+    <field id="muteChange" type="assocarray" alwaysNotify="true" onChange="onMuteChange" />
+    <field id="playEvent" type="assocarray" alwaysNotify="true" />
+    <field id="playingVideo" type="boolean" value="false" />
+    <field id="status" type="string" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/util.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/tz.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/schedule.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/playorder.brs" />
+  <script type="text/brightscript" uri="ZonePlayer.brs" />
+  <children>
+    <Rectangle id="bg" color="0x000000FF" />
+    <Poster id="posterA" opacity="0" />
+    <Poster id="posterB" opacity="0" />
+    <Video id="video" visible="false" enableUI="false" enableTrickPlay="false" disableScreenSaver="true" />
+    <!-- A clock widget drawn natively, so its seconds tick (a server frame would stand still between
+         refreshes). Only when the zone's offsets are known and the text is English; else a frame. -->
+    <Group id="clock" visible="false">
+      <Rectangle id="clockBg" color="0x00000000" />
+      <Label id="clockTime" horizAlign="center" vertAlign="center" />
+      <Label id="clockDate" horizAlign="center" vertAlign="center" />
+    </Group>
+    <Timer id="clockTick" repeat="true" duration="1" />
+    <Animation id="fade" duration="0.6" easeFunction="linear">
+      <FloatFieldInterpolator id="fadeIn" key="[0.0, 1.0]" keyValue="[0.0, 1.0]" />
+      <FloatFieldInterpolator id="fadeOut" key="[0.0, 1.0]" keyValue="[1.0, 0.0]" />
+    </Animation>
+    <Timer id="advance" repeat="false" />
+    <Timer id="recheck" repeat="true" duration="30" />
+    <Timer id="refresh" repeat="false" />
+    <Timer id="watchdog" repeat="false" />
+  </children>
+</component>

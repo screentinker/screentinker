@@ -380,6 +380,7 @@ export default {
   'device.info.size_free': '{size} liberi',
   'device.info.player_type': 'Tipo Player',
   'device.info.web_player': 'Web Player',
+  'device.info.roku_player': 'Player Roku',
   'device.info.wifi': 'WiFi',
   'device.info.uptime': 'Tempo di attività',
   'device.info.android_version': 'Versione Android',

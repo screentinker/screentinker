@@ -2122,6 +2122,10 @@ app.use('/api/billing', bearerAuth, require('./routes/billing'));
 // RGB565, etc.) for MCUs that call HTTP instead of running a browser. Handles its own dual
 // auth (device token OR API token) so it cannot use the PUBLIC_ROUTERS bearerAuth loop.
 app.use('/api/embedded', require('./routes/embedded'));
+// Player raster — the same Chromium pipeline, as full-colour frames for a player that cannot run
+// HTML (the Roku: GET /api/player/raster). Device-token auth like the embedded routes, and for the
+// same reason outside the PUBLIC_ROUTERS loop. Rate-limited per device inside the router.
+app.use('/api/player', require('./routes/player-raster'));
 
 
 // Activity logging middleware now mounted earlier (just before the workspace

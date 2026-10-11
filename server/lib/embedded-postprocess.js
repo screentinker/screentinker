@@ -285,4 +285,32 @@ async function postprocess(pngBuffer, profile) {
   return { buffer: Buffer.from(packed), contentType: 'application/octet-stream' };
 }
 
-module.exports = { postprocess };
+/*
+ * Full-colour output for a player that shows the frame on a real TV (the Roku, via
+ * routes/player-raster.js) rather than on e-paper.
+ *
+ * ⚠️ NOT a postprocess() profile, deliberately. postprocess() only ever emits JPEG as dithered 1-bit
+ * mono (its jpeg branch is an e-paper debugging aid), and every colour depth below 24-bit is a
+ * packed wire format for an MCU. A colour JPEG is a different product with a different knob (the
+ * quality), so it gets its own small function and postprocess()'s behaviour is untouched.
+ *
+ * The frame is cover-resized to exactly width x height (a page screenshot already is; this keeps
+ * the contract when a renderer returns something else), then encoded:
+ *   jpeg -> colour, `quality` 1..100 (the route clamps it to 40..95)
+ *   png  -> lossless, for text-heavy frames where JPEG ringing shows
+ *
+ * @returns {Promise<{ buffer: Buffer, contentType: string }>}
+ */
+async function encodeColour(pngBuffer, { width, height, format = 'jpeg', quality = 85 } = {}) {
+  const img = await Jimp.fromBuffer(pngBuffer);
+  if (width && height && (img.bitmap.width !== width || img.bitmap.height !== height)) {
+    img.cover({ w: width, h: height });
+  }
+  if (format === 'png') {
+    return { buffer: await img.getBuffer('image/png'), contentType: 'image/png' };
+  }
+  const q = Math.max(1, Math.min(100, Math.round(Number(quality) || 85)));
+  return { buffer: await img.getBuffer('image/jpeg', { quality: q }), contentType: 'image/jpeg' };
+}
+
+module.exports = { postprocess, encodeColour };

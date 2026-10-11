@@ -972,6 +972,7 @@ export default {
     'device.info.output_n': '(uitgang {n})',
     'device.info.player_type': 'Spelertype',
     'device.info.web_player': 'Webspeler',
+    'device.info.roku_player': 'Roku-speler',
     'device.info.brightsign_player': 'BrightSign',
     'device.info.wifi': 'Wifi',
     'device.info.uptime': 'Uptime',

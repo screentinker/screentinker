@@ -626,6 +626,7 @@ export default {
   'device.info.output_n': "(出力{n})",
   'device.info.player_type': "プレイヤータイプ",
   'device.info.web_player': "ウェブプレーヤー",
+  'device.info.roku_player': 'Roku プレーヤー',
   'device.info.brightsign_player': "ブライトサイン",
   'device.info.wifi': "WiFi",
   'device.info.uptime': "稼働時間",

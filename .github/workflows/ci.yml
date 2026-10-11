@@ -130,6 +130,37 @@ jobs:
         env:
           ST_SQLITE_DRIVER: node
 
+  roku:
+    name: Roku player (compile, vectors, protocol)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      # brs-node (the BrightScript simulator) needs Node 22; the server runs on it too for the
+      # end-to-end protocol run. The server's own unit tests stay on Node 20 in the test job.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Install Roku dev tooling
+        run: npm ci --prefix roku --no-audit --no-fund
+      - name: Compile + lint (BrighterScript, bslint)
+        run: cd roku && npx bsc --project bsconfig.json
+      - name: Schedule / power-window / play-order vectors
+        run: node roku/tests/run-vectors.js
+      - name: Install server dependencies
+        run: npm ci --prefix server --omit=dev --no-audit --no-fund
+      - name: Engine.IO codec + end-to-end protocol against the server
+        run: node roku/tests/run-protocol.js --e2e
+      # The whole app in the simulator against the server. No Chromium here, so widget frames are
+      # 501 and skipped; the run still checks pairing, the playlist, the native clock, the video
+      # request, tz_table and the roku family. (ffmpeg makes the test video.)
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Whole app in the simulator
+        run: node roku/tests/run-app.js --seconds 80
+        env:
+          EXPECT_TZ: '1'
+          EXPECT_FAMILY: '1'
+
   openapi:
     name: OpenAPI spec lint
     runs-on: ubuntu-latest

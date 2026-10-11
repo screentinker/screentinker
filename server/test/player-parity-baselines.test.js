@@ -443,3 +443,19 @@ test('the Tier-2 privilege is declared under the same guard as the kiosk it stan
   assert.ok(/if \(isOwner\) caps \+= "system\.kiosk"/.test(src),
     'and system.kiosk must remain until the stand-in retires a release later');
 });
+
+test('the Roku baseline claims nothing a Roku app cannot do', () => {
+  // A Roku app (BrightScript + SceneGraph) has no reboot, volume, capture, input injection, shell,
+  // self-update or TV power API, and no browser to run YouTube, slide audio or interactive pages in.
+  // Each of these is a control that would appear on every undeclared Roku row and do nothing.
+  for (const c of ['system.reboot', 'audio.volume', 'display.power', 'display.brightness', 'display.rotation',
+    'remote.screenshot', 'remote.stream', 'remote.input', 'system.self_update', 'offline.cache', 'sync.clock',
+    'playback.youtube', 'playback.pip', 'playback.slide_audio', 'playback.web_interactive', 'playback.web_interactive_framed']) {
+    assert.equal(caps.BASELINE.roku.includes(c), false, `BASELINE.roku claims ${c}`);
+  }
+  // And the two that only make sense for it are its alone (every other player must declare them).
+  for (const [family, list] of Object.entries(caps.BASELINE)) {
+    if (family === 'roku') continue;
+    assert.equal(list.includes('render.server_raster') || list.includes('clock.tz_table'), false, family);
+  }
+});

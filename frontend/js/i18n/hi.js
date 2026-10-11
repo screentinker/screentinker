@@ -263,4 +263,6 @@ export default {
   'templates.image_bundled': 'टेम्पलेट की इमेज ({file})',
   'templates.widget_type_label': 'टेम्पलेट',
   'templates.widget_template_missing': 'टेम्पलेट {key} उपलब्ध नहीं है: {error}',
+  // Device page, player type (same key as en.js).
+  'device.info.roku_player': 'Roku प्लेयर',
 };

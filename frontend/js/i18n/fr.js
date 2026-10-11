@@ -632,6 +632,7 @@ export default {
   'device.info.output_n': "(sortie {n})",
   'device.info.player_type': "Type de lecteur",
   'device.info.web_player': "Lecteur web",
+  'device.info.roku_player': 'Lecteur Roku',
   'device.info.brightsign_player': "BrightSign",
   'device.info.wifi': "WiFi",
   'device.info.uptime': "Disponibilité",

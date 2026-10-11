@@ -308,6 +308,74 @@ function localBaseUrl() {
   return global.__localApiOrigin || process.env.BASE_URL || `http://127.0.0.1:${process.env.PORT || config.port || 3001}`;
 }
 
+/*
+ * Template-agnostic settlement before a screenshot: fonts, finished animations, images and videos,
+ * including inside srcdoc iframes, each wait individually bounded so one hung asset cannot hold the
+ * frame. Shared by every page render here (the e-ink widget path and the player raster path), so a
+ * fix to what "settled" means reaches both.
+ */
+async function settlePage(page, isLayout) {
+  await page.evaluate(async (isLayout) => {
+    try { if (document.fonts?.ready) await document.fonts.ready; } catch (_) {}
+    try { document.getAnimations().forEach(a => { try { a.finish(); } catch (_) {} }); } catch (_) {}
+
+    // Settle iframes with individual bounded wait (so a hung remote iframe never blocks whole layout)
+    const iframes = Array.from(document.querySelectorAll('iframe'));
+    await Promise.all(iframes.map(iframe => {
+      return new Promise((resolve) => {
+        setTimeout(resolve, isLayout ? 3000 : 5000);
+        iframe.addEventListener('load', resolve, { once: true });
+        iframe.addEventListener('error', resolve, { once: true });
+        try {
+          const doc = iframe.contentDocument || iframe.contentWindow?.document;
+          if (doc && (doc.readyState === 'complete' || doc.readyState === 'interactive')) {
+            try { doc.getAnimations().forEach(a => { try { a.finish(); } catch (_) {} }); } catch (_) {}
+            const fonts = doc.fonts && doc.fonts.ready;
+            if (fonts && typeof fonts.then === 'function') fonts.then(resolve, resolve); else resolve();
+          }
+        } catch (_) { /* cross-origin: the load event or the timer settles it */ }
+      });
+    }));
+
+    // Settle images across root and iframes
+    const getNestedImages = (root) => {
+      let imgs = Array.from(root.querySelectorAll('img'));
+      const fList = Array.from(root.querySelectorAll('iframe'));
+      for (const f of fList) {
+        try {
+          const doc = f.contentDocument || f.contentWindow?.document;
+          if (doc) {
+            imgs = imgs.concat(Array.from(doc.querySelectorAll('img')));
+          }
+        } catch (_) {}
+      }
+      return imgs;
+    };
+
+    const imgs = getNestedImages(document);
+    await Promise.all(imgs.map(img => {
+      if (img.complete && img.naturalHeight !== 0) return Promise.resolve();
+      return new Promise(resolve => {
+        img.addEventListener('load', resolve, { once: true });
+        img.addEventListener('error', resolve, { once: true });
+        setTimeout(resolve, 1500);
+      });
+    }));
+
+    // Settle videos
+    const videos = Array.from(document.querySelectorAll('video'));
+    await Promise.all(videos.map(v => {
+      if (v.readyState >= 2) return Promise.resolve();
+      return new Promise(resolve => {
+        v.addEventListener('loadeddata', resolve, { once: true });
+        v.addEventListener('canplay', resolve, { once: true });
+        v.addEventListener('error', resolve, { once: true });
+        setTimeout(resolve, 2000);
+      });
+    }));
+  }, Boolean(isLayout)).catch(() => {});
+}
+
 async function renderWidgetOrHtml(html, profile, widgetType = '', options = {}) {
   await acquirePageSlot(options.signal);
   let browser = null;
@@ -352,65 +420,7 @@ async function renderWidgetOrHtml(html, profile, widgetType = '', options = {}) 
       }
 
       // Template-agnostic settlement: fonts, animations, images, and videos (including inside srcdoc iframes)
-      await page.evaluate(async (isLayout) => {
-        try { if (document.fonts?.ready) await document.fonts.ready; } catch (_) {}
-        try { document.getAnimations().forEach(a => { try { a.finish(); } catch (_) {} }); } catch (_) {}
-
-        // Settle iframes with individual bounded wait (so a hung remote iframe never blocks whole layout)
-        const iframes = Array.from(document.querySelectorAll('iframe'));
-        await Promise.all(iframes.map(iframe => {
-          return new Promise((resolve) => {
-            setTimeout(resolve, isLayout ? 3000 : 5000);
-            iframe.addEventListener('load', resolve, { once: true });
-            iframe.addEventListener('error', resolve, { once: true });
-            try {
-              const doc = iframe.contentDocument || iframe.contentWindow?.document;
-              if (doc && (doc.readyState === 'complete' || doc.readyState === 'interactive')) {
-                try { doc.getAnimations().forEach(a => { try { a.finish(); } catch (_) {} }); } catch (_) {}
-                const fonts = doc.fonts && doc.fonts.ready;
-                if (fonts && typeof fonts.then === 'function') fonts.then(resolve, resolve); else resolve();
-              }
-            } catch (_) { /* cross-origin: the load event or the timer settles it */ }
-          });
-        }));
-
-        // Settle images across root and iframes
-        const getNestedImages = (root) => {
-          let imgs = Array.from(root.querySelectorAll('img'));
-          const fList = Array.from(root.querySelectorAll('iframe'));
-          for (const f of fList) {
-            try {
-              const doc = f.contentDocument || f.contentWindow?.document;
-              if (doc) {
-                imgs = imgs.concat(Array.from(doc.querySelectorAll('img')));
-              }
-            } catch (_) {}
-          }
-          return imgs;
-        };
-
-        const imgs = getNestedImages(document);
-        await Promise.all(imgs.map(img => {
-          if (img.complete && img.naturalHeight !== 0) return Promise.resolve();
-          return new Promise(resolve => {
-            img.addEventListener('load', resolve, { once: true });
-            img.addEventListener('error', resolve, { once: true });
-            setTimeout(resolve, 1500);
-          });
-        }));
-
-        // Settle videos
-        const videos = Array.from(document.querySelectorAll('video'));
-        await Promise.all(videos.map(v => {
-          if (v.readyState >= 2) return Promise.resolve();
-          return new Promise(resolve => {
-            v.addEventListener('loadeddata', resolve, { once: true });
-            v.addEventListener('canplay', resolve, { once: true });
-            v.addEventListener('error', resolve, { once: true });
-            setTimeout(resolve, 2000);
-          });
-        }));
-      }, widgetType === 'layout').catch(() => {});
+      await settlePage(page, widgetType === 'layout');
 
       const snap = await page.screenshot({ type: 'png' });
       return Buffer.from(snap);
@@ -492,6 +502,136 @@ async function renderRemotePage(url, profile, options = {}) {
       const snap = await page.screenshot({ type: 'png' });
       return Buffer.from(snap);
     })(), 15000, 'Remote page rendering exceeded 15s deadline');
+  } finally {
+    if (options.signal) {
+      try { options.signal.removeEventListener('abort', onAbort); } catch (_) {}
+    }
+    if (page) {
+      try { await page.close(); } catch (_) {}
+    }
+    releasePageSlot();
+  }
+}
+
+// ─── Player raster (routes/player-raster.js — the Roku) ─────────────────────
+
+/*
+ * Every request a raster page makes is vetted, like renderRemotePage's, with ONE difference: the
+ * page is usually one of THIS server's own (a widget's /api/widgets/:id/render, which is exactly
+ * what a browser player frames), so this server's origin is allowed — but for GET/HEAD only.
+ *
+ * ⚠️ Why the method matters. The page runs operator-authored code (templates, bundles, widget
+ * scripts) inside a browser on the server, and loopback is not quite "just another client" here:
+ * it is where the mesh's internal API answers. Reads are what a widget legitimately needs (its
+ * /uploads images, a room display's state, a directory board's data.json); nothing it renders
+ * needs to WRITE, so a page cannot use the renderer to post to this server at all.
+ */
+function guardRasterRequests(page, localOrigin) {
+  return page.setRequestInterception(true).then(() => {
+    page.on('request', async (r) => {
+      try {
+        const u = new URL(r.url());
+        if (u.protocol === 'http:' || u.protocol === 'https:') {
+          if (u.origin === localOrigin) {
+            const m = String(r.method ? r.method() : 'GET').toUpperCase();
+            if (m !== 'GET' && m !== 'HEAD') throw new Error('raster pages may only read from this server');
+          } else {
+            await assertSafeUrl(r.url());
+          }
+        }
+        await r.continue();
+      } catch (_) {
+        try { await r.abort('addressunreachable'); } catch (_2) {}
+      }
+    });
+  });
+}
+
+/**
+ * Render one frame for a player that cannot run HTML.
+ *
+ * @param {{ path?: string, url?: string, html?: string }} source
+ *   path — a page on THIS server ('/api/widgets/<id>/render?rev=…'), loaded from localBaseUrl();
+ *   url  — a remote web page, SSRF-vetted before the browser sees it (BLOCKED_URL otherwise);
+ *   html — a self-contained document (a flattened HTML bundle).
+ * @param {{ width: number, height: number }} profile
+ * @param {{ signal?: AbortSignal, timezone?: string }} [options]
+ *   timezone — the screen's IANA zone, emulated so a clock or a date in the page reads the screen's
+ *   time rather than the server's.
+ * @returns {Promise<Buffer>} PNG
+ */
+async function renderPlayerFrame(source, profile, options = {}) {
+  if (!source || (!source.path && !source.url && typeof source.html !== 'string')) {
+    throw Object.assign(new Error('Nothing to render'), { code: 'NOTHING_TO_RENDER' });
+  }
+  if (source.path && !String(source.path).startsWith('/')) {
+    throw Object.assign(new Error('A local path must start with /'), { code: 'INVALID_PATH' });
+  }
+  if (source.url) {
+    try {
+      await assertSafeUrl(source.url);
+    } catch (e) {
+      if (e instanceof SsrfError) {
+        throw Object.assign(new Error(`Remote page refused: ${e.message}`), { code: 'BLOCKED_URL' });
+      }
+      throw Object.assign(new Error(`Invalid remote URL: ${e.message}`), { code: 'FETCH_ERROR' });
+    }
+  }
+  const width = safeDimension(profile && profile.width, 1920);
+  const height = safeDimension(profile && profile.height, 1080);
+
+  await acquirePageSlot(options.signal);
+  let page = null;
+  const onAbort = () => {
+    if (page) {
+      try { page.close(); } catch (_) {}
+    }
+  };
+  if (options.signal) {
+    options.signal.addEventListener('abort', onAbort, { once: true });
+  }
+
+  try {
+    return await withTimeout((async () => {
+      const deadline = Date.now() + 15000;
+      const remainingMs = () => Math.max(500, deadline - Date.now());
+      const localOrigin = new URL(localBaseUrl()).origin;
+
+      const browser = await getBrowser();
+      page = await browser.newPage();
+      // The browser is shared and long-lived: a rev-pinned page it cached for an earlier frame
+      // must never stand in for the fresh one a time bucket asked for.
+      if (typeof page.setCacheEnabled === 'function') await page.setCacheEnabled(false).catch(() => {});
+      await guardRasterRequests(page, localOrigin);
+      if (options.timezone && typeof page.emulateTimezone === 'function') {
+        // An unknown zone throws here; the frame then shows server time, which beats no frame.
+        await page.emulateTimezone(options.timezone).catch(() => {});
+      }
+      await page.setViewport({ width, height });
+      // ⚠️ Paint the zone's colour under a transparent page. Widgets are drawn to overlay a player's
+      // background, so their own <body> is transparent; captured as-is that is white, and a white
+      // clock vanishes into it. This colours only what the page leaves transparent.
+      if (/^[0-9a-f]{6}$/.test(options.background || '')) {
+        const hex = options.background;
+        const color = { r: parseInt(hex.slice(0, 2), 16), g: parseInt(hex.slice(2, 4), 16), b: parseInt(hex.slice(4, 6), 16), a: 1 };
+        try {
+          const cdp = await page.createCDPSession();
+          await cdp.send('Emulation.setDefaultBackgroundColorOverride', { color });
+        } catch { /* an older Chromium without the override still renders, just on white */ }
+      }
+      if (source.path) {
+        await page.goto(localOrigin + source.path, { waitUntil: 'load', timeout: Math.min(10000, remainingMs()) });
+      } else if (source.url) {
+        await page.goto(source.url, { waitUntil: 'load', timeout: Math.min(10000, remainingMs()) });
+      } else {
+        await page.setContent(source.html, { waitUntil: 'load', timeout: Math.min(8000, remainingMs()) });
+      }
+      // Widgets and boards usually paint from a fetch after load; give that a bounded chance.
+      await page.waitForNetworkIdle({ idleTime: 200, timeout: Math.min(2500, remainingMs()) }).catch(() => {});
+      await settlePage(page, false);
+      const snap = await page.screenshot({ type: 'png' });
+      return Buffer.from(snap);
+    })(), 15000, 'Player frame rendering exceeded 15s deadline');
   } finally {
     if (options.signal) {
       try { options.signal.removeEventListener('abort', onAbort); } catch (_) {}
@@ -879,6 +1019,7 @@ async function renderLayout(layout, zoneEntries, screenProfile, options = {}) {
 module.exports = {
   render,
   renderRemotePage,
+  renderPlayerFrame,
   renderLayout,
   renderLayoutNative,
   closeBrowser,

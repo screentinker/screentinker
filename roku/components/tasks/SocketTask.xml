@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  One socket.io session to the ScreenTinker server, over Engine.IO's HTTP long-polling transport.
+  Runs in its own thread so a held-open poll never stalls the screen.
+
+  in:   serverUrl  — base URL, e.g. https://screentinker.com
+        outbound   — set to { name, data } to emit one event (alwaysNotify: two identical
+                     emits in a row are two emits)
+        control    — "start" | "stop"
+  out:  inbound    — { name, data, seq } for every server event, plus the synthetic
+                     "__connect" / "__disconnect"
+        state      — "idle" | "connecting" | "open" | "closed"
+-->
+<component name="SocketTask" extends="Task">
+  <interface>
+    <field id="serverUrl" type="string" />
+    <field id="namespace" type="string" value="/device" />
+    <field id="outbound" type="assocarray" alwaysNotify="true" />
+    <field id="inbound" type="assocarray" alwaysNotify="true" />
+    <field id="state" type="string" value="idle" />
+    <field id="control" type="string" alwaysNotify="true" />
+    <field id="lastError" type="string" />
+    <field id="debug" type="boolean" value="false" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/util.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/engineio.brs" />
+  <script type="text/brightscript" uri="SocketTask.brs" />
+</component>

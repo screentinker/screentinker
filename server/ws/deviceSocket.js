@@ -994,6 +994,44 @@ function buildPlaylistPayloadUnchecked(deviceId) {
    * missed the change still stops counting on its next payload.
    */
   assembled.audience = require('../lib/audience').payloadConfig(deviceId);
+  /*
+   * The zone's UTC-offset table (lib/tz-table.js), for a player with no time-zone database of its
+   * own (the Roku) — so it evaluates schedules and power windows in the zone `timezone` names, not
+   * in whatever the box is set to.
+   *
+   * ⚠️ ONLY for a player that declares clock.tz_table (or whose baseline has it): every other
+   * player's payload stays byte-for-byte what it was. And ONLY when there IS an effective zone: a
+   * null `timezone` means "trust your own clock" on every player, and a UTC table would silently
+   * override that with the wrong answer for a screen that simply never reported a zone.
+   */
+  if (timezone && capsLib.supports(device, 'clock.tz_table')) {
+    assembled.tz_table = require('../lib/tz-table').tzTable(timezone);
+  }
+  /*
+   * Tables for the OTHER zones a clock widget on this screen names ("New York" on a Chicago lobby
+   * screen), so a player without a zone database can still tick that clock itself rather than show
+   * a frame whose seconds stand still. Keyed by zone; only zones that are real and differ from the
+   * screen's own; absent when there are none.
+   */
+  if (capsLib.supports(device, 'clock.tz_table')) {
+    const zones = new Set();
+    for (const it of Array.isArray(assembled.assignments) ? assembled.assignments : []) {
+      if (!it || it.widget_type !== 'clock') continue;
+      let cfg = it.widget_config;
+      if (typeof cfg === 'string') { try { cfg = JSON.parse(cfg); } catch { cfg = null; } }
+      const z = cfg && typeof cfg.timezone === 'string' ? cfg.timezone : '';
+      if (z && z !== timezone) zones.add(z);
+    }
+    if (zones.size) {
+      const tz = require('../lib/tz-table');
+      const tables = {};
+      for (const z of [...zones].slice(0, 16)) {
+        const t = tz.tzTable(z);
+        if (t && t.zone === z) tables[z] = t;   // an unknown zone comes back as UTC: leave it out
+      }
+      if (Object.keys(tables).length) assembled.tz_tables = tables;
+    }
+  }
   return assembled;
 }
 

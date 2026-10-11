@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The pairing screen: the code an operator types into Displays → Add display. -->
+<component name="PairingView" extends="Group">
+  <interface>
+    <field id="code" type="string" onChange="onChange" />
+    <field id="server" type="string" onChange="onChange" />
+  </interface>
+  <script type="text/brightscript" uri="PairingView.brs" />
+  <children>
+    <Rectangle width="1920" height="1080" color="0x0F172AFF" />
+    <Label translation="[0,250]" width="1920" horizAlign="center" text="Pair this screen" color="0xE2E8F0FF">
+      <Font role="font" uri="pkg:/fonts/Inter-Bold.ttf" size="64" />
+    </Label>
+    <Label id="codeLabel" translation="[0,400]" width="1920" horizAlign="center" color="0x60A5FAFF">
+      <Font role="font" uri="pkg:/fonts/Inter-Bold.ttf" size="200" />
+    </Label>
+    <Label id="howLabel" translation="[260,700]" width="1400" wrap="true" horizAlign="center" color="0x94A3B8FF">
+      <Font role="font" uri="pkg:/fonts/Inter-Regular.ttf" size="40" />
+    </Label>
+    <Label translation="[0,960]" width="1920" horizAlign="center" color="0x64748BFF" text="Press the options (*) key to change the server">
+      <Font role="font" uri="pkg:/fonts/Inter-Regular.ttf" size="30" />
+    </Label>
+  </children>
+</component>

@@ -803,6 +803,7 @@ export default {
   'device.liveness.offline': '离线', 'device.exit.clean': '正常退出', 'device.exit.clean_besteffort': '正常退出（尽力报告）', 'device.exit.silent_short': '无信号',
   'device.info.local_ip': '本地 IP', 'device.info.local_ip6': '本地 IPv6', 'device.info.battery': '电量', 'device.info.storage': '存储空间', 'device.info.hardware_model': '设备型号',
   'device.info.serial': '序列号', 'device.info.temperature': '温度', 'device.info.video_mode': '视频模式', 'device.info.web_player': '网页播放器', 'device.info.brightsign_player': 'BrightSign', 'device.info.uptime': '运行时长', 'device.info.app_version': '应用版本',
+  'device.info.roku_player': 'Roku 播放器',
   'device.pin.set': '设置……', 'device.pin.rotate_confirm': '为此显示屏生成新的设置 PIN 吗？当前 PIN 将立即失效。', 'device.pin.failed': 'PIN 更新失败', 'device.info.settings_pin_hint': '设备端设置菜单（连续按 2 次返回）', 'device.info.cpu_usage': 'CPU 使用率',
   'device.timeline.h24_ago': '24 小时前', 'device.timeline.now': '现在', 'device.timeline.offline': '离线', 'device.timeline.uptime_pct_no_data': '在线率 {pct}%（暂无数据）', 'device.incidents.none': '未记录到事件', 'device.incidents.down_for': '已离线 {dur}',
   'device.event.no_internet': '无互联网连接（路由器/运营商）', 'device.event.ping_timeout': '无响应（网络阻塞）', 'device.event.transport_error': '连接错误', 'device.event.crash': '应用崩溃', 'device.event.display_off': '屏幕关闭 / 休眠', 'device.event.display_on': '屏幕已开启', 'device.event.silent': '原因未知', 'device.event.offline': '设备离线', 'device.event.online': '设备恢复在线',

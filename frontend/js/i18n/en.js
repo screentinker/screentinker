@@ -2409,6 +2409,7 @@ export default {
   'device.info.output_n': '(output {n})',
   'device.info.player_type': 'Player Type',
   'device.info.web_player': 'Web Player',
+  'device.info.roku_player': 'Roku player',
   'device.info.brightsign_player': 'BrightSign',
   'device.info.linux_player': 'Raspberry Pi / Linux (native)',
   'device.info.windows_player': 'Windows (native)',
