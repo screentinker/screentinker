@@ -2,6 +2,10 @@ import { api, assertLocalCallAllowed, getAuthHeaders } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { t, getLanguage } from '../i18n.js';
 import { localName, localDescription, localParams, initialFormValues, langQuery } from '../lib/template-i18n.js';
+import {
+  STATUS_FILTERS, KIND_FILTERS, ORIENTATION_FILTERS, matchesFilters, allTags, isActionable, orientationsOf,
+  selectionToInstall, updatesOf, installSequentially,
+} from '../lib/template-library-filter.js';
 import { esc, isPlatformAdmin, hydrateAuthImages } from '../utils.js';
 import { openContentPicker } from './widgets.js';
 
@@ -212,16 +216,31 @@ async function renderInstalled(body, admin, refresh) {
     }
   } catch { /* counts are a hint, never a blocker */ }
   if (activeTab !== 'installed') return;
-  body.innerHTML = `<div class="content-grid tpl-grid">${list.map((tpl) => installedCard(tpl, admin, inUse.get(tpl.key) || 0)).join('')}</div>`;
-  body.querySelectorAll('[data-use]').forEach((b) => b.addEventListener('click', () => {
-    const tpl = list.find((x) => x.key === b.dataset.use);
-    if (tpl) openUseModal({ tpl });
-  }));
-  body.querySelectorAll('[data-uninstall]').forEach((b) => b.addEventListener('click', () => {
-    const tpl = list.find((x) => x.key === b.dataset.uninstall);
-    if (tpl) uninstall(tpl, refresh);
-  }));
-  wireThumbFallbacks(body);
+  body.innerHTML = `${toolbarHtml(instFilter, allTags(list), false)}<div id="tplInstList"></div>`;
+  const listEl = body.querySelector('#tplInstList');
+  function paint() {
+    const shown = list.filter((tpl) => matchesFilters(tpl, instFilter, lang()));
+    listEl.innerHTML = shown.length
+      ? `<div class="content-grid tpl-grid">${shown.map((tpl) => installedCard(tpl, admin, inUse.get(tpl.key) || 0)).join('')}</div>`
+      : noMatchesHtml();
+    listEl.querySelectorAll('[data-use]').forEach((b) => b.addEventListener('click', () => {
+      const tpl = list.find((x) => x.key === b.dataset.use);
+      if (tpl) openUseModal({ tpl });
+    }));
+    listEl.querySelectorAll('[data-uninstall]').forEach((b) => b.addEventListener('click', () => {
+      const tpl = list.find((x) => x.key === b.dataset.uninstall);
+      if (tpl) uninstall(tpl, refresh);
+    }));
+    const clear = listEl.querySelector('[data-clear-filters]');
+    if (clear) clear.addEventListener('click', () => {
+      resetFilter(instFilter);
+      body.querySelectorAll('.tpl-toolbar [data-filter]').forEach((el) => { el.value = el.dataset.filter === 'q' || el.dataset.filter === 'tag' ? '' : 'all'; });
+      paint();
+    });
+    wireThumbFallbacks(listEl);
+  }
+  wireToolbar(body, instFilter, paint);
+  paint();
 }
 
 function installedCard(tpl, admin, used = 0) {
@@ -274,6 +293,67 @@ async function uninstall(tpl, refresh) {
   }
 }
 
+/* ------------------------------------------------------------------ search, filters, selection */
+
+/*
+ * Search and filters. They live in module state so an install (which re-renders the tab) or a tab
+ * switch keeps them; a page reload starts clean. The selection is the same: keys of library
+ * entries ticked for a bulk install, kept until they are installed or cleared.
+ */
+const libFilter = { q: '', status: 'all', kind: 'all', orientation: 'all', tag: '' };
+const instFilter = { q: '', kind: 'all', orientation: 'all', tag: '' };
+const selected = new Set();
+
+const SEARCH_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+
+function filterSelect(name, label, values, current, labelOf) {
+  return `<select class="input tpl-filter" data-filter="${esc(name)}" aria-label="${esc(label)}">
+    ${values.map((v) => `<option value="${esc(v)}" ${v === current ? 'selected' : ''}>${esc(labelOf(v))}</option>`).join('')}
+  </select>`;
+}
+
+/** The search box and filter dropdowns. `withStatus` = the library tab (installed has no status). */
+function toolbarHtml(state, tags, withStatus) {
+  const tagValues = ['', ...tags];
+  return `<div class="tpl-toolbar" role="search">
+    <div class="tpl-search">${SEARCH_ICON}
+      <input type="search" class="input" data-filter="q" value="${esc(state.q)}" autocomplete="off"
+        placeholder="${esc(t('templates.search_placeholder'))}" aria-label="${esc(t('templates.search_label'))}">
+    </div>
+    ${withStatus ? filterSelect('status', t('templates.filter_status'), STATUS_FILTERS, state.status, (v) => t(`templates.filter_status_${v}`)) : ''}
+    ${filterSelect('kind', t('templates.filter_kind'), KIND_FILTERS, state.kind, (v) => (v === 'all' ? t('templates.filter_kind_all') : kindLabel(v)))}
+    ${filterSelect('orientation', t('templates.filter_orientation'), ORIENTATION_FILTERS, state.orientation, (v) => t(`templates.filter_orientation_${v}`))}
+    ${tags.length ? filterSelect('tag', t('templates.filter_tag'), tagValues, state.tag, (v) => (v === '' ? t('templates.filter_tag_all') : v)) : ''}
+  </div>`;
+}
+
+/**
+ * Wire a toolbar to its state object. The search box repaints as you type (short debounce) without
+ * rebuilding the toolbar, so it keeps focus; the dropdowns repaint on change.
+ */
+function wireToolbar(root, state, paint) {
+  let timer = null;
+  root.querySelectorAll('[data-filter]').forEach((el) => {
+    const key = el.dataset.filter;
+    if (key === 'q') {
+      el.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { state.q = el.value; paint(); }, 120); });
+    } else {
+      el.addEventListener('change', () => { state[key] = el.value; paint(); });
+    }
+  });
+}
+
+function resetFilter(state) {
+  state.q = '';
+  for (const k of ['status', 'kind', 'orientation']) if (k in state) state[k] = 'all';
+  state.tag = '';
+}
+
+function noMatchesHtml() {
+  return `<div class="empty-state tpl-nomatch"><h3>${esc(t('templates.no_matches'))}</h3>
+    <button class="btn btn-secondary btn-sm" data-clear-filters>${esc(t('templates.clear_filters'))}</button></div>`;
+}
+
 /* ------------------------------------------------------------------ library */
 
 async function renderLibrary(body, admin, refresh) {
@@ -285,6 +365,10 @@ async function renderLibrary(body, admin, refresh) {
   }
   if (activeTab !== 'library') return;
   const catalogs = Array.isArray(lib.catalogs) ? lib.catalogs : [];
+  const entries = catalogs.flatMap((c) => c.templates || []);
+  // A key that is no longer actionable (installed meanwhile, gone from the catalog) leaves the selection.
+  for (const k of [...selected]) if (!entries.some((e) => e.key === k && isActionable(e))) selected.delete(k);
+
   let html = '';
   if (!lib.network_enabled) {
     html += `<div class="tpl-callout">
@@ -294,30 +378,118 @@ async function renderLibrary(body, admin, refresh) {
     : `<p class="tpl-meta">${esc(t('templates.network_off_ask_admin'))}</p>`}
     </div>`;
   }
-  for (const c of catalogs) {
-    html += `<section class="tpl-catalog">
-      <div class="tpl-catalog-head">
-        <div>
-          <h3>${esc(c.label || c.id)} ${c.enabled ? '' : `<span class="tpl-badge">${esc(t('templates.catalog_disabled'))}</span>`}</h3>
-          <div class="tpl-meta">${esc(t('templates.catalog_key'))} <code>${esc(c.key_id || '?')}</code> · ${esc(t('templates.last_checked'))} ${fmtTime(c.last_checked)}${c.serial ? ` · ${esc(t('templates.serial'))} ${esc(c.serial)}` : ''}</div>
-        </div>
-        ${admin ? `<button class="btn btn-secondary btn-sm" data-refresh="${esc(c.id)}" ${lib.network_enabled && c.enabled && c.url ? '' : `disabled title="${esc(t('templates.check_now_disabled'))}"`}>${esc(t('templates.check_now'))}</button>` : ''}
-      </div>
-      ${c.stale ? `<div class="tpl-callout tpl-callout-warn">${esc(t('templates.stale', { date: c.expires || '' }))}</div>` : ''}
-      ${c.last_error ? `<div class="tpl-callout tpl-callout-error">${esc(t('templates.last_error'))} ${esc(c.last_error)}</div>` : ''}
-      ${c.templates && c.templates.length
-    ? `<div class="content-grid tpl-grid">${c.templates.map((e) => libraryCard(e, admin)).join('')}</div>`
-    : `<div class="tpl-meta" style="padding:8px 0 16px">${esc(c.enabled ? t('templates.catalog_empty') : t('templates.catalog_off'))}</div>`}
-    </section>`;
+  if (entries.length) {
+    html += toolbarHtml(libFilter, allTags(entries), true);
+    if (admin) {
+      html += `<div class="tpl-bulkbar" id="tplBulkBar">
+        <label class="tpl-check"><input type="checkbox" id="tplSelAll"> <span id="tplSelAllLabel"></span></label>
+        <span class="tpl-meta" id="tplSelCount"></span>
+        <button class="btn btn-secondary btn-sm" id="tplSelClear">${esc(t('templates.bulk_clear'))}</button>
+        <span class="tpl-bulk-spacer"></span>
+        <button class="btn btn-secondary btn-sm" id="tplUpdateAll" hidden></button>
+        <button class="btn btn-primary btn-sm" id="tplInstallSel" disabled></button>
+      </div>`;
+    }
   }
+  html += '<div id="tplLibList"></div>';
   if (!catalogs.length) html += `<div class="empty-state"><h3>${esc(t('templates.no_catalogs'))}</h3></div>`;
   body.innerHTML = html;
 
-  const newCount = catalogs.reduce((n, c) => n + (c.templates || []).filter((e) => e.is_new || e.is_updated).length, 0);
+  const newCount = entries.filter((e) => e.is_new || e.is_updated).length;
   const counter = document.getElementById('tplNewCount');
   if (counter) counter.innerHTML = newCount ? `<span class="tpl-badge tpl-badge-new">${esc(String(newCount))}</span>` : '';
 
-  wireThumbFallbacks(body);
+  const listEl = body.querySelector('#tplLibList');
+  const visible = () => entries.filter((e) => matchesFilters(e, libFilter, lang()));
+
+  function updateBulkBar() {
+    if (!admin || !entries.length) return;
+    const shown = visible().filter(isActionable);
+    const allShownSelected = shown.length > 0 && shown.every((e) => selected.has(e.key));
+    const selAll = body.querySelector('#tplSelAll');
+    selAll.checked = allShownSelected;
+    selAll.indeterminate = !allShownSelected && shown.some((e) => selected.has(e.key));
+    selAll.disabled = !shown.length;
+    body.querySelector('#tplSelAllLabel').textContent = t('templates.bulk_select_shown', { n: shown.length });
+    const picked = selectionToInstall(entries, selected);
+    body.querySelector('#tplSelCount').textContent = picked.length ? t('templates.bulk_selected', { n: picked.length }) : '';
+    body.querySelector('#tplSelClear').hidden = !picked.length;
+    const inst = body.querySelector('#tplInstallSel');
+    inst.disabled = !picked.length;
+    inst.textContent = picked.length ? t('templates.bulk_install_selected', { n: picked.length }) : t('templates.bulk_install_none');
+    const updates = updatesOf(entries);
+    const upd = body.querySelector('#tplUpdateAll');
+    upd.hidden = !updates.length;
+    upd.textContent = t('templates.bulk_update_all', { n: updates.length });
+  }
+
+  function paint() {
+    const shown = new Set(visible().map((e) => e.key));
+    let out = '';
+    for (const c of catalogs) {
+      const own = (c.templates || []).filter((e) => shown.has(e.key));
+      out += `<section class="tpl-catalog">
+        <div class="tpl-catalog-head">
+          <div>
+            <h3>${esc(c.label || c.id)} ${c.enabled ? '' : `<span class="tpl-badge">${esc(t('templates.catalog_disabled'))}</span>`}</h3>
+            <div class="tpl-meta">${esc(t('templates.catalog_key'))} <code>${esc(c.key_id || '?')}</code> · ${esc(t('templates.last_checked'))} ${fmtTime(c.last_checked)}${c.serial ? ` · ${esc(t('templates.serial'))} ${esc(c.serial)}` : ''}${c.templates && c.templates.length ? ` · ${esc(t('templates.shown_of', { shown: own.length, total: c.templates.length }))}` : ''}</div>
+          </div>
+          ${admin ? `<button class="btn btn-secondary btn-sm" data-refresh="${esc(c.id)}" ${lib.network_enabled && c.enabled && c.url ? '' : `disabled title="${esc(t('templates.check_now_disabled'))}"`}>${esc(t('templates.check_now'))}</button>` : ''}
+        </div>
+        ${c.stale ? `<div class="tpl-callout tpl-callout-warn">${esc(t('templates.stale', { date: c.expires || '' }))}</div>` : ''}
+        ${c.last_error ? `<div class="tpl-callout tpl-callout-error">${esc(t('templates.last_error'))} ${esc(c.last_error)}</div>` : ''}
+        ${!(c.templates && c.templates.length)
+    ? `<div class="tpl-meta" style="padding:8px 0 16px">${esc(c.enabled ? t('templates.catalog_empty') : t('templates.catalog_off'))}</div>`
+    : own.length
+      ? `<div class="content-grid tpl-grid">${own.map((e) => libraryCard(e, admin)).join('')}</div>`
+      : ''}
+      </section>`;
+    }
+    if (entries.length && !shown.size) out += noMatchesHtml();
+    listEl.innerHTML = out;
+    wireThumbFallbacks(listEl);
+    listEl.querySelectorAll('[data-refresh]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      b.textContent = t('templates.checking');
+      try {
+        const r = await TAPI(`/templates/catalogs/${encodeURIComponent(b.dataset.refresh)}/refresh`, { method: 'POST', body: '{}' });
+        showToast(t('templates.toast_checked', { n: r.templates }), 'success');
+      } catch (e) { showToast(e.message, 'error'); }
+      refresh();
+    }));
+    listEl.querySelectorAll('[data-install]').forEach((b) => b.addEventListener('click', () => {
+      const e = entries.find((x) => x.key === b.dataset.install);
+      if (e) installFromLibrary(e, refresh);
+    }));
+    listEl.querySelectorAll('[data-select]').forEach((cb) => cb.addEventListener('change', () => {
+      if (cb.checked) selected.add(cb.dataset.select); else selected.delete(cb.dataset.select);
+      cb.closest('.tpl-card')?.classList.toggle('tpl-card-selected', cb.checked);
+      updateBulkBar();
+    }));
+    const clear = listEl.querySelector('[data-clear-filters]');
+    if (clear) clear.addEventListener('click', () => {
+      resetFilter(libFilter);
+      body.querySelectorAll('.tpl-toolbar [data-filter]').forEach((el) => { el.value = el.dataset.filter === 'q' || el.dataset.filter === 'tag' ? '' : 'all'; });
+      paint();
+    });
+    updateBulkBar();
+  }
+
+  wireToolbar(body, libFilter, paint);
+  paint();
+
+  if (admin && entries.length) {
+    body.querySelector('#tplSelAll').addEventListener('change', (ev) => {
+      for (const e of visible().filter(isActionable)) {
+        if (ev.target.checked) selected.add(e.key); else selected.delete(e.key);
+      }
+      paint();
+    });
+    body.querySelector('#tplSelClear').addEventListener('click', () => { selected.clear(); paint(); });
+    body.querySelector('#tplInstallSel').addEventListener('click', () => installMany(selectionToInstall(entries, selected), refresh));
+    body.querySelector('#tplUpdateAll').addEventListener('click', () => installMany(updatesOf(entries), refresh));
+  }
+
   const en = body.querySelector('#tplEnableNet');
   if (en) en.addEventListener('click', async () => {
     en.disabled = true;
@@ -327,21 +499,6 @@ async function renderLibrary(body, admin, refresh) {
       refresh();
     } catch (e) { en.disabled = false; showToast(e.message, 'error'); }
   });
-  body.querySelectorAll('[data-refresh]').forEach((b) => b.addEventListener('click', async () => {
-    b.disabled = true;
-    b.textContent = t('templates.checking');
-    try {
-      const r = await TAPI(`/templates/catalogs/${encodeURIComponent(b.dataset.refresh)}/refresh`, { method: 'POST', body: '{}' });
-      showToast(t('templates.toast_checked', { n: r.templates }), 'success');
-    } catch (e) { showToast(e.message, 'error'); }
-    refresh();
-  }));
-  body.querySelectorAll('[data-install]').forEach((b) => b.addEventListener('click', () => {
-    const [cid, id] = b.dataset.install.split('/');
-    const c = catalogs.find((x) => x.id === cid);
-    const e = c && c.templates.find((x) => x.id === id);
-    if (e) installFromLibrary(e, refresh);
-  }));
 
   // Opening the tab is what "seen" means; the badges on screen stay until the next load.
   if (newCount) TAPI('/templates/library/seen', { method: 'POST', body: '{}' }).catch(() => {});
@@ -354,17 +511,22 @@ function libraryCard(e, admin) {
   let status = '';
   if (e.update_available) status = `<span class="tpl-badge tpl-badge-warn">${esc(t('templates.update_available', { from: e.installed, to: e.latest }))}</span>`;
   else if (e.installed) status = `<span class="tpl-badge tpl-badge-ok">${esc(t('templates.installed_version', { version: e.installed }))}</span>`;
-  let action = '';
-  if (admin && e.compatible !== false && (!e.installed || e.update_available)) {
-    action = `<button class="btn btn-primary btn-sm" data-install="${esc(e.key)}">${esc(e.installed ? t('templates.update') : t('templates.install'))}</button>`;
-  }
+  const actionable = admin && isActionable(e);
+  const action = actionable
+    ? `<button class="btn btn-primary btn-sm" data-install="${esc(e.key)}">${esc(e.installed ? t('templates.update') : t('templates.install'))}</button>`
+    : '';
+  const isSel = actionable && selected.has(e.key);
+  const orient = orientationsOf(e);
   return `
-    <div class="content-item tpl-card">
+    <div class="content-item tpl-card${isSel ? ' tpl-card-selected' : ''}">
+      ${actionable ? `<label class="tpl-select" title="${esc(t('templates.bulk_select_one', { name: nameOf(e) }))}">
+        <input type="checkbox" data-select="${esc(e.key)}" ${isSel ? 'checked' : ''} aria-label="${esc(t('templates.bulk_select_one', { name: nameOf(e) }))}">
+      </label>` : ''}
       <div class="content-item-preview tpl-preview">${thumbHtml(e.thumbnail, e.kind)}</div>
       <div class="content-item-body">
         <div class="content-item-name" title="${esc(nameOf(e))}">${esc(nameOf(e))}</div>
         <div class="tpl-meta">v${esc(e.latest)}${e.author ? ` · ${esc(e.author)}` : ''}${e.license ? ` · ${esc(e.license)}` : ''}</div>
-        <div class="tpl-badges">${kindBadge(e.kind)} ${badges.join(' ')} ${status}</div>
+        <div class="tpl-badges">${kindBadge(e.kind)} ${orient.map((o) => `<span class="tpl-badge">${esc(t(`templates.filter_orientation_${o === 'portrait' ? 'portrait' : 'landscape'}`))}</span>`).join(' ')} ${badges.join(' ')} ${status}</div>
         ${descOf(e) ? `<div class="tpl-desc">${esc(descOf(e))}</div>` : ''}
         ${Array.isArray(e.tags) && e.tags.length ? `<div class="tpl-tags">${e.tags.map((x) => `<span class="tpl-tag">${esc(x)}</span>`).join('')}</div>` : ''}
         ${e.kind === 'html' ? hostsLine(e.network) : ''}
@@ -373,6 +535,8 @@ function libraryCard(e, admin) {
       <div class="content-item-actions">${action}</div>
     </div>`;
 }
+
+const installBody = (e) => JSON.stringify({ catalog: e.catalog, id: e.id, version: e.latest });
 
 async function installFromLibrary(e, refresh) {
   const code = e.kind === 'html';
@@ -390,10 +554,78 @@ async function installFromLibrary(e, refresh) {
   });
   if (!ok) return;
   try {
-    await TAPI('/templates/install', { method: 'POST', body: JSON.stringify({ catalog: e.catalog, id: e.id, version: e.latest }) });
+    await TAPI('/templates/install', { method: 'POST', body: installBody(e) });
+    selected.delete(e.key);
     showToast(t('templates.toast_installed', { name: nameOf(e), version: e.latest }), 'success');
   } catch (err) { showToast(err.message, 'error'); }
   refresh();
+}
+
+/*
+ * Install or update several at once. One confirmation lists every template, and every CODE template
+ * is named with the hosts it may contact — the same disclosure the single install gives, never
+ * folded into a count. Installs then run one at a time through the ordinary install endpoint, so
+ * each is checked by the server exactly as a single install is; a failure is reported and the rest
+ * carry on. Closing the progress window stops after the current one.
+ */
+async function installMany(list, refresh) {
+  if (!list.length) return;
+  if (list.length === 1) return installFromLibrary(list[0], refresh);
+  const code = list.filter((e) => e.kind === 'html');
+  const row = (e) => `<li>${esc(nameOf(e))} <span class="tpl-meta">${esc(e.installed
+    ? t('templates.bulk_row_update', { from: e.installed, to: e.latest })
+    : t('templates.bulk_row_install', { version: e.latest }))}</span></li>`;
+  const ok = await confirmModal({
+    title: t('templates.bulk_title', { n: list.length }),
+    body: `
+      <ul class="tpl-list tpl-bulk-list">${list.map(row).join('')}</ul>
+      ${code.length ? `<div class="tpl-callout tpl-callout-warn">
+          <p><strong>${esc(t('templates.bulk_code_warning', { n: code.length }))}</strong></p>
+          ${code.map((e) => `<div class="tpl-bulk-code"><div>${esc(nameOf(e))}</div>${hostsLine(e.network)}</div>`).join('')}
+        </div>` : `<p class="tpl-meta">${esc(t('templates.slide_note'))}</p>`}
+      <p class="tpl-meta">${esc(t('templates.install_instance_wide'))}</p>`,
+    confirmLabel: t('templates.bulk_confirm', { n: list.length }),
+  });
+  if (!ok) return;
+
+  let stop = false;
+  let finished = false;
+  const m = openModal({
+    title: t('templates.bulk_title', { n: list.length }),
+    body: `<div class="tpl-progress"><div class="tpl-progress-bar" id="tplProgBar"></div></div>
+      <p id="tplProgText" class="tpl-meta" aria-live="polite"></p><div id="tplProgResult"></div>`,
+    footer: `<button class="btn btn-secondary" data-close id="tplProgClose">${esc(t('templates.bulk_stop'))}</button>`,
+  });
+  m.onClose(() => { stop = true; if (finished) refresh(); });
+  const result = await installSequentially(
+    list,
+    async (e) => {
+      await TAPI('/templates/install', { method: 'POST', body: installBody(e) });
+      selected.delete(e.key);
+    },
+    ({ done, total, entry }) => {
+      const bar = m.$('#tplProgBar');
+      if (bar) bar.style.width = `${Math.round((done / total) * 100)}%`;
+      const txt = m.$('#tplProgText');
+      if (txt) txt.textContent = entry ? t('templates.bulk_progress', { done: done + 1, total, name: nameOf(entry) }) : '';
+    },
+    { shouldStop: () => stop },
+  );
+  finished = true;
+  const skipped = list.length - result.ok.length - result.failed.length;
+  if (stop) {
+    // The window was closed mid-run: report in a toast instead.
+    showToast(t('templates.bulk_done', { ok: result.ok.length, total: list.length }), result.failed.length ? 'error' : 'success');
+    refresh();
+    return;
+  }
+  m.$('#tplProgText').textContent = t('templates.bulk_done', { ok: result.ok.length, total: list.length });
+  m.$('#tplProgResult').innerHTML = result.failed.length
+    ? `<div class="tpl-callout tpl-callout-error"><p><strong>${esc(t('templates.bulk_failed', { n: result.failed.length }))}</strong></p>
+        <ul class="tpl-list">${result.failed.map((f) => `<li>${esc(nameOf(f.entry))}: ${esc(f.error)}</li>`).join('')}</ul></div>`
+    : (skipped ? '' : `<div class="tpl-callout tpl-callout-ok">${esc(t('templates.bulk_all_ok'))}</div>`);
+  m.$('#tplProgClose').textContent = t('templates.bulk_close');
+  if (!result.failed.length) showToast(t('templates.bulk_done', { ok: result.ok.length, total: list.length }), 'success');
 }
 
 /* ------------------------------------------------------------------ import */
