@@ -2015,6 +2015,10 @@ const migrations = [
     updated_at     INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   )`,
   'ALTER TABLE templates_installed ADD COLUMN signer_key_id TEXT',
+  // The package's validated locales/<lang>.json translations (package.js validateLocales), kept
+  // beside the manifest so listing templates never has to re-parse every package. NULL = not yet
+  // read (an install from before this column): store.i18nOf fills it from the package once.
+  'ALTER TABLE templates_installed ADD COLUMN i18n_json TEXT',
   `CREATE TABLE IF NOT EXISTS template_catalogs (
     id             TEXT PRIMARY KEY,
     label          TEXT NOT NULL,

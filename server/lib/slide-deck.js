@@ -133,7 +133,8 @@ function storedCfg(e) {
   switch (e.kind) {
     case 'clock': return { clock_format: e.cfg.format, tz: e.cfg.tz, locale: e.cfg.locale };
     case 'date': return { date_format: e.cfg.format, tz: e.cfg.tz, locale: e.cfg.locale };
-    case 'countdown': return { target: e.cfg.target };
+    // locale only when the element has one (null = a countdown from before translated units).
+    case 'countdown': return e.cfg.locale == null ? { target: e.cfg.target } : { target: e.cfg.target, locale: e.cfg.locale };
     case 'image': return { fit: e.cfg.fit };
     case 'lettering': return { fit: e.cfg.fit };
     case 'qr': return { qr_ec: e.cfg.ec, qr_fg: e.cfg.fg, qr_bg: e.cfg.bg };

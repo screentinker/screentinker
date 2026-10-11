@@ -130,16 +130,16 @@ function strictBase64(s, what) {
   return buf;
 }
 
-function str(v, max, what, { required = false } = {}) {
+function str(v, max, what, { required = false, prefix = 'manifest.' } = {}) {
   if (v === undefined || v === null || v === '') {
-    if (required) fail(`manifest.${what} is required`);
+    if (required) fail(`${prefix}${what} is required`);
     return '';
   }
-  if (typeof v !== 'string') fail(`manifest.${what} must be a string`);
+  if (typeof v !== 'string') fail(`${prefix}${what} must be a string`);
   // Control characters are refused rather than stripped: a name is shown in the dashboard and a
   // stray U+202E (right-to-left override) is how "evil.exe" is dressed up as "exe.live".
-  if (/[\u0000-\u001f\u007f​-‏‪-‮⁦-⁩]/.test(v)) fail(`manifest.${what} contains control characters`);
-  if (v.length > max) fail(`manifest.${what} is too long (max ${max})`);
+  if (/[\u0000-\u001f\u007f​-‏‪-‮⁦-⁩]/.test(v)) fail(`${prefix}${what} contains control characters`);
+  if (v.length > max) fail(`${prefix}${what} is too long (max ${max})`);
   return v;
 }
 
@@ -270,8 +270,110 @@ function validateManifest(m, files) {
   };
 }
 
+/*
+ * ⚠️ TRANSLATIONS LIVE IN locales/<lang>.json, NEVER IN THE MANIFEST.
+ *
+ * The manifest refuses unknown keys (below), so a `translations` key there would make every
+ * server older than this one refuse the template outright. A package file, on the other hand, is
+ * something every server already accepts and ignores unless something asks for it — so a
+ * template that ships locales/de.json still installs, unchanged, on an older server, which just
+ * shows English. The file is therefore only ever an EXTRA: nothing renders from it, and a
+ * template must work without it.
+ *
+ * Every string goes through the same str() rules as the English it replaces (plain text, no
+ * control or bidi characters, the same length caps), and every key must name something that
+ * exists in the manifest: a translation for a param or option the manifest does not have is an
+ * author's typo that would otherwise sit there silently doing nothing.
+ */
+const LOCALE_LANGS = Object.freeze(['de', 'es', 'fr', 'hi', 'it', 'ja', 'nl', 'pt', 'zh']);
+const LOCALE_FILE_RE = /^locales\/([a-z]{2})\.json$/;
+const MAX_LOCALE_FILE_BYTES = 256 * 1024;
+// Same character rule as an operator's value (params.js): a translated default is submitted as one.
+const VALUE_BAD_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]/;
+
+function validateLocaleFile(rel, buf, manifest) {
+  const lang = LOCALE_FILE_RE.exec(rel)[1];
+  const where = `${rel}: `;
+  const lfail = (m) => fail(where + m);
+  if (buf.length > MAX_LOCALE_FILE_BYTES) lfail(`is larger than ${MAX_LOCALE_FILE_BYTES} bytes`);
+  let obj;
+  try {
+    let text = buf.toString('utf8');
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    obj = JSON.parse(text);
+  } catch { lfail('is not valid JSON'); }
+  if (!isPlainObject(obj)) lfail('must be a JSON object');
+  for (const k of Object.keys(obj)) if (!['name', 'description', 'params'].includes(k)) lfail(`unknown key "${k.slice(0, 40)}"`);
+  const s = (v, max, what) => str(v, max, what, { prefix: where });
+  const out = {};
+  const name = s(obj.name, 80, 'name');
+  if (name) out.name = name;
+  const description = s(obj.description, 500, 'description');
+  if (description) out.description = description;
+  if (obj.params !== undefined) {
+    if (!isPlainObject(obj.params)) lfail('params must be an object keyed by param name');
+    const params = {};
+    for (const pname of Object.keys(obj.params)) {
+      const p = manifest.params.find((x) => x.name === pname);
+      if (!p) lfail(`params."${pname.slice(0, 40)}" is not a param of this template`);
+      const t = obj.params[pname];
+      if (!isPlainObject(t)) lfail(`params.${pname} must be an object`);
+      for (const k of Object.keys(t)) {
+        if (!['label', 'help', 'options', 'default'].includes(k)) lfail(`params.${pname} has an unknown key "${k.slice(0, 40)}"`);
+      }
+      const tp = {};
+      const label = s(t.label, 80, `params.${pname}.label`);
+      if (label) tp.label = label;
+      const help = s(t.help, 200, `params.${pname}.help`);
+      if (help) tp.help = help;
+      if (t.options !== undefined) {
+        if (p.type !== 'select') lfail(`params.${pname}.options: only a select param has options`);
+        if (!isPlainObject(t.options)) lfail(`params.${pname}.options must be an object keyed by option value`);
+        const opts = {};
+        for (const v of Object.keys(t.options)) {
+          if (!p.options.some((o) => o.value === v)) lfail(`params.${pname}.options."${v.slice(0, 40)}" is not an option value of this param`);
+          const ol = s(t.options[v], 80, `params.${pname}.options.${v.slice(0, 40)}`);
+          if (ol) opts[v] = ol;
+        }
+        if (Object.keys(opts).length) tp.options = opts;
+      }
+      if (t.default !== undefined) {
+        if (p.type !== 'text' && p.type !== 'textarea') lfail(`params.${pname}.default: only a text or textarea param may have a translated default`);
+        const d = t.default;
+        if (typeof d !== 'string') lfail(`params.${pname}.default must be a string`);
+        if (d.length > p.max) lfail(`params.${pname}.default is too long (max ${p.max})`);
+        if (VALUE_BAD_CHARS.test(d) || (p.type === 'text' && /[\r\n]/.test(d))) lfail(`params.${pname}.default contains characters that are not allowed`);
+        if (d) tp.default = d;
+      }
+      if (Object.keys(tp).length) params[pname] = tp;
+    }
+    if (Object.keys(params).length) out.params = params;
+  }
+  return [lang, out];
+}
+
 /**
- * Decode and validate the canonical package bytes. Returns { manifest, files: Map<path, Buffer>, sha256 }.
+ * The validated translations of a package, { <lang>: { name?, description?, params? } }, from its
+ * locales/<lang>.json files. Anything else under locales/ is an error (a folder of the same name
+ * an html template used for its own purposes would otherwise be half-read as translations).
+ */
+function validateLocales(files, manifest) {
+  const i18n = {};
+  for (const [p, buf] of files) {
+    if (!p.toLowerCase().startsWith('locales/')) continue;
+    const m = LOCALE_FILE_RE.exec(p);
+    if (!m || !LOCALE_LANGS.includes(m[1])) {
+      fail(`"${p.slice(0, 80)}": only locales/<lang>.json is allowed under locales/, for lang in ${LOCALE_LANGS.join(', ')}`);
+    }
+    const [lang, out] = validateLocaleFile(p, buf, manifest);
+    if (Object.keys(out).length) i18n[lang] = out;
+  }
+  return i18n;
+}
+
+/**
+ * Decode and validate the canonical package bytes. Returns { manifest, files: Map<path, Buffer>, sha256, i18n }.
+ * `i18n` is the validated locales/<lang>.json translations ({} when there are none).
  */
 function parsePackageBytes(bytes) {
   if (!Buffer.isBuffer(bytes)) fail('package bytes must be a buffer');
@@ -326,7 +428,10 @@ function parsePackageBytes(bytes) {
     'orientation', 'min_server', 'entry', 'thumbnail', 'network', 'params']);
   for (const k of Object.keys(obj.manifest)) if (!known.has(k)) fail(`manifest has an unknown key "${k.slice(0, 40)}"`);
 
-  return { manifest, files, sha256: sha256Hex(bytes) };
+  // After the manifest checks, so the param names it is checked against are the normalised ones.
+  const i18n = validateLocales(files, manifest);
+
+  return { manifest, files, sha256: sha256Hex(bytes), i18n };
 }
 
 /**
@@ -374,7 +479,7 @@ function buildEnvelope(packageBytes, signature = null) {
 module.exports = {
   FORMAT, PackageError,
   MAX_TOTAL_BYTES, MAX_FILE_BYTES, MAX_ASSET_FILE_BYTES, MAX_PACKAGE_BYTES, MAX_FILES, MAX_PARAMS, MAX_ENVELOPE_BYTES,
-  BINARY_ASSET_EXTS, isBinaryAsset, SPDX_RE,
+  BINARY_ASSET_EXTS, isBinaryAsset, SPDX_RE, LOCALE_LANGS, MAX_LOCALE_FILE_BYTES, validateLocales,
   ID_RE, SEMVER_RE, HOST_RE, PARAM_TYPES, EXT_TYPES, SPDX_ALLOWED,
   canonicalJson, sha256Hex, strictBase64, mimeFor, extOf, isPlainObject,
   validateManifest, parsePackageBytes, parseEnvelope, buildPackageBytes, buildEnvelope,

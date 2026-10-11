@@ -1,6 +1,7 @@
 import { api, assertLocalCallAllowed, getAuthHeaders } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { t } from '../i18n.js';
+import { t, getLanguage } from '../i18n.js';
+import { localName, localDescription, localParams, initialFormValues, langQuery } from '../lib/template-i18n.js';
 import { esc, isPlatformAdmin, hydrateAuthImages } from '../utils.js';
 import { openContentPicker } from './widgets.js';
 
@@ -19,7 +20,15 @@ import { openContentPicker } from './widgets.js';
  * The server is the authority on who may install, import, uninstall or change the switches
  * (platform admins); the buttons here are hidden for everyone else only so nobody is offered a
  * control that will be refused.
+ *
+ * Names, descriptions and param labels are shown in the dashboard's language when the template
+ * ships a translation for it (locales/<lang>.json — see lib/template-i18n.js); English otherwise.
+ * A translation is third-party text exactly like the English, and goes through esc() the same way.
  */
+
+const lang = () => getLanguage();
+const nameOf = (tpl) => localName(tpl, lang());
+const descOf = (tpl) => localDescription(tpl, lang());
 
 // Own fetch helper, because request() in api.js drops the error body — and a 409 from uninstall
 // carries the list of widgets still using the template, which is the whole point of the answer.
@@ -181,7 +190,7 @@ export function cleanup() {}
 async function renderInstalled(body, admin, refresh) {
   body.innerHTML = `<div class="tpl-meta">${esc(t('templates.loading'))}</div>`;
   let list;
-  try { list = (await TAPI('/templates/installed')).templates || []; } catch (e) {
+  try { list = (await TAPI('/templates/installed' + langQuery(lang()))).templates || []; } catch (e) {
     body.innerHTML = `<div class="tpl-callout tpl-callout-error">${esc(e.message)}</div>`;
     return;
   }
@@ -223,10 +232,10 @@ function installedCard(tpl, admin, used = 0) {
       <div class="content-item-preview tpl-preview">${preview}</div>
       ${revoked ? `<div class="tpl-banner-danger">${esc(t('templates.revoked'))}${tpl.status_reason ? `: ${esc(tpl.status_reason)}` : ''}</div>` : ''}
       <div class="content-item-body">
-        <div class="content-item-name" title="${esc(tpl.name)}">${esc(tpl.name)}</div>
+        <div class="content-item-name" title="${esc(nameOf(tpl))}">${esc(nameOf(tpl))}</div>
         <div class="tpl-meta">v${esc(tpl.version)}${tpl.author ? ` · ${esc(tpl.author)}` : ''}${tpl.license ? ` · ${esc(tpl.license)}` : ''}</div>
         <div class="tpl-badges">${kindBadge(tpl.kind)} ${trustBadge(tpl)}</div>
-        ${tpl.description ? `<div class="tpl-desc">${esc(tpl.description)}</div>` : ''}
+        ${descOf(tpl) ? `<div class="tpl-desc">${esc(descOf(tpl))}</div>` : ''}
         ${tpl.kind === 'html' ? hostsLine(tpl.network) : ''}
         ${!tpl.usable && !revoked && tpl.unusable_reason ? `<div class="tpl-meta tpl-warn-text">${esc(tpl.unusable_reason)}</div>` : ''}
         ${used ? `<div class="tpl-meta tpl-inuse"><a href="#/widgets">${esc(used === 1 ? t('templates.in_use_one') : t('templates.in_use_many', { count: used }))}</a>${tpl.usable ? ` · ${esc(t('templates.use_again_hint'))}` : ''}</div>` : ''}
@@ -241,7 +250,7 @@ function installedCard(tpl, admin, used = 0) {
 async function uninstall(tpl, refresh) {
   const ok = await confirmModal({
     title: t('templates.uninstall_title'),
-    body: `<p>${esc(t('templates.uninstall_confirm', { name: tpl.name, version: tpl.version }))}</p>`,
+    body: `<p>${esc(t('templates.uninstall_confirm', { name: nameOf(tpl), version: tpl.version }))}</p>`,
     confirmLabel: t('templates.uninstall'),
     danger: true,
   });
@@ -249,13 +258,13 @@ async function uninstall(tpl, refresh) {
   const [cat, id] = String(tpl.key).split('/');
   try {
     await TAPI(`/templates/installed/${encodeURIComponent(cat)}/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    showToast(t('templates.toast_uninstalled', { name: tpl.name }), 'success');
+    showToast(t('templates.toast_uninstalled', { name: nameOf(tpl) }), 'success');
     refresh();
   } catch (e) {
     if (e.status === 409 && e.body && Array.isArray(e.body.widgets)) {
       openModal({
         title: t('templates.still_used_title'),
-        body: `<p>${esc(t('templates.still_used_desc', { name: tpl.name, n: e.body.widgets.length }))}</p>
+        body: `<p>${esc(t('templates.still_used_desc', { name: nameOf(tpl), n: e.body.widgets.length }))}</p>
           <ul class="tpl-list">${e.body.widgets.map((w) => `<li>${esc(w.name || w.id)} <span class="tpl-meta">(${esc(w.workspace_id || '')})</span></li>`).join('')}</ul>`,
         footer: `<a class="btn btn-secondary" href="#/widgets" data-close>${esc(t('templates.go_widgets'))}</a><button class="btn btn-primary" data-close>${esc(t('common.done'))}</button>`,
       });
@@ -270,7 +279,7 @@ async function uninstall(tpl, refresh) {
 async function renderLibrary(body, admin, refresh) {
   body.innerHTML = `<div class="tpl-meta">${esc(t('templates.loading'))}</div>`;
   let lib;
-  try { lib = await TAPI('/templates/library'); } catch (e) {
+  try { lib = await TAPI('/templates/library' + langQuery(lang())); } catch (e) {
     body.innerHTML = `<div class="tpl-callout tpl-callout-error">${esc(e.message)}</div>`;
     return;
   }
@@ -353,10 +362,10 @@ function libraryCard(e, admin) {
     <div class="content-item tpl-card">
       <div class="content-item-preview tpl-preview">${thumbHtml(e.thumbnail, e.kind)}</div>
       <div class="content-item-body">
-        <div class="content-item-name" title="${esc(e.name)}">${esc(e.name)}</div>
+        <div class="content-item-name" title="${esc(nameOf(e))}">${esc(nameOf(e))}</div>
         <div class="tpl-meta">v${esc(e.latest)}${e.author ? ` · ${esc(e.author)}` : ''}${e.license ? ` · ${esc(e.license)}` : ''}</div>
         <div class="tpl-badges">${kindBadge(e.kind)} ${badges.join(' ')} ${status}</div>
-        ${e.description ? `<div class="tpl-desc">${esc(e.description)}</div>` : ''}
+        ${descOf(e) ? `<div class="tpl-desc">${esc(descOf(e))}</div>` : ''}
         ${Array.isArray(e.tags) && e.tags.length ? `<div class="tpl-tags">${e.tags.map((x) => `<span class="tpl-tag">${esc(x)}</span>`).join('')}</div>` : ''}
         ${e.kind === 'html' ? hostsLine(e.network) : ''}
         ${e.compatible === false ? `<div class="tpl-meta tpl-warn-text">${esc(t('templates.needs_server', { version: e.min_server || '?' }))}</div>` : ''}
@@ -368,9 +377,9 @@ function libraryCard(e, admin) {
 async function installFromLibrary(e, refresh) {
   const code = e.kind === 'html';
   const ok = await confirmModal({
-    title: e.installed ? t('templates.update_title', { name: e.name }) : t('templates.install_title', { name: e.name }),
+    title: e.installed ? t('templates.update_title', { name: nameOf(e) }) : t('templates.install_title', { name: nameOf(e) }),
     body: `
-      <p>${esc(t('templates.install_confirm', { name: e.name, version: e.latest, catalog: e.catalog }))}</p>
+      <p>${esc(t('templates.install_confirm', { name: nameOf(e), version: e.latest, catalog: e.catalog }))}</p>
       <p>${esc(t('templates.kind'))} ${kindBadge(e.kind)}</p>
       ${code ? `<div class="tpl-callout tpl-callout-warn">
           <p><strong>${esc(t('templates.code_warning'))}</strong></p>
@@ -382,7 +391,7 @@ async function installFromLibrary(e, refresh) {
   if (!ok) return;
   try {
     await TAPI('/templates/install', { method: 'POST', body: JSON.stringify({ catalog: e.catalog, id: e.id, version: e.latest }) });
-    showToast(t('templates.toast_installed', { name: e.name, version: e.latest }), 'success');
+    showToast(t('templates.toast_installed', { name: nameOf(e), version: e.latest }), 'success');
   } catch (err) { showToast(err.message, 'error'); }
   refresh();
 }
@@ -628,20 +637,17 @@ export async function openUseModal({ tpl, widget = null, values: initialValues =
     const key = String(cfg.template || '');
     const [cat, id] = key.split('/');
     try {
-      tpl = await TAPI(`/templates/installed/${encodeURIComponent(cat || '')}/${encodeURIComponent(id || '')}`);
+      tpl = await TAPI(`/templates/installed/${encodeURIComponent(cat || '')}/${encodeURIComponent(id || '')}${langQuery(lang())}`);
     } catch (e) {
       showToast(t('templates.widget_template_missing', { key, error: e.message }), 'error');
       return;
     }
   }
   if (!tpl) return;
-  const params = Array.isArray(tpl.params) ? tpl.params : [];
-  const values = {};
-  for (const p of params) {
-    if (initialValues && Object.prototype.hasOwnProperty.call(initialValues, p.name)) values[p.name] = initialValues[p.name];
-    else if (p.default !== undefined) values[p.name] = p.default;
-    else values[p.name] = p.type === 'checkbox' ? false : '';
-  }
+  // Labels, help and option labels in the dashboard's language where the template translates
+  // them. A NEW widget starts from the translated text defaults; an existing one keeps what it has.
+  const params = localParams(tpl, lang());
+  const values = initialFormValues(params, initialValues, { isNew: !widget });
   let dataSources = [];
   if (params.some((p) => p.type === 'data_source')) {
     try { const r = await api.getDataSources(); dataSources = Array.isArray(r) ? r : []; } catch { dataSources = []; }
@@ -651,7 +657,7 @@ export async function openUseModal({ tpl, widget = null, values: initialValues =
   const base = `/templates/installed/${encodeURIComponent(cat)}/${encodeURIComponent(id)}`;
 
   const m = openModal({
-    title: editing ? t('templates.edit_title', { name: widget.name }) : t('templates.use_title', { name: tpl.name }),
+    title: editing ? t('templates.edit_title', { name: widget.name }) : t('templates.use_title', { name: nameOf(tpl) }),
     width: 1040,
     body: `
       <div class="tpl-use">
@@ -659,7 +665,7 @@ export async function openUseModal({ tpl, widget = null, values: initialValues =
           <div class="tpl-badges" style="margin-bottom:12px">${kindBadge(tpl.kind)} ${trustBadge(tpl)} <span class="tpl-meta">v${esc(tpl.version)}</span></div>
           ${tpl.kind === 'html' ? `<div class="tpl-callout tpl-callout-warn tpl-small">${esc(t('templates.code_values_visible'))}</div>` : ''}
           <div class="form-group"><label for="tplUseName">${esc(t('templates.widget_name'))}</label>
-            <input type="text" class="input" id="tplUseName" maxlength="120" value="${esc(initialName != null ? initialName : (widget ? widget.name : tpl.name))}"></div>
+            <input type="text" class="input" id="tplUseName" maxlength="120" value="${esc(initialName != null ? initialName : (widget ? widget.name : nameOf(tpl)))}"></div>
           ${params.map((p) => paramFieldHtml(p, values[p.name], dataSources)).join('')}
           <div id="tplUseError" class="tpl-warn-text" style="min-height:1em"></div>
         </div>

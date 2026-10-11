@@ -232,7 +232,9 @@ function newElement(kind) {
     ...(kind === 'date' ? { date_format: 'long', tz: '', locale: '' } : {}),
     // Default target a week out: a countdown to "now" reads as expired the moment it is added, and
     // the operator cannot tell whether it works.
-    ...(kind === 'countdown' ? { target: Date.now() + 7 * 86400000 } : {}),
+    // locale '' = the panel's own language for the units ("3 Tg." on a German screen). A countdown
+    // saved before that existed has no locale key at all and keeps its English "3d 4h 5m".
+    ...(kind === 'countdown' ? { target: Date.now() + 7 * 86400000, locale: '' } : {}),
     // ⚠️ Black modules, NOT style.color — a QR that inherits the usual white text colour is a
     // white square on a white panel. See kindConfig in lib/slide-render.js.
     ...(kind === 'qr' ? { qr_ec: 'M', qr_fg: '#000000', qr_bg: '#FFFFFF' } : {}),
@@ -859,6 +861,26 @@ function paintQr(host, e, text) {
  * the server silently drops — which is the worse failure, because the operator sees their choice
  * accepted and the wall ignores it.
  */
+// Countdown units by language (day, hour, minute, second) — the UNITS table of LIVE_SCRIPT.
+const COUNTDOWN_UNITS = {
+  en: ['d', 'h', 'm', 's'],
+  de: [' Tg.', ' Std.', ' Min.', ' Sek.'],
+  es: ['d', 'h', 'min', 's'],
+  fr: ['j', 'h', 'min', 's'],
+  hi: [' \u0926\u093f\u0928', ' \u0918\u0902\u0970', ' \u092e\u093f\u0970', ' \u0938\u0947\u0970'],
+  it: ['g', 'h', 'min', 's'],
+  ja: ['\u65e5', '\u6642\u9593', '\u5206', '\u79d2'],
+  nl: ['d', 'u', 'm', 's'],
+  pt: ['d', 'h', 'min', 's'],
+  zh: ['\u5929', '\u5c0f\u65f6', '\u5206', '\u79d2']
+};
+function countdownUnits(locale) {
+  // undefined/null: a countdown from before translated units — English, as it always was.
+  if (locale === undefined || locale === null) return COUNTDOWN_UNITS.en;
+  const l = String(locale || (typeof navigator !== 'undefined' && navigator.language) || 'en').toLowerCase().split('-')[0];
+  return Object.prototype.hasOwnProperty.call(COUNTDOWN_UNITS, l) ? COUNTDOWN_UNITS[l] : COUNTDOWN_UNITS.en;
+}
+
 function liveText(e, now) {
   if (e.kind === 'countdown') {
     const t = Number(e.target);
@@ -868,7 +890,8 @@ function liveText(e, now) {
     const sec = Math.floor(ms / 1000);
     const d = Math.floor(sec / 86400); const h = Math.floor((sec % 86400) / 3600);
     const m = Math.floor((sec % 3600) / 60); const ss = sec % 60;
-    return d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m ${ss}s` : `${m}m ${ss}s`;
+    const u = countdownUnits(e.locale);
+    return d > 0 ? `${d}${u[0]} ${h}${u[1]} ${m}${u[2]}` : h > 0 ? `${h}${u[1]} ${m}${u[2]} ${ss}${u[3]}` : `${m}${u[2]} ${ss}${u[3]}`;
   }
   let o;
   if (e.kind === 'clock') {
@@ -1337,6 +1360,7 @@ function renderProps(container) {
           + row('Language', `<input class="input" id="pLoc" placeholder="the panel's own" value="${esc(e.locale || '')}">`)
         : e.kind === 'countdown'
         ? row('Counts down to', `<input type="datetime-local" class="input" id="pTarget" value="${esc(localInput(e.target))}">`)
+          + row('Language', `<input class="input" id="pLoc" placeholder="${e.locale == null ? 'English (3d 4h 5m)' : "the panel's own"}" value="${esc(e.locale || '')}">`)
           + row('Then shows', `<textarea class="input" id="pText" rows="2" style="resize:vertical">${esc(s.fields[e.slot] || '')}</textarea>`)
           + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
                The message replaces the counter once the moment passes, so the slide keeps working

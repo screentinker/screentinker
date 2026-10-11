@@ -770,3 +770,79 @@ test('⚠️ the editor offers only video in the video picker', () => {
   assert.match(VIEW, /function videoContent\(\)/, 'the picker must filter by type');
   assert.match(VIEW, /id="sBgVid"[\s\S]{0,200}videoContent\(\)/, 'and the select must use it');
 });
+
+/* ============ countdown units follow the element's language ============ */
+
+/*
+ * The live script, run for real against a stand-in DOM: the only way to see the words a panel
+ * would show. `attrs` are the element's data- attributes exactly as the renderer wrote them.
+ */
+function countdownText(html, { now = Date.UTC(2027, 0, 1), language = 'en-US' } = {}) {
+  const vm = require('node:vm');
+  const attrs = {};
+  const tag = /<div class="e t live"([^>]*)>/.exec(html);
+  assert.ok(tag, 'no live element in the document');
+  for (const m of tag[1].matchAll(/(data-[a-z]+)="([^"]*)"/g)) attrs[m[1]] = m[2];
+  const el = { textContent: '', getAttribute: (n) => (Object.prototype.hasOwnProperty.call(attrs, n) ? attrs[n] : null) };
+  const body = R.LIVE_SCRIPT.replace(/^<script>/, '').replace(/<\/script>$/, '');
+  const FakeDate = class extends Date { static now() { return now; } };
+  vm.runInNewContext(body, {
+    document: { querySelectorAll: () => [el] },
+    navigator: { language },
+    setInterval: () => 0,
+    Date: FakeDate, Intl, Math, String, Object, parseInt, isFinite,
+  });
+  return { text: el.textContent, attrs };
+}
+const NOW = Date.UTC(2027, 0, 1);
+const IN_3D = NOW + ((3 * 24 + 4) * 3600 + 5 * 60 + 6) * 1000;
+const IN_2H = NOW + (2 * 3600 + 5 * 60 + 6) * 1000;
+const cd = (extra) => render([{ kind: 'countdown', slot: 'a', target: IN_3D, ...extra }], { a: 'Done' });
+
+test('⚠️ a countdown with no locale is unchanged: no data-loc, English units', () => {
+  const html = cd({});
+  assert.ok(!html.includes('data-loc='), 'a stored countdown must render byte-for-byte as before');
+  assert.equal(countdownText(html, { now: NOW, language: 'de-DE' }).text, '3d 4h 5m',
+    'a countdown from before translated units stays English even on a German panel');
+  const short = render([{ kind: 'countdown', slot: 'a', target: IN_2H }], { a: 'Done' });
+  assert.equal(countdownText(short, { now: NOW }).text, '2h 5m 6s');
+});
+
+test('countdown units in German and Japanese, and English for en', () => {
+  assert.equal(countdownText(cd({ locale: 'de' }), { now: NOW }).text, '3 Tg. 4 Std. 5 Min.');
+  assert.equal(countdownText(cd({ locale: 'de-CH' }), { now: NOW }).text, '3 Tg. 4 Std. 5 Min.');
+  assert.equal(countdownText(cd({ locale: 'ja' }), { now: NOW }).text, '3日 4時間 5分');
+  assert.equal(countdownText(cd({ locale: 'en' }), { now: NOW }).text, '3d 4h 5m');
+  assert.equal(countdownText(cd({ locale: 'sv' }), { now: NOW }).text, '3d 4h 5m', 'an untranslated language falls back to English');
+  const short = render([{ kind: 'countdown', slot: 'a', target: IN_2H, locale: 'zh' }], { a: 'Done' });
+  assert.equal(countdownText(short, { now: NOW }).text, '2小时 5分 6秒');
+});
+
+test("a countdown locale of '' follows the panel's language (a template left on auto)", () => {
+  const html = cd({ locale: '' });
+  const r = countdownText(html, { now: NOW, language: 'ja-JP' });
+  assert.equal(r.attrs['data-loc'], 'auto');
+  assert.equal(r.text, '3日 4時間 5分');
+  assert.equal(countdownText(html, { now: NOW, language: 'en-GB' }).text, '3d 4h 5m');
+  // A hostile tag is the screen's language, never an attribute value.
+  const evil = cd({ locale: EVIL });
+  assert.ok(evil.includes('data-loc="auto"'));
+  assert.ok(!evil.includes('onerror'));
+  // Expired: the done message, whatever the language.
+  assert.equal(countdownText(cd({ locale: 'de' }), { now: IN_3D + 1000 }).text, 'Done');
+});
+
+test('⚠️ a countdown keeps its language across a save, and gains none it did not have', () => {
+  assert.equal(savedEl(deckWith([{ kind: 'countdown', slot: 'a', target: IN_3D, locale: 'de' }])).locale, 'de');
+  assert.equal(savedEl(deckWith([{ kind: 'countdown', slot: 'a', target: IN_3D, locale: '' }])).locale, '');
+  assert.ok(!('locale' in savedEl(deckWith([{ kind: 'countdown', slot: 'a', target: IN_3D }]))));
+});
+
+test('⚠️ the editor and the renderer use the same countdown units', () => {
+  const lit = (src, re) => Function(`return (${re.exec(src)[1]});`)();
+  const server = lit(R.LIVE_SCRIPT, /var UNITS = (\{[\s\S]*?\n {2}\});/);
+  const editor = lit(VIEW, /const COUNTDOWN_UNITS = (\{[\s\S]*?\n\});/);
+  assert.deepEqual(editor, server);
+  assert.deepEqual(Object.keys(server).sort(), ['de', 'en', 'es', 'fr', 'hi', 'it', 'ja', 'nl', 'pt', 'zh']);
+  for (const [l, u] of Object.entries(server)) assert.equal(u.length, 4, `${l} needs day, hour, minute, second`);
+});

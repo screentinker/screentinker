@@ -205,6 +205,73 @@ A calendar source lists **10 events** by default; `max_events` (set through the 
 `PUT /api/data-sources/<id>`) raises that to at most **200** (was 50). Each event is nine keys, so
 200 events fit comfortably in the 3000-key limit.
 
+## Translating a template
+
+A template can be translated into the dashboard's languages — German (`de`), Spanish (`es`),
+French (`fr`), Hindi (`hi`), Italian (`it`), Japanese (`ja`), Dutch (`nl`), Portuguese (`pt`) and
+Simplified Chinese (`zh`). English stays in `manifest.json`: it is the source text and the fallback
+for anything not translated.
+
+### What the operator sees: `locales/<lang>.json`
+
+One optional file per language, next to `manifest.json`. Every key is optional:
+
+```json
+{
+  "name": "Raumschild",
+  "description": "Zeigt, wer im Raum ist und was als Nächstes kommt.",
+  "params": {
+    "headline": { "label": "Überschrift", "help": "Eine Zeile.", "default": "Willkommen" },
+    "layout":   { "label": "Anordnung", "options": { "left": "Links", "right": "Rechts" } }
+  }
+}
+```
+
+- `name` ≤ 80, `description` ≤ 500; per param `label` ≤ 80, `help` ≤ 200, `options` maps an option
+  **value** (as in the manifest) to its translated label (≤ 80), and `default` (≤ that param's
+  `max`) is allowed **only on `text`/`textarea` params**.
+- Plain text, the same rules as the English: no HTML meaning, no control or bidi characters (a
+  `textarea` default may have line breaks and tabs, as an operator's value may).
+- **Every key must exist.** A param name or option value the manifest does not have, an unknown
+  key, a language outside the list above, or any other file under `locales/` is an error — the
+  package does not build (`scripts/template-catalog.js build`) and does not install.
+- **The dashboard** shows the name, description, labels, help and option labels in the user's
+  dashboard language when they are translated, English otherwise. When someone **creates** a widget
+  from the template, its text fields start from the translated default; values already saved are
+  never changed, and a `locale` param is left on "the screen's language" rather than set from the
+  dashboard's.
+- ⚠️ **Never put translations in `manifest.json`.** Servers refuse unknown manifest keys, so that
+  would break the template on every older server. An older server accepts the `locales/` files as
+  ordinary package files and ignores them — it just shows English. So a template must work without
+  them: nothing on screen may read them.
+- The public gallery (`/templates`) stays in English: most of its cards come from the signed
+  catalog index, which carries no translations, and the page is cached as one document for every
+  visitor.
+
+### What the screen shows: the `locale` param
+
+The words a viewer reads follow the template's `locale` parameter (type `locale`, label
+"Language", default `''` = the player's own language), not the dashboard's.
+
+- Every template that shows a date, time, countdown, formatted number or fixed word has one.
+- Dates, times, numbers, currency and relative times are formatted with `Intl` in that locale —
+  never hard-coded English month or day names, "AM/PM" or "d h m".
+- Fixed words in an html template ("Open now", "Up next", "Updated", …) come from one strings table
+  with `en` plus the nine languages above, picked by the locale's primary subtag and falling back to
+  `en`. Counts use `Intl.PluralRules` or whole phrases with `{n}`. A param that overrides such a
+  word defaults to `''`, meaning "the built-in word in the screen's language"; a value still wins.
+- Slide templates: give `clock`, `date` **and `countdown`** elements `"locale": "{{param:locale}}"`.
+  A countdown's units follow it (`3d 4h 5m`, `3 Tg. 4 Std. 5 Min.`, `3日 4時間 5分`, …); `''` means
+  the panel's language. A countdown with **no** `locale` key keeps its English units, so slides
+  saved before this change look exactly as they did.
+- Layout must survive German (long words: `overflow-wrap`, `hyphens: auto` with a `lang` attribute)
+  and Japanese, Chinese and Hindi. Set `<html lang>` from the locale in html templates, and
+  `dir="auto"` on operator text.
+- **Fonts**: bundled subsets are Latin-only, so every font stack ends with
+  `"Noto Sans", "Noto Sans CJK JP", "Noto Sans CJK SC", "Noto Sans Devanagari", system-ui, sans-serif`
+  (serif: `"Noto Serif", "Noto Serif CJK JP", serif`) and the player's own fonts cover the rest. Do
+  not bundle CJK fonts — they do not fit the package limits.
+
 ## The public gallery (`/templates`)
 
 Every server with the marketing homepage on also serves a public template gallery at **`/templates`**

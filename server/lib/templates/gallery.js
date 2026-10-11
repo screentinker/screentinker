@@ -10,6 +10,12 @@
  * from `cachedIndex('official')` — the index whose signature this server already verified — and a
  * new template appears here on the next poll with nothing redeployed.
  *
+ * ⚠️ ENGLISH ONLY, DELIBERATELY. A template's translations (locales/<lang>.json) live inside its
+ * package, and most cards come from the signed index alone — a template this server has not
+ * installed has no package here to read them from. And the page is one cached document for every
+ * visitor (in process, and at the CDN, which does not vary on Accept-Language): a per-language page
+ * would hand one visitor's language to the next. The dashboard library is where translations show.
+ *
  * Pure apart from the inputs it is given: `cards()` takes the index and an `installed` lookup, and
  * `renderCards()` returns markup, so both are testable without a server.
  */

@@ -254,7 +254,19 @@ function kindConfig(kind, src) {
         locale: matchOr(LOCALE_RE, src.locale, 32, ''),
       };
     case 'countdown':
-      return { target: instant(src.target) };
+      /*
+       * ⚠️ `locale` IS THREE-STATE HERE, AND THE THIRD STATE IS WHAT KEEPS STORED SLIDES UNCHANGED.
+       *   absent  → null: the countdown predates translated units and keeps saying "3d 4h 5m"
+       *             exactly as it always has, on every panel;
+       *   ''      → the panel's own language (navigator.language), like a clock with no locale —
+       *             what a template's `"locale": "{{param:locale}}"` gives when left on auto;
+       *   a tag   → that language's units, falling back to English for one we do not have.
+       * A malformed tag is treated as '' (the screen's language), never passed through.
+       */
+      return {
+        target: instant(src.target),
+        locale: src.locale === undefined || src.locale === null ? null : matchOr(LOCALE_RE, src.locale, 32, ''),
+      };
     case 'image':
       // Not marked `config` in KINDS: it has a sensible default, so the AI generator can still be
       // offered image elements without having to reason about it.
@@ -675,6 +687,27 @@ const LIVE_SCRIPT = `<script>
     }
     return o;
   }
+  // Countdown units by language: day, hour, minute, second. No data-loc = English, as before.
+  // Kept equal to COUNTDOWN_UNITS in frontend/js/views/slides.js (test/slide-live-kinds.test.js).
+  var UNITS = {
+    en: ['d', 'h', 'm', 's'],
+    de: [' Tg.', ' Std.', ' Min.', ' Sek.'],
+    es: ['d', 'h', 'min', 's'],
+    fr: ['j', 'h', 'min', 's'],
+    hi: [' \u0926\u093f\u0928', ' \u0918\u0902\u0970', ' \u092e\u093f\u0970', ' \u0938\u0947\u0970'],
+    it: ['g', 'h', 'min', 's'],
+    ja: ['\u65e5', '\u6642\u9593', '\u5206', '\u79d2'],
+    nl: ['d', 'u', 'm', 's'],
+    pt: ['d', 'h', 'min', 's'],
+    zh: ['\u5929', '\u5c0f\u65f6', '\u5206', '\u79d2']
+  };
+  function units(el) {
+    var l = at(el, 'data-loc', '');
+    if (!l) return UNITS.en;
+    if (l === 'auto') { try { l = navigator.language || 'en'; } catch (e) { l = 'en'; } }
+    var p = String(l).toLowerCase().split('-')[0];
+    return Object.prototype.hasOwnProperty.call(UNITS, p) ? UNITS[p] : UNITS.en;
+  }
   function span(el, now) {
     var t = parseInt(at(el, 'data-to', ''), 10);
     if (!isFinite(t)) return '';
@@ -683,9 +716,10 @@ const LIVE_SCRIPT = `<script>
     var s = Math.floor(ms / 1000);
     var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
     var m = Math.floor((s % 3600) / 60), ss = s % 60;
-    return d > 0 ? d + 'd ' + h + 'h ' + m + 'm'
-      : h > 0 ? h + 'h ' + m + 'm ' + ss + 's'
-      : m + 'm ' + ss + 's';
+    var u = units(el);
+    return d > 0 ? d + u[0] + ' ' + h + u[1] + ' ' + m + u[2]
+      : h > 0 ? h + u[1] + ' ' + m + u[2] + ' ' + ss + u[3]
+      : m + u[2] + ' ' + ss + u[3];
   }
   function text(el, kind, now) {
     if (kind === 'countdown') return span(el, now);
@@ -889,6 +923,9 @@ function renderSlideHtml(rawConfig, opts = {}) {
       if (live === 'countdown') {
         if (e.cfg.target != null) attrs.push(`data-to="${e.cfg.target}"`);
         attrs.push(`data-done="${escapeHtml(fields[e.slot] || '')}"`);
+        // Only when the element says something about language: a stored countdown without a
+        // locale key renders byte-for-byte as before. '' (the screen's own) travels as "auto".
+        if (e.cfg.locale != null) attrs.push(`data-loc="${escapeHtml(e.cfg.locale || 'auto')}"`);
       } else {
         attrs.push(`data-fmt="${escapeHtml(e.cfg.format)}"`);
         if (e.cfg.tz) attrs.push(`data-tz="${escapeHtml(e.cfg.tz)}"`);

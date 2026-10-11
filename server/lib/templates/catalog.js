@@ -533,7 +533,7 @@ async function importOfflineBundle(buf) {
 
 /* ------------------------------------------------------------------ library view */
 
-function library(userId) {
+function library(userId, { lang = null } = {}) {
   const installed = store.listInstalled();
   const seen = new Map(db.prepare('SELECT template_key, version FROM template_seen WHERE user_id = ?').all(String(userId || '')).map((r) => [r.template_key, r.version]));
   const out = [];
@@ -556,6 +556,14 @@ function library(userId) {
         is_new: !seen.has(key),
         is_updated: seen.has(key) && semverCmp(latest.version, seen.get(key)) > 0,
         package_cached: store.hasPackageFile(latest.sha256),
+        // Translations only exist inside the package (never in the signed index, whose shape
+        // older servers check), so an entry gets them only once its package is held here.
+        ...(() => {
+          if (!lang) return {};
+          const i18n = inst && inst.sha256 === latest.sha256 ? store.i18nOf(inst) : store.i18nOfPackage(latest.sha256);
+          const tr = store.pickLang(i18n, lang);
+          return tr ? { i18n: { [lang]: tr } } : {};
+        })(),
         // Local first (works offline, and needs nothing from the catalog host); otherwise the
         // catalog's own copy, https only — the dashboard CSP allows https: images.
         thumbnail: t.thumbnail && store.hasPackageFile(latest.sha256)

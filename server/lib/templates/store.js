@@ -83,6 +83,47 @@ function rowToInstalled(r) {
   return { ...r, manifest };
 }
 
+/*
+ * The translations of an installed template ({ <lang>: {...} }, possibly {}). Read from the row;
+ * a row from before the i18n_json column (or one whose JSON is unreadable) is filled once from
+ * its package — which re-verifies the hash, so a tampered package contributes nothing.
+ */
+function i18nOf(row) {
+  if (!row) return {};
+  if (typeof row.i18n_json === 'string') {
+    try { const v = JSON.parse(row.i18n_json); if (pkgLib.isPlainObject(v)) return v; } catch { /* refill below */ }
+  }
+  const env = loadPackage(row.sha256);
+  if (!env) return {};
+  const i18n = env.i18n || {};
+  try { db.prepare('UPDATE templates_installed SET i18n_json = ? WHERE id = ? AND sha256 = ?').run(JSON.stringify(i18n), row.id, row.sha256); } catch { /* best effort */ }
+  row.i18n_json = JSON.stringify(i18n);
+  return i18n;
+}
+
+/*
+ * Translations of a package by hash, for a catalog entry that is cached here but not installed.
+ * Its own small cache, so the library view does not re-parse a package per request.
+ */
+const i18nCache = new Map();
+function i18nOfPackage(sha256) {
+  if (i18nCache.has(sha256)) return i18nCache.get(sha256);
+  const env = hasPackageFile(sha256) ? loadPackage(sha256) : null;
+  const i18n = (env && env.i18n) || {};
+  if (env) {
+    i18nCache.set(sha256, i18n);
+    while (i18nCache.size > 256) i18nCache.delete(i18nCache.keys().next().value);
+  }
+  return i18n;
+}
+
+/** One language's entry from an i18n map, or null. `lang` is a dashboard language code. */
+function pickLang(i18n, lang) {
+  const l = typeof lang === 'string' ? lang.toLowerCase().split('-')[0] : '';
+  if (!pkgLib.LOCALE_LANGS.includes(l) || !i18n || !pkgLib.isPlainObject(i18n[l])) return null;
+  return i18n[l];
+}
+
 function listInstalled() {
   return db.prepare('SELECT * FROM templates_installed ORDER BY name COLLATE NOCASE').all().map(rowToInstalled);
 }
@@ -100,14 +141,15 @@ function recordInstall({ env, envelopeBytes, catalog, trust, signer, signerKeyId
   const id = `${catalog}/${env.manifest.id}`;
   const now = Math.floor(Date.now() / 1000);
   db.prepare(`
-    INSERT INTO templates_installed (id, catalog, template_id, version, sha256, kind, name, manifest_json, trust, signer, signer_key_id, status, status_reason, installed_by, installed_at, updated_at)
-    VALUES (@id, @catalog, @template_id, @version, @sha256, @kind, @name, @manifest_json, @trust, @signer, @signer_key_id, 'active', NULL, @user, @now, @now)
+    INSERT INTO templates_installed (id, catalog, template_id, version, sha256, kind, name, manifest_json, i18n_json, trust, signer, signer_key_id, status, status_reason, installed_by, installed_at, updated_at)
+    VALUES (@id, @catalog, @template_id, @version, @sha256, @kind, @name, @manifest_json, @i18n_json, @trust, @signer, @signer_key_id, 'active', NULL, @user, @now, @now)
     ON CONFLICT(id) DO UPDATE SET version = excluded.version, sha256 = excluded.sha256, kind = excluded.kind,
-      name = excluded.name, manifest_json = excluded.manifest_json, trust = excluded.trust, signer = excluded.signer, signer_key_id = excluded.signer_key_id,
+      name = excluded.name, manifest_json = excluded.manifest_json, i18n_json = excluded.i18n_json, trust = excluded.trust, signer = excluded.signer, signer_key_id = excluded.signer_key_id,
       status = 'active', status_reason = NULL, updated_at = excluded.updated_at
   `).run({
     id, catalog, template_id: env.manifest.id, version: env.manifest.version, sha256: env.sha256,
     kind: env.manifest.kind, name: env.manifest.name, manifest_json: JSON.stringify(env.manifest),
+    i18n_json: JSON.stringify(env.i18n || {}),
     trust, signer: signer || null, signer_key_id: signerKeyId || null, user: userId || null, now,
   });
   bumpWidgets(id);
@@ -167,6 +209,6 @@ function bumpWidgets(id) {
 module.exports = {
   root, packagesDir, packagePath, putPackageFile, hasPackageFile, loadPackage,
   listInstalled, getInstalled, recordInstall, setStatus, uninstall, widgetsUsing, bumpWidgets,
-  setWidgetsChangedHook,
-  _clearCache: () => cache.clear(),
+  setWidgetsChangedHook, i18nOf, i18nOfPackage, pickLang,
+  _clearCache: () => { cache.clear(); i18nCache.clear(); },
 };

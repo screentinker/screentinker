@@ -52,8 +52,19 @@ function keyOf(req) {
 
 /* ------------------------------------------------------------------ browsing */
 
+/*
+ * Translations (a package's locales/<lang>.json, validated by package.js) ride along for ONE
+ * language — the dashboard's, passed as ?lang= — never all nine, so a list of forty templates
+ * stays the size it was. No ?lang (or English, or a language no template translates to): no
+ * `i18n` key at all, exactly the payload older dashboards got.
+ */
+function langOf(req) {
+  const l = typeof req.query.lang === 'string' ? req.query.lang.toLowerCase() : '';
+  return pkgLib.LOCALE_LANGS.includes(l) ? l : null;
+}
+
 router.get('/library', (req, res) => {
-  try { res.json(catalog.library(req.user.id)); } catch (e) { sendError(res, e); }
+  try { res.json(catalog.library(req.user.id, { lang: langOf(req) })); } catch (e) { sendError(res, e); }
 });
 
 router.post('/library/seen', (req, res) => {
@@ -61,9 +72,11 @@ router.post('/library/seen', (req, res) => {
   try { res.json({ marked: catalog.markSeen(req.user.id, keys) }); } catch (e) { sendError(res, e); }
 });
 
-function publicInstalled(row) {
+function publicInstalled(row, lang = null) {
   const m = row.manifest || {};
+  const tr = lang ? store.pickLang(store.i18nOf(row), lang) : null;
   return {
+    ...(tr ? { i18n: { [lang]: tr } } : {}),
     key: row.id, catalog: row.catalog, id: row.template_id, version: row.version, kind: row.kind, name: row.name,
     description: m.description || '', author: m.author || '', license: m.license || '', tags: m.tags || [],
     orientation: m.orientation || [], network: m.network || [], params: m.params || [],
@@ -75,14 +88,14 @@ function publicInstalled(row) {
 }
 
 router.get('/installed', (req, res) => {
-  try { res.json({ templates: store.listInstalled().map(publicInstalled) }); } catch (e) { sendError(res, e); }
+  try { res.json({ templates: store.listInstalled().map((r) => publicInstalled(r, langOf(req))) }); } catch (e) { sendError(res, e); }
 });
 
 router.get('/installed/:catalog/:id', (req, res) => {
   const key = keyOf(req);
   const row = key && store.getInstalled(key);
   if (!row) return res.status(404).json({ error: 'Template not installed' });
-  const out = publicInstalled(row);
+  const out = publicInstalled(row, langOf(req));
   if (isPlatformAdmin(req)) out.used_by = store.widgetsUsing(key).map((w) => ({ id: w.id, name: w.name, workspace_id: w.workspace_id }));
   res.json(out);
 });
@@ -406,3 +419,4 @@ router.delete('/installed/:catalog/:id', requirePlatformAdmin, (req, res) => {
 
 module.exports = router;
 module.exports.importBody = importBody;
+module.exports.publicInstalled = publicInstalled;
