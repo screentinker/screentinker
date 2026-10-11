@@ -236,13 +236,20 @@ test('Google: an all-day date is midnight in the ROOM’s zone; transparent and 
 });
 
 test('ICS: recurrences expand, CLASS:PRIVATE is private, TRANSP:TRANSPARENT is free', async () => {
-  // Tomorrow, so the resolver's "drop what is already over" filter cannot race a run near midnight UTC.
-  const today = new Date(Date.now() + 86400000).toISOString().slice(0, 10).replace(/-/g, '');
+  // Anchored on NOW, not on a calendar date. The resolver's window is "now + lookahead_days, to the
+  // end of that day in the SERVER's zone", so all it guarantees is 48h ahead. A fixed "tomorrow at
+  // 12:00Z" broke on any server west of UTC in the hours after UTC midnight: UTC's tomorrow is then
+  // two local days out, and the second occurrence fell past the window (one stand-up, not two).
+  // Starting an hour from now keeps every occurrence in the future and the first two inside 48h,
+  // whatever the server's zone and whatever the hour.
+  const HOUR = 3600000;
+  const stamp = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const t0 = Math.floor(Date.now() / HOUR) * HOUR + HOUR;
   ics._setFetcher(async () => [
     'BEGIN:VCALENDAR', 'VERSION:2.0',
-    'BEGIN:VEVENT', 'UID:daily-1', `DTSTART:${today}T120000Z`, `DTEND:${today}T123000Z`, 'RRULE:FREQ=DAILY;COUNT=3', 'SUMMARY:Stand-up', 'ORGANIZER;CN="Pat Lead":mailto:pat@acme.test', 'END:VEVENT',
-    'BEGIN:VEVENT', 'UID:secret-1', `DTSTART:${today}T130000Z`, `DTEND:${today}T133000Z`, 'SUMMARY:Board pay review', 'CLASS:PRIVATE', 'END:VEVENT',
-    'BEGIN:VEVENT', 'UID:hold-1', `DTSTART:${today}T140000Z`, `DTEND:${today}T143000Z`, 'SUMMARY:Tentative hold', 'TRANSP:TRANSPARENT', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:daily-1', `DTSTART:${stamp(t0)}`, `DTEND:${stamp(t0 + HOUR / 2)}`, 'RRULE:FREQ=DAILY;COUNT=3', 'SUMMARY:Stand-up', 'ORGANIZER;CN="Pat Lead":mailto:pat@acme.test', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:secret-1', `DTSTART:${stamp(t0 + HOUR)}`, `DTEND:${stamp(t0 + 1.5 * HOUR)}`, 'SUMMARY:Board pay review', 'CLASS:PRIVATE', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:hold-1', `DTSTART:${stamp(t0 + 2 * HOUR)}`, `DTEND:${stamp(t0 + 2.5 * HOUR)}`, 'SUMMARY:Tentative hold', 'TRANSP:TRANSPARENT', 'END:VEVENT',
     'END:VCALENDAR',
   ].join('\r\n'));
   try {
