@@ -78,7 +78,8 @@ for (const id of fs.readdirSync(root).sort()) {
     const where = `${id}/${f}`;
     const lines = text.split('\n');
     lines.forEach((line, i) => {
-      if (line.length > MAX_LINE && !(f === 'template.json' || f === 'manifest.json')) err(where, `line ${i + 1} is ${line.length} characters — minified or generated code is not accepted`);
+      // locales/*.json are translated data, not code: a translated sample (one JSON string) can be long.
+      if (line.length > MAX_LINE && !(f === 'template.json' || f === 'manifest.json' || /^locales\/[a-z]{2}\.json$/.test(f))) err(where, `line ${i + 1} is ${line.length} characters — minified or generated code is not accepted`);
     });
     if (ext === '.js' || ext === '.html' || ext === '.svg') {
       const checks = [

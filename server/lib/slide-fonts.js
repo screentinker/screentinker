@@ -116,9 +116,17 @@ function resolveFamily(id) {
 }
 
 /** The CSS font-family value for a family key — the bundled face, then a generic that always exists. */
+// The bundled faces are Latin-only. Players that have Noto installed (Android, Tizen, webOS, Pi with
+// fonts-noto-cjk) draw Japanese, Chinese and Hindi in Noto rather than whatever the generic maps to.
+const SCRIPT_FALLBACKS = {
+  'sans-serif': "'Noto Sans', 'Noto Sans CJK JP', 'Noto Sans CJK SC', 'Noto Sans Devanagari'",
+  serif: "'Noto Serif', 'Noto Serif CJK JP', 'Noto Serif CJK SC', 'Noto Serif Devanagari'",
+};
+
 function fontStack(key) {
   const f = FAMILIES[resolveFamily(key)];
-  return `'${f.css}', ${f.stack}`;
+  const extra = SCRIPT_FALLBACKS[f.stack];
+  return extra ? `'${f.css}', ${extra}, ${f.stack}` : `'${f.css}', ${f.stack}`;
 }
 
 /**

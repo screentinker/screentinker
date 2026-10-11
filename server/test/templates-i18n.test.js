@@ -136,6 +136,19 @@ test('each malformed locales file is refused with a message that names the file'
   assert.throws(() => withLocales({ 'locales/de.json': big }), /larger than/);
 });
 
+test('an INSTALLED package with a bad locales file still loads to render, just without translations', () => {
+  // Strict at install and build; lenient when a package already on disk is loaded for the screens,
+  // so a translation problem can never blank a wall.
+  const good = withLocales({ 'locales/de.json': DE });
+  const obj = JSON.parse(good.toString('utf8'));
+  obj.files['locales/sv.json'] = Buffer.from('{}').toString('base64');
+  const bad = Buffer.from(pkg.canonicalJson(obj), 'utf8');
+  assert.throws(() => pkg.parsePackageBytes(bad), /only locales\/<lang>\.json is allowed/);
+  const env = pkg.parsePackageBytes(bad, { lenientLocales: true });
+  assert.equal(env.manifest.id, 'room-sign');
+  assert.deepEqual(env.i18n, {});
+});
+
 test('⚠️ the manifest itself still refuses a translations key (older servers would refuse it too)', () => {
   assert.throws(() => build({ manifest: { i18n: { de: { name: 'x' } } } }), /unknown key "i18n"/);
   assert.throws(() => build({ manifest: { locales: {} } }), /unknown key "locales"/);

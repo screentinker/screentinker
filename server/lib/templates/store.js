@@ -65,7 +65,7 @@ function loadPackage(sha256) {
   let bytes;
   try { bytes = fs.readFileSync(packagePath(sha256)); } catch { return null; }
   let env;
-  try { env = pkgLib.parseEnvelope(bytes); } catch { return null; }
+  try { env = pkgLib.parseEnvelope(bytes, { lenientLocales: true }); } catch { return null; }
   if (env.sha256 !== sha256) {
     console.warn(`[templates] package ${sha256.slice(0, 12)}… on disk does not match its hash — refusing it`);
     return null;

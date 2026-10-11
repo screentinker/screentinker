@@ -375,7 +375,7 @@ function validateLocales(files, manifest) {
  * Decode and validate the canonical package bytes. Returns { manifest, files: Map<path, Buffer>, sha256, i18n }.
  * `i18n` is the validated locales/<lang>.json translations ({} when there are none).
  */
-function parsePackageBytes(bytes) {
+function parsePackageBytes(bytes, opts = {}) {
   if (!Buffer.isBuffer(bytes)) fail('package bytes must be a buffer');
   if (bytes.length > MAX_ENVELOPE_BYTES) fail('package is too large');
   let obj;
@@ -429,7 +429,12 @@ function parsePackageBytes(bytes) {
   for (const k of Object.keys(obj.manifest)) if (!known.has(k)) fail(`manifest has an unknown key "${k.slice(0, 40)}"`);
 
   // After the manifest checks, so the param names it is checked against are the normalised ones.
-  const i18n = validateLocales(files, manifest);
+  // At install/build a bad translation file is an error the author must see. When an ALREADY
+  // INSTALLED package is loaded to render (opts.lenientLocales), a translation problem must never
+  // blank the screens: the package loads without translations.
+  let i18n;
+  if (opts.lenientLocales) { try { i18n = validateLocales(files, manifest); } catch { i18n = {}; } }
+  else i18n = validateLocales(files, manifest);
 
   return { manifest, files, sha256: sha256Hex(bytes), i18n };
 }
@@ -438,7 +443,7 @@ function parsePackageBytes(bytes) {
  * Parse a .sttemplate envelope. Returns { packageBytes, signature, manifest, files, sha256 }.
  * Does NOT verify the signature — signing.verifyPackage does, and callers must.
  */
-function parseEnvelope(input) {
+function parseEnvelope(input, opts = {}) {
   const buf = Buffer.isBuffer(input) ? input : Buffer.from(String(input), 'utf8');
   if (buf.length > MAX_ENVELOPE_BYTES * 2) fail('template file is too large');
   let env;
@@ -455,7 +460,7 @@ function parseEnvelope(input) {
     if (sig.length !== 64) fail('signature must be 64 bytes');
     signature = { key_id: s.key_id, sig };
   }
-  const parsed = parsePackageBytes(packageBytes);
+  const parsed = parsePackageBytes(packageBytes, opts);
   return { packageBytes, signature, ...parsed };
 }
 

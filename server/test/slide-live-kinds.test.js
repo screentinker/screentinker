@@ -809,8 +809,8 @@ test('⚠️ a countdown with no locale is unchanged: no data-loc, English units
 });
 
 test('countdown units in German and Japanese, and English for en', () => {
-  assert.equal(countdownText(cd({ locale: 'de' }), { now: NOW }).text, '3 Tg. 4 Std. 5 Min.');
-  assert.equal(countdownText(cd({ locale: 'de-CH' }), { now: NOW }).text, '3 Tg. 4 Std. 5 Min.');
+  assert.equal(countdownText(cd({ locale: 'de' }), { now: NOW }).text, '3\u00a0Tg. 4\u00a0Std. 5\u00a0Min.');
+  assert.equal(countdownText(cd({ locale: 'de-CH' }), { now: NOW }).text, '3\u00a0Tg. 4\u00a0Std. 5\u00a0Min.');
   assert.equal(countdownText(cd({ locale: 'ja' }), { now: NOW }).text, '3日 4時間 5分');
   assert.equal(countdownText(cd({ locale: 'en' }), { now: NOW }).text, '3d 4h 5m');
   assert.equal(countdownText(cd({ locale: 'sv' }), { now: NOW }).text, '3d 4h 5m', 'an untranslated language falls back to English');

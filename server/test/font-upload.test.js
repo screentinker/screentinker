@@ -109,7 +109,7 @@ test('⚠️ a DELETED font falls back to the default AND declares its face', ()
    * reading the emitted HTML, not by reading the code.
    */
   const html = renderSlideHtml(slideUsing('u:gone'), { resolveFont: () => null });
-  assert.match(html, /font-family:'Inter', sans-serif/);
+  assert.match(html, /font-family:'Inter', 'Noto Sans'[^;"]*, sans-serif/);
   assert.match(html, /@font-face\{font-family:'Inter'/, 'the fallback family was never declared');
   assert.match(html, /url\(\/fonts\/inter\.woff2\)/);
 });

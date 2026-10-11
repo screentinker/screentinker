@@ -691,10 +691,10 @@ const LIVE_SCRIPT = `<script>
   // Kept equal to COUNTDOWN_UNITS in frontend/js/views/slides.js (test/slide-live-kinds.test.js).
   var UNITS = {
     en: ['d', 'h', 'm', 's'],
-    de: [' Tg.', ' Std.', ' Min.', ' Sek.'],
+    de: ['\u00a0Tg.', '\u00a0Std.', '\u00a0Min.', '\u00a0Sek.'],
     es: ['d', 'h', 'min', 's'],
     fr: ['j', 'h', 'min', 's'],
-    hi: [' \u0926\u093f\u0928', ' \u0918\u0902\u0970', ' \u092e\u093f\u0970', ' \u0938\u0947\u0970'],
+    hi: ['\u00a0\u0926\u093f\u0928', '\u00a0\u0918\u0902\u0970', '\u00a0\u092e\u093f\u0970', '\u00a0\u0938\u0947\u0970'],
     it: ['g', 'h', 'min', 's'],
     ja: ['\u65e5', '\u6642\u9593', '\u5206', '\u79d2'],
     nl: ['d', 'u', 'm', 's'],

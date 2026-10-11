@@ -125,7 +125,7 @@ test('a rendered slide carries @font-face for its fonts and uses the family', ()
   });
   assert.match(html, /@font-face\{font-family:'Archivo'/);
   assert.match(html, /@font-face\{font-family:'Inter'/);
-  assert.match(html, /font-family:'Archivo', sans-serif/);
+  assert.match(html, /font-family:'Archivo', 'Noto Sans'[^;"]*, sans-serif/);
   assert.match(html, /url\(\/fonts\/archivo\.woff2\)/);
   assert.match(html, /url\(\/fonts\/inter-ext\.woff2\)/);
 });
