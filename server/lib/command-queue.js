@@ -63,15 +63,42 @@ function queueOrEmitPlaylistUpdate(deviceNs, deviceId, buildPayload) {
 // (always true under current logic; reserved for future "rejected because
 // stale/full" cases). Used by item 6 in commit D - dashboard command handler
 // calls this when the device room is empty.
-function queueCommand(deviceId, type, payload) {
+function queueCommand(deviceId, type, payload, opts = {}) {
   if (!deviceId || !type) return false;
   let perDevice = pendingCommands.get(deviceId);
   if (!perDevice) {
     perDevice = new Map();
     pendingCommands.set(deviceId, perDevice);
   }
-  perDevice.set(type, { payload: payload || {}, expiresAt: Date.now() + config.commandQueueTtlMs });
+  const ttl = Number.isFinite(opts.ttlMs) && opts.ttlMs > 0 ? opts.ttlMs : config.commandQueueTtlMs;
+  perDevice.set(type, { payload: payload || {}, expiresAt: Date.now() + ttl });
   return true;
+}
+
+/*
+ * ⚠️ AN EMBEDDED PANEL IS NOT "BRIEFLY OFFLINE" — it polls over HTTP and deep-sleeps between calls
+ * for as long as X-ST-Expires-In told it to, which is 30-60s on a normal dwell and many hours under
+ * a power schedule. The 30s socket-reconnect TTL above would expire almost every command before
+ * the panel next asked, so the dashboard would say "queued" and nothing would ever happen. Hold an
+ * embedded panel's command until it is due back (devices.heartbeat_expected_by) plus a grace, with
+ * a floor for a panel that has never told us and a cap so a dead panel's entry does not live on.
+ */
+const EMBEDDED_GRACE_MS = 10 * 60 * 1000;
+const EMBEDDED_FLOOR_MS = 15 * 60 * 1000;
+const EMBEDDED_CAP_MS   = 7 * 24 * 3600 * 1000;
+
+function ttlForDevice(device) {
+  if (!device || !device.id) return config.commandQueueTtlMs;
+  let row = device;
+  if (row.client_type === undefined || row.heartbeat_expected_by === undefined) {
+    try {
+      row = require('../db/database').db
+        .prepare('SELECT client_type, heartbeat_expected_by FROM devices WHERE id = ?').get(device.id) || {};
+    } catch (_) { row = {}; }
+  }
+  if (row.client_type !== 'embedded') return config.commandQueueTtlMs;
+  const untilDue = (Number(row.heartbeat_expected_by) || 0) * 1000 - Date.now();
+  return Math.min(EMBEDDED_CAP_MS, Math.max(EMBEDDED_FLOOR_MS, untilDue + EMBEDDED_GRACE_MS));
 }
 
 // Called on device:register success, after heartbeat.registerConnection and
@@ -160,6 +187,7 @@ module.exports = {
   queueCommand,
   flushQueue,
   popPendingCommands,
+  ttlForDevice,
   getQueueDepth,
   startSweep,
   stopSweep,

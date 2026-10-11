@@ -683,6 +683,11 @@ router.put('/:id', (req, res) => {
   if (normTags !== undefined) { updates.push('tags = ?'); values.push(JSON.stringify(normTags)); }
   if (locUpdate) for (const [k, v] of Object.entries(locUpdate)) { updates.push(`${k} = ?`); values.push(v); }
   if (screen_profile !== undefined) {
+    // Only an embedded (server-rendered) panel has a render profile. Anything else would silently
+    // keep it and ignore it, so refuse rather than store a setting nothing reads.
+    if (device.client_type !== 'embedded') {
+      return res.status(400).json({ error: 'screen_profile applies to embedded displays only' });
+    }
     let profileVal = null;
     if (screen_profile !== null && screen_profile !== '') {
       const { parseProfile } = require('../lib/embedded-profiles');

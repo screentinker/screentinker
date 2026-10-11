@@ -515,7 +515,7 @@ function isNativeDevice(device) {
 
 function isEmbeddedDevice(device) {
   if (!device) return false;
-  return device.client_type === 'embedded' || String(device.platform || '').toLowerCase().includes('embedded') || Boolean(device.screen_profile);
+  return device.client_type === 'embedded' || String(device.platform || '').toLowerCase().includes('embedded');
 }
 
 // The one-shot shell's presets and wording, per native OS. Android keeps TERMINAL_PRESETS.
@@ -960,11 +960,15 @@ async function loadDevice(deviceId, activeTab = null) {
           <div class="info-card">
             <div class="info-card-label">${t('device.info.battery')}</div>
             <div class="info-card-value" id="telBattery">${
-              latestTelemetry.battery_charging
-                ? (latestTelemetry.battery_level != null ? `${latestTelemetry.battery_level}% (Charging)` : 'Charging')
-                : (device.power_source === 'usb' || latestTelemetry.power_source === 'usb')
-                  ? (latestTelemetry.battery_level != null ? `${latestTelemetry.battery_level}% (Mains)` : 'Mains (USB)')
-                  : (latestTelemetry.battery_level != null ? `${latestTelemetry.battery_level}%` : '--')
+              // Charging / mains annotations are an embedded-panel reading; every other player keeps
+              // the plain percentage it has always shown.
+              !isEmbeddedDevice(device)
+                ? (latestTelemetry.battery_level != null ? latestTelemetry.battery_level + '%' : '--')
+                : latestTelemetry.battery_charging
+                  ? (latestTelemetry.battery_level != null ? t('device.info.battery_charging_pct', { level: latestTelemetry.battery_level }) : t('device.info.battery_charging'))
+                  : (device.power_source === 'usb' || latestTelemetry.power_source === 'usb')
+                    ? (latestTelemetry.battery_level != null ? t('device.info.battery_mains_pct', { level: latestTelemetry.battery_level }) : t('device.info.battery_mains'))
+                    : (latestTelemetry.battery_level != null ? `${latestTelemetry.battery_level}%` : '--')
             }</div>
             ${latestTelemetry.battery_level != null ? `
             <div class="progress-bar">
@@ -1221,17 +1225,15 @@ async function loadDevice(deviceId, activeTab = null) {
                 </select>
               </div>
             </div>
-            ${(device.client_type === 'embedded' || Boolean(device.screen_profile)) ? `
+            ${isEmbeddedDevice(device) ? `
             <div class="form-group">
-              <label>Dithering</label>
+              <label>${t('device.form.dither_label')}</label>
               <select id="epdDither" class="input" style="background:var(--bg-input)">
                 <option value="floyd-steinberg" ${currentDither === 'floyd-steinberg' ? 'selected' : ''}>Floyd–Steinberg</option>
                 <option value="atkinson" ${currentDither === 'atkinson' ? 'selected' : ''}>Atkinson</option>
-                <option value="none" ${currentDither === 'none' ? 'selected' : ''}>None (Threshold)</option>
+                <option value="none" ${currentDither === 'none' ? 'selected' : ''}>${t('device.form.dither_none')}</option>
               </select>
-              <div style="font-size:12px;color:var(--text-muted);margin-top:4px">
-                Choose &ldquo;None&rdquo; for pure solid black backgrounds without error-diffusion dots.
-              </div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('device.form.dither_hint')}</div>
             </div>
             ` : ''}
             <div class="form-group">
@@ -2624,7 +2626,12 @@ function setupActions(device) {
         background_color: (document.getElementById('devBackground')?.dataset.cleared === '1')
           ? '' : (document.getElementById('devBackground')?.value || ''),
         default_content_id: document.getElementById('deviceDefaultContent').value || null,
-        ota_enabled: document.getElementById('otaToggle')?.checked ? 1 : 0,
+        // OTA toggles and the reboot time are not rendered for an embedded panel. Send each one only
+        // when its control is on the page, so a save never writes a value the operator could not see.
+        ...(document.getElementById('otaToggle')
+          ? { ota_enabled: document.getElementById('otaToggle').checked ? 1 : 0 } : {}),
+        ...(document.getElementById('otaBetaToggle')
+          ? { ota_beta: document.getElementById('otaBetaToggle').checked ? 1 : 0 } : {}),
         ...(document.getElementById('rebootSchedule')
           ? { reboot_schedule: document.getElementById('rebootSchedule').value || null } : {}),
         // Only present when the live-video toggle rendered (server master on); otherwise omitted so
@@ -3642,12 +3649,14 @@ function updateTelemetryDisplay(telemetry) {
     const el = document.getElementById(id);
     if (el) el.textContent = val;
   };
-  if (telemetry.battery_level != null || telemetry.power_source || telemetry.battery_charging) {
+  if (!isEmbeddedDevice(currentDevice)) {
+    if (telemetry.battery_level != null) update('telBattery', telemetry.battery_level + '%');
+  } else if (telemetry.battery_level != null || telemetry.power_source || telemetry.battery_charging) {
     let text = '--';
     if (telemetry.battery_charging) {
-      text = telemetry.battery_level != null ? `${telemetry.battery_level}% (Charging)` : 'Charging';
+      text = telemetry.battery_level != null ? t('device.info.battery_charging_pct', { level: telemetry.battery_level }) : t('device.info.battery_charging');
     } else if (telemetry.power_source === 'usb' || currentDevice?.power_source === 'usb') {
-      text = telemetry.battery_level != null ? `${telemetry.battery_level}% (Mains)` : 'Mains (USB)';
+      text = telemetry.battery_level != null ? t('device.info.battery_mains_pct', { level: telemetry.battery_level }) : t('device.info.battery_mains');
     } else if (telemetry.battery_level != null) {
       text = telemetry.battery_level + '%';
     }

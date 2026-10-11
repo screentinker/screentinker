@@ -3748,8 +3748,10 @@ migrationStep('device tags and dynamic groups', () => {
 });
 
 migrationStep('device power source', () => {
-  try { db.prepare("ALTER TABLE devices ADD COLUMN power_source TEXT DEFAULT 'battery'").run(); } catch (_) { /* present */ }
-  try { db.prepare("ALTER TABLE device_telemetry ADD COLUMN power_source TEXT DEFAULT 'battery'").run(); } catch (_) { /* present */ }
+  // NULL = not reported. Only embedded panels send X-ST-Power-Source, and a 'battery' default would
+  // stamp every Android, Pi and Windows row with a power source nobody measured.
+  try { db.prepare('ALTER TABLE devices ADD COLUMN power_source TEXT').run(); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE device_telemetry ADD COLUMN power_source TEXT').run(); } catch (_) { /* present */ }
 });
 
 migrationStep('CAP feeds', () => {

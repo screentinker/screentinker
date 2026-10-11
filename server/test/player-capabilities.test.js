@@ -155,8 +155,10 @@ test('embedded display capabilities adapt to power source', () => {
   assert.equal(caps.supports(usbDev, 'system.self_update'), false);
   assert.equal(caps.supports(usbDev, 'audio.volume'), false);
 
-  const profileDev = { screen_profile: 'seeed-reterminal-sticky' };
-  assert.equal(caps.platformFamily(profileDev), 'embedded');
-  assert.equal(caps.supports(profileDev, 'playback.pip'), false);
+  // A screen_profile is a setting, not an identity: an Android screen that somehow carries one
+  // must stay an Android screen with its controls.
+  const androidWithProfile = { client_type: 'apk', android_version: '13', screen_profile: 'seeed-reterminal-sticky' };
+  assert.notEqual(caps.platformFamily(androidWithProfile), 'embedded');
+  assert.deepEqual(caps.capabilitiesFor(androidWithProfile), caps.capabilitiesFor({ client_type: 'apk', android_version: '13' }));
 });
 

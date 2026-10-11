@@ -169,7 +169,7 @@ function touchDeviceHeartbeat(device, req) {
     powerSource = 'battery';
   }
 
-  let batteryCharging = 0;
+  let batteryCharging = null;   // not reported is not "not charging"
   if (chargingHeader !== undefined) {
     batteryCharging = (chargingHeader === '1' || chargingHeader === 'true') ? 1 : 0;
   }

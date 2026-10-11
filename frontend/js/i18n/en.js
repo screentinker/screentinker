@@ -2387,6 +2387,10 @@ export default {
   'device.info.battery': 'Battery',
   'device.info.storage': 'Storage',
   'device.info.size_free': '{size} free',
+  'device.info.battery_charging': 'Charging',
+  'device.info.battery_charging_pct': '{level}% (charging)',
+  'device.info.battery_mains': 'Mains (USB)',
+  'device.info.battery_mains_pct': '{level}% (mains)',
   // "Player storage" rather than "Storage": on a browser-family player this is the widget's cache
   // quota, not the device filesystem, and it sits in the same column as Android's real disk usage.
   'device.info.player_storage': 'Player Storage',
@@ -2524,6 +2528,9 @@ export default {
   'device.reboot_schedule.label': 'Nightly reboot',
   'device.reboot_schedule.hint': 'Reboot this panel once a day at this device-local time (leave blank for off). A clean nightly reboot clears memory leaks and re-syncs the clock. Silent on device-owner panels; a no-op on panels that can\'t self-reboot.',
   'device.form.save_settings': 'Save Settings',
+  'device.form.dither_label': 'Dithering',
+  'device.form.dither_none': 'None (threshold)',
+  'device.form.dither_hint': 'Choose "None" for solid black areas without error-diffusion dots.',
   // #150 re-adopt: restore a removed device's saved settings onto this one
   'device.readopt.button': 'Restore from removed device…',
   'device.readopt.button_hint': "Apply a previously-removed device's saved settings onto this one (for a re-paired screen whose fingerprint changed)",

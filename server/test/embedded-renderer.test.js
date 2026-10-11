@@ -32,12 +32,12 @@ db.exec(`
     timezone TEXT, reported_timezone TEXT, background_color TEXT DEFAULT '#000000',
     default_content_id TEXT, last_heartbeat INTEGER, ip_address TEXT,
     app_version TEXT, updated_at INTEGER, heartbeat_expected_by INTEGER,
-    power_source TEXT DEFAULT 'battery'
+    power_source TEXT
   );
   CREATE TABLE device_telemetry (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id TEXT, battery_level INTEGER, battery_charging INTEGER DEFAULT 0,
-    wifi_rssi INTEGER, local_ip TEXT, power_source TEXT DEFAULT 'battery',
+    device_id TEXT, battery_level INTEGER, battery_charging INTEGER,
+    wifi_rssi INTEGER, local_ip TEXT, power_source TEXT,
     reported_at INTEGER
   );
   CREATE TABLE playlists (
@@ -1323,6 +1323,27 @@ describe('Embedded Device Liveness & Telemetry Ingestion', () => {
     assert.equal(telemetry.wifi_rssi, -65);
     // The request's source address is NOT the screen's LAN address — see touchDeviceHeartbeat.
     assert.equal(telemetry.local_ip, null);
+  });
+
+  test('touchDeviceHeartbeat ignores invalid/out-of-range telemetry gracefully', () => {
+    const req = {
+      headers: {
+        'x-st-device-battery': '999', // out of 0..100 range
+        'x-st-device-rssi': '10',    // out of 0..-120 dBm range
+      },
+      socket: { remoteAddress: '192.168.1.52' },
+    };
+    const prevCount = db.prepare('SELECT COUNT(*) c FROM device_telemetry WHERE device_id = ?').get(devId).c;
+    touchDeviceHeartbeat({ id: devId }, req);
+    const newCount = db.prepare('SELECT COUNT(*) c FROM device_telemetry WHERE device_id = ?').get(devId).c;
+    assert.equal(newCount, prevCount, 'no invalid telemetry row inserted');
+  });
+
+  test('touchDeviceHeartbeat leaves battery_charging NULL when the panel does not report it', () => {
+    touchDeviceHeartbeat({ id: devId }, { headers: { 'x-st-device-battery': '40' }, socket: { remoteAddress: '192.168.1.54' } });
+    const row = db.prepare('SELECT battery_charging, power_source FROM device_telemetry WHERE device_id = ? ORDER BY id DESC LIMIT 1').get(devId);
+    assert.equal(row.battery_charging, null);
+    assert.equal(row.power_source, null);
   });
 
   test('touchDeviceHeartbeat records power_source and battery_charging', () => {
