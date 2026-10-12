@@ -1482,7 +1482,11 @@ router.get('/:id/talk', async (req, res) => {
 
 // Operator -> device audio: proxy the operator's PUBLISH offer into the downlink stream (dst=).
 router.post('/:id/talk/publish', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
-  const device = checkDeviceRead(req, res);
+  // ⚠️ WRITE, not read. These carry the session's media: publish plays the
+  // caller's microphone out of the device, view hears the device's microphone. checkDeviceRead let a
+  // read-only workspace_viewer attach to a session an editor had started; dashboard:talk-start was
+  // already write-gated, the media routes were not.
+  const device = checkDeviceOwnership(req, res);
   if (!device) return;
   if (!orgWebrtc.talkEnabledForDevice(device.id) || !go2rtc.enabled()) return res.status(409).json({ error: 'Talk is not available for this device' });
   const name = go2rtc.talkStreamName(device.workspace_id, device.id, 'dn');
@@ -1496,7 +1500,11 @@ router.post('/:id/talk/publish', express.text({ type: ['application/sdp', 'text/
 
 // Device -> operator audio: proxy the operator's SUBSCRIBE offer against the uplink stream (src=).
 router.post('/:id/talk/view', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
-  const device = checkDeviceRead(req, res);
+  // ⚠️ WRITE, not read. These carry the session's media: publish plays the
+  // caller's microphone out of the device, view hears the device's microphone. checkDeviceRead let a
+  // read-only workspace_viewer attach to a session an editor had started; dashboard:talk-start was
+  // already write-gated, the media routes were not.
+  const device = checkDeviceOwnership(req, res);
   if (!device) return;
   if (!orgWebrtc.talkEnabledForDevice(device.id) || !go2rtc.enabled()) return res.status(409).json({ error: 'Talk is not available for this device' });
   const name = go2rtc.talkStreamName(device.workspace_id, device.id, 'up');

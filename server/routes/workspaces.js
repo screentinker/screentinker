@@ -3,6 +3,7 @@ const router = express.Router();
 const crypto = require('crypto');
 const { db } = require('../db/database');
 const { canAdminWorkspace, canAccessWorkspace } = require('../lib/permissions');
+const { resourceAccess } = require('../lib/tenancy');
 const { isPlatformRole, isPlatformStaff } = require('../middleware/auth');
 const go2rtc = require('../lib/go2rtc');
 const orgWebrtc = require('../lib/org-webrtc');   // #talk: per-org talk flag + ICE override
@@ -609,7 +610,12 @@ router.delete('/:id/members/:userId', (req, res) => {
  * #talk broadcast (one-way PA to every device in the workspace). Same shape as the per-group
  * routes in device-groups.js: the operator publishes their mic to the workspace's shared go2rtc
  * stream, and the dashboard tells every device in the workspace to listen. Gated on the live-video
- * master switch + the workspace flag + a live sidecar. Any workspace member may talk.
+ * master switch + the workspace flag + a live sidecar.
+ *
+ * ⚠️ PUBLISHING NEEDS WRITE ACCESS, as dashboard:group-talk-start does per device and as the group
+ * routes do (requireGroupWrite). This used to say "any workspace member may talk", which let a
+ * read-only workspace_viewer put their microphone on every screen in a broadcast an editor had
+ * started (the same gap as the per-device routes had). Reading the session info stays open to members.
  */
 function loadTalkWorkspace(req, res) {
   const ws = db.prepare('SELECT id, live_video_enabled FROM workspaces WHERE id = ?').get(req.params.id);
@@ -634,6 +640,10 @@ router.get('/:id/talk', async (req, res) => {
 
 router.post('/:id/talk/publish', express.text({ type: ['application/sdp', 'text/plain'], limit: '256kb' }), async (req, res) => {
   const ws = loadTalkWorkspace(req, res); if (!ws) return;
+  const ctx = resourceAccess(req, ws);
+  if (!ctx || (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer')) {
+    return res.status(403).json({ error: 'Read-only access' });
+  }
   if (!orgWebrtc.talkEnabledForWorkspace(ws.id) || !go2rtc.enabled()) {
     return res.status(409).json({ error: 'Talk is not available for this workspace' });
   }

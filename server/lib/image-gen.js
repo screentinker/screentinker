@@ -1,5 +1,8 @@
 'use strict';
 
+// Every request here goes to an admin-configured endpoint, or to a URL one returned: lib/ai-fetch.
+const { aiFetch } = require('./ai-fetch');
+
 // #41 Phase 2: text-to-image for AI signage. Two backends, both BYO/self-hostable:
 //  - 'comfyui'  -> local ComfyUI (SDXL) via its prompt/history/view API
 //  - 'openai'   -> any OpenAI-compatible /images/generations endpoint
@@ -26,7 +29,7 @@ async function comfyGenerate(baseUrl, prompt, model, width, height, signal) {
   const ckpt = model || 'sd_xl_base_1.0.safetensors';
   const seed = Math.floor(Math.random() * 1e15);
   const wf = buildComfyWorkflow(prompt, ckpt, width, height, seed);
-  const sub = await fetch(baseUrl + '/prompt', {
+  const sub = await aiFetch(baseUrl + '/prompt', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt: wf }), signal,
   });
@@ -38,7 +41,7 @@ async function comfyGenerate(baseUrl, prompt, model, width, height, signal) {
   for (let i = 0; i < 120; i++) {
     if (signal && signal.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
     await sleep(1000);
-    const h = await fetch(`${baseUrl}/history/${prompt_id}`, { signal }).then((r) => r.json()).catch(() => null);
+    const h = await aiFetch(`${baseUrl}/history/${prompt_id}`, { signal }).then((r) => r.json()).catch(() => null);
     const entry = h && h[prompt_id];
     if (!entry) continue;
     const outputs = entry.outputs || {};
@@ -47,7 +50,7 @@ async function comfyGenerate(baseUrl, prompt, model, width, height, signal) {
       if (imgs && imgs.length) {
         const im = imgs[0];
         const q = new URLSearchParams({ filename: im.filename, subfolder: im.subfolder || '', type: im.type || 'output' });
-        const buf = Buffer.from(await (await fetch(`${baseUrl}/view?${q}`, { signal })).arrayBuffer());
+        const buf = Buffer.from(await (await aiFetch(`${baseUrl}/view?${q}`, { signal })).arrayBuffer());
         return 'data:image/png;base64,' + buf.toString('base64');
       }
     }
@@ -120,7 +123,7 @@ async function openaiCompatGenerate(baseUrl, key, prompt, model, size, signal, d
         resolution: '2k',
       };
     if (model) body.model = model;   // omit for sd.cpp (uses its loaded checkpoint)
-    const res = await fetch(baseUrl + '/images/generations', {
+    const res = await aiFetch(baseUrl + '/images/generations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify(body),
@@ -147,7 +150,7 @@ async function openaiCompatGenerate(baseUrl, key, prompt, model, size, signal, d
   if (b64) return 'data:image/png;base64,' + b64;
   const url = j && j.data && j.data[0] && j.data[0].url;
   if (url) {
-    const buf = Buffer.from(await (await fetch(url, { signal })).arrayBuffer());
+    const buf = Buffer.from(await (await aiFetch(url, { signal })).arrayBuffer());
     return 'data:image/png;base64,' + buf.toString('base64');
   }
   throw new Error('Image endpoint returned no image');

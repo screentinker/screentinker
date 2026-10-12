@@ -11,6 +11,8 @@ const { db } = require('../db/database');
 const config = require('../config');
 const { encrypt, decrypt } = require('../lib/secretbox');
 const { generateImage } = require('../lib/image-gen');
+const { aiFetch } = require('../lib/ai-fetch');
+const { vetRequestHost } = require('../lib/storage/endpoint-guard');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
@@ -45,6 +47,10 @@ function endpointAllowed(rawUrl) {
   if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return false;
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return false;
   if (/^(fc|fd)/.test(h)) return false; // IPv6 ULA
+  // Any IP literal, bracketed IPv6 included ([::1], [::ffff:7f00:1]), by the real address rules.
+  // This is only the early refusal at save time: lib/ai-fetch vets the address actually connected
+  // to, which is what stops a NAME that resolves inward.
+  try { vetRequestHost(h); } catch { return false; }
   return true;
 }
 
@@ -231,7 +237,7 @@ router.post('/models', async (req, res) => {
   const timer = setTimeout(() => controller.abort(), 15000);
   let r;
   try {
-    r = await fetch(base_url + '/models', { headers: { Authorization: `Bearer ${key}` }, signal: controller.signal });
+    r = await aiFetch(base_url + '/models', { headers: { Authorization: `Bearer ${key}` }, signal: controller.signal });
   } catch (e) {
     clearTimeout(timer);
     return res.status(UPSTREAM_STATUS).json({ error: 'Could not reach the endpoint: ' + (e.name === 'AbortError' ? 'timed out' : e.message) });
@@ -395,7 +401,7 @@ async function askModelForJson({ workspaceId, system, user, timeoutMs = 180000 }
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let aiRes;
   try {
-    aiRes = await fetch(url, {
+    aiRes = await aiFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify({
@@ -1039,7 +1045,7 @@ router.post('/generate-design', async (req, res) => {
   const timer = setTimeout(() => controller.abort(), 180000); // local models can be slow
   let aiRes;
   try {
-    aiRes = await fetch(url, {
+    aiRes = await aiFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify({
