@@ -25,11 +25,25 @@ async function start({ serverDir = process.env.SERVER_DIR || path.join(REPO, 'se
   let log = '';
   proc.stdout.on('data', (d) => { log += d; });
   proc.stderr.on('data', (d) => { log += d; });
+  /*
+   * Wait for the server to answer, by the clock rather than by a count of tries. A fresh database's
+   * first boot (13 tables rebuilt by the tenant cascade, the version-history baseline, every column
+   * migration) took about a minute on a slow CI runner, and the old budget (120 tries x 500 ms)
+   * gave up just as the banner printed (2026-10-12, main after v2.6.1). Each probe has its own
+   * timeout, so one request that hangs cannot spend the whole budget.
+   */
+  const BOOT_BUDGET_MS = 150000;
+  const t0 = Date.now();
   let up = false;
-  for (let i = 0; i < 120 && !up; i++) {
-    try { await fetch(base + '/'); up = true; } catch { await new Promise((r) => setTimeout(r, 500)); }
+  while (!up && Date.now() - t0 < BOOT_BUDGET_MS) {
+    if (proc.exitCode !== null) break;   // it died: say so now, not in 150 s
+    try { await fetch(base + '/', { signal: AbortSignal.timeout(5000) }); up = true; }
+    catch { await new Promise((r) => setTimeout(r, 500)); }
   }
-  if (!up) throw new Error('server did not start:\n' + log.slice(-2000));
+  if (!up) {
+    const why = proc.exitCode !== null ? `exited with code ${proc.exitCode}` : `no answer within ${BOOT_BUDGET_MS / 1000} s`;
+    throw new Error(`server did not start (${why}):\n` + log.slice(-2000));
+  }
   const s = {
     base, work, proc, log: () => log,
     async api(p, opts = {}, token = s.token) {
