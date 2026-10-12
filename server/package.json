@@ -46,7 +46,7 @@
   },
   "devDependencies": {
     "esbuild": "0.28.2",
-    "js-yaml": "^4.2.0",
+    "js-yaml": "^5.4.3",
     "sharp": "^0.35.3"
   },
   "overrides": {
