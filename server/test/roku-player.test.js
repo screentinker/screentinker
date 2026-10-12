@@ -242,3 +242,16 @@ test('clock widgets in other zones get their own tables (tz_tables), so a Roku c
   assert.ok([-240, -300].includes(p.tz_tables['America/New_York'].spans[0].offset_min));
   assert.equal('tz_tables' in buildPlaylistPayload('web-clocks'), false, 'other players are unchanged');
 });
+
+test('finalize-release.sh builds, checks and ships the Roku sideload zip', () => {
+  // Until the store build is published, and for anyone testing a newer one, a Roku is set up by
+  // sideloading this zip in developer mode. It is built from the tagged tree at finalize, like the
+  // APK, and listed as EXPECTED so a release cannot quietly ship without it.
+  const fin = require('node:fs').readFileSync(path.join(__dirname, '..', '..', 'scripts', 'finalize-release.sh'), 'utf8');
+  assert.match(fin, /bsc --project bsconfig\.json --createPackage/, 'the zip is packaged by bsc');
+  assert.match(fin, /node tests\/check-threads\.js/, 'the render-thread check gates it');
+  assert.match(fin, /gh release upload[^\n]*"\$ROKU_ZIP"/, 'finalize must upload the zip, not only expect it');
+  const expected = fin.slice(fin.indexOf('EXPECTED="'), fin.indexOf('"', fin.indexOf('EXPECTED="') + 10));
+  assert.match(expected, /^screentinker-roku\.zip$/m, 'the zip is in the completeness list');
+  assert.match(fin, /\[ "\$ROKU_TITLE" != "ScreenTinker" \]/, 'a zip without the app manifest is refused');
+});

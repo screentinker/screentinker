@@ -6,7 +6,8 @@
 #   2. pull the CI-built unsigned .wgt back down from the release,
 #   3. assemble a COMPLETE source tarball that bundles BOTH binaries
 #      (extract it and ScreenTinker.apk sits at the root, ready for /download/apk),
-#   4. upload the APK + the complete tarball to the release (replacing the
+#   4. build the Roku sideload zip (roku/, packaged by bsc),
+#   5. upload the APK + the complete tarball + the Roku zip to the release (replacing the
 #      source-only tarball CI uploaded).
 #
 #   KEYSTORE_PASSWORD=... KEY_PASSWORD=... scripts/finalize-release.sh
@@ -20,7 +21,7 @@ TAG="v$VERSION"
 : "${KEYSTORE_PASSWORD:?set KEYSTORE_PASSWORD}"
 : "${KEY_PASSWORD:?set KEY_PASSWORD}"
 
-cleanup() { rm -f ScreenTinker.apk ScreenTinker.apk.version ScreenTinker.wgt "screentinker-$VERSION.tar.gz"; }
+cleanup() { rm -f ScreenTinker.apk ScreenTinker.apk.version ScreenTinker.wgt "screentinker-$VERSION.tar.gz" screentinker-roku.zip; }
 trap cleanup EXIT
 
 echo "==> Building signed APK $VERSION"
@@ -121,10 +122,30 @@ if [ "$VPKG_VERSION" != "$VERSION" ]; then
 fi
 echo "==> Vega package OK: $(du -h "$VPKG" | cut -f1), declares $VPKG_VERSION"
 
-echo "==> Uploading APK + complete tarball + Vega package to $TAG"
-gh release upload "$TAG" "$OUT" ScreenTinker.apk ScreenTinker.apk.version "$VPKG" --clobber
+# ---------------------------------------------------------------------------
+# The Roku sideload zip. Roku installs from the Roku Channel Store, but until the store build is
+# published (and for anyone testing a newer one) the app is sideloaded in developer mode, and that
+# takes this zip. It is built here from the tagged tree, like the APK, so it always matches the tag.
+# The Roku app keeps its OWN version (roku/manifest major/minor/build), which is what the store and
+# the dashboard see; it does not follow VERSION.
+echo "==> Building the Roku sideload zip"
+ROKU_ZIP=screentinker-roku.zip
+( cd roku && npm ci --no-audit --no-fund >/dev/null && node tests/check-threads.js \
+    && npx bsc --project bsconfig.json --createPackage --outFile "../.roku-build/$ROKU_ZIP" >/dev/null )
+cp ".roku-build/$ROKU_ZIP" "$ROKU_ZIP"
+# It must be the app, not an empty or half-built package: a manifest at the root that names it.
+ROKU_TITLE="$(python3 -c "import zipfile,sys;m=zipfile.ZipFile(sys.argv[1]).read('manifest').decode();print(next((l.split('=',1)[1] for l in m.splitlines() if l.startswith('title=')),''))" "$ROKU_ZIP")"
+ROKU_VER="$(python3 -c "import zipfile,sys;d=dict(l.split('=',1) for l in zipfile.ZipFile(sys.argv[1]).read('manifest').decode().splitlines() if '=' in l and not l.startswith('#'));print('%s.%s.%s'%(d.get('major_version'),d.get('minor_version'),d.get('build_version')))" "$ROKU_ZIP")"
+if [ "$ROKU_TITLE" != "ScreenTinker" ]; then
+  echo "ERROR: $ROKU_ZIP has no ScreenTinker manifest at its root (title='$ROKU_TITLE')." >&2
+  exit 1
+fi
+echo "==> Roku zip OK: $(du -h "$ROKU_ZIP" | cut -f1), app $ROKU_VER"
 
-echo "==> Done: $TAG now carries the standalone APK, the Vega .vpkg and a tarball bundling apk + wgt."
+echo "==> Uploading APK + complete tarball + Vega package + Roku zip to $TAG"
+gh release upload "$TAG" "$OUT" ScreenTinker.apk ScreenTinker.apk.version "$VPKG" "$ROKU_ZIP" --clobber
+
+echo "==> Done: $TAG now carries the standalone APK, the Vega .vpkg, the Roku zip and a tarball bundling apk + wgt."
 
 # ---------------------------------------------------------------------------
 # COMPLETENESS GATE. This is the last step of a release, so it is the right and
@@ -151,6 +172,7 @@ ScreenTinker.ipk
 screentinker-$VERSION.tar.gz
 screentinker-sbom-$VERSION.cdx.json
 screentinker-vega_armv7.vpkg
+screentinker-roku.zip
 "
 echo "==> Checking $TAG carries every expected asset"
 PRESENT="$(gh release view "$TAG" --json assets -q '.assets[].name')"
