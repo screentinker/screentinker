@@ -14,7 +14,7 @@
 
 ScreenTinker is a free, open-source **digital signage CMS** you can self-host on your own server — or run in our managed cloud. Manage TVs, video walls, and kiosks across multiple locations from one dashboard, with remote control, scheduling, playlists, and analytics. Built for retail, QSR menu boards, offices, lobbies, education, and any environment where you need centralized control over remote screens. Multi-tenant, MIT-licensed, single-developer maintained with direct contact access.
 
-**Runs on any screen** — Android TV, Fire TV, Samsung Tizen, LG webOS, Amazon Vega OS, Raspberry Pi, Windows, ChromeOS, or any web browser. No per-device player licence, no hardware lock-in.
+**Runs on any screen** — Android TV, Fire TV, Samsung Tizen, LG webOS, Amazon Vega OS, Roku, Raspberry Pi, Windows, ChromeOS, or any web browser. No per-device player licence, no hardware lock-in.
 
 **Why self-host?** Keep your content and data on your own infrastructure, avoid per-screen SaaS fees, run air-gapped on a private LAN, and read or fork the source. Set `SELF_HOSTED=true` and a $5 VPS drives hundreds of screens.
 
@@ -151,8 +151,9 @@ away, how many hops a screen's data crosses to reach you, and which server relay
 
 ## Supported Platforms
 
-Android TV, Fire TV, Raspberry Pi, Windows, ChromeOS, LG webOS, Samsung Tizen, BrightSign, and any
-device with a web browser.
+Android TV, Fire TV, Roku, Raspberry Pi, Windows, ChromeOS, LG webOS, Samsung Tizen, BrightSign, and any
+device with a web browser. Roku has limits a sign owner should read first: see
+[the Roku guide](https://screentinker.com/guides/roku-digital-signage.html).
 
 Anything with a reasonably modern browser can be a display without installing anything: point it at
 `/player`. The native players add what a browser cannot: the **Android APK** gives you unattended boot,

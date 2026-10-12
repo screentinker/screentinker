@@ -1,6 +1,6 @@
 # ScreenTinker
 
-> Open-source digital signage. A self-hostable CMS and player fleet manager, MIT licensed, with an optional hosted version. Runs on Android TV and Fire TV, Amazon Vega OS, Samsung Tizen, LG webOS, BrightSign, Raspberry Pi, Windows, ChromeOS, any web browser, Mac and iPad/iPhone (both beta), and e-paper/ESP32 panels driven by a server-side renderer — twelve platforms, one CMS.
+> Open-source digital signage. A self-hostable CMS and player fleet manager, MIT licensed, with an optional hosted version. Runs on Android TV and Fire TV, Amazon Vega OS, Roku, Samsung Tizen, LG webOS, BrightSign, Raspberry Pi, Windows, ChromeOS, any web browser, Mac and iPad/iPhone (both beta), and e-paper/ESP32 panels driven by a server-side renderer — thirteen platforms, one CMS.
 
 ScreenTinker turns ordinary screens into managed digital signs. A server holds the content, playlists, layouts and schedules; players pair to it and pull what they should be showing. The player is a web page, so a display that can open a URL can run it, and native builds exist for the platforms that need one.
 
@@ -45,6 +45,7 @@ so plainly when it has none.
 - [Digital signage on Windows](https://screentinker.com/guides/windows-digital-signage.html): kiosk-mode browser, autostart, and the settings that decide whether it survives a month.
 - [ChromeOS and Chromebox](https://screentinker.com/guides/chromeos-digital-signage.html): managed kiosk through the Google Admin console, or unmanaged on a single device.
 - [Fire TV Stick 4K Select and HD (Vega OS)](https://screentinker.com/guides/digital-signage-vega.html): these two sticks are not Android, the APK does not install, and they are **not** certified hardware.
+- [Roku](https://screentinker.com/guides/roku-digital-signage.html): a native Roku app (in Roku Channel Store review, October 2026; Roku OS 15.1+). Plays playlists, schedules and layouts, but a Roku cannot start itself after a power cut, cannot be rebooted or screenshotted remotely, shows web content as server-drawn pictures, and cannot decode H.264 taller than 1080 pixels. Not certified hardware.
 - [Apple TV](https://screentinker.com/guides/apple-tv-digital-signage.html): ⚠️ NOT supported, and not
   planned. tvOS ships no web view, so the player cannot run there and a native port could not show
   widgets, HTML bundles, web pages or YouTube. Unattended operation also requires MDM. Use a Raspberry

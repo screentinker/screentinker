@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ScreenTinker on Roku: what works and what does not | ScreenTinker</title>
+  <meta name="description" content="The ScreenTinker player for Roku: what it plays, and what a Roku cannot do as a sign (no autostart, no reboot, no screenshots, no tall H.264).">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/roku-digital-signage.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/roku-digital-signage.md">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/roku-digital-signage.html">
+  <meta property="og:title" content="ScreenTinker on Roku: what works and what does not">
+  <meta property="og:description" content="A native Roku player for ScreenTinker, and the limits a Roku puts on a sign. Read them before you buy one.">
+  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:site_name" content="ScreenTinker">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="ScreenTinker on Roku: what works and what does not">
+  <meta name="twitter:description" content="A native Roku player for ScreenTinker, and the limits a Roku puts on a sign. Read them before you buy one.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/#features">Guides</a>
+      <span>/</span>
+      <span>Roku</span>
+    </nav>
+
+    <h1>ScreenTinker on Roku</h1>
+    <p class="lead">A native player for Roku streaming sticks and Roku TVs. It plays your playlists, schedules and layouts well. But a Roku was built for watching TV, not for running a sign unattended, and some things it will never do. They are listed below so you can decide before you buy one.</p>
+
+    <h2>Where it stands</h2>
+    <ul>
+      <li><strong>Roku Channel Store:</strong> submitted in October 2026 and in Roku's review. This page will link the app once Roku publishes it.</li>
+      <li><strong>Tested on:</strong> one Roku Streaming Stick 4K (model 3820R2) on Roku OS 15.3.4, paired to screentinker.com. It paired, played image playlists, and started in about 1.5 seconds.</li>
+      <li><strong>Not on the <a href="/certified-hardware">certified hardware</a> list.</strong> One stick is a test, not a certification.</li>
+    </ul>
+
+    <h2>What you need</h2>
+    <ul>
+      <li><strong>Roku OS 15.1 or later.</strong> Roku's store requires it for new apps, so older Rokus that cannot update to 15.1 cannot install it. Check under <em>Settings &gt; System &gt; About</em>.</li>
+      <li><strong>A ScreenTinker server newer than 2.5.1.</strong> The Roku support is in the server as well as the app. If you self-host, the server also needs Chromium installed to draw web content for the Roku (see <em>Web content is a picture</em> below).</li>
+      <li>A ScreenTinker account, on screentinker.com or your own server.</li>
+    </ul>
+
+    <h2>Setting it up</h2>
+    <ol>
+      <li>Install ScreenTinker from the Roku Channel Store, once it is published.</li>
+      <li>Open it. Keep <code>https://screentinker.com</code>, or type your own server's address, then choose <strong>Connect</strong>. You can change the server later with the options (<strong>*</strong>) key.</li>
+      <li>A pairing code appears. In your dashboard, add a display and enter the code.</li>
+      <li>Change these Roku settings, or the sign will not last the day:
+        <ul>
+          <li><em>Settings &gt; Theme &gt; Screensaver</em>: set the wait time to the longest it offers, or off if your model allows it.</li>
+          <li><em>Settings &gt; System &gt; Power</em>: turn off <strong>Auto power saving</strong>. Turn off <strong>Bandwidth saver</strong> under <em>Settings &gt; Network</em>.</li>
+          <li>If <em>Autoplay</em> is off on the Roku, the player waits for someone to press OK after each launch. That is a Roku rule, and the screen says so.</li>
+        </ul>
+      </li>
+    </ol>
+
+    <h2>What it plays</h2>
+    <ul>
+      <li>Images, and video up to 1920 x 1080 (see the limit on tall video below).</li>
+      <li>Playlists, schedules, play order, and power schedules that blank the screen out of hours.</li>
+      <li>Layouts with several zones. A Roku decodes one video at a time, so only one zone plays video. The others show the video's thumbnail.</li>
+      <li>Clocks, drawn on the Roku so the seconds tick.</li>
+      <li>Widgets and web pages, as pictures drawn by the server (next section).</li>
+    </ul>
+
+    <h2>What a Roku cannot do</h2>
+    <p>None of these is something we can fix in the app. They are how Roku works.</p>
+    <ul>
+      <li><strong>It does not start by itself.</strong> After a power cut, a reboot or a Roku update, the Roku goes to its home screen and stays there. Roku does not let any app start on its own. Someone has to open the app again, or an always-on device on the same network can do it with one request to Roku's network control: <code>POST http://&lt;roku-address&gt;:8060/launch/&lt;app id&gt;</code>, allowed under <em>Settings &gt; System &gt; Advanced system settings &gt; Control by mobile apps</em>. ScreenTinker does not send that for you yet. If the screen must come back without anyone, use another player.</li>
+      <li><strong>No remote reboot, volume, screenshots or live view.</strong> Apps cannot reboot a Roku, change its volume, or capture the screen, so the dashboard cannot show you what a Roku is displaying.</li>
+      <li><strong>No control of the TV.</strong> No power on or off, and no switching inputs. Power schedules blank the picture instead.</li>
+      <li><strong>Web content is a picture.</strong> A Roku has no web browser. Widgets, web pages and slides are drawn by your ScreenTinker server and sent as images, refreshed on a timer. They are correct but still: no animation, no video inside a web page, nothing to touch. A self-hosted server needs Chromium for this.</li>
+      <li><strong>No tall H.264 video.</strong> A Roku cannot decode H.264 that is more than 1080 pixels tall, which rules out portrait 1080 x 1920 phone and AI clips. The size of the zone makes no difference, because decoding comes first. The screen tells you which video failed. Upload a copy no bigger than 1920 x 1080, for example: <code>ffmpeg -i in.mp4 -vf "scale=-2:1080" -c:v libx264 -crf 20 -c:a copy out.mp4</code></li>
+      <li><strong>The screensaver is not blocked.</strong> Roku's store rules forbid an app from keeping the screensaver away, so over still images it can start. That is why the setup step above sets its wait time to the longest.</li>
+      <li><strong>No video walls or group sync.</strong> A Roku can be one screen of its own, not part of a synchronised wall.</li>
+      <li><strong>No interactive kiosk.</strong> There is no touch, and the remote only moves between the player's own screens.</li>
+    </ul>
+
+    <h2>When to choose something else</h2>
+    <p>A Roku suits a screen that someone switches on each morning: a waiting room TV, a break room, a home office. For a sign that must survive power cuts with nobody there, or that needs screenshots, reboots or live web pages, use an <a href="/guides/digital-signage-android-tv.html">Android TV or Fire TV</a> device, a <a href="/guides/raspberry-pi-digital-signage.html">Raspberry Pi</a>, or a commercial panel.</p>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/digital-signage-android-tv.html">Android TV and Fire TV</a></li>
+        <li><a href="/guides/raspberry-pi-digital-signage.html">Raspberry Pi</a></li>
+        <li><a href="/certified-hardware">Certified hardware</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+</body>
+</html>

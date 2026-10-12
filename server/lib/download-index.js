@@ -217,6 +217,21 @@ function entries(state = {}) {
       size: null,
       absent: 'These two sticks are not Android and the APK does not install. Read the guide before buying one for a sign.',
     },
+    {
+      id: 'roku',
+      name: 'Roku',
+      file: null,
+      // Not a download: a Roku app installs from the Roku Channel Store. A sideloaded zip needs
+      // developer mode on every Roku, which is not how a sign should be set up. Until Roku publishes
+      // the app there is no store link either, so the row explains instead of offering.
+      what: 'Not a download. The ScreenTinker app installs from the Roku Channel Store (in Roku’s review). Needs Roku OS 15.1 or later.',
+      url: null,
+      guide: '/guides/roku-digital-signage.html',
+      available: false,
+      version: null,
+      size: null,
+      absent: 'The Roku app is in Roku’s store review. Read the guide first: a Roku cannot start itself after a power cut.',
+    },
   ];
 }
 

@@ -80,6 +80,19 @@ test('Vega is listed but never offered as an install', () => {
   }
 });
 
+test('Roku is listed but never offered as a file', () => {
+  // A Roku app installs from the Roku Channel Store; a zip here could only be sideloaded in developer
+  // mode. The row stays, so a Roku owner finds the guide and its limits (no autostart above all).
+  for (const state of [{}, FULL]) {
+    const roku = di.entries(state).find((x) => x.id === 'roku');
+    assert.ok(roku, 'Roku row present');
+    assert.equal(roku.available, false);
+    assert.equal(roku.url, null, 'Roku must have no download URL in any state');
+    assert.equal(roku.guide, '/guides/roku-digital-signage.html');
+    assert.ok(roku.absent);
+  }
+});
+
 test('the BrightSign row points at this server, not at a release asset', () => {
   const bs = di.entries(FULL).find((x) => x.id === 'brightsign');
   assert.equal(bs.url, '/download/autorun.zip');
