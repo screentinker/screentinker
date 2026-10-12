@@ -6,9 +6,10 @@ on:
   push:
     tags: ['v*']
 
+# Read-only by default; each job that writes asks for exactly what it needs (OpenSSF Scorecard
+# Token-Permissions). verify and test get a read-only token.
 permissions:
-  contents: write   # create the GitHub Release
-  packages: write   # push the image to ghcr.io
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -21,7 +22,7 @@ jobs:
     name: Verify tag matches VERSION
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Assert pushed tag equals VERSION
         run: |
           TAG="${GITHUB_REF_NAME#v}"
@@ -41,8 +42,8 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '20'
           cache: npm
@@ -54,8 +55,10 @@ jobs:
     name: Tarball + Tizen .wgt + GitHub Release
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the GitHub Release and upload its assets
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0   # full history, for release notes
 
@@ -241,8 +244,11 @@ jobs:
     name: Docker image (amd64 + arm64) -> ghcr
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # push the image to ghcr.io
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - id: ver
         run: |
           VERSION="$(cat VERSION)"
@@ -255,9 +261,9 @@ jobs:
             *)   TAGS="${TAGS}"$'\n'"ghcr.io/screentinker/screentinker:latest" ;;
           esac
           { echo "tags<<__EOF__"; printf '%s\n' "$TAGS"; echo "__EOF__"; } >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -272,7 +278,7 @@ jobs:
       # exists with no image behind it. Anyone deploying from ghcr — alpha, and every self-hoster
       # pulling :latest — sees a version that is announced and unpullable, which reads as a broken
       # release rather than a hiccup at a registry.
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         id: push
         continue-on-error: true
         with:
@@ -288,7 +294,7 @@ jobs:
       # No continue-on-error: a second refusal is a real failure and must fail the release.
       - name: Retry the push
         if: steps.push.outcome == 'failure'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64

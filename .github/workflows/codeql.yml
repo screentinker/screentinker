@@ -1,0 +1,40 @@
+name: CodeQL
+
+# Static analysis of the JavaScript (OpenSSF Scorecard: SAST). Findings appear under Security ->
+# Code scanning; this workflow does not fail a PR on its own.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '27 4 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write   # upload the results to code scanning
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          # Vendored third-party bundles and tooling output are not our code.
+          config: |
+            paths-ignore:
+              - '**/node_modules/**'
+              - frontend/vendor/**
+              - marketing/**
+              - '**/*.min.js'
+      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        with:
+          category: /language:javascript-typescript

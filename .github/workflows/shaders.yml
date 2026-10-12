@@ -21,13 +21,13 @@ jobs:
     name: Compile transition shaders (real WebGL)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '20'
       # Install Chrome and resolve its path explicitly — don't assume /usr/bin/google-chrome-stable
       # exists on the runner image (it silently won't fail until a push, at the worst possible time).
-      - uses: browser-actions/setup-chrome@v1
+      - uses: browser-actions/setup-chrome@c785b87e244131f27c9f19c1a33e2ead956ab7ce # v1
         id: chrome
         with:
           chrome-version: stable

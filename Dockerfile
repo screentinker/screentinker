@@ -9,7 +9,7 @@
 # --- builder: install production deps (better-sqlite3 is the only native one left; image
 # decoding is pure JS + WASM since sharp was dropped, and sharp is now a devDependency that
 # --omit=dev leaves out entirely) ---
-FROM node:20-slim AS builder
+FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS builder
 WORKDIR /app/server
 # build toolchain in case a native prebuild is missing for the target arch
 RUN apt-get update \
@@ -19,7 +19,7 @@ COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev
 
 # --- runtime ---
-FROM node:20-slim
+FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
 # ffmpeg (ships ffprobe) powers video thumbnails + duration extraction at upload.
 # Without it videos still upload and play, but arrive with no thumbnail or duration.
 RUN apt-get update \

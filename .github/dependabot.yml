@@ -1,0 +1,30 @@
+# Dependency updates (OpenSSF Scorecard: Dependency-Update-Tool). Each update is an ordinary PR that
+# runs the full CI, and merges go through the same gate as any other PR. Nothing auto-merges.
+version: 2
+updates:
+  # The workflows pin every action by commit SHA with the tag as a comment; Dependabot moves both.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # The server. Minor and patch updates are grouped into one PR; a major version gets its own PR,
+  # because it needs reading (nodemailer 10 needed Node 20; puppeteer-core 25 needs Node 22.12).
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      server-minor-and-patch:
+        update-types: [minor, patch]
+
+  # Base images are pinned by digest (Dockerfile, Dockerfile.embedded, docker/updater). Without this
+  # a pinned digest would never pick up a patched node:20-slim.
+  - package-ecosystem: docker
+    directories: ["/", "/docker/updater"]
+    schedule:
+      interval: weekly
