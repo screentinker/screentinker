@@ -198,6 +198,8 @@ Schema migrations run automatically on first boot — no manual migration comman
 
 `npm start` is preferred over `node server.js` directly because the script invokes Node with `--env-file-if-exists=.env` so a `server/.env` file (gitignored) is loaded automatically for local dev.
 
+⚠️ **Only `npm start` reads `server/.env`.** Under pm2, systemd or `node server.js`, set the variables in that process manager instead: systemd `Environment=`, or for pm2 `SELF_HOSTED=true pm2 restart <id> --update-env` then `pm2 save`. A `.env` at the repository root is never read. At boot the server logs a `[config]` warning naming any key in either file that is not in effect.
+
 ### Environment Variables
 
 | Variable | Description | Default |
@@ -212,7 +214,7 @@ Schema migrations run automatically on first boot — no manual migration comman
 | `VIEW_ONLY_ENABLED` | View-only display links (`/view/<token>`). Each display is still off until a workspace admin turns it on. `false` removes the feature from the instance — see [View-only display access](docs/view-only-access.md). | `true` when `SELF_HOSTED=true`, else `false` |
 | `VIEW_TRUSTED_PROXIES` | Comma-separated proxy addresses/CIDRs whose `X-Forwarded-For` the view-only **network** check believes. Unset = only the TCP peer counts. | unset |
 | `APP_URL` | Your public URL (used for Stripe callbacks and invite-accept URLs in emailed invites) | _(none)_ |
-| `JWT_SECRET` | JWT signing key (auto-generated if not set) | _(auto)_ |
+| `JWT_SECRET` | JWT signing key, also the source of the key that encrypts saved secrets. Auto-generated into `certs/.jwt_secret` if not set. ⚠️ Changing it later signs everyone out and makes saved secrets unreadable; the server warns at boot if it changed. | _(auto)_ |
 | `SSL_CERT` | Path to SSL certificate | `server/certs/cert.pem` |
 | `SSL_KEY` | Path to SSL private key | `server/certs/key.pem` |
 | `PING_INTERVAL` | Socket.IO Engine.IO ping interval (ms). Raise for slow TV WebKits that miss pongs under decode load. | `30000` |
@@ -883,7 +885,7 @@ scripts/upgrade.sh
 scripts/upgrade.sh v1.8.0
 ```
 
-Set `SERVICE_NAME` if your systemd unit is not named `screentinker`.
+It restarts the systemd unit `screentinker` (set `SERVICE_NAME` if yours is named differently), or else the pm2 process running this checkout's `server/`. Run it as the user that owns the pm2 process, since pm2 is per user. For anything else, set `RESTART_CMD='<your restart command>'`. If it can't find a way to restart, it says so and exits with status 2: the new release is installed, but the old one is still running until you restart it.
 
 If you deployed without git, initialize it once so `upgrade.sh` can resolve tags:
 

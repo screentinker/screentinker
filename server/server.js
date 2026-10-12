@@ -3328,6 +3328,23 @@ server.listen(listenPort, '0.0.0.0', () => {
     console.error(`[EMAIL] config check failed: ${e.message}`);
   }
 
+  // Settings that look applied but are not, and a JWT_SECRET that changed under saved secrets.
+  // Both used to fail silently; see lib/config-check.js.
+  try {
+    const cc = require('./lib/config-check');
+    for (const m of cc.envFileWarnings({ serverDir: __dirname })) console.warn(m);
+    const appSettings = require('./lib/app-settings');
+    const sk = cc.checkSecretKey({
+      secret: config.jwtSecret,
+      get: (k) => appSettings.get(k, undefined),
+      set: (k, v) => appSettings.set(k, v),
+      certsDir: config.certsDir,
+    });
+    for (const m of sk.messages) console.error(m);
+  } catch (e) {
+    console.error(`[config] check failed: ${e.message}`);
+  }
+
   // Media tooling diagnostics — ffmpeg/ffprobe are SYSTEM dependencies that video
   // thumbnail + duration extraction needs. Ingest is best-effort, so without them
   // every video uploads fine and silently gets no thumbnail: exactly the kind of

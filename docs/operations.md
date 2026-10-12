@@ -74,7 +74,10 @@ Every time, in this order:
 > only, never automatic), install the updater: [instance-updater.md](instance-updater.md).
 
 `scripts/upgrade.sh` does the whole sequence — snapshot, checkout, `npm ci --omit=dev`, restart, and
-report the running version. It defaults to the newest **stable** tag, deliberately skipping
+report the running version. It restarts the systemd unit (`SERVICE_NAME`, default `screentinker`), or
+the pm2 process for this checkout, or runs `RESTART_CMD`. If none applies, it says the old version
+is still running and exits 2. It refuses to start over local edits to tracked files, and if a step
+fails it names that step. It defaults to the newest **stable** tag, deliberately skipping
 `-rc`/`-beta`/`-alpha` prereleases:
 
 ```bash

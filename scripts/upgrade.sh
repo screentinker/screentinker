@@ -6,12 +6,32 @@
 #
 # Backs up the database first, checks out the tag (detached HEAD - you are now
 # running a specific release, not a moving branch), installs production deps,
-# restarts the service, and reports the running version. Schema migrations run
+# restarts the server, and reports the running version. Schema migrations run
 # automatically on the next boot.
 #
-# Env overrides: SERVICE_NAME (systemd unit, default screentinker), APP_DIR, DB,
+# Restart: RESTART_CMD if set, else the systemd unit SERVICE_NAME if it exists, else the pm2
+# process running this checkout's server/ (run the script as the user that owns it - pm2 is per
+# user). If none of those applies, the script says so: the new code is installed but not running.
+#
+# Env overrides: SERVICE_NAME (systemd unit, default screentinker), RESTART_CMD, APP_DIR, DB,
 # BACKUP_DIR, STATUS_URL.
-set -euo pipefail
+set -Eeuo pipefail
+
+# ⚠️ SAY WHICH STEP FAILED. Under `set -e` a failing command just ends the script, and its last
+# visible line is whatever the PREVIOUS step printed. A self-hoster saw "==> Backup verified" and
+# then nothing, reasonably concluded it had "crashed after the backup", and finished by hand with a
+# `git pull` - which lands on main, not the release. Naming the step, and what has and has not
+# changed, turns that into something they can act on.
+STEP="starting"
+on_error() {
+  local rc=$?
+  echo "" >&2
+  echo "ERROR: the upgrade stopped while ${STEP} (exit ${rc}). The steps after it did not run." >&2
+  [ -n "${BK:-}" ] && echo "       Your database backup is at $BK." >&2
+  echo "       Fix the error above and run this script again; it is safe to re-run." >&2
+  echo "       Do not finish with a plain 'git pull': that moves you to main, not a release." >&2
+}
+trap on_error ERR
 # APP_DIR defaults to the checkout this script lives in, but is overridable like DB and BACKUP_DIR
 # already were.
 #
@@ -54,6 +74,7 @@ if [ -z "${DB:-}" ]; then
 fi
 BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/backups}"
 
+STEP="fetching release tags"
 echo "==> Fetching tags"
 git fetch --tags origin
 
@@ -67,6 +88,20 @@ if [ -z "$TARGET" ] || ! git rev-parse -q --verify "refs/tags/$TARGET^{commit}" 
   exit 1
 fi
 echo "==> Target release: $TARGET"
+
+# ⚠️ LOCAL EDITS STOP THE CHECKOUT, so find them before the backup rather than after it. `git
+# checkout` refuses to overwrite a modified tracked file, and with the check here the operator is
+# told which files and nothing has been touched yet.
+STEP="checking for local changes"
+DIRTY="$(git status --porcelain --untracked-files=no)"
+if [ -n "$DIRTY" ]; then
+  echo "ERROR: these tracked files have local changes, and checking out $TARGET would overwrite them:" >&2
+  printf '%s\n' "$DIRTY" | sed 's/^/         /' >&2
+  echo "       Keep them with 'git stash' (and 'git stash pop' afterwards), or discard them with" >&2
+  echo "       'git checkout -- <file>'. Then run this script again. Nothing has been changed." >&2
+  trap - ERR
+  exit 1
+fi
 
 # Back up the db first. This copy is the ONLY way back from a bad upgrade, so it is taken with a
 # method that finishes, and it is verified before anything is changed.
@@ -84,6 +119,7 @@ echo "==> Target release: $TARGET"
 #
 # VACUUM INTO writes a fresh database from a single read transaction and completes on a busy WAL
 # database. The same 1.4 GB production database took under a minute.
+STEP="backing up the database"
 if [ -f "$DB" ]; then
   mkdir -p "$BACKUP_DIR"
   BK="$BACKUP_DIR/remote_display-pre-${TARGET}-$(date +%Y%m%d-%H%M%S).db"
@@ -124,14 +160,59 @@ else
   echo "==> No db at $DB yet (fresh install) - skipping backup"
 fi
 
+STEP="checking out $TARGET"
 echo "==> Checking out $TARGET"
 git checkout -q "$TARGET"
 
+STEP="installing server dependencies (npm ci)"
 echo "==> Installing server deps (npm ci --omit=dev)"
 ( cd server && npm ci --omit=dev )
 
-echo "==> Restarting $SERVICE_NAME"
-sudo systemctl restart "$SERVICE_NAME"
+# ⚠️ NOT EVERY INSTALL IS A SYSTEMD UNIT CALLED screentinker. The README's quick start is
+# `npm start`, and people put that under pm2; a hard-coded `systemctl restart` then failed at the
+# very end, leaving the new code on disk and the old process serving it. Find how this server is
+# actually run, and when that cannot be found, say plainly that it is not restarted.
+pm2_id_for_checkout() {
+  command -v pm2 >/dev/null 2>&1 || return 0
+  command -v node >/dev/null 2>&1 || return 0
+  pm2 jlist 2>/dev/null | APP_SERVER="$APP_DIR/server" node -e '
+    let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+      let list = []; try { list = JSON.parse(s); } catch { return; }
+      const dir = process.env.APP_SERVER;
+      const p = list.find((x) => x.pm2_env && (x.pm2_env.pm_cwd === dir || x.pm2_env.pm_exec_path === dir + "/server.js"));
+      if (p) process.stdout.write(String(p.pm_id));
+    });' || true
+}
+
+STEP="restarting the server"
+RESTARTED="" LOGS_HINT="the server's log"
+if [ -n "${RESTART_CMD:-}" ]; then
+  echo "==> Restarting: $RESTART_CMD"
+  sh -c "$RESTART_CMD"
+  RESTARTED=1
+elif command -v systemctl >/dev/null 2>&1 && systemctl cat "$SERVICE_NAME" >/dev/null 2>&1; then
+  echo "==> Restarting $SERVICE_NAME (systemd)"
+  sudo systemctl restart "$SERVICE_NAME"
+  RESTARTED=1 LOGS_HINT="journalctl -u $SERVICE_NAME"
+else
+  PM2_ID="$(pm2_id_for_checkout)"
+  if [ -n "$PM2_ID" ]; then
+    # Plain restart, not --update-env: the process keeps the environment pm2 saved for it.
+    echo "==> Restarting pm2 process $PM2_ID"
+    pm2 restart "$PM2_ID"
+    RESTARTED=1 LOGS_HINT="pm2 logs $PM2_ID"
+  fi
+fi
+if [ -z "$RESTARTED" ]; then
+  trap - ERR
+  echo "" >&2
+  echo "WARNING: $TARGET is installed, but the server was NOT restarted, so the old version is still" >&2
+  echo "         running. No systemd unit '$SERVICE_NAME' and no pm2 process for $APP_DIR/server was" >&2
+  echo "         found (pm2 is per user: run this script as the user that owns the process)." >&2
+  echo "         Restart the server yourself now; migrations run when it starts. Next time, set" >&2
+  echo "         SERVICE_NAME, or RESTART_CMD='<your restart command>', to do this automatically." >&2
+  exit 2
+fi
 
 # Best-effort: report the running version. Tries HTTP :3001 then HTTPS :3443.
 echo "==> Waiting for the service to answer..."
@@ -145,5 +226,6 @@ for i in $(seq 1 30); do
   [ -n "$OUT" ] && break
   sleep 1
 done
-echo "==> /api/status: ${OUT:-<no response - check: journalctl -u $SERVICE_NAME>}"
+trap - ERR
+echo "==> /api/status: ${OUT:-<no response - check: $LOGS_HINT>}"
 echo "==> Upgrade to $TARGET complete. (Back to bleeding edge anytime: git checkout main)"
