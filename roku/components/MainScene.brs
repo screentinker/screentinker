@@ -91,9 +91,11 @@ sub onLaunchArgs()
 end sub
 
 sub openSetup()
-    d = CreateObject("roSGNode", "KeyboardDialog")
+    ' StandardKeyboardDialog, not the legacy KeyboardDialog: Roku's static analysis flags KeyboardDialog
+    ' as invalid for voice entry (requirement 4.12). Its message is an ARRAY of lines.
+    d = CreateObject("roSGNode", "StandardKeyboardDialog")
     d.title = "ScreenTinker server"
-    d.message = "Enter your ScreenTinker server address. Using the ScreenTinker cloud? Keep screentinker.com."
+    d.message = ["Enter your ScreenTinker server address. Using the ScreenTinker cloud? Keep screentinker.com."]
     d.buttons = ["Connect", "Cancel"]
     cur = m.cfg.server
     if cur = "" then cur = "https://screentinker.com"
@@ -130,7 +132,7 @@ sub onSetupButton()
     d = m.setup
     if d = invalid then return
     if d.buttonSelected = 0 then
-        s = ST_NormaliseServerUrl(d.text)
+        s = ST_NormaliseServerUrl(setupText(d))
         m.setup = invalid
         d.close = true
         if s = "" then
@@ -152,6 +154,14 @@ sub onSetupButton()
         if m.cfg.server = "" then exitApp()
     end if
 end sub
+
+' The typed address. StandardKeyboardDialog exposes it as `text`; its textEditBox holds the same.
+function setupText(d as object) as string
+    t = d.text
+    if (t = invalid or t = "") and d.textEditBox <> invalid then t = d.textEditBox.text
+    if t = invalid then return ""
+    return t
+end function
 
 sub moveToServer(url as string)
     ' A new server knows nothing about this display: start from a clean identity there.

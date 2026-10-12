@@ -3,6 +3,9 @@ major_version=0
 minor_version=2
 build_version=00001
 ui_resolutions=fhd
+# Roku certification blocks uploads without RSG 1.3 from 2026-10-01; it needs Roku OS 15.1+, so the
+# Developer Dashboard's minimum firmware must be 15.1 too.
+rsg_version=1.3
 mm_icon_focus_fhd=pkg:/images/icon_fhd.png
 mm_icon_focus_hd=pkg:/images/icon_hd.png
 splash_screen_fhd=pkg:/images/splash_fhd.png

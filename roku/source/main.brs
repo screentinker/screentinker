@@ -30,6 +30,17 @@ sub Main(args as dynamic)
     input = CreateObject("roInput")
     input.SetMessagePort(port)
 
+    ' Memory: log what this app may use, and hear about it when that runs low. Not much else to do
+    ' about it from here, but a signage player runs for weeks, so a slow leak shows up in the log
+    ' before Roku kills the app. Guarded: these methods arrived over several Roku OS releases.
+    mem = CreateObject("roAppMemoryMonitor")
+    if mem <> invalid then
+        mem.SetMessagePort(port)
+        if FindMemberFunction(mem, "EnableMemoryWarningEvent") <> invalid then mem.EnableMemoryWarningEvent(true)
+        if FindMemberFunction(mem, "EnableLowGeneralMemoryEvent") <> invalid then mem.EnableLowGeneralMemoryEvent(true)
+        logMemory(mem, "launch")
+    end if
+
     while true
         msg = wait(0, port)
         t = type(msg)
@@ -40,6 +51,8 @@ sub Main(args as dynamic)
                 screen.Close()
                 return
             end if
+        else if t = "roAppMemoryMonitorEvent" then
+            logMemory(mem, "warning")
         else if t = "roInputEvent" then
             info = msg.GetInfo()
             if ST_IsAA(info) then
@@ -62,3 +75,33 @@ sub logDeepLink(a as object)
         ST_Log("launch", "deep link contentId=" + c + " mediaType=" + mt + ", opening the player")
     end if
 end sub
+
+sub logMemory(mem as object, why as string)
+    if mem = invalid then return
+    parts = []
+    if FindMemberFunction(mem, "GetChannelMemoryLimit") <> invalid then
+        lim = mem.GetChannelMemoryLimit()
+        if ST_IsAA(lim) then
+            for each k in lim
+                parts.Push(k + "=" + memValue(lim[k]))
+            end for
+        end if
+    end if
+    if FindMemberFunction(mem, "GetMemoryLimitPercent") <> invalid then parts.Push("used%=" + memValue(mem.GetMemoryLimitPercent()))
+    if FindMemberFunction(mem, "GetChannelAvailableMemory") <> invalid then parts.Push("availableKB=" + memValue(mem.GetChannelAvailableMemory()))
+    line = "memory " + why + ":"
+    for each p in parts
+        line = line + " " + p
+    end for
+    ST_Log("main", line)
+end sub
+
+function memValue(v as dynamic) as string
+    if v = invalid then return "?"
+    if ST_IsString(v) then return v
+    t = type(v)
+    if t = "Boolean" or t = "roBoolean" then
+        if v then return "true" else return "false"
+    end if
+    return ST_NumToStr(v)
+end function
