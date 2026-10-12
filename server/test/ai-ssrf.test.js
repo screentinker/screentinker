@@ -30,6 +30,10 @@ test('⚠️ hosted: loopback by literal, mapped IPv6, and by a NAME are all ref
       `http://[::ffff:7f00:1]:${port}/models`,
       `http://[::ffff:127.0.0.1]:${port}/models`,
       `http://[::1]:${port}/models`,
+      `http://[::127.0.0.1]:${port}/models`,       // IPv4-compatible
+      `http://[::ffff:0:7f00:1]:${port}/models`,   // IPv4-translated
+      `http://0x7f.1:${port}/models`,
+      `http://localhost.:${port}/models`,
       `http://localhost:${port}/models`,          // a name: only the connect-time lookup can catch it
       'http://169.254.169.254/latest/meta-data/',
       'http://metadata.google.internal/',

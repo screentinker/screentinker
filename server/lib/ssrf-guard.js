@@ -104,6 +104,16 @@ function isBlockedV6(ip) {
   if ((h[0] & 0xffc0) === 0xfe80) return true;                              // fe80::/10 link-local
   if ((h[0] & 0xff00) === 0xff00) return true;                             // ff00::/8  multicast
   if (h[0] === 0x2002) return true;                                        // 2002::/16 6to4
+  /*
+   * Forms that carry an IPv4 address (or nothing routable) and were not caught above. Found by
+   * probing the AI endpoint guard: `[::127.0.0.1]` and `[::ffff:0:7f00:1]` both passed vetting and
+   * only failed because the test host does not route them. A host that does would reach loopback.
+   */
+  if (h.slice(0, 6).every((x) => x === 0)) return true;                     // ::/96 IPv4-compatible
+  if (h.slice(0, 4).every((x) => x === 0) && h[4] === 0xffff && h[5] === 0) return true; // ::ffff:0:0/96 translated
+  if (h[0] === 0x2001 && h[1] === 0) return true;                          // 2001::/32 Teredo (embeds a v4)
+  if (h[0] === 0x2001 && h[1] === 0x0db8) return true;                     // 2001:db8::/32 documentation
+  if (h[0] === 0x0100 && h[1] === 0 && h[2] === 0 && h[3] === 0) return true; // 100::/64 discard
   return false;
 }
 

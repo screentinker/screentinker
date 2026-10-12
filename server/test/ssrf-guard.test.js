@@ -37,3 +37,18 @@ for (const [name, url] of ALLOW) {
     assert.ok(r.addresses.length > 0, 'expected vetted addresses for ' + url);
   });
 }
+
+test('IPv6 forms that carry an IPv4 address, or nothing routable, are blocked', () => {
+  const g = require('../lib/ssrf-guard');
+  // [::127.0.0.1] and [::ffff:0:7f00:1] passed vetting; they failed only because the test host
+  // did not route them.
+  for (const ip of ['::127.0.0.1', '::7f00:1', '::ffff:0:7f00:1', '::ffff:0:a00:1', '2001:0:4136:e378:8000:63bf:3fff:fdd2',
+    '2001:db8::1', '100::1']) {
+    assert.equal(g.isBlockedIp(ip), true, ip);
+  }
+  // ...without catching real public space next to them.
+  for (const ip of ['2606:4700:4700::1111', '2001:4860:4860::8888', '2001:200::1', '2a00:1450:4001:80b::200e',
+    '::ffff:8.8.8.8', '64:ff9b::808:808']) {
+    assert.equal(g.isBlockedIp(ip), false, ip);
+  }
+});
