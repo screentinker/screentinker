@@ -116,6 +116,18 @@ const SECONDS = Number((process.argv.find((a, i) => process.argv[i - 1] === '--s
       if (!d || d.status !== 'online') fail('the display is not online on the server');
       if (process.env.EXPECT_FAMILY && d.platform_family !== 'roku') fail(`platform_family is ${d.platform_family}, expected roku`);
     }
+    // ⚠️ ON FAILURE, SHOW THE SERVER'S SIDE TOO. Twice on 2026-10-12 the app logged only "session
+    // closed: server closed ()" and never got back in, and nothing said why the server closed it:
+    // this harness printed the server log only when the server failed to start.
+    // RUN_APP_SERVER_LOG=1 prints it on a passing run as well, for debugging the socket.
+    if ((exitCode || process.env.RUN_APP_SERVER_LOG) && srv && typeof srv.log === 'function') {
+      const lines = String(srv.log()).split('\n');
+      const relevant = lines.filter((l) => /socket|device|disconnect|reconnect|refus|throttl|quarantin|flap|reject|error|warn|pair|regist/i.test(l));
+      console.log(`  --- server log on failure: ${relevant.length} relevant of ${lines.length} lines (last 60), then the final 20 ---`);
+      for (const l of relevant.slice(-60)) console.log('  server> ' + l.slice(0, 240));
+      console.log('  --- final 20 server lines ---');
+      for (const l of lines.slice(-20)) console.log('  server> ' + l.slice(0, 240));
+    }
     console.log(exitCode ? 'app run: FAILED' : 'app run: passed');
   } catch (e) {
     fail(e.stack || e.message);

@@ -37,7 +37,13 @@ sub runSocket()
         end if
 
         if m.sid = "" then
-            if not handshake() then
+            if handshake() then
+                ST_Log("socket", "handshake ok, session open")
+            else
+                ' ⚠️ LOG EVERY FAILED HANDSHAKE. It used to fail silently: after a server close the console
+                ' went quiet for the rest of a run while the app backed off 1, 2, 4 ... 30 s, and nothing on
+                ' screen or in the log said why it never came back (CI, 2026-10-12, twice).
+                ST_Log("socket", "handshake failed: " + m.top.lastError + "; retrying in " + Int(m.backoffMs / 1000).ToStr() + " s")
                 waitAndPump(m.backoffMs)
                 m.backoffMs = m.backoffMs * 2
                 if m.backoffMs > 30000 then m.backoffMs = 30000
@@ -103,8 +109,12 @@ function handshake() as boolean
     base = m.server
     if base = "" then return false
     x = newTransfer(ST_EioUrl(base, ""))
+    m.top.lastError = ""   ' cleared BEFORE the request, so what syncGet records is this attempt's
     body = syncGet(x, 15000)
-    if body = invalid then return false
+    if body = invalid then
+        if m.top.lastError = "" then m.top.lastError = "no response"
+        return false
+    end if
     open = invalid
     for each p in ST_EioDecodePayload(body)
         if p.type = "0" then open = ST_EioParseOpen(p.data)
@@ -232,6 +242,9 @@ sub onPollResponse(msg as object)
         if p.type = "2" then
             m.queue.Unshift("3" + p.data)
         else if p.type = "1" then
+            ' The server ended this Engine.IO session itself (socket.disconnect, a refused reconnect, a
+            ' superseded transport). Say so in lastError, which closeSession prints.
+            m.top.lastError = "engine.io close from server"
             closeSession("server closed")
             return
         else if p.type = "4" then
