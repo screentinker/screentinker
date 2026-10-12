@@ -6,7 +6,6 @@ sub init()
     m.blackout = m.top.findNode("blackout")
     m.overlay = m.top.findNode("overlay")
     m.backdrop = m.top.findNode("backdrop")
-    m.keepalive = m.top.findNode("keepalive")
     m.heartbeat = m.top.findNode("heartbeat")
     m.reregister = m.top.findNode("reregister")
     m.powerTick = m.top.findNode("powerTick")
@@ -21,6 +20,11 @@ sub init()
     m.suspended = false
     m.lastBackMs = 0&
     m.deviceName = ""
+    m.launchSignalled = false
+    m.dialogBeacon = false
+    ' Roku's autoplay policy (certification 4.8): with Autoplay switched off in the Roku's settings,
+    ' nothing may start playing until the viewer asks. Asked once per launch, by pressing OK.
+    m.awaitingStart = not ST_AutoPlayEnabled()
 
     m.cfg = {
         server: ST_RegRead("server_url"),
@@ -34,19 +38,32 @@ sub init()
     m.reregister.observeField("fire", "onReregister")
     m.powerTick.observeField("fire", "onPowerTick")
 
-    keepalive = CreateObject("roSGNode", "ContentNode")
-    keepalive.url = "pkg:/assets/keepalive.mp4"
-    keepalive.streamFormat = "mp4"
-    m.keepalive.content = keepalive
-    m.keepalive.mute = true
-    keepAwake()
+    ' The launch is complete once a first screen is up and answering the remote. If the server is
+    ' slow, that screen is "Connecting to …", which is a fully rendered screen too.
+    m.launchTimer = m.top.findNode("launchTimer")
+    m.launchTimer.observeField("fire", "signalLaunchComplete")
 
     m.top.setFocus(true)
     if m.cfg.server = "" then
         openSetup()
     else
         startSocket()
+        m.launchTimer.control = "start"
     end if
+end sub
+
+' The AppLaunchComplete beacon (certification 3.2 is measured with it), once per launch.
+sub signalLaunchComplete()
+    if m.launchSignalled then return
+    m.launchSignalled = true
+    m.launchTimer.control = "stop"
+    ST_Log("launch", "complete")
+    m.top.signalBeacon("AppLaunchComplete")
+end sub
+
+sub exitApp()
+    ST_Log("launch", "exit")
+    m.top.exitRequested = true
 end sub
 
 ' ---------------------------------------------------------------- launch arguments / setup
@@ -60,8 +77,10 @@ sub onLaunchArgs()
     s = ST_NormaliseServerUrl(ST_Str(a, "server"))
     if s <> "" then
         if m.setup <> invalid then
-            m.setup.close = true
+            d = m.setup
             m.setup = invalid
+            d.close = true
+            endSetupDialog()
         end if
         if s <> m.cfg.server then
             moveToServer(s)
@@ -80,8 +99,31 @@ sub openSetup()
     if cur = "" then cur = "https://screentinker.com"
     d.text = cur
     d.observeField("buttonSelected", "onSetupButton")
+    d.observeField("wasClosed", "onSetupClosed")
     m.setup = d
+    ' A dialog that waits for input before the first screen must be bracketed by AppDialog beacons,
+    ' so the time a viewer spends typing is not counted as launch time.
+    if not m.launchSignalled and not m.dialogBeacon then
+        m.dialogBeacon = true
+        m.top.signalBeacon("AppDialogInitiate")
+    end if
     m.top.dialog = d
+end sub
+
+sub endSetupDialog()
+    if m.dialogBeacon then
+        m.dialogBeacon = false
+        m.top.signalBeacon("AppDialogComplete")
+    end if
+end sub
+
+' Back on the keyboard closes it without a button. With no server yet there is nothing behind it,
+' so that is "leave the app", as Back must be (certification 4.6).
+sub onSetupClosed()
+    if m.setup = invalid then return
+    m.setup = invalid
+    endSetupDialog()
+    if m.cfg.server = "" then exitApp()
 end sub
 
 sub onSetupButton()
@@ -89,21 +131,25 @@ sub onSetupButton()
     if d = invalid then return
     if d.buttonSelected = 0 then
         s = ST_NormaliseServerUrl(d.text)
-        d.close = true
         m.setup = invalid
+        d.close = true
         if s = "" then
             openSetup()
             return
         end if
+        endSetupDialog()
         if s <> m.cfg.server then
             moveToServer(s)
         else if m.socket = invalid then
             startSocket()
         end if
+        signalLaunchComplete()
     else
-        d.close = true
         m.setup = invalid
-        if m.cfg.server = "" then openSetup()
+        d.close = true
+        endSetupDialog()
+        ' Cancel on first run used to reopen the dialog, a loop with no way out but Home.
+        if m.cfg.server = "" then exitApp()
     end if
 end sub
 
@@ -260,6 +306,7 @@ sub showPairing()
     m.pairing.code = m.cfg.pairingCode
     m.pairing.server = m.cfg.server
     m.pairing.visible = true
+    signalLaunchComplete()
 end sub
 
 sub onReregister()
@@ -342,7 +389,6 @@ sub clearStage()
     ' ⚠️ The signature is NOT cleared here: buildStage() calls this right after recording the new
     ' one, and clearing it made every payload look new — each push restarted playback at item one.
     ' Callers that tear the stage down for good (pairing, refresh, suspension) clear it themselves.
-    keepAwake()
 end sub
 
 sub buildStage(p as object)
@@ -399,7 +445,6 @@ sub buildStage(p as object)
             canVideo: (i = best), defaultContent: p.default_content, zoneId: z.id
         }
         node.observeField("playEvent", "onPlayEvent")
-        node.observeField("playingVideo", "onPlayingVideo")
         m.stage.appendChild(node)
         m.zones.Push(node)
     end for
@@ -432,7 +477,25 @@ sub distributeItems(p as object, start as boolean)
         cfg.tzTables = p.tz_tables
         m.zones[i].config = cfg
         m.zones[i].items = buckets[i]
-        if start then m.zones[i].command = "start"
+        if start and not m.awaitingStart then m.zones[i].command = "start"
+    end for
+    if start then signalLaunchComplete()
+    ' Shown again after every payload: a reconnect clears the status line.
+    if m.awaitingStart then
+        if start then ST_Log("autoplay", "off on this Roku, waiting for OK")
+        showStatus("Autoplay is off on this Roku." + Chr(10) + "Press OK to start playback.")
+    end if
+end sub
+
+' The viewer asked for playback; from here on this launch plays as normal.
+sub startPlayback()
+    m.awaitingStart = false
+    hideStatus()
+    ST_Log("autoplay", "started by the viewer")
+    for each z in m.zones
+        z.command = "start"
+        ' OK pressed while a power window or screen_off has the screen black: start, then hold
+        if m.blackout.visible then z.command = "pause"
     end for
 end sub
 
@@ -460,26 +523,6 @@ sub onPlayEvent(ev as object)
     end if
     ST_Log("play", pe.event + " " + nm)
     emit("device:play-event", d)
-end sub
-
-sub onPlayingVideo()
-    keepAwake()
-end sub
-
-' ⚠️ ROKU STARTS ITS SCREENSAVER OVER A STILL PICTURE. An app can only hold it off while a Video
-' node with disableScreenSaver is playing; faking key presses fails certification. So while no zone
-' is playing real video, a 2x2 px silent black clip loops behind the stage. The moment a zone plays
-' video it is stopped, because a Roku decodes one video at a time.
-sub keepAwake()
-    anyVideo = false
-    for each z in m.zones
-        if z.playingVideo then anyVideo = true
-    end for
-    if anyVideo then
-        if m.keepalive.state = "playing" or m.keepalive.state = "buffering" then m.keepalive.control = "stop"
-    else
-        if m.keepalive.state <> "playing" and m.keepalive.state <> "buffering" then m.keepalive.control = "play"
-    end if
 end sub
 
 ' ---------------------------------------------------------------- power windows and screen off
@@ -569,6 +612,9 @@ function onKeyEvent(key as string, press as boolean) as boolean
     if not press then return false
     if key = "options" then
         openSetup()
+        return true
+    else if key = "OK" and m.awaitingStart and m.zones.Count() > 0 then
+        startPlayback()
         return true
     else if key = "OK" or key = "info" then
         if m.overlay.visible then

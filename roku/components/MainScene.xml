@@ -2,6 +2,8 @@
 <component name="MainScene" extends="Scene">
   <interface>
     <field id="launchArgs" type="assocarray" onChange="onLaunchArgs" />
+    <!-- set when the viewer leaves from a screen with nothing behind it; main.brs closes the app -->
+    <field id="exitRequested" type="boolean" value="false" alwaysNotify="true" />
   </interface>
   <script type="text/brightscript" uri="pkg:/source/lib/util.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/device.brs" />
@@ -10,9 +12,6 @@
   <script type="text/brightscript" uri="MainScene.brs" />
   <children>
     <Rectangle id="backdrop" width="1920" height="1080" color="0x000000FF" />
-    <!-- Keeps the screensaver away while no zone is playing video (see keepAwake()). Tiny, behind
-         everything, and never visible to a viewer. -->
-    <Video id="keepalive" width="2" height="2" translation="[0,0]" enableUI="false" disableScreenSaver="true" loop="true" />
     <Group id="stage" />
     <PairingView id="pairing" visible="false" />
     <Rectangle id="blackout" width="1920" height="1080" color="0x000000FF" visible="false" />
@@ -20,5 +19,6 @@
     <Timer id="heartbeat" repeat="true" duration="15" />
     <Timer id="reregister" repeat="true" duration="600" />
     <Timer id="powerTick" repeat="true" duration="30" />
+    <Timer id="launchTimer" repeat="false" duration="5" />
   </children>
 </component>

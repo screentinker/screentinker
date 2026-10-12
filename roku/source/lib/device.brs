@@ -10,6 +10,14 @@ function ST_AppVersion() as string
     return ai.GetVersion()
 end function
 
+' Roku's Autoplay setting (Settings > Accessibility on recent Roku OS). A Roku OS old enough not to
+' have the call predates the setting, so autoplay is on there.
+function ST_AutoPlayEnabled() as boolean
+    di = CreateObject("roDeviceInfo")
+    if FindMemberFunction(di, "IsAutoPlayEnabled") = invalid then return true
+    return di.IsAutoPlayEnabled() = true
+end function
+
 function ST_OsVersionString() as string
     di = CreateObject("roDeviceInfo")
     v = di.GetOSVersion()

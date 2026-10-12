@@ -31,7 +31,7 @@
     <Rectangle id="bg" color="0x000000FF" />
     <Poster id="posterA" opacity="0" />
     <Poster id="posterB" opacity="0" />
-    <Video id="video" visible="false" enableUI="false" enableTrickPlay="false" disableScreenSaver="true" />
+    <Video id="video" visible="false" enableUI="false" enableTrickPlay="false" />
     <!-- A clock widget drawn natively, so its seconds tick (a server frame would stand still between
          refreshes). Only when the zone's offsets are known and the text is English; else a frame. -->
     <Group id="clock" visible="false">

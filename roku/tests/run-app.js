@@ -14,6 +14,10 @@
  * to catch crashes, wrong field types and protocol mistakes; it does not decode video. The video item
  * is expected to be ASKED FOR and then moved past by the player's watchdog — proving the request and
  * the watchdog, not that a Roku plays the file.
+ *
+ * The simulator reports Autoplay as OFF, so this also runs Roku's autoplay policy: the player must
+ * wait with nothing playing, and start when OK (Select) is pressed — sent here over the simulator's
+ * ECP port, as a remote would.
  */
 
 const fs = require('fs');
@@ -24,6 +28,7 @@ const { start, packageApp, REPO } = require('./lib/st-server');
 
 const ROKU = path.join(REPO, 'roku');
 const BRS_CLI = process.env.BRS_CLI || path.join(ROKU, 'node_modules/brs-node/bin/brs.cli.js');
+const ECP_PORT = 8060;
 const SECONDS = Number((process.argv.find((a, i) => process.argv[i - 1] === '--seconds')) || 90);
 
 (async () => {
@@ -44,9 +49,10 @@ const SECONDS = Number((process.argv.find((a, i) => process.argv[i - 1] === '--s
     console.log(`content: image ${img.id}, video ${vid.id}, clock widget ${clock.id}`);
 
     const zip = packageApp(work);
-    brs = spawn(process.execPath, [BRS_CLI, '-c', '0', '-g', 'warning', '-k', `server=${srv.base}`, zip], { cwd: work, stdio: ['ignore', 'pipe', 'pipe'] });
+    brs = spawn(process.execPath, [BRS_CLI, '-c', '0', '-g', 'warning', '-e', '-k', `server=${srv.base}`, zip], { cwd: work, stdio: ['ignore', 'pipe', 'pipe'] });
     let deviceId = null;
     let pairing = false;
+    let pressedAt = -1;
     let buf = '';
     const onData = async (d) => {
       buf += d;
@@ -56,6 +62,15 @@ const SECONDS = Number((process.argv.find((a, i) => process.argv[i - 1] === '--s
         if (!line.trim()) continue;
         if (/^\[st\]|BRIGHTSCRIPT: ERROR|Runtime Error/.test(line)) console.log('  roku> ' + line);
         seen.push(line);
+        if (pressedAt < 0 && /\[st\] autoplay: off on this Roku, waiting for OK/.test(line)) {
+          pressedAt = seen.length;
+          // a viewer takes a moment; it also proves nothing started in the meantime
+          setTimeout(() => {
+            fetch(`http://127.0.0.1:${ECP_PORT}/keypress/Select`, { method: 'POST' })
+              .then((r) => console.log(`  test> pressed OK over ECP (${r.status})`))
+              .catch((e) => fail('ECP keypress: ' + e.message));
+          }, 3000);
+        }
         const m = line.match(/\[st\] pairing: code (\d{6})/);
         if (m && !pairing) {
           pairing = true;
@@ -73,6 +88,14 @@ const SECONDS = Number((process.argv.find((a, i) => process.argv[i - 1] === '--s
     const has = (re) => seen.some((l) => re.test(l));
     if (!has(/\[st\] pairing: code \d{6}/)) fail('the app never showed a pairing code');
     if (!has(/\[st\] payload: items=4/)) fail('the app never received the 4-item playlist');
+    if (!has(/\[st\] launch: complete/)) fail('the AppLaunchComplete beacon was never signalled');
+    if (pressedAt < 0) fail('with Autoplay off the player never waited for OK');
+    else {
+      const started = seen.findIndex((l) => /\[st\] autoplay: started by the viewer/.test(l));
+      if (started < 0) fail('OK did not start playback');
+      const early = seen.slice(0, started < 0 ? seen.length : started).filter((l) => /\[st\] play: play_start|show (image|video|raster) /.test(l));
+      if (early.length) fail('something played before OK was pressed: ' + early[0]);
+    }
     if (!has(/show image icon-512/)) fail('the image was never started');
     if (!has(/on screen .*\/uploads\/content\//)) fail('the image never reached the screen');
     if (!has(/show video /)) fail('the video was never started');

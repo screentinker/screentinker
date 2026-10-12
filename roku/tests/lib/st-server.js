@@ -104,7 +104,7 @@ function packageApp(dir) {
   const app = path.join(dir, 'app');
   fs.rmSync(app, { recursive: true, force: true });
   fs.mkdirSync(app, { recursive: true });
-  for (const f of ['manifest', 'source', 'components', 'images', 'assets', 'fonts']) fs.cpSync(path.join(ROKU, f), path.join(app, f), { recursive: true });
+  for (const f of ['manifest', 'source', 'components', 'images', 'fonts']) fs.cpSync(path.join(ROKU, f), path.join(app, f), { recursive: true });
   const zip = path.join(dir, 'app.zip');
   fs.rmSync(zip, { force: true });
   const r = spawnSync('zip', ['-qr', zip, '.'], { cwd: app });

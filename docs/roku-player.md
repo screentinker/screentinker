@@ -41,7 +41,7 @@ roku/
     playorder.brs               sequential / shuffle / weighted next-item (tizen/js/play-order.js)
   components/
     MainScene.xml/.brs          setup -> pairing -> playing; socket events, commands, heartbeats,
-                                layouts, power windows, the screensaver keep-awake
+                                layouts, power windows, launch beacons, the autoplay wait
     tasks/SocketTask.xml/.brs   the Engine.IO session in a Task thread (long-poll GET + one POST at a
                                 time, ping/pong, ping and POST timeouts, reconnect with backoff)
     tasks/RasterTask.xml/.brs   fetches server-rendered frames to tmp:/ (Bearer auth, ETag/304,
@@ -51,7 +51,6 @@ roku/
     ui/PairingView, ui/Overlay  pairing code screen; status / info strip
   images/                       icons + splash (from the ScreenTinker logo)
   fonts/                        Inter Regular/Bold (OFL, the server's own font, as static TTF)
-  assets/keepalive.mp4          1-second silent black clip we generate (keeps the screensaver off)
   tests/                        vectors, codec, end-to-end protocol, whole-app and screenshot harnesses
 ```
 
@@ -234,8 +233,20 @@ If-None-Match: "<etag from the last 200>"                      (optional)
   uses); a structural change rebuilds the stage.
 - **The socket rebuilds itself** when no ping arrives within `pingInterval + pingTimeout + 5 s`, or a
   POST has not completed in 15 s (re-sending what was in flight, then re-registering).
-- **Screensaver**: Roku holds off its screensaver only while a Video node with `disableScreenSaver`
-  plays, so while no zone plays video a 2×2 px silent clip loops behind the stage.
+- **Screensaver**: the app leaves Roku's screensaver alone (certification 4.5). Up to 0.1.x a 2×2 px
+  silent clip looped behind the stage to hold it off, and the Video node set `disableScreenSaver`;
+  both are gone. Over a still image or a frame, the Roku's own screensaver timeout applies; set it
+  to the longest the TV allows, or *Off* where the model offers that.
+- **Autoplay**: if Autoplay is off in the Roku's settings (`roDeviceInfo.IsAutoPlayEnabled()`), the
+  stage is built but nothing starts until OK is pressed, once per launch (certification 4.8). The
+  status line says so. On a Roku OS too old to have the call, playback starts as before.
+- **Launch beacons**: `AppLaunchComplete` fires on the first screen that answers the remote (pairing,
+  the first playlist, or 5 s of "Connecting to …"). The first-run server prompt is bracketed by
+  `AppDialogInitiate` / `AppDialogComplete` so typing time is not counted as launch time.
+- **Deep links**: Roku's `contentId` / `mediaType` (search, voice, certification tests) open the
+  player, at launch or while running; there is no catalogue to open a title from.
+- **Back / Cancel on first run** (no server saved yet) leave the app, since nothing is behind the
+  prompt. Elsewhere Back still needs two presses within 3 s.
 - **Power windows and `screen_off`** blank the screen and pause playback; the TV stays on.
 - **Debugging**: launch with `debug=1` to log every Engine.IO request; `debug=0` turns it off.
 
@@ -246,7 +257,7 @@ If-None-Match: "<etag from the last 200>"                      (optional)
 | `bsc` + bslint | the whole app compiles with zero diagnostics |
 | `tests/run-vectors.js` | the shared schedule and power-window vectors, generated time-zone and next-edge cases, play order against `tizen/js/play-order.js` |
 | `tests/run-protocol.js --e2e` | the codec, then a real Engine.IO session against the server: register, pair, re-register, playlist, heartbeat ack |
-| `tests/run-app.js` | the whole app in brs-node: pairing, a 3-item playlist (image, video, clock), server frames, tz_table, plays reported, `platform_family roku` |
+| `tests/run-app.js` | the whole app in brs-node: pairing, a 4-item playlist (image, video, clock, text widget), server frames, tz_table, plays reported, `platform_family roku`; the launch beacon; with the simulator's Autoplay off, nothing plays until OK is pressed over ECP |
 | `tests/screenshot-app.js [--layout]` | the app drawn by the simulator in Chromium: pairing screen, image, video, native clocks, server frames, a two-zone layout |
 | `server/test/roku-*.test.js`, `player-raster.test.js`, `tz-table.test.js` | the server side, plus a guard against BrightSign-only or certification-banned calls in `roku/` |
 

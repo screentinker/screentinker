@@ -1,6 +1,6 @@
 {
   "rootDir": ".",
-  "files": ["manifest", "source/**/*", "components/**/*", "images/**/*", "assets/**/*", "fonts/**/*"],
+  "files": ["manifest", "source/**/*", "components/**/*", "images/**/*", "fonts/**/*"],
   "stagingDir": "../.roku-build/staging",
   "retainStagingDir": false,
   "createPackage": false,
