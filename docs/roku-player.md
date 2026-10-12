@@ -250,7 +250,7 @@ If-None-Match: "<etag from the last 200>"                      (optional)
 - **Power windows and `screen_off`** blank the screen and pause playback; the TV stays on.
 - **Debugging**: launch with `debug=1` to log every Engine.IO request; `debug=0` turns it off.
 
-## How it was tested (no Roku yet)
+## How it was tested
 
 | | |
 |---|---|
@@ -260,6 +260,13 @@ If-None-Match: "<etag from the last 200>"                      (optional)
 | `tests/run-app.js` | the whole app in brs-node: pairing, a 4-item playlist (image, video, clock, text widget), server frames, tz_table, plays reported, `platform_family roku`; the launch beacon; with the simulator's Autoplay off, nothing plays until OK is pressed over ECP |
 | `tests/screenshot-app.js [--layout]` | the app drawn by the simulator in Chromium: pairing screen, image, video, native clocks, server frames, a two-zone layout |
 | `server/test/roku-*.test.js`, `player-raster.test.js`, `tz-table.test.js` | the server side, plus a guard against BrightSign-only or certification-banned calls in `roku/` |
+| `tests/check-threads.js` | no component that Roku allows only on the main thread or in a Task (`roUrlTransfer`, sockets, `roChannelStore`) is created by a script running on the render thread. **The simulator does not enforce this, and a real Roku crashes on it.** |
+
+**On a real Roku** (Streaming Stick 4K 3820R2, Roku OS 15.3.4, paired to screentinker.com): pairing, image playlists, a launch of about 1.5 s by Roku's own `AppLaunchComplete` beacon, and reinstalling over an existing install keeping the pairing. Found only on the device:
+- `roUrlTransfer.Escape()` on the render thread crashed into the debugger, leaving a black screen. `ST_UrlEncode` now uses `EncodeUriComponent()`, and `check-threads.js` guards the rule.
+- After a decode error, the Video node reported the next video `finished` without it ever playing. A playlist with nothing playable then spun about twice a second, with a black screen and a play row per attempt. Now: `finished` without `playing` is a failure; failures send `play_end` with `completed: false`; and a round where nothing played puts a message on screen and retries after 30 s, doubling to every 5 minutes.
+
+Debugging a device: `nc <roku-ip> 8085` is the BrightScript console (no password; it shows output only from when you connect). `POST :8060/launch/dev` relaunches the sideloaded app, and `GET :8060/query/app-ui` lists the scene, including hidden nodes.
 
 ## What a Roku cannot do (and will not pretend to)
 
@@ -271,3 +278,4 @@ If-None-Match: "<etag from the last 200>"                      (optional)
 - **Play items that need a browser natively.** They are shown as server-rendered frames: correct
   content, refreshed on a timer, but no animation, no video inside a web page, no touch.
 - **Video walls / group sync.** Not implemented.
+- **Play H.264 taller than 1080 pixels**, which in practice means portrait 1080x1920 phone and AI clips. The decoder refuses it (`unsupported video format`, code -5, `Image height too high`), and the size of the zone makes no difference, because decoding happens first. Use a copy no bigger than 1920x1080, e.g. `ffmpeg -i in.mp4 -vf "scale=-2:1080" -c:v libx264 -crf 20 -c:a copy out.mp4`. The screen now says so instead of going black.

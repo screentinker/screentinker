@@ -28,6 +28,10 @@ sub init()
     m.rasterSlot = {}       ' frame key -> "a" | "b"
     m.failedThisRound = {}  ' item identity -> true, cleared when the round wraps
     m.running = false
+    m.videoStarted = false  ' the current video reached "playing"
+    m.failRounds = 0        ' consecutive rounds in which nothing could play
+    m.holding = false       ' waiting on m.retry after such a round
+    m.lastFailReason = ""
 
     m.raster = CreateObject("roSGNode", "RasterTask")
     m.raster.observeField("result", "onRasterResult")
@@ -42,6 +46,11 @@ sub init()
     m.refresh.observeField("fire", "onRefreshFire")
     m.watchdog = m.top.findNode("watchdog")
     m.watchdog.observeField("fire", "onWatchdogFire")
+    m.retry = m.top.findNode("retry")
+    m.retry.observeField("fire", "onRetryFire")
+    m.notice = m.top.findNode("notice")
+    m.noticeBg = m.top.findNode("noticeBg")
+    m.noticeText = m.top.findNode("noticeText")
     m.clock = m.top.findNode("clock")
     m.clockBg = m.top.findNode("clockBg")
     m.clockTime = m.top.findNode("clockTime")
@@ -53,8 +62,8 @@ end sub
 sub onWatchdogFire()
     if m.videoGen <> m.gen or m.current = invalid then return
     ST_Log(m.top.id, "video watchdog: no end after " + Int(m.watchdog.duration).ToStr() + " s, moving on")
-    m.failedThisRound[ST_ItemIdentity(m.current)] = true
     stopVideo()
+    itemFailed("A video stopped responding.")
     playNext()
 end sub
 
@@ -68,6 +77,8 @@ sub onCommand()
         m.idx = -1
         m.order = ST_PlayOrderNew()
         m.failedThisRound = {}
+        endHold()
+        m.failRounds = 0
         m.recheck.control = "start"
         playNext()
     else if c = "stop" then
@@ -107,10 +118,16 @@ sub applyGeometry()
     end for
     m.video.width = w
     m.video.height = h
+    m.noticeBg.width = w
+    m.noticeBg.height = h
+    m.noticeText.translation = [Int(w * 0.1), 0]
+    m.noticeText.width = Int(w * 0.8)
+    m.noticeText.height = h
 end sub
 
 sub stopAll()
     stopNativeClock()
+    endHold()
     m.running = false
     m.gen = m.gen + 1
     endCurrent(false)
@@ -163,10 +180,14 @@ sub playNext()
     items = m.top.items
     allows = eligibility()
     if countTrue(allows) = 0 then
-        ' Nothing can play now. If that is only because everything failed once this round, forget
-        ' the failures — the recheck tick (30 s) tries again, which is the retry backoff.
+        ' Nothing can play now. If that is because everything FAILED this round, say so on screen and
+        ' wait before trying again. ⚠️ Without the wait this was a tight loop on a real Roku: four
+        ' undecodable videos cycled about twice a second, a black screen, and a play_start/play_end
+        ' pair sent to the server for every attempt.
+        failed = m.failedThisRound.Count() > 0
         m.failedThisRound = {}
         showIdle()
+        if failed then holdAfterFailures()
         return
     end if
     mode = ST_Str(m.top.config, "playbackOrder", "sequential")
@@ -184,7 +205,7 @@ end sub
 sub onRecheckFire()
     ' Schedules open and close on their own clock. Idle: try again. Playing a looping single item:
     ' re-evaluate, because a second item may have just come into its window.
-    if not m.running then return
+    if not m.running or m.holding then return
     if m.current = invalid then
         playNext()
     else if m.eligibleCount = 1 then
@@ -199,6 +220,63 @@ end sub
 sub onAdvanceFire()
     playNext()
 end sub
+
+' ---------------------------------------------------------------- failures
+
+' The current item could not be shown. Recorded as not completed, so a failed attempt is not
+' reported to the server as a play.
+sub itemFailed(reason as string)
+    if m.current <> invalid then m.failedThisRound[ST_ItemIdentity(m.current)] = true
+    if reason <> "" then m.lastFailReason = reason
+    endCurrent(false)
+end sub
+
+' Something played: the playlist works, so forget the backoff and take the notice down.
+sub markSuccess()
+    m.failRounds = 0
+    m.lastFailReason = ""
+    m.notice.visible = false
+end sub
+
+sub holdAfterFailures()
+    m.failRounds = m.failRounds + 1
+    d = 30
+    for i = 2 to m.failRounds
+        d = d * 2
+        if d >= 300 then exit for
+    end for
+    if d > 300 then d = 300
+    ST_Log(m.top.id, "nothing in this playlist could play; trying again in " + d.ToStr() + " s")
+    msg = "Nothing in this playlist can play on this Roku."
+    if m.lastFailReason <> "" then msg = msg + Chr(10) + Chr(10) + m.lastFailReason
+    msg = msg + Chr(10) + Chr(10) + "It will try again automatically."
+    m.noticeText.text = msg
+    m.notice.visible = true
+    m.holding = true
+    m.retry.duration = d
+    m.retry.control = "start"
+end sub
+
+sub endHold()
+    m.holding = false
+    m.retry.control = "stop"
+    m.notice.visible = false
+end sub
+
+sub onRetryFire()
+    m.holding = false
+    if m.running then playNext()
+end sub
+
+' Roku's own wording ("unsupported video format", "Image height too high") turned into what to do.
+function videoFailReason(msg as string, detail as string) as string
+    t = LCase(msg + " " + detail)
+    if Instr(1, t, "height too high") > 0 or Instr(1, t, "width too high") > 0 then
+        return "A video is larger than this Roku can play. Use a copy no bigger than 1920 x 1080 (a portrait video: 1080 pixels tall or less)."
+    end if
+    if Instr(1, t, "unsupported") > 0 then return "A video is in a format this Roku cannot play (" + msg + ")."
+    return "A video could not be played (" + msg + ")."
+end function
 
 ' ---------------------------------------------------------------- playing one item
 
@@ -317,8 +395,10 @@ sub onPosterStatus(ev as object)
     if st = "ready" then
         ST_Log(m.top.id, "on screen " + p.uri)
         bringToFront(p)
+        if m.current <> invalid then markSuccess()
     else if st = "failed" then
-        if m.current <> invalid then m.failedThisRound[ST_ItemIdentity(m.current)] = true
+        if m.current = invalid then return  ' default content on the idle screen: stay idle
+        itemFailed("An image could not be loaded.")
         m.advance.control = "stop"
         playNext()
     end if
@@ -392,6 +472,7 @@ sub onRasterResult()
     if not ST_IsAA(r) or want = invalid or r.seq <> want.seq or want.gen <> m.gen then return
     key = want.key
     if r.ok then
+        if m.current <> invalid then markSuccess()
         if ST_Str(r, "etag") <> "" then m.rasterEtag[key] = r.etag
         if r.notModified = true then
             ' unchanged: show the frame we already have (it may not be on screen if we came from
@@ -421,7 +502,7 @@ sub onRasterResult()
         else
             m.top.status = "frame failed: " + ST_Str(r, "error")
             ST_Log(m.top.id, m.top.status)
-            if m.current <> invalid then m.failedThisRound[ST_ItemIdentity(m.current)] = true
+            itemFailed("A page could not be rendered for this screen.")
             m.advance.control = "stop"
             playNext()
         end if
@@ -437,7 +518,8 @@ end sub
 sub playVideo(item as object, kind as string)
     url = ST_MediaUrl(ST_Str(m.top.config, "serverUrl"), item)
     if url = "" then
-        m.failedThisRound[ST_ItemIdentity(item)] = true
+        if m.current = invalid then return
+        itemFailed("A video has no address to play from.")
         playNext()
         return
     end if
@@ -451,6 +533,7 @@ sub playVideo(item as object, kind as string)
         if ST_IsTrue(item.captions_enabled) then m.video.globalCaptionMode = "On" else m.video.globalCaptionMode = "Off"
     end if
     m.videoGen = m.gen
+    m.videoStarted = false
     m.top.playingVideo = true
     m.video.loop = (m.eligibleCount <= 1 and kind = "video")
     m.video.mute = ST_IsTrue(item.muted)
@@ -483,6 +566,8 @@ sub onVideoState()
     st = m.video.state
     if st = "playing" then
         ST_Log(m.top.id, "video playing")
+        m.videoStarted = true
+        if m.current <> invalid then markSuccess()
         m.video.visible = true
         ' the frame underneath is no longer needed
         for each p in m.posters
@@ -491,16 +576,39 @@ sub onVideoState()
         m.front = -1
     else if st = "finished" then
         m.watchdog.control = "stop"
-        if not m.video.loop then
+        ' ⚠️ "finished" WITHOUT EVER "playing" IS A FAILURE. After a decode error the Video node
+        ' reported the NEXT video "finished" at once, so a playlist of undecodable videos looked like
+        ' every other item played fine and the loop never stopped.
+        if not m.videoStarted then
+            ST_Log(m.top.id, "video ended without playing")
+            stopVideo()
+            if m.current = invalid then return
+            itemFailed("A video could not be played on this Roku.")
+            playNext()
+        else if not m.video.loop then
             m.videoGen = -1
             playNext()
         end if
     else if st = "error" then
-        m.top.status = "video error: " + m.video.errorMsg
+        ' errorMsg alone ("unsupported video format") cannot tell a codec from a container from a bad
+        ' URL. errorCode, errorStr and errorInfo can, without anyone opening the file.
+        m.top.status = "video error: " + m.video.errorMsg + " (code " + ST_NumToStr(m.video.errorCode) + ")"
+        if m.video.errorStr <> invalid and m.video.errorStr <> "" then m.top.status = m.top.status + " " + m.video.errorStr
+        info = m.video.errorInfo
+        detail = ""
+        if info <> invalid then
+            m.top.status = m.top.status + " " + FormatJson(info)
+            if ST_IsAA(info) then detail = ST_Str(info, "dbgmsg")
+        end if
         ST_Log(m.top.id, m.top.status)
-        m.failedThisRound[ST_ItemIdentity(m.current)] = true
-        m.videoGen = -1
-        m.top.playingVideo = false
+        reason = videoFailReason(m.video.errorMsg, detail)
+        ' Reset the node, so the next video does not inherit this one's state. stopVideo() only
+        ' stops a playing/buffering/paused node, never one in "error", so stop it here explicitly.
+        m.video.control = "stop"
+        stopVideo()
+        m.video.content = invalid
+        if m.current = invalid then return  ' default content on the idle screen: stay idle
+        itemFailed(reason)
         playNext()
     end if
 end sub

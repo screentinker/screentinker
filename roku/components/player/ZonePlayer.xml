@@ -48,5 +48,12 @@
     <Timer id="recheck" repeat="true" duration="30" />
     <Timer id="refresh" repeat="false" />
     <Timer id="watchdog" repeat="false" />
+    <!-- After a round in which nothing could play: wait before trying again (30 s, doubling to 5 min). -->
+    <Timer id="retry" repeat="false" />
+    <!-- Said on screen when nothing in the playlist can play, instead of a black screen. -->
+    <Group id="notice" visible="false">
+      <Rectangle id="noticeBg" color="0x000000CC" />
+      <Label id="noticeText" horizAlign="center" vertAlign="center" wrap="true" font="font:MediumSystemFont" color="0xFFFFFFFF" />
+    </Group>
   </children>
 </component>

@@ -146,6 +146,9 @@ jobs:
         run: cd roku && npx bsc --project bsconfig.json
       - name: Schedule / power-window / play-order vectors
         run: node roku/tests/run-vectors.js
+      # The simulator does not enforce SceneGraph thread rules; a real Roku crashes on them.
+      - name: Render-thread rule check
+        run: node roku/tests/check-threads.js
       - name: Install server dependencies
         run: npm ci --prefix server --omit=dev --no-audit --no-fund
       - name: Engine.IO codec + end-to-end protocol against the server

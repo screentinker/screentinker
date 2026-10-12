@@ -66,10 +66,14 @@ function ST_NumToStr(n as dynamic) as string
     return Str(n).Trim()
 end function
 
-' Percent-encode for a query string value (RFC 3986 unreserved kept).
+' Percent-encode for a query string value.
+' ⚠️ NOT roUrlTransfer.Escape(). roUrlTransfer is a MAIN/TASK-only component: creating one on the
+' render thread fails, and the next line then crashes the app into the debugger with a black screen.
+' ZonePlayer builds media and frame URLs on the render thread. The simulator does not enforce thread
+' rules, so this only showed on a real Roku (Streaming Stick 4K, OS 15.3.4). The string method works
+' on every thread.
 function ST_UrlEncode(s as string) as string
-    o = CreateObject("roUrlTransfer")
-    return o.Escape(s)
+    return s.EncodeUriComponent()
 end function
 
 ' Join a base URL and a path without doubling or dropping the slash.
