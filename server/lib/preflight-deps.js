@@ -90,6 +90,57 @@ function missingDeps() {
 }
 
 /**
+ * Which installed PRODUCTION packages are not the version package-lock.json says (#587 follow-up).
+ *
+ * ⚠️ missingDeps() ONLY ASKS "IS IT ON DISK". An upgrade by `git pull` + restart (no upgrade.sh, so
+ * no `npm ci`) therefore kept every package it already had: after the 2.6.2 security refresh that
+ * meant nodemailer 9 under a package.json asking for ^10, and the vulnerable proxy-addr and engine.io
+ * underneath, while the server booted as if nothing were wrong. Transitive packages are compared
+ * too: that is where proxy-addr and engine.io live.
+ *
+ * Compared only where the package IS on disk: an absent optional or platform-specific package (an
+ * @img/sharp-* or esbuild binary for another OS) is not stale. Dev-only entries are ignored, and so
+ * are links and bundled packages, which npm does not version from the lockfile.
+ * @returns {{name: string, installed: string, locked: string}[]}
+ */
+function staleDeps(serverDir = SERVER_DIR) {
+  let lock;
+  try { lock = JSON.parse(fs.readFileSync(path.join(serverDir, 'package-lock.json'), 'utf8')); }
+  catch { return []; }   // no lockfile: nothing to compare against
+  const out = [];
+  for (const [key, entry] of Object.entries(lock.packages || {})) {
+    if (!key.startsWith('node_modules/') || !entry || !entry.version) continue;
+    if (entry.dev || entry.link || entry.inBundle) continue;
+    let installed;
+    try { installed = JSON.parse(fs.readFileSync(path.join(serverDir, key, 'package.json'), 'utf8')).version; }
+    catch { continue; }   // not on disk: missingDeps() owns the top-level case, absent optionals are fine
+    if (installed !== entry.version) out.push({ name: key.slice(key.lastIndexOf('node_modules/') + 13), installed, locked: entry.version });
+  }
+  return out;
+}
+
+/** A tree installed with --omit=dev: none of package.json's devDependencies are on disk. */
+function productionTree(serverDir = SERVER_DIR) {
+  let pkg;
+  try { pkg = JSON.parse(fs.readFileSync(path.join(serverDir, 'package.json'), 'utf8')); } catch { return true; }
+  return !Object.keys(pkg.devDependencies || {}).some((n) => fs.existsSync(path.join(serverDir, 'node_modules', n, 'package.json')));
+}
+
+/**
+ * npm needs a writable home for its cache and logs. A systemd service user often has none (prod's
+ * `screentinker` user has no /home directory), and then npm dies writing ~/.npm/_logs having
+ * installed nothing. Point it inside the install instead, as the documented prod recipe does.
+ */
+function npmEnv(serverDir = SERVER_DIR, env = process.env) {
+  const home = env.HOME;
+  let writable = false;
+  if (home) { try { fs.accessSync(home, fs.constants.W_OK); writable = true; } catch { /* not ours */ } }
+  if (writable) return env;
+  const base = path.join(serverDir, '..');
+  return { ...env, HOME: base, npm_config_cache: path.join(base, '.npm-cache') };
+}
+
+/**
  * Is the native module loadable by THIS Node?
  *
  * Checked by actually loading it, because the failure is an ABI mismatch that no version string
@@ -157,7 +208,19 @@ function canRebuildNative() {
 
 function run(args, label) {
   console.log(`[preflight] ${label}: npm ${args.join(' ')}`);
-  execFileSync('npm', args, { cwd: SERVER_DIR, stdio: 'inherit', timeout: INSTALL_TIMEOUT_MS });
+  execFileSync('npm', args, { cwd: SERVER_DIR, stdio: 'inherit', timeout: INSTALL_TIMEOUT_MS, env: npmEnv() });
+}
+
+/**
+ * The npm arguments that bring a POPULATED tree back to the lockfile. `install` (not `ci`, which
+ * deletes node_modules first: a network failure halfway would leave a server that cannot boot at
+ * all), `--no-save` (a booting server does not edit package.json), and `--omit=dev` only on a
+ * tree that has no dev packages, because on a developer's tree it prunes them and breaks npm test.
+ */
+function reconcileArgs(serverDir = SERVER_DIR) {
+  return productionTree(serverDir)
+    ? ['install', '--omit=dev', '--no-save', '--no-audit', '--no-fund']
+    : ['install', '--no-save', '--no-audit', '--no-fund'];
 }
 
 function fail(reason, hint) {
@@ -234,6 +297,26 @@ function preflight() {
   }
 
   /*
+   * Installed but OUT OF DATE: an upgrade by `git pull` + restart. Brought back to the lockfile in
+   * place, so the security fixes an upgrade carries are actually running, not merely on disk.
+   */
+  const stale = staleDeps();
+  if (stale.length) {
+    const sample = stale.slice(0, 5).map((d) => `${d.name} ${d.installed} → ${d.locked}`).join(', ');
+    console.warn(`[preflight] ${stale.length} installed package(s) differ from package-lock.json (${sample}${stale.length > 5 ? ', …' : ''}) — updating before start.`);
+    try {
+      run(reconcileArgs(), 'updating to the lockfile');
+    } catch (e) {
+      // Not fatal: the old versions still run. Say so loudly instead of refusing to boot.
+      console.error(`[preflight] could not update dependencies (${e && e.message}). The server will start with the versions it has.`);
+      console.error('[preflight] Run `npm ci --omit=dev` in the server directory to install the versions this release expects.');
+    }
+    const left = staleDeps();
+    if (left.length) console.error(`[preflight] still out of date: ${left.slice(0, 5).map((d) => `${d.name} ${d.installed} (wants ${d.locked})`).join(', ')}`);
+    else console.log('[preflight] dependencies match package-lock.json.');
+  }
+
+  /*
    * ⚠️ A HOST WITH NO NATIVE MODULE IS NOT A BROKEN HOST ANY MORE.
    *
    * db/sqlite-driver.js falls back to node:sqlite when better-sqlite3 is absent or unloadable, which
@@ -265,4 +348,4 @@ function preflight() {
   }
 }
 
-module.exports = { preflight, missingDeps, nativeModuleBroken, requiredDeps };
+module.exports = { preflight, missingDeps, nativeModuleBroken, requiredDeps, staleDeps, productionTree, npmEnv, reconcileArgs };

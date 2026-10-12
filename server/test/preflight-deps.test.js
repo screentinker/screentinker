@@ -120,3 +120,85 @@ test('requiredDeps copes with a package.json missing either section', () => {
   assert.deepEqual(preflight.requiredDeps({ optionalDependencies: { a: '1' } }, false), ['a']);
   assert.deepEqual(preflight.requiredDeps({ dependencies: { b: '1' } }, false), ['b']);
 });
+
+// ---- installed but OUT OF DATE (an upgrade by git pull + restart) ----
+
+const os = require('node:os');
+
+function fakeTree({ pkg, lock, installed }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'st-preflight-'));
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(pkg));
+  fs.writeFileSync(path.join(dir, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3, packages: { '': {}, ...lock } }));
+  for (const [key, version] of Object.entries(installed)) {
+    fs.mkdirSync(path.join(dir, key), { recursive: true });
+    fs.writeFileSync(path.join(dir, key, 'package.json'), JSON.stringify({ version }));
+  }
+  return dir;
+}
+
+test('⚠️ a package that is installed but older than the lockfile is STALE, nested ones too', () => {
+  // 2.6.2: git pull + restart kept nodemailer 9 under ^10, and proxy-addr/engine.io underneath.
+  const dir = fakeTree({
+    pkg: { dependencies: { nodemailer: '^10.1.0', express: '^4.18.2' } },
+    lock: {
+      'node_modules/nodemailer': { version: '10.1.0' },
+      'node_modules/express': { version: '4.22.3' },
+      'node_modules/proxy-addr': { version: '2.0.8' },
+      'node_modules/get-uri/node_modules/basic-ftp': { version: '6.2.3' },
+    },
+    installed: {
+      'node_modules/nodemailer': '9.0.5',
+      'node_modules/express': '4.22.3',
+      'node_modules/proxy-addr': '2.0.7',
+      'node_modules/get-uri/node_modules/basic-ftp': '5.3.1',
+    },
+  });
+  try {
+    const st = preflight.staleDeps(dir).map((d) => `${d.name} ${d.installed}->${d.locked}`).sort();
+    assert.deepEqual(st, ['basic-ftp 5.3.1->6.2.3', 'nodemailer 9.0.5->10.1.0', 'proxy-addr 2.0.7->2.0.8']);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('dev-only, linked and absent optional packages are never stale', () => {
+  const dir = fakeTree({
+    pkg: { dependencies: {}, devDependencies: { sharp: '^0.35.3' } },
+    lock: {
+      'node_modules/sharp': { version: '0.35.3', dev: true },
+      'node_modules/local-thing': { version: '1.0.0', link: true },
+      'node_modules/@img/sharp-darwin-arm64': { version: '0.35.3', optional: true },
+      'node_modules/bundled': { version: '2.0.0', inBundle: true },
+    },
+    installed: { 'node_modules/sharp': '0.30.0', 'node_modules/local-thing': '0.0.1', 'node_modules/bundled': '1.0.0' },
+  });
+  try { assert.deepEqual(preflight.staleDeps(dir), []); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the repair keeps a developer tree whole and keeps a production tree lean', () => {
+  // `npm install --omit=dev` on a populated developer tree PRUNES devDependencies and breaks npm test.
+  const prod = fakeTree({ pkg: { dependencies: {}, devDependencies: { sharp: '^0.35.3' } }, lock: {}, installed: {} });
+  const dev = fakeTree({ pkg: { dependencies: {}, devDependencies: { sharp: '^0.35.3' } }, lock: {}, installed: { 'node_modules/sharp': '0.35.3' } });
+  try {
+    assert.equal(preflight.productionTree(prod), true);
+    assert.deepEqual(preflight.reconcileArgs(prod), ['install', '--omit=dev', '--no-save', '--no-audit', '--no-fund']);
+    assert.equal(preflight.productionTree(dev), false);
+    assert.deepEqual(preflight.reconcileArgs(dev), ['install', '--no-save', '--no-audit', '--no-fund']);
+    for (const args of [preflight.reconcileArgs(prod), preflight.reconcileArgs(dev)]) {
+      assert.ok(!args.includes('ci'), 'never `npm ci` on a populated tree: it deletes node_modules first');
+    }
+  } finally { for (const d of [prod, dev]) fs.rmSync(d, { recursive: true, force: true }); }
+});
+
+test('npm gets a writable cache when the service user has no home', () => {
+  // prod's `screentinker` user has no /home directory; npm then dies writing ~/.npm/_logs.
+  const env = preflight.npmEnv('/opt/screentinker/server', { HOME: '/nonexistent/home', PATH: '/usr/bin' });
+  assert.equal(env.HOME, '/opt/screentinker');
+  assert.equal(env.npm_config_cache, '/opt/screentinker/.npm-cache');
+  assert.equal(env.PATH, '/usr/bin', 'the rest of the environment is kept');
+  const ok = preflight.npmEnv('/x/server', { HOME: os.tmpdir() });
+  assert.equal(ok.HOME, os.tmpdir(), 'a writable HOME is left alone');
+  assert.equal(ok.npm_config_cache, undefined);
+});
+
+test('this checkout itself is not stale (or every boot would reinstall)', () => {
+  assert.deepEqual(preflight.staleDeps(), [], 'node_modules should match package-lock.json after npm ci');
+});

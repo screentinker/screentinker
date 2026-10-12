@@ -668,9 +668,11 @@ direction — but it should be a decision, not a surprise.
 #### Dependency preflight on boot
 
 Before anything else is loaded, the server checks that the packages this build declares are actually
-installed and that the native database module loads under the running Node. If either is wrong it
-repairs it (`npm install --omit=dev`, or `npm rebuild better-sqlite3`) and continues; if it cannot,
-it exits saying what to run rather than dying on a `MODULE_NOT_FOUND` naming a file.
+installed, that the installed ones are the **versions `package-lock.json` names**, and that the native
+database module loads under the running Node. If any is wrong it repairs it (installs what is
+missing, updates what is out of date to the lockfile in place, or `npm rebuild better-sqlite3`) and
+continues; if it cannot, it says what to run rather than dying on a `MODULE_NOT_FOUND` naming a file.
+A failed update is not fatal: the server starts on the versions it has and logs that it did.
 
 `scripts/upgrade.sh` already installs dependencies, so this is not for the normal path. It is for
 the ways a box ends up with the wrong `node_modules`:
@@ -679,6 +681,11 @@ the ways a box ends up with the wrong `node_modules`:
   are rolling back because something is already wrong;
 - **upgrading Node** leaves `better-sqlite3` compiled against the previous ABI, which fails in a way
   that reads like database corruption and is not.
+- **upgrading with `git pull`** and a restart (by hand, or under pm2) instead of `upgrade.sh`: the
+  new release's lockfile arrives but its packages do not. Without the version check the server ran
+  on the old ones, and with them the old security bugs; now it updates them on that first restart.
+  It runs `npm install --omit=dev` on a production tree and leaves a developer's dev packages
+  alone. If the service user has no writable home, npm's cache goes in `.npm-cache` beside `server/`.
 
 Set `ST_SKIP_DEP_PREFLIGHT=1` on an air-gapped host, or anywhere you manage `node_modules` yourself
 and do not want a boot reaching for the registry.
