@@ -230,7 +230,7 @@ function entries(state = {}) {
       available: false,
       version: null,
       size: null,
-      absent: 'The Roku app is in Roku’s store review. Read the guide first: a Roku cannot start itself after a power cut.',
+      absent: 'The Roku app is in Roku’s store review; once published it is added with the channel code Screentinker. Read the guide first: a Roku cannot start itself after a power cut.',
     },
   ];
 }

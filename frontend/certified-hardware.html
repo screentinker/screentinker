@@ -110,7 +110,7 @@
     <h1>Certified Hardware</h1>
     <p class="lead">The device models ScreenTinker has tested with ScreenTinker, what each one actually
       does, and which ones to avoid.</p>
-    <p class="updated">Last updated 2026-10-09. 7 devices currently certified.</p>
+    <p class="updated">Last updated 2026-10-12. 7 devices currently certified.</p>
 
     <p style="margin:20px 0 4px">
       <a href="/certified-hardware/submit" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Report hardware that works</a>
@@ -510,6 +510,39 @@
           <tr id="fire-os-aftti947bc"><td><a class="anchor" href="#fire-os-aftti947bc" aria-label="Link to Toshiba G700">#</a>Toshiba G700</td><td>AFTTI947BC</td><td>TV / display</td><td class="buy"><a href="https://www.amazon.com/dp/B0H7WFWB8Y?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy</a> <span class="affiliate-tag">(affiliate)</span></td></tr>
         </tbody>
       </table></div>
+    </section>
+
+    <section class="status-group status-known-issues">
+      <h2>Known issues <span class="count">(1)</span></h2>
+      <p class="group-blurb">Runs, but something is broken. What is broken is stated on each entry.</p>
+      <article class="device" id="roku-streaming-stick-4k">
+        <h3><a class="anchor" href="#roku-streaming-stick-4k" aria-label="Link to Roku Streaming Stick 4K">#</a>Roku Streaming Stick 4K</h3>
+        <dl class="device-spec">
+          <dt>Manufacturer</dt><dd>Roku</dd>
+          <dt>Model numbers</dt><dd>3820R2</dd>
+          <dt>Category</dt><dd>Streaming player</dd>
+          <dt>Operating system</dt><dd>Roku OS</dd>
+          <dt>ScreenTinker player</dt><dd>ScreenTinker for Roku (native app, 0.2.1). Run on one 3820R2</dd>
+          <dt>Maximum resolution</dt><dd>1920x1080</dd>
+          <dt>Validated on</dt><dd>2026-10-12</dd>
+          <dt>Validated by</dt><dd>ScreenTinker</dd>
+          <dt>Tested against</dt><dd>2.5.1</dd>
+          <dt>Minimum ScreenTinker version</dt><dd><span class="unknown">Not recorded</span></dd>
+          <dt>Manufacturer end of life</dt><dd><span class="unknown">Not recorded</span></dd>
+        </dl>
+        <ul class="device-notes">
+          <li>A native Roku app (roku/ in the source, see docs/roku-player.md). It needs Roku OS 15.1 or later. Submitted to the Roku Channel Store in October 2026 and in Roku&#39;s review; once published it is added with the channel code Screentinker.</li>
+          <li>Run on one 3820R2 (Roku OS 15.3.4, app 0.2.1, against screentinker.com on 2.5.1): it paired, played an image playlist, started in about 1.5 seconds, and kept its pairing across a reinstall. Not certified.</li>
+          <li>It does not start by itself. After a power cut, a reboot or a Roku update the Roku stays on its home screen, because Roku does not let apps autostart. Someone, or a device on the network sending Roku&#39;s ECP launch request, has to open it again. ScreenTinker does not send that request.</li>
+          <li>No remote reboot, volume, screenshots or live view, and no TV power or input control. Power schedules blank the picture instead.</li>
+          <li>H.264 taller than 1080 pixels does not decode (&quot;Image height too high&quot;), which rules out portrait 1080x1920 clips in any zone size. The screen says which video failed. Use a copy no bigger than 1920x1080.</li>
+          <li>Widgets, web pages and slides are pictures drawn by the server: no animation, video inside a page, or touch. That needs a server newer than 2.5.1 with Chromium, and it has not been run on this stick yet. Neither has a long video.</li>
+          <li>One video at a time: in a layout only one zone plays video, the others show its thumbnail. No video walls or group sync. The system screensaver is not blocked (a Roku store rule), so set its wait to the longest.</li>
+          <li>1920x1080 is the resolution this stick&#39;s interface reported. The stick can output 4K, so this may be the TV or the HDMI link, not a device ceiling.</li>
+        </ul>
+        <p class="setup-link"><a href="/guides/roku-digital-signage.html">Setup guide for this device</a></p>
+        <p class="buy-link"><a href="https://www.amazon.com/dp/B09BKCDXZC?tag=screentinker-20" rel="sponsored nofollow" target="_blank">Buy this device</a> <span class="affiliate-tag">(affiliate link)</span></p>
+      </article>
     </section>
 
     <section class="status-group status-not-supported">

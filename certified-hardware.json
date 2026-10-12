@@ -63,7 +63,7 @@
     "",
     "Order within a status group is the order of this array. Groups are ordered by the list above."
   ],
-  "last_updated": "2026-10-09",
+  "last_updated": "2026-10-12",
   "devices": [
     {
       "id": "fire-tv-stick-4k-max",
@@ -2367,6 +2367,37 @@
         "Same player as the 4K Select. Transitions are declared. Group sync does not warm a second decoder, because that is a second CMA claim. The earlier browser attempt was not reliable.",
         "1080p is the product's output, not a measurement of this app.",
         "No device-owner kiosk, reboot, RTSP, or package self-update. Back does not quit the app, and that is the whole of the lifecycle control."
+      ],
+      "eol": null
+    },
+    {
+      "id": "roku-streaming-stick-4k",
+      "name": "Roku Streaming Stick 4K",
+      "manufacturer": "Roku",
+      "model_numbers": [
+        "3820R2"
+      ],
+      "category": "streaming-player",
+      "os": "Roku OS",
+      "player": "ScreenTinker for Roku (native app, 0.2.1). Run on one 3820R2",
+      "status": "known-issues",
+      "max_resolution": "1920x1080",
+      "validated_on": "2026-10-12",
+      "validated_by": "ScreenTinker",
+      "player_version": "2.5.1",
+      "min_version": null,
+      "provisioning_url": "/guides/roku-digital-signage.html",
+      "buy_url": "https://www.amazon.com/dp/B09BKCDXZC?tag=screentinker-20",
+      "photo": null,
+      "notes": [
+        "A native Roku app (roku/ in the source, see docs/roku-player.md). It needs Roku OS 15.1 or later. Submitted to the Roku Channel Store in October 2026 and in Roku's review; once published it is added with the channel code Screentinker.",
+        "Run on one 3820R2 (Roku OS 15.3.4, app 0.2.1, against screentinker.com on 2.5.1): it paired, played an image playlist, started in about 1.5 seconds, and kept its pairing across a reinstall. Not certified.",
+        "It does not start by itself. After a power cut, a reboot or a Roku update the Roku stays on its home screen, because Roku does not let apps autostart. Someone, or a device on the network sending Roku's ECP launch request, has to open it again. ScreenTinker does not send that request.",
+        "No remote reboot, volume, screenshots or live view, and no TV power or input control. Power schedules blank the picture instead.",
+        "H.264 taller than 1080 pixels does not decode (\"Image height too high\"), which rules out portrait 1080x1920 clips in any zone size. The screen says which video failed. Use a copy no bigger than 1920x1080.",
+        "Widgets, web pages and slides are pictures drawn by the server: no animation, video inside a page, or touch. That needs a server newer than 2.5.1 with Chromium, and it has not been run on this stick yet. Neither has a long video.",
+        "One video at a time: in a layout only one zone plays video, the others show its thumbnail. No video walls or group sync. The system screensaver is not blocked (a Roku store rule), so set its wait to the longest.",
+        "1920x1080 is the resolution this stick's interface reported. The stick can output 4K, so this may be the TV or the HDMI link, not a device ceiling."
       ],
       "eol": null
     },
