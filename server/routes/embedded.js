@@ -169,7 +169,15 @@ function touchDeviceHeartbeat(device, req) {
     powerSource = 'battery';
   }
 
-  let batteryCharging = null;   // not reported is not "not charging"
+  /*
+   * ⚠️ 0 WHEN NOT REPORTED, NOT NULL. device_telemetry.battery_charging is NOT NULL DEFAULT 0
+   * (schema.sql), and an explicit NULL does not fall back to the default: it fails the insert. With
+   * NULL here every poll that sent the documented battery / RSSI headers but no X-ST-Charging lost
+   * its whole telemetry row, silently, so the panel never got its battery or Wi-Fi card (2.6.0). 0 is
+   * what every other player's rows mean by "not charging or not reported", and the dashboard only
+   * acts on 1 ("charging").
+   */
+  let batteryCharging = 0;
   if (chargingHeader !== undefined) {
     batteryCharging = (chargingHeader === '1' || chargingHeader === 'true') ? 1 : 0;
   }
@@ -204,11 +212,17 @@ function touchDeviceHeartbeat(device, req) {
         pruneTelemetry(device.id);
       }
     }
-  } catch {
-    // non-fatal
+  } catch (e) {
+    // Non-fatal for the render, but never silent: a bare catch here hid a constraint failure that
+    // dropped every embedded telemetry row for a whole release. Logged once per device per process.
+    if (!_telemetryFailureLogged.has(device.id)) {
+      _telemetryFailureLogged.add(device.id);
+      console.warn(`[embedded] heartbeat/telemetry write failed for ${device.id}: ${e.message}`);
+    }
   }
   return clientIp;
 }
+const _telemetryFailureLogged = new Set();
 
 /**
  * When the response goes out, remember when this device said it will call next: X-ST-Expires-In is

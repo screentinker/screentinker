@@ -50,6 +50,7 @@ function render(device, telemetry) {
     // subject of this file) is what decides visibility; the per-org flag is enforced server-side.
     talkAvailable: true,
     latestTelemetry: telemetry || {},
+    currentDither: 'floyd-steinberg',   // resolved in loadDevice() for embedded panels, outside the slice
     diagWidget: null,
     // Stubs. Each returns something recognisable so a control cannot be "found" by accident.
     t: (key) => key,
@@ -105,7 +106,7 @@ function render(device, telemetry) {
     // helper the template calls has to be stubbed or it is a ReferenceError rather than a missing
     // section. The subject here is which CONTROLS a platform is offered, not what the trigger
     // panels render.
-    renderTriggerConfig: () => '',
+    renderTriggerConfig: () => '<div id="triggerConfigStub"></div>',   // a marker, so its gate is testable
     // Same again for the playlist-inheritance badge ("Inherited from Lobby" / "Set for this
     // screen" + revert). It is not platform-dependent, so it is not this file's subject; it has
     // its own coverage in test/device-playlist-source-badge.test.js.
@@ -911,4 +912,26 @@ test('the shipped isAndroidDevice and isRokuDevice agree that a Roku is a Roku',
   assert.equal(ctx.r({ platform: 'Roku' }), true);
   assert.equal(ctx.r({ platform: 'brokuser' }), false);
   assert.equal(ctx.r(null), false);
+});
+
+test('an e-paper panel gets the Controls tab for its power schedule, and nothing else in it', () => {
+  // The embedded renderer honours a device power schedule (deep sleep through the off window), but
+  // the editor lives only in the Controls tab, which used to need a volume or brightness control.
+  const { capabilitiesFor } = require('../lib/player-capabilities');
+  const panel = { client_type: 'embedded', platform: 'embedded', screen_profile: '{"profile":"epd-7in5"}' };
+  panel.capabilities = capabilitiesFor({ ...panel, capabilities: null });
+  const html = render(panel);
+  assert.ok(html.includes('data-tab="controls"'), 'the tab is there');
+  assert.ok(has(html, 'powerScheduleHost'), 'with the power-schedule editor in it');
+  for (const id of ['sysVolume', 'sysWinBrightness', 'sysBrightness', 'sysTimeout']) assert.equal(has(html, id), false, `no ${id} on a panel`);
+  assert.equal(has(html, 'device.sysctl.subtitle'), false, 'and no Android "no device owner needed" line');
+  assert.equal(has(html, 'triggerConfigStub'), false, 'no Triggers listener either');
+});
+
+test('a Roku is not offered the Triggers listener it does not implement', () => {
+  const { capabilitiesFor } = require('../lib/player-capabilities');
+  const roku = { client_type: 'roku', platform: 'roku' };
+  roku.capabilities = capabilitiesFor({ ...roku, capabilities: null });
+  assert.equal(has(render(roku), 'triggerConfigStub'), false);
+  assert.ok(has(render(ANDROID_FULL), 'triggerConfigStub'), 'an Android panel keeps it');
 });

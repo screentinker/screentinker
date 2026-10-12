@@ -36,7 +36,7 @@ db.exec(`
   );
   CREATE TABLE device_telemetry (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id TEXT, battery_level INTEGER, battery_charging INTEGER,
+    device_id TEXT, battery_level INTEGER, battery_charging INTEGER NOT NULL DEFAULT 0,  -- as schema.sql
     wifi_rssi INTEGER, local_ip TEXT, power_source TEXT,
     reported_at INTEGER
   );
@@ -1339,10 +1339,18 @@ describe('Embedded Device Liveness & Telemetry Ingestion', () => {
     assert.equal(newCount, prevCount, 'no invalid telemetry row inserted');
   });
 
-  test('touchDeviceHeartbeat leaves battery_charging NULL when the panel does not report it', () => {
+  test('a panel that does not report charging still gets its telemetry row (battery_charging 0)', () => {
+    // ⚠️ This test used to assert NULL, against a hand-written table whose column was nullable. The
+    // real column is NOT NULL DEFAULT 0, so on a real server NULL failed the insert and the row was
+    // lost. The table above now matches schema.sql; embedded-telemetry-real-schema.test.js checks it
+    // against the real database too.
+    const before = db.prepare('SELECT COUNT(*) c FROM device_telemetry WHERE device_id = ?').get(devId).c;
     touchDeviceHeartbeat({ id: devId }, { headers: { 'x-st-device-battery': '40' }, socket: { remoteAddress: '192.168.1.54' } });
-    const row = db.prepare('SELECT battery_charging, power_source FROM device_telemetry WHERE device_id = ? ORDER BY id DESC LIMIT 1').get(devId);
-    assert.equal(row.battery_charging, null);
+    const after = db.prepare('SELECT COUNT(*) c FROM device_telemetry WHERE device_id = ?').get(devId).c;
+    assert.equal(after, before + 1, 'the row was written');
+    const row = db.prepare('SELECT battery_level, battery_charging, power_source FROM device_telemetry WHERE device_id = ? ORDER BY id DESC LIMIT 1').get(devId);
+    assert.equal(row.battery_level, 40);
+    assert.equal(row.battery_charging, 0);
     assert.equal(row.power_source, null);
   });
 

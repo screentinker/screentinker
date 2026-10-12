@@ -782,7 +782,7 @@ async function loadDevice(deviceId, activeTab = null) {
         <div class="tab" data-tab="playlist">${t('device.tab.playlist')} <span class="help-tip" data-tip="${t('device.tab.playlist_tip')}">?</span></div>
         <div class="tab" data-tab="info">${t('device.tab.info')} <span class="help-tip" data-tip="${t('device.tab.info_tip')}">?</span></div>
         ${(can('remote.stream') || can('remote.input') || can('remote.screenshot')) ? `<div class="tab" data-tab="remote">${t('device.tab.remote')} <span class="help-tip" data-tip="${t('device.tab.remote_tip')}">?</span></div>` : ''}
-        ${(can('audio.volume') || can('display.brightness') || can('system.brightness') || can('system.screen_timeout')) ? `<div class="tab" data-tab="controls">${t('device.tab.controls')} <span class="help-tip" data-tip="${t('device.tab.controls_tip')}">?</span></div>` : ''}
+        ${((can('audio.volume') || can('display.brightness') || can('system.brightness') || can('system.screen_timeout')) || isEmbeddedDevice(device)) ? `<div class="tab" data-tab="controls">${t('device.tab.controls')} <span class="help-tip" data-tip="${t('device.tab.controls_tip')}">?</span></div>` : ''}
         ${(device.tier === 2 || can('system.shell') || can('system.pty')) ? `<div class="tab" data-tab="terminal">${t('device.tab.terminal')} <span class="help-tip" data-tip="${t('device.tab.terminal_tip')}">?</span></div>` : ''}
         <!--
           #313 — only for a display that actually HAS an enrolment key, i.e. one created for a
@@ -1178,7 +1178,8 @@ async function loadDevice(deviceId, activeTab = null) {
           </div>
         </div>
 
-        ${!isEmbeddedDevice(device) ? `
+        ${/* Triggers are LAN-fired interrupts no Roku or embedded panel implements (player-capabilities.js). */ ''}
+        ${!isEmbeddedDevice(device) && !isRokuDevice(device) ? `
         ${renderTriggerConfig(device)}
         ${renderTriggerDiagnostics(device)}
         ` : ''}
@@ -1449,8 +1450,12 @@ async function loadDevice(deviceId, activeTab = null) {
         </div>
       </div>` : ''}
 
-      ${(can('audio.volume') || can('display.brightness') || can('system.brightness') || can('system.screen_timeout')) ? `
-      <!-- Controls Tab (#160 Track-A system control — no device owner needed) -->
+      ${((can('audio.volume') || can('display.brightness') || can('system.brightness') || can('system.screen_timeout')) || isEmbeddedDevice(device)) ? `
+      <!-- Controls Tab (#160 Track-A system control — no device owner needed). ⚠️ ALSO for e-paper and
+           other embedded panels, which have none of those controls but DO honour a device power
+           schedule (the embedded renderer evaluates it and tells the panel how long to sleep). Without
+           this the schedule editor below was unreachable for them: it lives only in this tab. Each
+           control row is gated by its own capability, so a panel sees the schedule and nothing else. -->
       <div class="tab-content" id="tab-controls">
         <!--
           The weekly backlight schedule. Rendered EMPTY here and filled by loadPowerSchedule() after
@@ -1462,7 +1467,7 @@ async function loadDevice(deviceId, activeTab = null) {
           <h4 style="margin:0 0 8px">${t('power.section_title')}</h4>
           <div id="powerScheduleHost" style="font-size:13px;color:var(--text-muted)">…</div>
         </div>
-        <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">${t('device.sysctl.subtitle')}</div>
+        ${!isEmbeddedDevice(device) ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">${t('device.sysctl.subtitle')}</div>` : ''}
         <div style="display:grid;grid-template-columns:130px 1fr;gap:14px 14px;align-items:center;font-size:13px;max-width:480px">
           ${can('audio.volume') ? `
           <label>${t('device.sysctl.volume')}</label>
