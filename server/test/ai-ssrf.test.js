@@ -63,3 +63,10 @@ test('the guarded path does not follow redirects (a 3xx could point inward)', ()
   assert.match(src, /guardedLookup\(\{ allowPrivate: false \}\)/);
   assert.match(src, /vetRequestHost\(url\.hostname\)/, 'Node never calls lookup for an IP literal');
 });
+
+test('OIDC discovery, JWKS and token requests use the guarded transport, not bare fetch', () => {
+  // assertFetchable() only sees the URL; a provider NAME resolving to a private address passed it.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'oidc.js'), 'utf8');
+  assert.ok(!/(?<![.\w])fetch\(/.test(src), 'lib/oidc.js calls fetch directly');
+  assert.match(src, /let transport = guardedFetch;/);
+});

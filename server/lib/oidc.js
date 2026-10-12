@@ -110,6 +110,16 @@ function isBlockedV6(ip) {
   return false;
 }
 
+/*
+ * ⚠️ assertFetchable() sees the URL, not where it resolves: a provider NAME that resolves to a
+ * private address passed it. guardedFetch vets the address the socket actually connects to, and
+ * like `redirect: 'manual'` it never follows a 3xx (the status checks below still refuse one).
+ */
+const { guardedFetch } = require('./ai-fetch');
+let transport = guardedFetch;
+/** Tests point this at a pretend provider; null restores the guarded transport. */
+function _setTransport(fn) { transport = fn || guardedFetch; }
+
 function assertFetchable(url) {
   let u;
   try { u = new URL(url); } catch { throw new Error(`not a URL: ${url}`); }
@@ -145,7 +155,7 @@ async function getJson(url) {
      * one, which defeats the check above entirely. A provider that redirects its own well-known
      * document is misconfigured, and saying so is more useful than quietly following it.
      */
-    const res = await fetch(url, { signal: ctl.signal, redirect: 'manual' });
+    const res = await transport(url, { signal: ctl.signal });
     if (res.status >= 300 && res.status < 400) throw new Error(`${url} redirected; provider URLs must be final`);
     if (!res.ok) throw new Error(`${url} responded ${res.status}`);
     return await res.json();
@@ -290,7 +300,7 @@ async function exchangeCode({ issuer, clientId, clientSecret, code, redirectUri,
   let payload;
   try {
     assertFetchable(doc.token_endpoint);
-    const res = await fetch(doc.token_endpoint, { method: 'POST', headers, body, signal: ctl.signal, redirect: 'manual' });
+    const res = await transport(doc.token_endpoint, { method: 'POST', headers, body, signal: ctl.signal });
     payload = await res.json().catch(() => ({}));
     if (!res.ok) {
       // The provider's own error is far more useful than "exchange failed" — a wrong redirect_uri
@@ -319,7 +329,7 @@ async function fetchJwks(jwksUri) {
   return getJson(jwksUri);
 }
 
-module.exports = {
+module.exports = { _setTransport,
   discover,
   assertFetchable,
   fetchJwks,

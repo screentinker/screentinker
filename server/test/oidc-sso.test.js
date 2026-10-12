@@ -46,10 +46,9 @@ function discoveryDoc(issuer = ISSUER) {
   };
 }
 
-/** Point global fetch at the pretend provider. Returns a restore function. */
+/** Point the OIDC transport at the pretend provider. Returns a restore function. */
 function mockProvider({ doc = discoveryDoc(), jwks = JWKS } = {}) {
-  const real = global.fetch;
-  global.fetch = async (url) => {
+  oidc._setTransport(async (url) => {
     const u = String(url);
     if (u.endsWith('/.well-known/openid-configuration')) {
       return { ok: true, status: 200, json: async () => doc };
@@ -58,9 +57,9 @@ function mockProvider({ doc = discoveryDoc(), jwks = JWKS } = {}) {
       return { ok: true, status: 200, json: async () => jwks };
     }
     return { ok: false, status: 404, json: async () => ({}) };
-  };
+  });
   oidc._resetCaches();
-  return () => { global.fetch = real; oidc._resetCaches(); };
+  return () => { oidc._setTransport(null); oidc._resetCaches(); };
 }
 
 const idToken = (claims = {}, { key = privateKey, alg = 'RS256', kid = KID } = {}) => jwt.sign(
@@ -181,18 +180,17 @@ test('an unknown kid triggers exactly one JWKS refresh, then gives up', async ()
   // Key rotation is normal and must not fail every login until a cache expires; a token quoting
   // nonsense must not become a way to hammer the provider either.
   let jwksFetches = 0;
-  const real = global.fetch;
-  global.fetch = async (url) => {
+  oidc._setTransport(async (url) => {
     const u = String(url);
     if (u.endsWith('/.well-known/openid-configuration')) return { ok: true, status: 200, json: async () => discoveryDoc() };
     if (u.endsWith('/jwks')) { jwksFetches++; return { ok: true, status: 200, json: async () => JWKS }; }
     return { ok: false, status: 404, json: async () => ({}) };
-  };
+  });
   oidc._resetCaches();
   try {
     await assert.rejects(() => verify(idToken({}, { kid: 'no-such-kid' })), /no signing key/i);
     assert.equal(jwksFetches, 1, 'one refresh, not a loop');
-  } finally { global.fetch = real; oidc._resetCaches(); }
+  } finally { oidc._setTransport(null); oidc._resetCaches(); }
 });
 
 // ---------------------------------------------------------------------------------------------
