@@ -20,19 +20,19 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { generateImage } = require('../lib/image-gen');
+const aiFetch = require('../lib/ai-fetch');   // the transport image-gen uses
 
 /** A 1x1 PNG is enough: nothing here decodes it, the transport is what is under test. */
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
 function stubFetch(handler) {
   const calls = [];
-  const original = global.fetch;
-  global.fetch = async (url, opts) => {
+  aiFetch._setTransport(async (url, opts) => {
     const body = opts && opts.body ? JSON.parse(opts.body) : {};
     calls.push({ url, body });
     return handler(body, calls.length);
-  };
-  return { calls, restore: () => { global.fetch = original; } };
+  });
+  return { calls, restore: () => { aiFetch._setTransport(null); } };
 }
 
 const jsonRes = (status, obj) => ({
@@ -105,19 +105,18 @@ test('a 401 is not retried either', async () => {
 test('a url response is fetched and inlined', async () => {
   // Some endpoints ignore response_format and hand back a link instead of bytes.
   let n = 0;
-  const original = global.fetch;
-  global.fetch = async (url) => {
+  aiFetch._setTransport(async (url) => {
     n++;
     if (String(url).includes('/images/generations')) {
       return jsonRes(200, { data: [{ url: 'https://cdn.example/img.png' }] });
     }
     return { ok: true, status: 200, arrayBuffer: async () => Buffer.from(PNG_B64, 'base64') };
-  };
+  });
   try {
     const out = await generateImage({ provider: 'openai', baseUrl: 'https://x/v1', apiKey: 'k', model: 'm', prompt: 'p' });
     assert.ok(String(out).startsWith('data:image/png;base64,'));
     assert.equal(n, 2, 'one generate call plus one download');
-  } finally { global.fetch = original; }
+  } finally { aiFetch._setTransport(null); }
 });
 
 test('an empty response is an error, not an empty image', async () => {

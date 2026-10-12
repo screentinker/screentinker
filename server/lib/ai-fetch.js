@@ -76,9 +76,14 @@ async function guardedFetch(urlString, { method = 'GET', headers = {}, body = nu
   };
 }
 
+let override = null;
+/** Tests point this at a pretend endpoint; null restores the real transport. */
+function _setTransport(fn) { override = fn || null; }
+
 function aiFetch(url, opts) {
+  if (override) return override(url, opts);
   if (config.selfHosted) return fetch(url, opts);
   return guardedFetch(url, opts);
 }
 
-module.exports = { aiFetch, guardedFetch };
+module.exports = { aiFetch, guardedFetch, _setTransport };
