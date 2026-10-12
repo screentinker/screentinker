@@ -373,7 +373,10 @@ CREATE TABLE IF NOT EXISTS play_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_play_logs_device ON play_logs(device_id, started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_play_logs_content ON play_logs(content_id, started_at DESC);
+-- ⚠️ No idx_play_logs_content here. The migrations DROP it (#451), and this file is exec'd on EVERY
+-- boot before they run, so keeping it built that 260 MB index synchronously on each restart only
+-- for it to be dropped a few statements later (prod: ~236 MB of freed pages after one boot). The
+-- foreign-key lookups it might seem to serve use the partial idx_play_logs_content_ref instead.
 CREATE INDEX IF NOT EXISTS idx_play_logs_time ON play_logs(started_at, ended_at);
 -- ⚠️ idx_play_logs_client_event is created by the MIGRATIONS, not here. This file is exec'd
 -- wholesale before the migrations run, so on a database that predates client_event_id the index
