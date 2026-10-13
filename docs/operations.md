@@ -86,11 +86,22 @@ scripts/upgrade.sh              # latest stable release
 scripts/upgrade.sh v1.2.3       # or pin one
 ```
 
-Before it changes anything it refuses a target the host cannot run: a Node older than the
-release's `engines` floor (`ST_ALLOW_OLD_NODE=1` overrides), or, for a release on `better-sqlite3`,
-no `python3`/`make`/`g++`. After `npm ci` it opens a database with the new driver, and if that
-fails it puts the previous release back and stops **without** restarting, so the running server is
-never replaced by one that cannot start.
+Before it changes anything it checks the host can run the target: a Node at least the release's
+`engines` floor and, for a release on `better-sqlite3`, `python3`/`make`/`g++`. When something is
+missing and you are at a terminal it **offers to fix it** (`Upgrade Node to 22.x now? [Y/n]`) and
+carries on: Node from NodeSource's apt repository (a node apt does not own, such as nvm, is left
+alone with instructions), the toolchain with `apt-get`. With no terminal it stops instead;
+`ST_AUTO_INSTALL_PREREQS=1` answers yes in advance, `ST_ALLOW_OLD_NODE=1` skips the Node check.
+After `npm ci` it opens a database with the new driver, and if that fails it puts the previous
+release back and stops **without** restarting, so the running server is never replaced by one that
+cannot start.
+
+**Every run is recorded** in `backups/upgrade-history.jsonl` (beside the database backups), one
+JSON line whatever the outcome: when and by whom, the release and commit it came **from** and went
+**to**, Node before and after, what it changed on the host, the backup it took, and the result
+(`done`, `refused`, `rolled_back`, `failed`, ...). When it upgrades Node it first saves the old
+NodeSource apt files and version in `backups/node-apt-before-<time>/`, named in that line, so Node
+can be put back exactly. The dashboard updater appends to the same file.
 
 ⚠️ **Run the TARGET release's copy of the script.** `upgrade.sh` is tracked, so the copy in your
 checkout is the one from the release you are LEAVING, and checks added in a newer release do not

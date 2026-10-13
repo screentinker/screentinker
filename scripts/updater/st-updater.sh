@@ -86,6 +86,20 @@ write_json() { # file, json — atomic, world-readable
 set_status() { # state, message
   write_json "$OUT_DIR/status.json" "{\"id\":\"$(jstr "$JOB_ID")\",\"mode\":\"$MODE\",\"state\":\"$1\",\"target\":\"$(jstr "$JOB_TARGET")\",\"from\":\"$(jstr "$JOB_FROM")\",\"message\":\"$(jstr "$2")\",\"backup\":\"$(jstr "$JOB_BACKUP")\",\"started_at\":$JOB_STARTED,\"updated_at\":$(date +%s)}"
   log "[$1] $2"
+  case "$1" in done|failed|rolled_back) record_history "$1" "$2" ;; esac
+}
+
+# The same upgrade history scripts/upgrade.sh keeps (one JSON line per run, beside the database
+# backups), so a dashboard upgrade and a hand-run one read as one timeline of what came from what.
+# Kept owned like the backups directory: this runs as root, upgrade.sh as the service user.
+record_history() { # result, message
+  _hdir="${BACKUP_DIR:-$OUT_DIR}"
+  [ -d "$_hdir" ] || return 0
+  _hist="$_hdir/upgrade-history.jsonl"
+  printf '{"at":"%s","by":"dashboard updater (job %s)","result":"%s","from":"%s","to":"v%s","node":"%s","mode":"%s","backup":"%s","detail":"%s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(jstr "$JOB_ID")" "$1" "$(jstr "$JOB_FROM")" "$(jstr "$JOB_TARGET")" \
+    "$(node -v 2>/dev/null || echo none)" "$MODE" "$(jstr "$JOB_BACKUP")" "$(jstr "$2")" >> "$_hist" 2>/dev/null || return 0
+  chown --reference="$_hdir" "$_hist" 2>/dev/null || true
 }
 
 heartbeat() {
@@ -174,7 +188,7 @@ git_preflight() { # ref
   _floor="$(printf '%s' "$_pkg" | sed -n 's/.*"node": *">= *v\{0,1\}\([0-9][0-9.]*\)".*/\1/p' | head -1)"
   _have="$(node -p 'process.versions.node' 2>/dev/null || echo 0)"
   if [ -n "$_floor" ] && [ "$(printf '%s\n%s\n' "$_floor" "$_have" | sort -V | head -1)" != "$_floor" ]; then
-    set_status failed "$1 needs Node >= $_floor; $SERVICE_NAME runs Node $_have, and the new release would not start on it. Upgrade Node first (docs/operations.md, \"Upgrading Node.js\") - nothing was changed."
+    set_status failed "$1 needs Node >= $_floor; $SERVICE_NAME runs Node $_have, and the new release would not start on it. Upgrade Node first: run scripts/upgrade.sh on the host once, which offers to (docs/operations.md, \"Upgrading Node.js\") - nothing was changed."
     return 1
   fi
   NATIVE_DRIVER=0
@@ -183,7 +197,7 @@ git_preflight() { # ref
     _missing=""
     for _t in python3 make g++; do command -v "$_t" >/dev/null 2>&1 || _missing="$_missing $_t"; done
     if [ -n "$_missing" ]; then
-      set_status failed "Missing on the host:$_missing. npm needs them to install the database driver and skips it silently without them. Install them (apt-get install -y python3 make g++) and try again - nothing was changed."
+      set_status failed "Missing on the host:$_missing. npm needs them to install the database driver and skips it silently without them. Install them (apt-get install -y python3 make g++), or run scripts/upgrade.sh on the host once, which offers to - nothing was changed."
       return 1
     fi
   fi

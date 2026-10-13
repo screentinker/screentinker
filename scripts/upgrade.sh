@@ -30,6 +30,7 @@ on_error() {
   [ -n "${BK:-}" ] && echo "       Your database backup is at $BK." >&2
   echo "       Fix the error above and run this script again; it is safe to re-run." >&2
   echo "       Do not finish with a plain 'git pull': that moves you to main, not a release." >&2
+  type record >/dev/null 2>&1 && record failed "stopped while ${STEP} (exit ${rc})"
 }
 trap on_error ERR
 # APP_DIR defaults to the checkout this script lives in, but is overridable like DB and BACKUP_DIR
@@ -74,6 +75,26 @@ if [ -z "${DB:-}" ]; then
 fi
 BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/backups}"
 
+# ---------- the upgrade history: what every run came from, went to, and changed ----------
+#
+# One JSON line per run in $BACKUP_DIR/upgrade-history.jsonl, whatever the outcome (refused,
+# rolled back, failed, done), so "it was fine yesterday" can be answered: which release and commit
+# it came from, the Node before and after, anything this run installed on the host, and where the
+# database backup is. Written before every exit; never allowed to fail the upgrade itself.
+PREV_REF="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+PREV_NAME="$(git describe --tags --exact-match HEAD 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+NODE_BEFORE="$(node -v 2>/dev/null || echo none)"
+HOST_CHANGES=""   # what this run changed on the HOST (Node, packages), with where the old state was saved
+HISTORY="$BACKUP_DIR/upgrade-history.jsonl"
+json_str() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n\t' '  '; }
+record() { # result detail
+  mkdir -p "$BACKUP_DIR" 2>/dev/null || return 0
+  printf '{"at":"%s","by":"%s","result":"%s","from":"%s","from_commit":"%s","to":"%s","node_before":"%s","node_after":"%s","host_changes":"%s","backup":"%s","detail":"%s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(json_str "$(id -un 2>/dev/null)")" "$1" "$(json_str "$PREV_NAME")" "$PREV_REF" \
+    "$(json_str "${TARGET:-}")" "$NODE_BEFORE" "$(node -v 2>/dev/null || echo none)" "$(json_str "$HOST_CHANGES")" \
+    "$(json_str "${BK:-}")" "$(json_str "$2")" >> "$HISTORY" 2>/dev/null || true
+}
+
 STEP="fetching release tags"
 echo "==> Fetching tags"
 git fetch --tags origin
@@ -85,6 +106,7 @@ git fetch --tags origin
 TARGET="${1:-$(git tag -l 'v*' | grep -vE -- '-(rc|beta|alpha|pre)' | sort -V | tail -1)}"
 if [ -z "$TARGET" ] || ! git rev-parse -q --verify "refs/tags/$TARGET^{commit}" >/dev/null; then
   echo "ERROR: no such release tag: '${TARGET:-<none found>}'" >&2
+  record refused "no such release tag"
   exit 1
 fi
 echo "==> Target release: $TARGET"
@@ -99,6 +121,7 @@ if [ -n "$DIRTY" ]; then
   printf '%s\n' "$DIRTY" | sed 's/^/         /' >&2
   echo "       Keep them with 'git stash' (and 'git stash pop' afterwards), or discard them with" >&2
   echo "       'git checkout -- <file>'. Then run this script again. Nothing has been changed." >&2
+  record refused "local changes to tracked files"
   trap - ERR
   exit 1
 fi
@@ -147,6 +170,7 @@ if [ -f "$DB" ]; then
   if [ "$INTEG" != "ok" ]; then
     echo "ERROR: the backup failed its integrity check (${INTEG:-no answer})." >&2
     echo "       Refusing to upgrade: an unverified backup is not a way back." >&2
+    record failed "backup failed its integrity check"
     exit 1
   fi
   echo "==> Backup verified ($(du -h "$BK" | cut -f1), integrity ok)"
@@ -155,58 +179,126 @@ elif command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SERVI
   # means upgrading with no backup.
   echo "ERROR: no database at $DB, but $SERVICE_NAME is running." >&2
   echo "       Set DB=/path/to/remote_display.db (or DATA_DIR) and run again." >&2
+  record refused "no database found while the service is running"
   exit 1
 else
   echo "==> No db at $DB yet (fresh install) - skipping backup"
 fi
 
-# The Node the TARGET release declares, checked before anything changes. Read from the tag with
-# git show, because the copy of this script that runs is the one from the release being LEFT: a
-# check that only looked at the checkout would see the old floor.
+# ---------- what the TARGET needs from this host: checked, and fixed with the operator's yes ----------
 #
-# ⚠️ A REFUSAL NOW, NOT A WARNING. Since better-sqlite3 13 (Node-API 10) the server below its floor
-# does not merely lose a feature: it stops at boot with "upgrade Node", or on Node 22.12 segfaults
-# outright, so going ahead would replace a working server with one that will not start.
-# ST_ALLOW_OLD_NODE=1 proceeds anyway (and skips the native check after the install), for an
-# operator who runs the built-in driver on purpose (ST_SQLITE_DRIVER=node on Node 22.13+).
+# Painless where it can be: when the host is missing something the release needs, the operator at
+# the terminal is asked, and a yes installs it and carries on. Nobody is asked when there is no
+# terminal (cron, CI, a pipe): then it stops exactly as before, unless ST_AUTO_INSTALL_PREREQS=1
+# says yes in advance. Only what apt manages is touched; anything else is described, not guessed at.
+SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
+# ⚠️ apt NEVER READS THE TERMINAL. Left attached it swallowed the keystroke meant for the next
+# prompt (which then waited for ever), and dpkg can stop on a config-file question mid-upgrade.
+apt_get() { $SUDO env DEBIAN_FRONTEND=noninteractive apt-get "$@" < /dev/null; }
+confirm() { # question
+  [ "${ST_AUTO_INSTALL_PREREQS:-0}" = "1" ] && { echo "    $1 yes (ST_AUTO_INSTALL_PREREQS=1)"; return 0; }
+  [ -t 0 ] && [ -r /dev/tty ] || return 1
+  local ans=""
+  printf '%s [Y/n] ' "$1" > /dev/tty
+  read -r ans < /dev/tty || return 1
+  case "$ans" in ""|y|Y|yes|Yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+# Node <major>.x from NodeSource's apt repository: what setup_<major>.x sets up, without running a
+# downloaded script. Refuses a node that apt does not own (nvm, a tarball, a custom path): upgrading
+# a different node than the one the service runs would change nothing, or the wrong thing.
+upgrade_node() { # major
+  local major="$1" real
+  command -v apt-get >/dev/null 2>&1 || { echo "    No apt-get on this host: install Node $major.x yourself (https://nodejs.org), then run this again." >&2; return 1; }
+  real="$(readlink -f "$(command -v node 2>/dev/null || echo /nonexistent)" 2>/dev/null || true)"
+  if [ -e "$real" ] && ! dpkg -S "$real" >/dev/null 2>&1; then
+    echo "    Node here is $real, which apt does not manage (nvm, a tarball...). Upgrade that install" >&2
+    echo "    to Node $major.x yourself, make sure the service runs it, then run this again." >&2
+    return 1
+  fi
+  # Saved BEFORE anything changes, and named in the history, so Node can be put back exactly.
+  local saved; saved="$BACKUP_DIR/node-apt-before-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$saved" || return 1
+  for f in /etc/apt/sources.list.d/nodesource.list /etc/apt/sources.list.d/nodesource.sources /etc/apt/preferences.d/nodejs; do
+    [ -e "$f" ] && cp -p "$f" "$saved/"
+  done
+  printf '%s\n' "$NODE_BEFORE" > "$saved/node-version"
+  HOST_CHANGES="${HOST_CHANGES}Node $NODE_BEFORE -> NodeSource node_${major}.x (previous apt files and version in $saved); "
+  echo "==> Installing Node $major.x from NodeSource's apt repository (previous setup saved in $saved)"
+  apt_get install -y -qq ca-certificates curl gnupg >/dev/null || return 1
+  $SUDO install -d -m 0755 /etc/apt/keyrings || return 1
+  [ -s /etc/apt/keyrings/nodesource.gpg ] || curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+    | $SUDO gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg || return 1
+  # Replaces the list an older setup_<N>.x wrote (either format), pinned over the distribution's own.
+  $SUDO rm -f /etc/apt/sources.list.d/nodesource.sources
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${major}.x nodistro main" \
+    | $SUDO tee /etc/apt/sources.list.d/nodesource.list >/dev/null || return 1
+  printf 'Package: nodejs\nPin: origin deb.nodesource.com\nPin-Priority: 600\n' | $SUDO tee /etc/apt/preferences.d/nodejs >/dev/null || return 1
+  apt_get update -qq && apt_get install -y -qq nodejs
+}
+
+node_ok() { [ -z "$NODE_FLOOR" ] || [ "$(printf '%s\n%s\n' "$NODE_FLOOR" "$(node -p 'process.versions.node' 2>/dev/null || echo 0)" | sort -V | head -1)" = "$NODE_FLOOR" ]; }
+
+# The Node the TARGET release declares. Read from the tag with git show, because the copy of this
+# script that runs is the one from the release being LEFT: a check that only looked at the checkout
+# would see the old floor.
+#
+# ⚠️ BELOW THE FLOOR THE NEW RELEASE DOES NOT START (better-sqlite3 13 needs Node-API 10; the server
+# stops at boot with "upgrade Node"), so this never just warns and carries on. ST_ALLOW_OLD_NODE=1
+# proceeds anyway (and skips the driver check after the install), for an operator who runs the
+# built-in driver on purpose (ST_SQLITE_DRIVER=node on Node 22.13+).
+#
+# Upgrading Node first is safe for the release being left: 2.6.x runs on Node 22 too, so a rollback
+# after this point still has a server that starts.
 STEP="checking the Node version $TARGET needs"
 TARGET_PKG="$(git show "$TARGET:server/package.json" 2>/dev/null || true)"
 NODE_FLOOR="$(printf '%s' "$TARGET_PKG" | sed -n 's/.*"node": *">= *v\{0,1\}\([0-9][0-9.]*\)".*/\1/p' | head -1)"
-NODE_HAVE="$(node -p 'process.versions.node' 2>/dev/null || echo 0)"
-if [ -n "$NODE_FLOOR" ] && [ "$(printf '%s\n%s\n' "$NODE_FLOOR" "$NODE_HAVE" | sort -V | head -1)" != "$NODE_FLOOR" ]; then
+if ! node_ok; then
+  NODE_HAVE="$(node -p 'process.versions.node' 2>/dev/null || echo none)"
   if [ "${ST_ALLOW_OLD_NODE:-0}" = "1" ]; then
     echo "WARNING: $TARGET needs Node >= $NODE_FLOOR; this host has Node $NODE_HAVE. Going ahead (ST_ALLOW_OLD_NODE=1)." >&2
   else
-    echo "ERROR: $TARGET needs Node >= $NODE_FLOOR; this host has Node $NODE_HAVE." >&2
-    echo "       The new release would not start on it. Upgrade Node first (see \"Upgrading Node.js\" in" >&2
-    echo "       docs/operations.md), then run this script again. Nothing has been changed." >&2
-    trap - ERR; exit 1
+    echo "ERROR: $TARGET needs Node >= $NODE_FLOOR; this host has Node $NODE_HAVE, and the new release would not start on it." >&2
+    STEP="upgrading Node"
+    if confirm "Upgrade Node to ${NODE_FLOOR%%.*}.x now?" && upgrade_node "${NODE_FLOOR%%.*}" && node_ok; then
+      echo "==> Node is now $(node -v)"
+    else
+      echo "       Upgrade Node to >= $NODE_FLOOR (see \"Upgrading Node.js\" in docs/operations.md), then run" >&2
+      echo "       this script again. Your server and its release have not been changed." >&2
+      record refused "needs Node >= $NODE_FLOOR, host has $NODE_HAVE"
+      trap - ERR; exit 1
+    fi
   fi
 fi
 
 # ⚠️ A BUILD TOOLCHAIN, EVEN WHERE A PREBUILT BINARY EXISTS. npm runs better-sqlite3's `node-gyp
 # rebuild` install step regardless, node-gyp cannot start without python3, make and g++, and npm
 # then drops the module SILENTLY as a failed optional dependency: the install "succeeds" and the
-# server comes up on the experimental built-in driver, or not at all. Checked here, before anything
-# changes, rather than discovered after the restart.
+# server comes up on the experimental built-in driver, or not at all.
 NATIVE_DRIVER=0
+missing_tools() { local m=""; for t in python3 make g++; do command -v "$t" >/dev/null 2>&1 || m="$m $t"; done; printf '%s' "$m"; }
 if printf '%s' "$TARGET_PKG" | grep -q '"better-sqlite3"' && [ "${ST_SQLITE_DRIVER:-}" != "node" ] && [ "${ST_ALLOW_OLD_NODE:-0}" != "1" ]; then
   NATIVE_DRIVER=1
   STEP="checking the build toolchain"
-  MISSING=""
-  for tool in python3 make g++; do command -v "$tool" >/dev/null 2>&1 || MISSING="$MISSING $tool"; done
+  MISSING="$(missing_tools)"
   if [ -n "$MISSING" ] && [ "${ST_SKIP_TOOLCHAIN_CHECK:-0}" != "1" ]; then
     echo "ERROR: missing:$MISSING. npm needs them to install the database driver (even prebuilt)," >&2
-    echo "       and without them it skips the driver without saying so. Install them first, e.g." >&2
-    echo "         sudo apt-get install -y python3 make g++" >&2
-    echo "       then run this script again. Nothing has been changed." >&2
-    trap - ERR; exit 1
+    echo "       and without them it skips the driver without saying so." >&2
+    STEP="installing the build toolchain"
+    if command -v apt-get >/dev/null 2>&1 && confirm "Install python3, make and g++ now?" \
+       && apt_get install -y -qq python3 make g++ && [ -z "$(missing_tools)" ]; then
+      HOST_CHANGES="${HOST_CHANGES}apt-get installed python3 make g++ (was missing:$MISSING); "
+      echo "==> Build toolchain installed"
+    else
+      echo "       Install them (e.g. sudo apt-get install -y python3 make g++), then run this script" >&2
+      echo "       again. Your server and its release have not been changed." >&2
+      record refused "missing build toolchain:$MISSING"
+      trap - ERR; exit 1
+    fi
   fi
 fi
 
 STEP="checking out $TARGET"
-PREV_REF="$(git rev-parse HEAD)"
-PREV_NAME="$(git describe --tags --exact-match HEAD 2>/dev/null || git rev-parse --short HEAD)"
 echo "==> Checking out $TARGET (from $PREV_NAME)"
 git checkout -q "$TARGET"
 
@@ -226,6 +318,7 @@ if [ "$NATIVE_DRIVER" = 1 ]; then
     git checkout -q "$PREV_REF"
     ( cd server && npm ci --omit=dev ) >/dev/null 2>&1 || echo "       (npm ci for $PREV_NAME failed too: run it in server/ by hand)" >&2
     echo "       Rolled back to $PREV_NAME; the server was not restarted. Check the npm output above." >&2
+    record rolled_back "better-sqlite3 missing or not loading after npm ci; $PREV_NAME checked back out, not restarted"
     trap - ERR; exit 1
   fi
   echo "==> Database driver loads"
@@ -274,6 +367,7 @@ if [ -z "$RESTARTED" ]; then
   echo "         found (pm2 is per user: run this script as the user that owns the process)." >&2
   echo "         Restart the server yourself now; migrations run when it starts. Next time, set" >&2
   echo "         SERVICE_NAME, or RESTART_CMD='<your restart command>', to do this automatically." >&2
+  record installed_not_restarted "no systemd unit or pm2 process found to restart"
   exit 2
 fi
 
@@ -291,4 +385,6 @@ for i in $(seq 1 30); do
 done
 trap - ERR
 echo "==> /api/status: ${OUT:-<no response - check: $LOGS_HINT>}"
+record "$([ -n "$OUT" ] && echo done || echo restarted_no_answer)" "status: $(printf '%s' "${OUT:-no response}" | head -c 300)"
 echo "==> Upgrade to $TARGET complete. (Back to bleeding edge anytime: git checkout main)"
+echo "==> Recorded in $HISTORY (from $PREV_NAME, Node $NODE_BEFORE -> $(node -v 2>/dev/null))"
