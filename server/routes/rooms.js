@@ -16,6 +16,8 @@
 const express = require('express');
 const crypto = require('crypto');
 const router = express.Router();
+// Abuse backstop (lib/backstop-limiter.js): already counted app-wide; here so this router is never unguarded.
+router.use(require('../lib/backstop-limiter'));
 const { db } = require('../db/database');
 const secretbox = require('../lib/secretbox');
 const { canRead, canAdmin, isOrgAdmin } = require('../lib/permissions');

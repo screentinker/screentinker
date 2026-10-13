@@ -278,6 +278,18 @@ const globalCors = cors({
   credentials: true,
 });
 app.use((req, res, next) => (isMcpPath(req.path) ? mcpCors : globalCors)(req, res, next));
+
+/*
+ * The global abuse backstop (lib/backstop-limit.js: keys, numbers, what is never counted).
+ *
+ * ⚠️ MOUNTED HERE ON PURPOSE: after CORS, so a 429 carries the headers a dashboard needs to read
+ * it, and BEFORE every route below — the Stripe webhook included — so nothing is mounted ahead of
+ * it by accident. It is additive: the per-endpoint rateLimit() limits further down are unchanged
+ * and are still what bounds login, uploads, MCP and the rest. Its ceilings are far above any real
+ * client; RATE_LIMIT_BACKSTOP=0 turns it off.
+ */
+app.use(require('./lib/backstop-limiter'));
+
 // Stripe webhook needs raw body (before express.json parses it)
 const stripeRouter = require('./routes/stripe');
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), stripeRouter);

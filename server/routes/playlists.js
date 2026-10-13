@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+// Abuse backstop (lib/backstop-limiter.js): already counted app-wide; here so this router is never unguarded.
+router.use(require('../lib/backstop-limiter'));
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');

@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+// Abuse backstop (lib/backstop-limiter.js): already counted app-wide; here so this router is never unguarded.
+router.use(require('../lib/backstop-limiter'));
 
 // Smart playlists select content by rule, so any successful content write can change what they
 // play. Notify once per write; lib/smart-playlist debounces per workspace and republishes only the

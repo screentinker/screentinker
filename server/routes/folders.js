@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+// Abuse backstop (lib/backstop-limiter.js): already counted app-wide; here so this router is never unguarded.
+router.use(require('../lib/backstop-limiter'));
 
 // A folder rule includes subfolders, so moving or deleting a folder can change what a smart
 // playlist selects (lib/smart-playlist.js debounces and republishes only real changes).

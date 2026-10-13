@@ -69,7 +69,11 @@ function createNativeUpdateRoutes(spec) {
     const getDb = () => deps.db || require('../db/database').db;
     const getBand = deps.getBand || (() => require('../services/loop-lag').getBand());
 
-    if (selfUpdate) app.get(CHECK_URL, (req, res) => {
+    // The abuse backstop (lib/backstop-limiter.js). Already applied app-wide; named here because these
+    // routes are added to an `app` passed in, which static analysis cannot connect to that mount.
+    // The download is never counted (content bytes, see lib/backstop-limit.js), so this costs it nothing.
+    const backstop = require('../lib/backstop-limiter');
+    if (selfUpdate) app.get(CHECK_URL, backstop, (req, res) => {
       const currentVersion = typeof req.query.version === 'string' ? req.query.version : '';
       const deviceId = typeof req.query.device_id === 'string' && req.query.device_id ? req.query.device_id : null;
       const forced = req.query.forced === '1' || req.query.forced === 'true';
@@ -166,7 +170,7 @@ function createNativeUpdateRoutes(spec) {
       return answer(true, verdict.reason);
     });
 
-    app.get(DOWNLOAD_URL, (req, res) => {
+    app.get(DOWNLOAD_URL, backstop, (req, res) => {
       let pkg = cache.get();
       // ?version=<previous> during a rollback: the archived previous package (lib/ota-rollout.js).
       if (req.query.version && pkg.exists && String(req.query.version) !== pkg.version) {

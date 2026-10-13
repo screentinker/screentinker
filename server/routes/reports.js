@@ -1,6 +1,8 @@
 const express = require('express');
 const playReport = require('../lib/play-report');   // raw + rollup, one series across the seam
 const router = express.Router();
+// Abuse backstop (lib/backstop-limiter.js): already counted app-wide; here so this router is never unguarded.
+router.use(require('../lib/backstop-limiter'));
 const { db } = require('../db/database');
 
 // Phase 2.2g: scope reports to the caller's current workspace.

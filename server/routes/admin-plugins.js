@@ -17,6 +17,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const router = express.Router();
+// Abuse backstop (lib/backstop-limiter.js): already counted app-wide; here so this router is never unguarded.
+router.use(require('../lib/backstop-limiter'));
 const config = require('../config');
 const { db } = require('../db/database');
 const registry = require('../lib/plugins/registry');

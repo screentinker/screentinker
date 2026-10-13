@@ -21,6 +21,7 @@ function parseBillingRateTable(raw) {
 }
 
 const { parseSize } = require('./lib/parse-size');
+const backstop = require('./lib/backstop-limit');
 
 module.exports = {
   /*
@@ -33,6 +34,14 @@ module.exports = {
   triggerIngress: process.env.TRIGGER_INGRESS === '1' || process.env.TRIGGER_INGRESS === 'true',
   /** UDP port for the server-side door. Only bound when triggerIngress is on. */
   triggerIngressUdpPort: Number(process.env.TRIGGER_INGRESS_UDP_PORT || 7847),
+
+  /*
+   * Global abuse backstop (lib/backstop-limit.js says who shares a bucket and why these numbers).
+   * Requests per minute: per credential, and per anonymous IP. 0 on the first turns the backstop
+   * off entirely; 0 on the second stops limiting anonymous requests only.
+   */
+  rateLimitBackstop: backstop.parseLimit(process.env.RATE_LIMIT_BACKSTOP, backstop.DEFAULT_IDENTITY_MAX),
+  rateLimitBackstopAnon: backstop.parseLimit(process.env.RATE_LIMIT_BACKSTOP_ANON, backstop.DEFAULT_ANON_MAX),
 
   port: process.env.PORT || 3001,
   httpsPort: process.env.HTTPS_PORT || 3443,

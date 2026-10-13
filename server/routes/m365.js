@@ -14,6 +14,8 @@
 
 const express = require('express');
 const router = express.Router();
+// Abuse backstop (lib/backstop-limiter.js): already counted app-wide; here so this router is never unguarded.
+router.use(require('../lib/backstop-limiter'));
 const { db } = require('../db/database');
 const { resourceAccess } = require('../lib/tenancy');
 const m365 = require('../lib/m365');
