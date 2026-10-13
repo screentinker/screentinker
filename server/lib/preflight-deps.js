@@ -15,17 +15,14 @@
  *                 every boot fail with NODE_MODULE_VERSION mismatch, which reads like database
  *                 corruption and is not.
  *
- *                 ⚠️ better-sqlite3 is pinned to EXACTLY 12.9.0, not a caret range, and the reason
- *                 is invisible from package.json: 12.10.0 DROPPED the prebuilt binary for Node 20
- *                 (ABI 115) while still advertising `"node": "20.x || ..."` in engines. So a caret
- *                 resolves to 12.11.x, finds no prebuild on Node 20, and silently falls through to
- *                 `node-gyp rebuild` — a from-source compile during install, and during the repair
- *                 below. That matters here: this file rebuilds synchronously BEFORE the server
- *                 listens, and prod's systemd unit has TimeoutStartSec=90 with Restart=always, so a
- *                 slow or failing compile is a boot loop rather than a self-heal. 12.9.0 is the last
- *                 version shipping prebuilds for BOTH Node 20 (115) and Node 22 (127), which is what
- *                 lets the runtime move without the module having to compile at all.
- *                 Re-check the release assets before widening the pin.
+ *                 Since better-sqlite3 13 that binary is a Node-API build bundled in the package,
+ *                 so a Node upgrade within Node-API 10+ no longer invalidates it. Two things still
+ *                 apply. ⚠️ Below Node-API 10 (Node < 22.14) it SEGFAULTS rather than throwing, so
+ *                 db/native-floor.js is asked BEFORE anything loads it. And it ships prebuilds only
+ *                 for linux/darwin/win x64+arm64 (glibc 2.34+, or musl): anywhere else the repair
+ *                 below is a from-source compile, which runs synchronously BEFORE the server
+ *                 listens — under prod's TimeoutStartSec=90 with Restart=always a slow compile is a
+ *                 boot loop rather than a self-heal. Re-check the prebuilds before changing the pin.
  *   HAND EDITS    a `git checkout`, a partly-copied tree, an interrupted install.
  *
  * All three present as a server that will not start, with an error that names a file rather than
@@ -41,6 +38,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { nativeUnsupported } = require('../db/native-floor');
 
 const SERVER_DIR = path.join(__dirname, '..');
 const NODE_MODULES = path.join(SERVER_DIR, 'node_modules');
@@ -173,6 +171,9 @@ function npmEnv(serverDir = SERVER_DIR, env = process.env) {
  * comparison catches reliably — a rebuild against the same major can still differ.
  */
 function nativeModuleBroken() {
+  // ⚠️ Never load it on a Node it segfaults under: that kills this process before any catch runs.
+  const tooOld = nativeUnsupported();
+  if (tooOld) return tooOld;
   try {
     /*
      * ⚠️ CONSTRUCT one, do not merely require it.
@@ -265,7 +266,7 @@ function preflight() {
     const floor = nodeBelowFloor(JSON.parse(fs.readFileSync(path.join(SERVER_DIR, 'package.json'), 'utf8')));
     if (floor) {
       console.warn(`[preflight] ⚠️ Node ${process.versions.node} is older than this release needs (>= ${floor}).`);
-      console.warn('[preflight]    The server will start, but optional features may be missing (Chromium rendering needs puppeteer-core, which npm skips on this Node).');
+      console.warn('[preflight]    The native SQLite driver needs Node 22.14+, so the server starts only where Node\'s built-in node:sqlite can stand in, and Chromium rendering (puppeteer-core) may be missing.');
       console.warn('[preflight]    Upgrade Node: see "Upgrading Node.js" in docs/operations.md.');
     }
   } catch { /* no package.json: missingDeps() reports nothing either */ }
@@ -361,6 +362,19 @@ function preflight() {
    * still repaired, because it is faster and it is what production runs.
    */
   const nativeProblem = nativeModuleBroken();
+  /*
+   * ⚠️ TOO OLD A NODE IS NOT A BROKEN INSTALL. A rebuild cannot give Node 20 or 22.13 the Node-API
+   * the module needs, so skip straight to the built-in driver, or stop with the actual fix.
+   */
+  const tooOld = nativeUnsupported();
+  if (tooOld) {
+    if (nodeSqliteAvailable()) {
+      console.log('[preflight] better-sqlite3 cannot run on this Node; using the built-in node:sqlite driver.');
+      console.log(`[preflight]   ${tooOld}`);
+      return;
+    }
+    fail(tooOld, 'Upgrade Node to 22.14 or newer: see "Upgrading Node.js" in docs/operations.md.');
+  }
   if (nativeProblem && !canRebuildNative()) {
     console.log('[preflight] better-sqlite3 is unavailable; using the built-in node:sqlite driver.');
     console.log(`[preflight]   ${String(nativeProblem).split('\n')[0]}`);

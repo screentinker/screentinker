@@ -136,7 +136,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # brs-node (the BrightScript simulator) needs Node 22; the server runs on it too for the
-      # end-to-end protocol run. Every server job runs Node 22 too (the production floor is 22.12).
+      # end-to-end protocol run. Every server job runs Node 22 too (the production floor is 22.14).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'

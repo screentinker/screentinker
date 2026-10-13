@@ -681,8 +681,9 @@ the ways a box ends up with the wrong `node_modules`:
 
 - **rolling back** to an older tag restores that tag's `package.json` but not its packages — and you
   are rolling back because something is already wrong;
-- **upgrading Node** leaves `better-sqlite3` compiled against the previous ABI, which fails in a way
-  that reads like database corruption and is not.
+- **upgrading Node** to one too old for `better-sqlite3` (Node-API 10, Node 22.14+): preflight then
+  uses the built-in `node:sqlite` where the Node has it, and otherwise stops with "upgrade Node"
+  instead of letting the module crash the process.
 - **upgrading with `git pull`** and a restart (by hand, or under pm2) instead of `upgrade.sh`: the
   new release's lockfile arrives but its packages do not. Without the version check the server ran
   on the old ones, and with them the old security bugs; now it updates them on that first restart.
@@ -1161,7 +1162,7 @@ scripts/          Device setup scripts + admin recovery
 
 ## Tech Stack
 
-- **Backend:** Node.js 22.12+, Express, Socket.IO, SQLite (better-sqlite3)
+- **Backend:** Node.js 22.14+, Express, Socket.IO, SQLite (better-sqlite3)
 - **Frontend:** Vanilla JS SPA (no framework, no build step), ES modules, Service Worker for offline support
 - **Android:** Kotlin, ExoPlayer, Socket.IO client
 - **Auth:** JWT with bcrypt, Google/Microsoft OAuth (optional)

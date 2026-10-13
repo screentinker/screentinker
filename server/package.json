@@ -13,7 +13,7 @@
     "smoke": "node smoke-ui.js"
   },
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.14.0"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1149.0",

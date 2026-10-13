@@ -225,5 +225,5 @@ test('the Node floor comes from engines, and only a lower Node is reported', () 
 
 test('this checkout declares the Node floor the release needs', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-  assert.equal(pkg.engines && pkg.engines.node, '>=22.12.0', 'puppeteer-core 25 is the floor-setter');
+  assert.equal(pkg.engines && pkg.engines.node, '>=22.14.0', 'better-sqlite3 13 (Node-API 10) is the floor-setter');
 });

@@ -272,8 +272,12 @@ both the old and new Node major first, confirm it on the runtime you already hav
 change Node. Each half is then independently reversible. Doing both at once means a failure gives
 you nothing to bisect and no single step to undo.
 
-**Check the version floor: Node 22.12 or newer** (`engines` in `server/package.json`).
+**Check the version floor: Node 22.14 or newer** (`engines` in `server/package.json`).
 
+- `better-sqlite3` 13, the database driver, is a Node-API 10 build and needs **22.14**. On an older
+  Node it would crash the process outright, so the server never loads it there: preflight switches
+  to Node's built-in `node:sqlite` where that exists (Node 24), and otherwise refuses to start with
+  a message saying to upgrade Node. A 22.x host older than 22.14 must be upgraded first.
 - `puppeteer-core` 25, which renders widgets and slides for players that cannot (Roku, BrightSign
   frames), needs **22.12**. On an older Node, npm skips it: the server still starts, preflight warns
   that it is below the floor, and Chromium rendering is off until Node is upgraded.
@@ -287,22 +291,19 @@ upgrade Node, confirm the server on it, then run `scripts/upgrade.sh` to the rel
 `upgrade.sh` warns before it changes anything if the target release needs a newer Node than the
 host has (`ST_REQUIRE_NODE_FLOOR=1` makes that a refusal).
 
-**One native module has to survive the move.** `better-sqlite3` is compiled against a single Node
-ABI, so changing Node invalidates it. Two things make this survivable:
+**The native database module.** `better-sqlite3` 13 is a Node-API build: one binary serves every
+Node from 22.14 on, so moving between Node versions above that floor no longer invalidates it.
 
-- `lib/preflight-deps.js` runs before anything else at boot, detects the mismatch by *opening a
-  database* (a bare `require` succeeds even on a wrong ABI, so it is not a valid check), and repairs
-  it with `npm rebuild better-sqlite3`.
-- The pinned version ships **prebuilt binaries for both the current and the next Node major**, so
-  that repair downloads a binary instead of compiling one.
-
-⚠️ **That second point is why the version is pinned exactly rather than with a caret**, and why
-widening it is risky in a way `package.json` does not show. A version with no prebuild for your Node
-falls back to a from-source `node-gyp` build — and because preflight rebuilds *synchronously before
-the server listens*, a compile that outlives `TimeoutStartSec` turns `Restart=always` into a boot
-loop that never finishes. Before changing that pin, check the project's release assets and confirm a
-prebuild exists for every Node ABI you intend to run. A build toolchain (`python3`, `make`, `g++`)
-should still be present as a fallback.
+- Its prebuilt binaries ship inside the npm package for Linux, macOS and Windows on x64 and arm64.
+  The Linux ones need **glibc 2.34+** (Debian 12 Bookworm, Ubuntu 22.04 or newer) or musl. Debian 11
+  Bullseye and Ubuntu 20.04 cannot load them, so a native install there must move to a newer OS.
+- `lib/preflight-deps.js` runs before anything else at boot. It refuses to load the module on a Node
+  below 22.14 (see the floor above), detects a broken install by *opening a database* (a bare
+  `require` can succeed on a binary that cannot run), and repairs it with `npm rebuild better-sqlite3`.
+- Anywhere with no prebuild (32-bit ARM, for example) that repair is a from-source compile needing
+  a C++20 toolchain. Because preflight rebuilds *synchronously before the server listens*, a compile
+  that outlives `TimeoutStartSec` turns `Restart=always` into a boot loop. The version is pinned
+  exactly for that reason: check the prebuilds before changing the pin.
 
 **Native (git + systemd)**
 

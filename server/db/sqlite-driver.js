@@ -36,6 +36,9 @@ let driverName = null;
 let fallbackReason = null;
 
 function loadNative() {
+  // ⚠️ Before the require: on a too-old Node the binary segfaults, which no catch below can see.
+  const tooOld = require('./native-floor').nativeUnsupported();
+  if (tooOld) throw new Error(tooOld);
   const D = require('better-sqlite3');
   // The ABI check. Touches no file.
   new D(':memory:').close();
@@ -69,7 +72,7 @@ if (FORCED === 'node' || FORCED === 'node:sqlite') {
         'No usable SQLite driver. better-sqlite3 failed with: ' + msg +
         ' — and the built-in node:sqlite is unavailable on ' + process.version +
         ' (it is unflagged only from Node 23.4; 22.x needs --experimental-sqlite). ' +
-        'Rebuild better-sqlite3 for this Node, or run Node 24.');
+        'Upgrade Node to 22.14 or newer (or run Node 24), or rebuild better-sqlite3 for this Node.');
     }
     driverName = 'node:sqlite';
     fallbackReason = msg;

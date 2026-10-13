@@ -12,7 +12,7 @@
 #   git clone https://github.com/screentinker/screentinker.git
 #   cd screentinker/scripts && sudo ./raspberry-pi-setup.sh
 #
-# Works on Raspberry Pi OS Lite or Desktop (Bookworm / Bullseye)
+# Works on Raspberry Pi OS Lite or Desktop (Trixie / Bookworm, 64-bit for the server)
 # Tested on Pi 3B+, Pi 4, Pi 5
 
 set -euo pipefail
@@ -355,8 +355,9 @@ apt-get install -y -qq \
 if [ "$PLAYER_ONLY" = false ]; then
     NEED_NODE=true
     if command -v node &>/dev/null; then
-        CUR=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
-        if [ "$CUR" -ge "$NODE_MAJOR" ]; then
+        # 22.14 is the floor, not just 22: the database driver needs Node-API 10.
+        CUR=$(node -v | sed 's/^v//')
+        if [ "$(printf '%s\n' 22.14.0 "$CUR" | sort -V | head -n1)" = "22.14.0" ]; then
             log "Node.js $(node -v) already installed"
             NEED_NODE=false
         fi
