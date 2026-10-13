@@ -28,6 +28,7 @@ const label = feedLabel(xml);
 check('channel title used as label', label === 'Demo Newsroom', label);
 
 // decodeText: ampersand applied last so escaped entities survive
+check('a stripped tag never joins its neighbours into a new one', decodeText('<scr<b></b>ipt>x') === 'ipt>x', decodeText('<scr<b></b>ipt>x'));
 check('escaped &lt; survives', decodeText('a &amp;lt; b') === 'a &lt; b', decodeText('a &amp;lt; b'));
 
 // uri round-trips through URLSearchParams

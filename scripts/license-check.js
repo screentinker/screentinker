@@ -152,7 +152,7 @@ if (SBOM_OUT) {
         type: 'library',
         name: p.name,
         version: p.version,
-        purl: `pkg:npm/${p.name.replace('@', '%40')}@${p.version}`,
+        purl: `pkg:npm/${p.name.replace(/@/g, '%40')}@${p.version}`,
         licenses: p.license ? [{ license: /[()]| OR | AND /.test(p.license) ? { name: p.license } : { id: p.license } }] : [],
       })),
   };

@@ -83,25 +83,24 @@ for (const id of fs.readdirSync(root).sort()) {
     });
     if (ext === '.js' || ext === '.html' || ext === '.svg') {
       const checks = [
-        [/\beval\s*\(/, 'eval()'],
-        [/\bnew\s+Function\s*\(/, 'new Function()'],
-        [/\bFunction\s*\(\s*['"`]/, 'Function("…")'],
-        [/\bset(?:Timeout|Interval)\s*\(\s*['"`]/, 'setTimeout/setInterval with a string'],
-        [/\bdocument\.write(?:ln)?\s*\(/, 'document.write()'],
-        [/\b(?:webkit)?RTCPeerConnection\b|\bRTCDataChannel\b/, 'WebRTC (not fenced by CSP on Chromium players)'],
-        [/\b(?:location\s*(?:\.href)?\s*=|location\.(?:assign|replace)\s*\(|window\.open\s*\()/, 'navigation / window.open (a way to send data to undeclared hosts)'],
-        [/createElement\s*\(\s*['"`]script['"`]\s*\)/i, 'a dynamically created <script>'],
-        [/\bimport\s*\(|^\s*import\s[^(]|<script[^>]+type\s*=\s*["']module/im, 'ES module import (not supported — files are inlined)'],
-        [/\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b/, 'network API — only for hosts in manifest.network'],
-        [/\.innerHTML\s*=|insertAdjacentHTML|outerHTML\s*=/, 'HTML injection sink — write values with textContent'],
-        [/\blocalStorage\b|\bsessionStorage\b|\bindexedDB\b|document\.cookie/, 'storage API — throws in the opaque-origin sandbox'],
-        [/<(?:audio|video)\b[^>]*\bautoplay\b(?![^>]*\bmuted\b)/i, 'media that could play sound'],
+        [/\beval\s*\(/, 'eval()', err],
+        [/\bnew\s+Function\s*\(/, 'new Function()', err],
+        [/\bFunction\s*\(\s*['"`]/, 'Function("…")', err],
+        [/\bset(?:Timeout|Interval)\s*\(\s*['"`]/, 'setTimeout/setInterval with a string', err],
+        [/\bdocument\.write(?:ln)?\s*\(/, 'document.write()', err],
+        [/\b(?:webkit)?RTCPeerConnection\b|\bRTCDataChannel\b/, 'WebRTC (not fenced by CSP on Chromium players)', err],
+        [/\b(?:location\s*(?:\.href)?\s*=|location\.(?:assign|replace)\s*\(|window\.open\s*\()/, 'navigation / window.open (a way to send data to undeclared hosts)', err],
+        [/createElement\s*\(\s*['"`]script['"`]\s*\)/i, 'a dynamically created <script>', err],
+        [/\bimport\s*\(|^\s*import\s[^(]|<script[^>]+type\s*=\s*["']module/im, 'ES module import (not supported — files are inlined)', err],
+        [/\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon)\b/, 'network API — only for hosts in manifest.network', warn],
+        [/\.innerHTML\s*=|insertAdjacentHTML|outerHTML\s*=/, 'HTML injection sink — write values with textContent', warn],
+        [/\blocalStorage\b|\bsessionStorage\b|\bindexedDB\b|document\.cookie/, 'storage API — throws in the opaque-origin sandbox', warn],
+        [/<(?:audio|video)\b[^>]*\bautoplay\b(?![^>]*\bmuted\b)/i, 'media that could play sound', warn],
       ];
-      for (const [re, what] of checks) {
-        if (re.test(text)) {
-          const serious = /eval|Function|string|document\.write|<script>|module|WebRTC|navigation/.test(what);
-          (serious ? err : warn)(where, `uses ${what}`);
-        }
+      // Severity is a column, not a regex over the label: the old /eval|…|<script>/ test on the
+      // description meant rewording a message could silently demote an error to a warning.
+      for (const [re, what, report] of checks) {
+        if (re.test(text)) report(where, `uses ${what}`);
       }
     }
     // URLs: every host must be declared (namespaces excepted). Protocol-relative too.

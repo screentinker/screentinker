@@ -12,6 +12,8 @@
  * user supplied. A general converter would be a much larger surface for a much smaller benefit.
  */
 
+const { stripTags: dropTags } = require('./strip-tags');
+
 // Block-level elements whose boundaries become blank lines. Everything else is inline.
 const BLOCK = 'p|div|section|article|header|footer|main|h[1-6]|ul|ol|li|table|tr|blockquote|pre';
 
@@ -42,7 +44,7 @@ function decodeEntities(s) {
     .replace(/&amp;/g, '&');
 }
 
-const stripTags = (s) => decodeEntities(String(s).replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim();
+const stripTags = (s) => decodeEntities(dropTags(s)).replace(/\s+/g, ' ').trim();
 
 /* Absolute URLs. A Markdown rendition is read away from the page it came from — often by something
  * that will never issue a second request to resolve a relative path — so a bare "/guides/x.html" is
@@ -76,23 +78,37 @@ function inlineMarkup(html, origin) {
     const inner = stripTags(t2);
     return inner ? `**${inner}**` : '';
   });
-  s = s.replace(/<(em|i)\b[^>]*>([\s\S]*?)<\/\1>/gi, (_m, _t, t2) => {
-    const inner = stripTags(t2);
-    return inner ? `*${inner}*` : '';
-  });
+  // Repeated until stable, because an empty pair is REMOVED: "<<i></i>iframe>" would otherwise
+  // come out of one pass as "<iframe>". Our pages never nest like that, so for them this is one pass.
+  let prev;
+  do {
+    prev = s;
+    s = s.replace(/<(em|i)\b[^>]*>([\s\S]*?)<\/\1>/gi, (_m, _t, t2) => {
+      const inner = stripTags(t2);
+      return inner ? `*${inner}*` : '';
+    });
+  } while (s !== prev);
   s = s.replace(/<kbd\b[^>]*>([\s\S]*?)<\/kbd>/gi, (_m, t) => '`' + stripTags(t) + '`');
   return s;
 }
 
 // Flatten to one line. Used for a table cell or a list item, where a newline would break the shape.
 function inline(html, origin) {
-  return decodeEntities(inlineMarkup(html, origin).replace(/<[^>]*>/g, ''))
+  return decodeEntities(dropTags(inlineMarkup(html, origin)))
     .replace(/[ \t]+/g, ' ').trim();
 }
 
+/*
+ * A literal "|" in a cell is escaped as "\|". A backslash that already sits in front of one is
+ * escaped too, or "a\|b" would become "a\\|b" — an escaped backslash and then a REAL column break.
+ * Only that backslash: GFM leaves "\\" inside a code span as two characters, so escaping every
+ * backslash would double the ones in `C:\path`.
+ */
+const PIPE_ESC = /\\(?=\|)|\|/g;
+
 function tableToMarkdown(html, origin) {
   const rows = [...String(html).matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((m) =>
-    [...m[1].matchAll(/<(t[hd])\b[^>]*>([\s\S]*?)<\/\1>/gi)].map((c) => inline(c[2], origin).replace(/\|/g, '\\|'))
+    [...m[1].matchAll(/<(t[hd])\b[^>]*>([\s\S]*?)<\/\1>/gi)].map((c) => inline(c[2], origin).replace(PIPE_ESC, '\\$&'))
   ).filter((r) => r.length);
   if (!rows.length) return '';
   const width = Math.max(...rows.map((r) => r.length));
@@ -111,8 +127,12 @@ function tableToMarkdown(html, origin) {
  */
 function body(html) {
   let s = String(html);
-  s = s.replace(/<!--[\s\S]*?-->/g, '');
-  s = s.replace(/<(script|style|svg|noscript|template)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
+  // Each until stable: removing one block can join the halves around it into another
+  // ("<scr<script></script>ipt>"). Comments first and to a fixed point, as before, so a comment can
+  // still hide a <script> from the second rule.
+  let prev;
+  do { prev = s; s = s.replace(/<!--[\s\S]*?-->/g, ''); } while (s !== prev);
+  do { prev = s; s = s.replace(/<(script|style|svg|noscript|template)\b[^>]*>[\s\S]*?<\/\1>/gi, ''); } while (s !== prev);
   s = s.replace(/<nav\b[^>]*>[\s\S]*?<\/nav>/gi, '');
   s = s.replace(/<footer\b[^>]*>[\s\S]*?<\/footer>/gi, '');
   const main = s.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i);
@@ -144,7 +164,7 @@ function toMarkdown(html, { url = null, origin = null } = {}) {
   });
   s = s.replace(/<table\b[^>]*>[\s\S]*?<\/table>/gi, (m) => `\n\n${tableToMarkdown(m, origin)}\n\n`);
   s = s.replace(/<pre\b[^>]*>([\s\S]*?)<\/pre>/gi, (_m, t) =>
-    `\n\n\`\`\`\n${decodeEntities(String(t).replace(/<[^>]*>/g, '')).trim()}\n\`\`\`\n\n`);
+    `\n\n\`\`\`\n${decodeEntities(dropTags(t)).trim()}\n\`\`\`\n\n`);
   s = s.replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, (_m, t) => {
     const text = inline(t, origin);
     return text ? `\n- ${text}` : '';

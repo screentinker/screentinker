@@ -20,8 +20,13 @@ function decodeText(s) {
   let t = String(s);
   // pull CDATA payloads out verbatim
   t = t.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1');
-  // strip any stray tags (some feeds put markup in titles)
-  t = t.replace(/<[^>]+>/g, '');
+  // strip any stray tags (some feeds put markup in titles). Until stable, so a stripped tag can never
+  // leave the halves around it joined into a new one. The ticker shows this as text either way.
+  let prev;
+  do {
+    prev = t;
+    t = t.replace(/<[^>]+>/g, '');
+  } while (t !== prev);
   // named + numeric entities
   t = t
     .replace(/&lt;/g, '<')

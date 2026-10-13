@@ -163,10 +163,30 @@ test('⚠️ pagination is CAPPED server-side, whatever the caller asks for', ()
 test('search is parameterised and escapes LIKE wildcards', () => {
   // A device literally named "100%" must not become a match-everything pattern.
   const q = hv.deviceQuery({ search: '100%_x' });
-  assert.match(q.sql, /d\.name LIKE \? OR d\.device_id LIKE \?/);
+  assert.match(q.sql, /d\.name LIKE \? ESCAPE '\\' OR d\.device_id LIKE \? ESCAPE '\\'/);
   assert.ok(q.params[0].includes('\\%'), 'a literal % is escaped');
   assert.ok(q.params[0].includes('\\_'), 'and so is a literal _');
   assert.ok(!q.sql.includes('100%'), 'the term never reaches the SQL text');
+});
+
+test('⚠️ the escaping actually holds in SQLite: "100%" finds "100%" and nothing else', () => {
+  // Without ESCAPE '\' SQLite treats "\%" as a backslash and a wildcard, so the escaped term
+  // matched nothing. Run the clause deviceQuery emits against a real database, not a copy of it.
+  const Database = require('better-sqlite3');
+  const sdb = new Database(':memory:');
+  sdb.exec('CREATE TABLE d (device_id TEXT, name TEXT)');
+  const ins = sdb.prepare('INSERT INTO d VALUES (?, ?)');
+  for (const [id, name] of [['1', '100%'], ['2', '1000'], ['3', 'a_b'], ['4', 'axb'], ['5', 'c\\%d'], ['6', 'c\\zd']]) ins.run(id, name);
+  const hits = (search) => {
+    const q = hv.deviceQuery({ search });
+    const clause = q.sql.match(/\(d\.name LIKE .*?\)/)[0];
+    return sdb.prepare(`SELECT device_id FROM d WHERE ${clause}`)
+      .all(q.params[0], q.params[1]).map((r) => r.device_id).sort();
+  };
+  assert.deepEqual(hits('100%'), ['1']);
+  assert.deepEqual(hits('a_b'), ['3']);
+  assert.deepEqual(hits('c\\%'), ['5'], 'a literal backslash cannot be used to un-escape the wildcard');
+  sdb.close();
 });
 
 test('search covers the id, because a health-only grant has no name to search', () => {

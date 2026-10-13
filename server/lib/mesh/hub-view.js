@@ -151,8 +151,13 @@ function deviceQuery({ search = null, nodeIds = null, status = null,
      * ONLY by id — which is a documented consequence of the grant and why the empty state has to
      * explain itself rather than just saying "no results".
      */
-    where.push('(d.name LIKE ? OR d.device_id LIKE ?)');
-    const like = `%${String(search).replace(/[%_]/g, '\\$&')}%`;
+    /*
+     * ⚠️ ESCAPE '\' IS NOT OPTIONAL. SQLite's LIKE has no escape character unless the clause names
+     * one, so "\%" without it is a literal backslash followed by a wildcard: a search for "100%"
+     * found nothing named "100%". The backslash itself is escaped too, or "a\%" would undo it.
+     */
+    where.push("(d.name LIKE ? ESCAPE '\\' OR d.device_id LIKE ? ESCAPE '\\')");
+    const like = `%${String(search).replace(/[\\%_]/g, '\\$&')}%`;
     params.push(like, like);
   }
   if (Array.isArray(nodeIds) && nodeIds.length) {

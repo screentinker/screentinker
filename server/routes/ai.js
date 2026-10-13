@@ -11,6 +11,7 @@ const { db } = require('../db/database');
 const config = require('../config');
 const { encrypt, decrypt } = require('../lib/secretbox');
 const { generateImage } = require('../lib/image-gen');
+const { stripTags } = require('../lib/strip-tags');
 const { aiFetch } = require('../lib/ai-fetch');
 const { vetRequestHost } = require('../lib/storage/endpoint-guard');
 const fs = require('fs');
@@ -70,7 +71,8 @@ x, y, width, height are PERCENTAGES of the canvas (0-100). fontSize is a number 
 
 const clampN = (n, lo, hi, d) => { n = Number(n); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
 const hex = (c, d) => (typeof c === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(c.trim())) ? c.trim() : d;
-const cleanText = (s) => String(s == null ? '' : s).replace(/<[^>]*>/g, '').trim().slice(0, 200);
+// Flattened to text, not sanitised: every consumer renders these as text or escapes them on output.
+const cleanText = (s) => stripTags(s == null ? '' : s).trim().slice(0, 200);
 
 // Keep generated text on the canvas. The Designer renders text nowrap at
 // ~fontSize/10 % of the canvas width per em, so long/large text runs off the

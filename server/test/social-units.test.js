@@ -42,6 +42,7 @@ test("Mastodon's HTML becomes plain text", () => {
   assert.equal(htmlToText('<script>alert(1)</script>x'), 'alert(1)x', 'tags are dropped, never kept');
   assert.equal(htmlToText('&lt;img src=x&gt;'), '<img src=x>', 'entities decode to TEXT, which the wall renders with textContent');
   assert.equal(htmlToText('&#128512;&#x1F600;&#0;'), '😀😀');
+  assert.equal(htmlToText('<scr<b></b>ipt>x'), 'ipt>x', 'removing a tag never joins its neighbours into a new one');
 });
 
 test('only image bytes are kept, whatever the content type said', () => {

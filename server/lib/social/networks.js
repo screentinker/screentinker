@@ -22,6 +22,7 @@
 
 const { baseFor, getJson, ApiError } = require('./http');
 const { secretOf } = require('./connections');
+const { stripTags } = require('../strip-tags');
 
 const NETWORKS = ['instagram', 'facebook', 'youtube', 'x', 'bluesky', 'mastodon'];
 const NEEDS_CONNECTION = { instagram: true, facebook: true, youtube: true, x: true, bluesky: false, mastodon: false };
@@ -262,10 +263,10 @@ function instanceBase(instance) {
 
 /** Mastodon sends HTML. Flatten it to text; the wall never renders a network's markup. */
 function htmlToText(html) {
-  return String(html || '')
+  const flat = String(html || '')
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
-    .replace(/<[^>]*>/g, '')
+    .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n');
+  return stripTags(flat)
     .replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos|nbsp);/gi, (m, e) => {
       const named = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }[e.toLowerCase()];
       if (named) return named;

@@ -29,7 +29,7 @@ const PLATFORMS = Object.freeze(['win-x64-cp312', 'linux-aarch64-cp313', 'linux-
 
 const caches = new Map();
 for (const p of PLATFORMS) {
-  const re = new RegExp(`^screentinker-audience_(\\d+\\.\\d+\\.\\d+(?:[~-][0-9A-Za-z.~-]+)?)_${p.replace(/[.-]/g, '\\$&')}\\.zip$`);
+  const re = new RegExp(`^screentinker-audience_(\\d+\\.\\d+\\.\\d+(?:[~-][0-9A-Za-z.~-]+)?)_${p.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')}\\.zip$`);
   caches.set(p, createPackageCache({ name: `audience-${p}`, filenameRe: re, envDirVar: 'AUDIENCE_ADDON_DIST_DIR' }));
 }
 
