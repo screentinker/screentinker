@@ -29,12 +29,21 @@ jobs:
           languages: javascript-typescript
           build-mode: none
           # Vendored third-party bundles and tooling output are not our code.
+          #
+          # The test suites are not shipped and never receive a request from outside the test
+          # process. They were 92 of the open alerts, and every one was a test doing what tests do:
+          # regex-matching rendered HTML (bad-tag-filter), building fixture URLs by substring, or
+          # standing up throwaway Express routes with no limiter. None of that reaches a deployment,
+          # and leaving it in made the list too noisy to notice a real finding in shipped code.
           config: |
             paths-ignore:
               - '**/node_modules/**'
               - frontend/vendor/**
               - marketing/**
               - '**/*.min.js'
+              - server/test/**
+              - native/tests/**
+              - roku/tests/**
       - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
         with:
           category: /language:javascript-typescript
