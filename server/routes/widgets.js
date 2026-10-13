@@ -1092,7 +1092,15 @@ router.get('/preview-session/:id', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Type', 'text/html');
   // The editor previews a cloud document with allow-same-origin (as players do); script-free by CSP.
+  //
+  // Every other preview gets `sandbox allow-scripts` as a HEADER, the same thing the dashboard's
+  // <iframe sandbox="allow-scripts"> already applies. In the dashboard that changes nothing. It
+  // matters when this URL is opened top-level: it is unauthenticated (_skipAuth) and lives on the
+  // dashboard's origin, so without the header the page would run as the origin whose localStorage
+  // holds the session. Raw author HTML is already isolated one level down (renderText's srcdoc
+  // iframe); this keeps the wrapper, and anything a future widget type emits, opaque as well.
   if (entry.widget_type === 'cloud-doc') res.setHeader('Content-Security-Policy', require('../lib/cloud-docs').RENDER_CSP);
+  else res.setHeader('Content-Security-Policy', `sandbox ${PREVIEW_IFRAME_SANDBOX}`);
   res.send(html);
 });
 

@@ -71,3 +71,12 @@ test('dashboard preview iframe is hard-coded to allow-scripts', () => {
     'preview iframe sandbox must be a literal, not computed from the org setting'
   );
 });
+
+// The preview-session GET is unauthenticated and served from the dashboard's origin. The dashboard
+// frames it sandboxed, but the URL can also be opened top-level, so the response has to carry the
+// same sandbox itself.
+test('preview-session GET carries a sandbox CSP for every non-cloud-doc preview', () => {
+  const body = handlerBody(WIDGETS_ROUTE, 'get', '/preview-session/:id');
+  assert.match(body, /else res\.setHeader\('Content-Security-Policy', `sandbox \$\{PREVIEW_IFRAME_SANDBOX\}`\)/,
+    'GET /preview-session/:id must send `sandbox allow-scripts` when it is not a cloud-doc');
+});
