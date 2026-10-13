@@ -2579,3 +2579,9 @@ tr[hidden] { display: none; }
 .power-times[hidden] { display: none; }
 .power-allday-label { display: inline-flex; align-items: center; gap: 6px; }
 .power-schedule-editor input:disabled, .power-schedule-editor .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Set by /js/nav-prime.js before the first paint, removed by route() where it shows the sidebar:
+   the login/reset/onboarding screens never paint a sidebar the router is about to hide. */
+html.nav-pending #sidebar,
+html.nav-pending #mobileMenuBtn { display: none !important; }
+html.nav-pending .main-wrapper { margin-left: 0 !important; }

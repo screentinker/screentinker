@@ -15,6 +15,9 @@
   <link rel="stylesheet" href="/css/reset.css">
   <link rel="stylesheet" href="/css/main.css">
   <link rel="stylesheet" href="/css/library.css">
+  <!-- Before the first paint: hides the sidebar on the screens the router will hide it on, so it
+       does not flash there (classic script, not a module, so it runs now; see the file). -->
+  <script src="/js/nav-prime.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <!-- #238: the players' own rotation rule (server/lib/orientation-style.js), served under /player
        because it IS the player's — the dashboard previews of rotated screens went sideways for as

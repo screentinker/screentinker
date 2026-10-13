@@ -561,7 +561,8 @@ function route() {
     return;
   }
 
-  // Show sidebar for authenticated views
+  // Show sidebar for authenticated views (and drop nav-prime.js's first-paint hide).
+  document.documentElement.classList.remove('nav-pending');
   sidebar.style.display = '';
   if (mainWrapper) mainWrapper.style.marginLeft = '';
   const mb = document.getElementById('mobileMenuBtn');
