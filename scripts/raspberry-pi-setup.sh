@@ -343,8 +343,14 @@ apt-get update -qq
 apt-get upgrade -y -qq
 
 log "Installing base dependencies..."
+# ⚠️ python3 make g++ are NOT optional. npm runs better-sqlite3's `node-gyp rebuild` install step
+# even though the package bundles its binaries (binding.gyp then just picks the prebuild), and
+# node-gyp cannot run without them: npm then silently drops the module as a failed optional
+# dependency and the server falls back to Node's experimental built-in SQLite. On a platform with
+# no prebuild (32-bit ARM) the same toolchain compiles it from source instead.
 apt-get install -y -qq \
     git curl wget unzip htop \
+    python3 make g++ \
     avahi-daemon \
     fonts-liberation fonts-noto-color-emoji \
     >> "$LOG_FILE" 2>&1
@@ -364,7 +370,18 @@ if [ "$PLAYER_ONLY" = false ]; then
     fi
     if [ "$NEED_NODE" = true ]; then
         log "Installing Node.js ${NODE_MAJOR}.x..."
-        curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - >> "$LOG_FILE" 2>&1
+        # NodeSource's apt repo added directly, rather than piping their setup script into a root
+        # shell: nothing downloaded is executed, and apt verifies every package against the repo's
+        # signing key (OpenSSF Scorecard: Pinned-Dependencies). It is what setup_${NODE_MAJOR}.x does.
+        apt-get install -y -qq ca-certificates curl gnupg >> "$LOG_FILE" 2>&1
+        install -d -m 0755 /etc/apt/keyrings
+        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+            | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
+            > /etc/apt/sources.list.d/nodesource.list
+        # NodeSource's nodejs over the distribution's own (Debian 13 ships Node 20).
+        printf 'Package: nodejs\nPin: origin deb.nodesource.com\nPin-Priority: 600\n' > /etc/apt/preferences.d/nodejs
+        apt-get update -qq >> "$LOG_FILE" 2>&1
         apt-get install -y -qq nodejs >> "$LOG_FILE" 2>&1
         log "Node.js $(node -v) installed"
     fi
@@ -384,7 +401,8 @@ if [ "$PLAYER_ONLY" = false ]; then
 
     log "Installing Node.js dependencies..."
     cd "$SCREENTINKER_DIR/server"
-    npm install --production >> "$LOG_FILE" 2>&1
+    # From the lockfile, exactly: the versions CI tested, integrity-checked (`npm install` re-resolves).
+    npm ci --omit=dev --no-audit --no-fund >> "$LOG_FILE" 2>&1
 
     # Data directories
     mkdir -p "$SCREENTINKER_DIR/server/db"

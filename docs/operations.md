@@ -300,6 +300,12 @@ Node from 22.14 on, so moving between Node versions above that floor no longer i
 - `lib/preflight-deps.js` runs before anything else at boot. It refuses to load the module on a Node
   below 22.14 (see the floor above), detects a broken install by *opening a database* (a bare
   `require` can succeed on a binary that cannot run), and repairs it with `npm rebuild better-sqlite3`.
+- ⚠️ **`python3`, `make` and `g++` must be installed even where a prebuild exists.** npm runs the
+  package's `node-gyp rebuild` install step regardless, and node-gyp cannot start without them; npm
+  then *silently* drops `better-sqlite3` as a failed optional dependency and the server runs on
+  Node's experimental built-in `node:sqlite` (Node 22.13+), or not at all on an older Node. The
+  install scripts and the Docker build install them. Check with `ls server/node_modules/better-sqlite3`
+  after any `npm ci`.
 - Anywhere with no prebuild (32-bit ARM, for example) that repair is a from-source compile needing
   a C++20 toolchain. Because preflight rebuilds *synchronously before the server listens*, a compile
   that outlives `TimeoutStartSec` turns `Restart=always` into a boot loop. The version is pinned

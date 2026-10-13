@@ -34,7 +34,7 @@ updates:
   # the installers), and docker:N-cli talks to the HOST's daemon, so its floor is the customer's
   # Docker. Both are decided by hand.
   - package-ecosystem: docker
-    directories: ["/", "/docker/updater"]
+    directories: ["/", "/docker/updater", "/docker/go2rtc-vp8"]
     schedule:
       interval: weekly
     ignore:

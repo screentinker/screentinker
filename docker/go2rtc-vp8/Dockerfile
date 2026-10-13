@@ -16,10 +16,12 @@
 # ScreenTinker's dashboard live view uses). go2rtc's RTSP/MP4/HLS/MSE outputs still require H264, so
 # they will not see a VP8-only producer. If you rely on those, keep publishers on H264.
 
+# ⚠️ Both base images are pinned by digest (OpenSSF Scorecard: Pinned-Dependencies) and spelled
+# out rather than built from ARGs, so Dependabot can move tag and digest together. GO2RTC_VERSION
+# below (the source tag cloned and patched) must match the runtime image tag in the final FROM.
 ARG GO2RTC_VERSION=v1.9.14
-ARG GO_VERSION=1.25
 
-FROM golang:${GO_VERSION}-alpine AS build
+FROM golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59 AS build
 ARG GO2RTC_VERSION
 RUN apk add --no-cache git
 WORKDIR /src
@@ -29,5 +31,5 @@ RUN git apply --verbose /tmp/vp8-vp9-codecs.patch
 RUN CGO_ENABLED=0 go build -ldflags "-s -w" -trimpath -o /go2rtc .
 
 # Final image: reuse upstream's runtime (ffmpeg, tini, etc.), swap in the patched binary.
-FROM alexxit/go2rtc:${GO2RTC_VERSION#v}
+FROM alexxit/go2rtc:1.9.14@sha256:675c318b23c06fd862a61d262240c9a63436b4050d177ffc68a32710d9e05bae
 COPY --from=build /go2rtc /usr/local/bin/go2rtc

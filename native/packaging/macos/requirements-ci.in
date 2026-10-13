@@ -1,0 +1,4 @@
+# CI-only inputs for the macOS test job: the shipped pins plus the test runner.
+# Compile with:  uv pip compile requirements-ci.in --python-platform aarch64-apple-darwin --python-version 3.12 --generate-hashes -o requirements-ci.txt
+-r requirements.txt
+pytest

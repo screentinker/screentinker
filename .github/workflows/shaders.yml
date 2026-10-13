@@ -32,7 +32,9 @@ jobs:
         with:
           chrome-version: stable
       # puppeteer-core only (Apache-2.0) — drives the Chrome above, downloads no browser binary.
-      - run: npm install --no-audit --no-fund
+      # `npm ci` from the root lockfile, not `npm install`: the same tree every run, verified against
+      # the lockfile's integrity hashes (OpenSSF Scorecard: Pinned-Dependencies).
+      - run: npm ci --no-audit --no-fund
       - name: Compile + link all transition shaders in headless Chrome (SwiftShader)
         env:
           PUPPETEER_EXECUTABLE_PATH: ${{ steps.chrome.outputs.chrome-path }}
