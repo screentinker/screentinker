@@ -9,7 +9,10 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const Database = require('better-sqlite3');
-const { authenticator } = require('otplib');
+// The phone: otplib 13 has no `authenticator`; generate the current code under the server's limits.
+const otplib = require('otplib');
+const PHONE_LIMITS = otplib.createGuardrails({ MIN_SECRET_BYTES: 10 });   // accepts pre-otplib-13 secrets too
+const authenticator = { generate: (secret) => otplib.generateSync({ secret, guardrails: PHONE_LIMITS }) };
 
 // Inject the db BEFORE requiring middleware/auth so requireAuth queries this one.
 const mem = new Database(':memory:');
@@ -117,4 +120,35 @@ test('an older 40-bit recovery code still verifies (no lockout after the entropy
   // Verification is length-agnostic (hash the typed code, look the hash up), so a pre-bump code
   // already in the table keeps matching.
   assert.equal(totp.hashRecoveryCode(oldCode), storedHash, 'a 40-bit code still hashes to its stored value');
+});
+
+// ---- otplib 13 ----
+
+test('⚠️ a secret enrolled under otplib 12 (10 bytes) still verifies: no MFA user is locked out', () => {
+  // otplib 12's generateSecret() made 16 base32 chars = 10 bytes; otplib 13 refuses < 16 bytes by default.
+  const legacy = 'LQCTSNL4FFHV6FKB';
+  assert.equal(legacy.length, 16);
+  const now = 1791800000 * 1000;
+  const code = otplib.generateSync({ secret: legacy, epoch: now / 1000, guardrails: PHONE_LIMITS });
+  assert.equal(totp.verifyCode(code, legacy, 0, now), totp.currentStep(now));
+});
+
+test('new secrets are 20 bytes (32 base32 chars)', () => {
+  assert.equal(totp.generateSecret().length, 32);
+});
+
+test('the clock-skew window is one step either side, as otplib 12 window:1 was', () => {
+  const secret = totp.generateSecret();
+  const now = 1791800000 * 1000;
+  const at = (off) => otplib.generateSync({ secret, epoch: now / 1000 + off, guardrails: PHONE_LIMITS });
+  assert.equal(totp.verifyCode(at(-30), secret, 0, now), totp.currentStep(now) - 1);
+  assert.equal(totp.verifyCode(at(0), secret, 0, now), totp.currentStep(now));
+  assert.equal(totp.verifyCode(at(30), secret, 0, now), totp.currentStep(now) + 1);
+  assert.equal(totp.verifyCode(at(-60), secret, 0, now), null, 'two steps old is refused');
+  assert.equal(totp.verifyCode(at(60), secret, 0, now), null, 'two steps ahead is refused');
+});
+
+test('a stored secret that is garbage fails the check instead of throwing', () => {
+  assert.equal(totp.verifyCode('123456', 'not-base32-!!', 0), null);
+  assert.equal(totp.verifyCode('123456', 'AAAA', 0), null, 'too short even for the legacy limit');
 });

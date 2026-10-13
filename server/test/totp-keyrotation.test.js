@@ -14,7 +14,10 @@ const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
-const { authenticator } = require('otplib');
+// The phone: otplib 13 has no `authenticator`; generate the current code under the server's limits.
+const otplib = require('otplib');
+const PHONE_LIMITS = otplib.createGuardrails({ MIN_SECRET_BYTES: 10 });   // accepts pre-otplib-13 secrets too
+const authenticator = { generate: (secret) => otplib.generateSync({ secret, guardrails: PHONE_LIMITS }) };
 
 const { freePort } = require('./helpers/free-port');
 let PORT, BASE;

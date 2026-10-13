@@ -5,22 +5,33 @@
 // API token / recovery codes. Recovery codes ARE hashed (SHA-256, same discipline as
 // api_tokens) - see generateRecoveryCodes / hashRecoveryCode.
 
-const { authenticator } = require('otplib');
+const otplib = require('otplib');
 const crypto = require('crypto');
 const secretbox = require('./secretbox');
 const { hashToken } = require('../middleware/apiToken');
 
 const STEP_SEC = 30;
 const ISSUER = 'ScreenTinker';
-authenticator.options = { window: 1 }; // accept ±1 step (±30s) for clock skew
 
-function generateSecret() { return authenticator.generateSecret(); }            // base32 plaintext
+/*
+ * ⚠️ EVERY SECRET ALREADY ENROLLED IS 10 BYTES. otplib 12's generateSecret() made 10-byte (80-bit)
+ * secrets; otplib 13 REFUSES anything under 16 bytes by default (SecretTooShortError). Ported
+ * without this, verifyCode threw for every user who had set up MFA, and a code that throws is a
+ * code that does not match: all of them locked out at their next sign-in.
+ *
+ * So verification accepts the 10 bytes every existing secret has. NEW secrets use otplib 13's
+ * default of 20 bytes (160-bit, what RFC 4226 recommends); nothing re-enrols anyone.
+ */
+const LEGACY_SECRET_BYTES = 10;
+const guardrails = otplib.createGuardrails({ MIN_SECRET_BYTES: LEGACY_SECRET_BYTES });
+
+function generateSecret() { return otplib.generateSecret(); }                    // base32 plaintext, 20 bytes
 // otpauth:// URI for the QR. `instance` (the dashboard host, e.g. alpha.screentinker.com)
 // is folded into the issuer so an authenticator app can tell apart accounts on more than
 // one ScreenTinker — it shows "ScreenTinker (host)" instead of a bare, ambiguous "ScreenTinker".
 function keyuri(email, secret, instance) {
   const issuer = instance ? `${ISSUER} (${instance})` : ISSUER;
-  return authenticator.keyuri(email, issuer, secret);
+  return otplib.generateURI({ issuer, label: email, secret });
 }
 function encryptSecret(secret) { return secretbox.encrypt(secret); }            // for storage
 function decryptSecret(enc) { return secretbox.decrypt(enc); }                  // for verification
@@ -32,8 +43,18 @@ function currentStep(now = Date.now()) { return Math.floor(now / 1000 / STEP_SEC
 // The caller persists the returned step as the user's new totp_last_step.
 function verifyCode(token, secret, lastStep = 0, now = Date.now()) {
   if (!secret || !/^[0-9]{6}$/.test(String(token || '').trim())) return null;
-  const delta = authenticator.checkDelta(String(token).trim(), secret); // -1|0|1 or null
-  if (delta == null) return null;
+  let delta;
+  try {
+    // epochTolerance = one step either side: the ±30 s clock skew otplib 12's `window: 1` gave.
+    const r = otplib.verifySync({
+      token: String(token).trim(), secret,
+      epoch: Math.floor(now / 1000), epochTolerance: STEP_SEC, guardrails,
+    });
+    if (!r.valid) return null;
+    delta = r.delta;                                                   // -1|0|1
+  } catch (_) {
+    return null;   // a malformed stored secret is a failed check, never a 500
+  }
   const step = currentStep(now) + delta;
   if (step <= lastStep) return null; // a code from an already-consumed step (replay)
   return step;
