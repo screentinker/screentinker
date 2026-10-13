@@ -151,7 +151,7 @@ function normalise(config, { dataMap = null } = {}) {
     subtitle: str(c.subtitle, 200),
     footer: str(c.footer, 300),
     theme,
-    accent: /^#[0-9a-f]{6}$/i.test(c.accent || '') ? c.accent : (theme === 'light' ? '#b45309' : '#f59e0b'),
+    accent: require('./safe-color').hexColor(c.accent, theme === 'light' ? '#b45309' : '#f59e0b', [6]),
     currency: str(c.currency == null ? '$' : c.currency, 6),
     currency_after: !!c.currency_after,
     decimals: [0, 1, 2, 3].includes(Number(c.decimals)) ? Number(c.decimals) : 2,

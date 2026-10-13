@@ -96,8 +96,10 @@ function inlineUserContent(html, workspaceId) {
  * save time by validateTimezone below, so nobody silently gets UTC again.
  */
 function safeTimezone(tz) {
-  if (!tz) return 'UTC';
-  return isRealTimezone(tz) ? tz : 'UTC';
+  if (!tz || !isRealTimezone(tz)) return 'UTC';
+  // Intl's own spelling of the zone, not the caller's string: isRealTimezone already refuses quotes
+  // and backslashes, and this makes what is inlined into the clock's script text Intl produced.
+  return new Intl.DateTimeFormat('en-US', { timeZone: tz }).resolvedOptions().timeZone;
 }
 
 function serverTimezone() {
@@ -1048,6 +1050,11 @@ router.post('/preview', (req, res) => {
   });
   if (req.workspaceId) html = inlineUserContent(html, req.workspaceId);
   res.setHeader('Content-Type', 'text/html');
+  // Same containment as the preview-session URL below: this is author config rendered on the
+  // dashboard's origin, so if the response is ever loaded as a document it runs opaque, not as the
+  // origin whose localStorage holds the session.
+  if (widget_type === 'cloud-doc') res.setHeader('Content-Security-Policy', require('../lib/cloud-docs').RENDER_CSP);
+  else res.setHeader('Content-Security-Policy', `sandbox ${PREVIEW_IFRAME_SANDBOX}`);
   res.send(html);
 });
 
@@ -1168,7 +1175,7 @@ async function load() {
   try {
     // #324: wttr.in accepts lang=, so "Sunny" can arrive in the operator's language rather than
     // always English. Same locale field the clock gained in #323; blank leaves wttr.in's default.
-    const r = await fetch('https://wttr.in/${encodeURIComponent(c.location || 'New York')}?format=j1${/^[A-Za-z]{2}$/.test(String(c.locale || '').slice(0, 2)) ? '&lang=' + String(c.locale).slice(0, 2).toLowerCase() : ''}');
+    const r = await fetch('https://wttr.in/${encodeURIComponent(c.location || 'New York')}?format=j1${/^[A-Za-z]{2}$/.test(String(c.locale || '').slice(0, 2)) ? '&lang=' + encodeURIComponent(String(c.locale).slice(0, 2).toLowerCase()) : ''}');
     const d = await r.json();
     const cur = d.current_condition[0];
     const unit = '${c.units === 'metric' ? 'temp_C' : 'temp_F'}';

@@ -262,6 +262,15 @@ process.env.ST_SKIP_DEP_PREFLIGHT = '1';
  * install block further down — so declaring it next to its logic put the whole boot in a temporal
  * dead zone: one frame, one ReferenceError, no server, and a blank screen to debug it with.
  */
+/*
+ * What an error may say on the status page: its message, never the error itself. The status JSON is
+ * served to anything that can reach the box's status port, and an Error stringified as-is can carry a
+ * stack trace and the paths it names. The stack still goes to the log (remember('error', …)).
+ */
+function errorText(e) {
+  return e && typeof e.message === 'string' && e.message ? e.message : 'unexpected error (see the log)';
+}
+
 let installState = { phase: 'idle', detail: '', pct: null };
 let lastLoggedInstall = null;
 
@@ -472,7 +481,7 @@ function startServer() {
     scheduleUpdateChecks();
   } catch (e) {
     remember('error', ['server failed to start', e && e.stack ? e.stack : String(e)]);
-    fatalMessage = String(e && e.message ? e.message : e);
+    fatalMessage = errorText(e);
     post(statusFrame());
     post({ type: 'st-server-fatal', message: fatalMessage });
   }
@@ -660,7 +669,7 @@ function runInstall(manifest) {
     remember('log', ['payload installed (' + r.files + ' files) — starting the server']);
     startServer();
   }).catch((e) => {
-    installState = { phase: 'failed', detail: String(e && e.message ? e.message : e), pct: null };
+    installState = { phase: 'failed', detail: errorText(e), pct: null };
     /*
      * ⚠️ A FAILED *UPDATE* IS NOT FATAL — a failed first install is. If a server is already on disk
      * it is still perfectly good, and refusing to boot because a newer one could not be fetched

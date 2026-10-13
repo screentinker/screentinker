@@ -112,7 +112,7 @@ const helmet = require('helmet');
 // dashboard buttons — TODO: refactor these to addEventListener and tighten further.
 // styleSrcAttr 'unsafe-inline' is required because the views use inline style="..."
 // attributes extensively for layout.
-const dashboardCsp = helmet.contentSecurityPolicy({
+const DASHBOARD_CSP = {
   useDefaults: true,
   directives: {
     defaultSrc: ["'self'"],
@@ -141,7 +141,7 @@ const dashboardCsp = helmet.contentSecurityPolicy({
     // protected by the HSTS header set above.
     upgradeInsecureRequests: null,
   },
-});
+};
 
 /*
  * FIRST: mark "an HTTP request is being served", for the corporate backstop's tripwire — a write to
@@ -151,29 +151,33 @@ const dashboardCsp = helmet.contentSecurityPolicy({
 app.use(require('./lib/corporate/actor').httpMarker);
 
 app.use(helmet({
-  contentSecurityPolicy: false,        // we apply our own below, scoped to non-render paths
+  // The dashboard policy, on every response; the middleware below strips it from the render paths
+  // that need inline script and set their own (stripped rather than never set, so a new route is
+  // covered by default instead of exempt by default).
+  contentSecurityPolicy: DASHBOARD_CSP,
   crossOriginEmbedderPolicy: false,    // allow loading external widget content
   hsts: { maxAge: 31536000, includeSubDomains: true },
 }));
 
-// Apply CSP everywhere except routes that legitimately need inline scripts:
+// CSP (set by helmet above) applies everywhere except routes that legitimately need inline scripts:
 // - widget/kiosk renders (public, fetched by devices, intentionally inline)
 // - /player (the web player has inline JS, served to display devices)
 // - /         (landing page has inline JSON-LD + a pricing fetch script)
 // The dashboard at /app uses ES modules only and gets the strict policy.
 app.use((req, res, next) => {
-  if (req.path === '/' || req.path === '/landing.html') return next();
-  if (req.path.startsWith('/player')) return next();
-  if (req.path.startsWith('/view/')) return next(); // view-only display page: the web player (routes/view.js)
-  if (req.path === '/docs') return next(); // Redoc API reference needs a relaxed CSP
-  if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/render')) return next();
-  if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/data.json')) return next();
-  if (req.path.startsWith('/api/widgets/preview-session/')) return next();
+  const exempt = () => { res.removeHeader('Content-Security-Policy'); return next(); };
+  if (req.path === '/' || req.path === '/landing.html') return exempt();
+  if (req.path.startsWith('/player')) return exempt();
+  if (req.path.startsWith('/view/')) return exempt(); // view-only display page: the web player (routes/view.js)
+  if (req.path === '/docs') return exempt(); // Redoc API reference needs a relaxed CSP
+  if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/render')) return exempt();
+  if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/data.json')) return exempt();
+  if (req.path.startsWith('/api/widgets/preview-session/')) return exempt();
   // Template previews carry their own sandboxing CSP (lib/templates/render.js).
-  if (req.path.startsWith('/api/templates/preview/')) return next();
-  if (req.path.startsWith('/api/templates/asset/')) return next();   // sets its own `sandbox` CSP
-  if (req.path.startsWith('/api/templates/demo/')) return next();    // the gallery preview: same CSP as a render
-  if (req.path.startsWith('/api/kiosk/') && req.path.endsWith('/render')) return next();
+  if (req.path.startsWith('/api/templates/preview/')) return exempt();
+  if (req.path.startsWith('/api/templates/asset/')) return exempt();   // sets its own `sandbox` CSP
+  if (req.path.startsWith('/api/templates/demo/')) return exempt();    // the gallery preview: same CSP as a render
+  if (req.path.startsWith('/api/kiosk/') && req.path.endsWith('/render')) return exempt();
   /*
    * ⚠️ AN HTML BUNDLE IS THE SAME CASE AS A WIDGET RENDER, and it fails the same way without this.
    * The document is flattened to data: URIs, so the dashboard's `script-src 'self'` blocks every
@@ -181,13 +185,13 @@ app.use((req, res, next) => {
    * — a blank rectangle with nothing in any log. What contains a bundle is BUNDLE_SANDBOX_CSP,
    * which the two bundle routes set themselves (see there), not this policy.
    */
-  if (req.path.startsWith('/api/content/') && req.path.endsWith('/bundle')) return next();
-  if (/^\/api\/content\/[^/]+\/bundle-preview\//.test(req.path)) return next();
+  if (req.path.startsWith('/api/content/') && req.path.endsWith('/bundle')) return exempt();
+  if (/^\/api\/content\/[^/]+\/bundle-preview\//.test(req.path)) return exempt();
   // Plugin static files are operator HTML/JS, same CSP case as a widget render. Only skip
   // the dashboard policy when the loader is actually on — otherwise /plugins/* is just 404
   // and must not look different from any other unknown path.
-  if (config.pluginsEnabled && req.path.startsWith('/plugins/')) return next();
-  return dashboardCsp(req, res, next);
+  if (config.pluginsEnabled && req.path.startsWith('/plugins/')) return exempt();
+  return next();
 });
 // CORS policy.
 // - SELF_HOSTED=true: allow all origins (operator controls their own deployment).
@@ -507,7 +511,9 @@ function sendMarkdown(req, res, file, canonicalPath) {
     // `.md` is its own URL; the HTML page URL keeps its edge caching.
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Link', aiSurface.linkHeader(base));
-    return res.send(mdRendition.toMarkdown(html, { url: base + canonicalPath, origin: base }));
+    // encodeURI: canonicalPath comes from req.path. Only known pages reach here, whose paths are
+    // already plain, but what goes into a response body is encoded, not trusted to be.
+    return res.send(mdRendition.toMarkdown(html, { url: base + encodeURI(canonicalPath), origin: base }));
   } catch (e) {
     return res.status(404).type('text/plain').send('not found');
   }

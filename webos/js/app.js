@@ -28,11 +28,15 @@
 
   function log(m) { try { console.log('[st-shell] ' + m); } catch (e) {} }
 
+  // The server address typed on the remote ends up as the player iframe's src. Rebuilt behind a
+  // LITERAL scheme, never kept as typed, so it can only ever be an http(s) URL: a typed
+  // "javascript:…" becomes the harmless host name "javascript" instead of script in the app's origin.
   function normaliseUrl(u) {
     u = String(u || '').trim();
     if (!u) return '';
-    if (!/^https?:\/\//i.test(u)) u = 'http://' + u;
-    return u.replace(/\/+$/, '');
+    var m = /^(https?):\/\/(.*)$/i.exec(u);
+    var rest = (m ? m[2] : u).replace(/\/+$/, '');
+    return (m && m[1].toLowerCase() === 'https' ? 'https://' : 'http://') + rest;
   }
 
   // A config.json next to the app wins over nothing, and a value typed on the remote wins over
