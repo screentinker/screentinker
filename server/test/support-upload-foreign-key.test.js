@@ -89,7 +89,11 @@ function pngFile(name) {
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
     'base64'
   );
-  const tmp = path.join(os.tmpdir(), 'st-supfk-' + crypto.randomBytes(6).toString('hex') + '.upload');
+  // Staged where every real uploader stages: contentDir, as multer's `<uuid>.part`. finalizeUpload
+  // refuses a file anywhere else.
+  const { contentDir } = require('../config');
+  fs.mkdirSync(contentDir, { recursive: true });
+  const tmp = path.join(contentDir, crypto.randomUUID() + '.part');
   fs.writeFileSync(tmp, bytes);
   return { path: tmp, originalname: name, size: bytes.length, mimetype: 'image/png' };
 }
