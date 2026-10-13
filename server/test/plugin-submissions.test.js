@@ -19,7 +19,7 @@ const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const crypto = require('node:crypto');
-const archiver = require('archiver');
+const { ZipArchive } = require('archiver');
 
 const inbox = require('../lib/plugins/inbox');
 const submissions = require('../lib/plugins/submissions');
@@ -96,7 +96,7 @@ function writeZip(filePath, files) {
   return new Promise((resolve, reject) => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const out = fs.createWriteStream(filePath);
-    const archive = archiver('zip', { zlib: { level: 9 } });
+    const archive = new ZipArchive({ zlib: { level: 9 } });
     out.on('close', resolve);
     archive.on('error', reject);
     archive.pipe(out);

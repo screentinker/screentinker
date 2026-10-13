@@ -19,7 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const archiver = require('archiver');
+const { ZipArchive } = require('archiver');
 
 // The payload, mirroring scripts/build-autorun-zip.sh. autozip.brs must be present or nothing
 // unpacks the archive on the player; autorun.brs must be INSIDE it and never beside it on the
@@ -128,7 +128,7 @@ function buildZip(serverUrl) {
     // supports a specific set of methods, of which "no compression" is the universally safe one.
     // A compressed package deploys perfectly and then fails to open, which reads as a broken
     // deployment rather than a broken zip.
-    const archive = archiver('zip', { store: true });
+    const archive = new ZipArchive({ store: true });
 
     archive.on('data', (c) => chunks.push(c));
     archive.on('error', reject);

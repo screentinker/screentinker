@@ -394,10 +394,10 @@ async function cmdBundle(a) {
   const dist = a._[0];
   if (!dist || !a.out) die('usage: template-catalog.js bundle <dist> -o <offline.zip>', 2);
   if (!fs.existsSync(path.join(dist, 'index.json.sig'))) die('the dist is not signed — run "sign" first');
-  const archiver = require(path.join(ROOT, 'server/node_modules/archiver'));
+  const { ZipArchive } = require(path.join(ROOT, 'server/node_modules/archiver'));
   const index = JSON.parse(fs.readFileSync(path.join(dist, 'index.json'), 'utf8'));
   const out = fs.createWriteStream(a.out);
-  const zip = archiver('zip', { zlib: { level: 9 } });
+  const zip = new ZipArchive({ zlib: { level: 9 } });
   const done = new Promise((res, rej) => { out.on('close', res); zip.on('error', rej); });
   zip.pipe(out);
   const fixed = new Date('2000-01-01T00:00:00Z');

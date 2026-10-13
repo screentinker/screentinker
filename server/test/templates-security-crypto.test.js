@@ -38,7 +38,7 @@ const catalog = require('../lib/templates/catalog');
 const tplWidget = require('../lib/templates/widget');
 const zipLib = require('../lib/templates/zip');
 const appSettings = require('../lib/app-settings');
-const archiver = require('archiver');
+const { ZipArchive } = require('archiver');
 
 db.prepare("INSERT INTO users (id, email, role, password_hash) VALUES ('u1','u1@test.local','platform_admin','x')").run();
 
@@ -109,7 +109,7 @@ function serveFiles(files) {
 }
 
 async function zipOf(entries, { level = 6 } = {}) {
-  const a = archiver('zip', { zlib: { level } });
+  const a = new ZipArchive({ zlib: { level } });
   const chunks = [];
   a.on('data', (c) => chunks.push(c));
   const done = new Promise((r) => a.on('end', r));
@@ -584,7 +584,7 @@ test('[SAFE] zip: traversal, absolute, drive, backslash, NUL, deep paths, dot-du
 test('[SAFE] zip: symlink entries, encrypted flag and unsupported methods are refused', async () => {
   const { readZip } = zipLib;
   const opts = { maxArchiveBytes: 1e7, maxEntries: 100, maxFileBytes: 1e6, maxTotalBytes: 1e7 };
-  const a = archiver('zip');
+  const a = new ZipArchive();
   const chunks = []; a.on('data', (c) => chunks.push(c));
   const done = new Promise((r) => a.on('end', r));
   a.symlink('link.txt', '/etc/passwd');

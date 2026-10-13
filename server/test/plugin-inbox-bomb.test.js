@@ -13,11 +13,11 @@ process.env.NODE_ENV = 'test';
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const archiver = require('archiver');
+const { ZipArchive } = require('archiver');
 const inbox = require('../lib/plugins/inbox');
 
 async function lyingZip(bigBytes) {
-  const a = archiver('zip', { zlib: { level: 9 } });
+  const a = new ZipArchive({ zlib: { level: 9 } });
   const chunks = [];
   a.on('data', (c) => chunks.push(c));
   const done = new Promise((r) => a.on('end', r));

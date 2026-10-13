@@ -381,11 +381,11 @@ test('revocation by sha256 also catches unverified local copies of the same byte
 
 test('offline bundle: verified exactly like an online index, packages kept only when pinned', async () => {
   freshCatalogState();
-  const archiver = require('archiver');
+  const { ZipArchive } = require('archiver');
   const good = slideTemplate();
   const idx = makeIndex([{ bytes: good }], { serial: 500 });
   async function zip(entries) {
-    const a = archiver('zip');
+    const a = new ZipArchive();
     const chunks = [];
     a.on('data', (c) => chunks.push(c));
     const done = new Promise((r) => a.on('end', r));
@@ -413,8 +413,8 @@ test('offline bundle: verified exactly like an online index, packages kept only 
 
 test('zip bombs: real inflated bytes are counted, not the claimed sizes', async () => {
   const { readZip } = require('../lib/templates/zip');
-  const archiver = require('archiver');
-  const a = archiver('zip', { zlib: { level: 9 } });
+  const { ZipArchive } = require('archiver');
+  const a = new ZipArchive({ zlib: { level: 9 } });
   const chunks = [];
   a.on('data', (c) => chunks.push(c));
   const done = new Promise((r) => a.on('end', r));

@@ -321,12 +321,12 @@ router.get('/export', async (req, res) => {
 
   // If include_files requested, bundle as ZIP with content files
   if (req.query.include_files === 'true') {
-    const archiver = require('archiver');
+    const { ZipArchive } = require('archiver');
     const dateStr = new Date().toISOString().split('T')[0];
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename=screentinker-export-${dateStr}.zip`);
 
-    const archive = archiver('zip', { zlib: { level: 5 } });
+    const archive = new ZipArchive({ zlib: { level: 5 } });
     archive.pipe(res);
 
     // Collect file info and add files to archive

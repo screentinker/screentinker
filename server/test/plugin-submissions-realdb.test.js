@@ -16,7 +16,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const archiver = require('archiver');
+const { ZipArchive } = require('archiver');
 
 let Database;
 try { Database = require('better-sqlite3'); } catch { Database = null; }
@@ -37,7 +37,7 @@ function pluginSchemaDDL() {
 function makePluginZip(id = 'realdb-sample') {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    const a = archiver('zip', { zlib: { level: 0 } });
+    const a = new ZipArchive({ zlib: { level: 0 } });
     a.on('data', (c) => chunks.push(c));
     a.on('error', reject);
     a.on('end', () => resolve(Buffer.concat(chunks)));

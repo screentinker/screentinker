@@ -116,8 +116,8 @@ const signedEnv = (bytes) => pkg.buildEnvelope(bytes, signing.signPackage(bytes,
 const unsignedEnv = (bytes) => pkg.buildEnvelope(bytes, null);
 
 async function zip(entries) {
-  const archiver = require('archiver');
-  const a = archiver('zip');
+  const { ZipArchive } = require('archiver');
+  const a = new ZipArchive();
   const chunks = [];
   a.on('data', (c) => chunks.push(c));
   const done = new Promise((r) => a.on('end', r));
