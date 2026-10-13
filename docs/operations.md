@@ -86,6 +86,25 @@ scripts/upgrade.sh              # latest stable release
 scripts/upgrade.sh v1.2.3       # or pin one
 ```
 
+Before it changes anything it refuses a target the host cannot run: a Node older than the
+release's `engines` floor (`ST_ALLOW_OLD_NODE=1` overrides), or, for a release on `better-sqlite3`,
+no `python3`/`make`/`g++`. After `npm ci` it opens a database with the new driver, and if that
+fails it puts the previous release back and stops **without** restarting, so the running server is
+never replaced by one that cannot start.
+
+⚠️ **Run the TARGET release's copy of the script.** `upgrade.sh` is tracked, so the copy in your
+checkout is the one from the release you are LEAVING, and checks added in a newer release do not
+protect the upgrade to it. Run the new one against your checkout instead:
+
+```bash
+cd /opt/screentinker && git fetch --tags origin
+git show v1.2.3:scripts/upgrade.sh > /tmp/st-upgrade.sh
+APP_DIR=/opt/screentinker bash /tmp/st-upgrade.sh v1.2.3
+```
+
+The dashboard updater (`st-updater.sh`) is a copy too: re-run `scripts/updater/install-systemd.sh`
+from the new release to pick up its checks.
+
 If you are doing it by hand, the order matters:
 
 ```bash
@@ -288,8 +307,9 @@ you nothing to bisect and no single step to undo.
 **Moving from Node 20: change Node FIRST, on the release you already run, then upgrade the app.**
 Releases up to 2.6.x run on both Node 20 and Node 22, so that order is the two-step path above:
 upgrade Node, confirm the server on it, then run `scripts/upgrade.sh` to the release that needs 22.
-`upgrade.sh` warns before it changes anything if the target release needs a newer Node than the
-host has (`ST_REQUIRE_NODE_FLOOR=1` makes that a refusal).
+`upgrade.sh` refuses, before it changes anything, a target release that needs a newer Node than the
+host has: below the floor the server no longer starts (see the database driver below), so this is
+a refusal rather than the warning it once was. `ST_ALLOW_OLD_NODE=1` proceeds anyway.
 
 **The native database module.** `better-sqlite3` 13 is a Node-API build: one binary serves every
 Node from 22.14 on, so moving between Node versions above that floor no longer invalidates it.

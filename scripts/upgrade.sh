@@ -164,29 +164,72 @@ fi
 # git show, because the copy of this script that runs is the one from the release being LEFT: a
 # check that only looked at the checkout would see the old floor.
 #
-# A warning, not a refusal. The server still starts on an older Node (preflight says what is
-# missing), and refusing here would leave an operator who cannot change Node today on the old
-# release. ST_REQUIRE_NODE_FLOOR=1 makes it a refusal for those who would rather stop.
+# ⚠️ A REFUSAL NOW, NOT A WARNING. Since better-sqlite3 13 (Node-API 10) the server below its floor
+# does not merely lose a feature: it stops at boot with "upgrade Node", or on Node 22.12 segfaults
+# outright, so going ahead would replace a working server with one that will not start.
+# ST_ALLOW_OLD_NODE=1 proceeds anyway (and skips the native check after the install), for an
+# operator who runs the built-in driver on purpose (ST_SQLITE_DRIVER=node on Node 22.13+).
 STEP="checking the Node version $TARGET needs"
-NODE_FLOOR="$(git show "$TARGET:server/package.json" 2>/dev/null | sed -n 's/.*"node": *">= *v\{0,1\}\([0-9][0-9.]*\)".*/\1/p' | head -1)"
+TARGET_PKG="$(git show "$TARGET:server/package.json" 2>/dev/null || true)"
+NODE_FLOOR="$(printf '%s' "$TARGET_PKG" | sed -n 's/.*"node": *">= *v\{0,1\}\([0-9][0-9.]*\)".*/\1/p' | head -1)"
 NODE_HAVE="$(node -p 'process.versions.node' 2>/dev/null || echo 0)"
 if [ -n "$NODE_FLOOR" ] && [ "$(printf '%s\n%s\n' "$NODE_FLOOR" "$NODE_HAVE" | sort -V | head -1)" != "$NODE_FLOOR" ]; then
-  echo "WARNING: $TARGET needs Node >= $NODE_FLOOR; this host has Node $NODE_HAVE." >&2
-  echo "         It will start, but optional features (Chromium rendering) may be missing." >&2
-  echo "         See \"Upgrading Node.js\" in docs/operations.md." >&2
-  if [ "${ST_REQUIRE_NODE_FLOOR:-0}" = "1" ]; then
-    echo "ERROR: ST_REQUIRE_NODE_FLOOR=1 - stopping. Nothing has been changed." >&2
+  if [ "${ST_ALLOW_OLD_NODE:-0}" = "1" ]; then
+    echo "WARNING: $TARGET needs Node >= $NODE_FLOOR; this host has Node $NODE_HAVE. Going ahead (ST_ALLOW_OLD_NODE=1)." >&2
+  else
+    echo "ERROR: $TARGET needs Node >= $NODE_FLOOR; this host has Node $NODE_HAVE." >&2
+    echo "       The new release would not start on it. Upgrade Node first (see \"Upgrading Node.js\" in" >&2
+    echo "       docs/operations.md), then run this script again. Nothing has been changed." >&2
+    trap - ERR; exit 1
+  fi
+fi
+
+# ⚠️ A BUILD TOOLCHAIN, EVEN WHERE A PREBUILT BINARY EXISTS. npm runs better-sqlite3's `node-gyp
+# rebuild` install step regardless, node-gyp cannot start without python3, make and g++, and npm
+# then drops the module SILENTLY as a failed optional dependency: the install "succeeds" and the
+# server comes up on the experimental built-in driver, or not at all. Checked here, before anything
+# changes, rather than discovered after the restart.
+NATIVE_DRIVER=0
+if printf '%s' "$TARGET_PKG" | grep -q '"better-sqlite3"' && [ "${ST_SQLITE_DRIVER:-}" != "node" ] && [ "${ST_ALLOW_OLD_NODE:-0}" != "1" ]; then
+  NATIVE_DRIVER=1
+  STEP="checking the build toolchain"
+  MISSING=""
+  for tool in python3 make g++; do command -v "$tool" >/dev/null 2>&1 || MISSING="$MISSING $tool"; done
+  if [ -n "$MISSING" ] && [ "${ST_SKIP_TOOLCHAIN_CHECK:-0}" != "1" ]; then
+    echo "ERROR: missing:$MISSING. npm needs them to install the database driver (even prebuilt)," >&2
+    echo "       and without them it skips the driver without saying so. Install them first, e.g." >&2
+    echo "         sudo apt-get install -y python3 make g++" >&2
+    echo "       then run this script again. Nothing has been changed." >&2
     trap - ERR; exit 1
   fi
 fi
 
 STEP="checking out $TARGET"
-echo "==> Checking out $TARGET"
+PREV_REF="$(git rev-parse HEAD)"
+PREV_NAME="$(git describe --tags --exact-match HEAD 2>/dev/null || git rev-parse --short HEAD)"
+echo "==> Checking out $TARGET (from $PREV_NAME)"
 git checkout -q "$TARGET"
 
 STEP="installing server dependencies (npm ci)"
 echo "==> Installing server deps (npm ci --omit=dev)"
 ( cd server && npm ci --omit=dev )
+
+# ⚠️ PROVE THE DRIVER LOADS BEFORE RESTARTING. Opening a database, not just requiring it: the binary
+# is loaded lazily. The old server is still the one running, so a failure here costs nothing: put
+# the previous release back on disk and stop, instead of restarting into a server that cannot start.
+if [ "$NATIVE_DRIVER" = 1 ]; then
+  STEP="checking the database driver loads"
+  if ! ( cd server && node -e "const D = require('better-sqlite3'); new D(':memory:').close()" ) >/dev/null 2>&1; then
+    echo "ERROR: better-sqlite3 is missing or will not load after the install." >&2
+    echo "       Putting $PREV_NAME back so the running server's code stays consistent..." >&2
+    STEP="rolling back to $PREV_NAME"
+    git checkout -q "$PREV_REF"
+    ( cd server && npm ci --omit=dev ) >/dev/null 2>&1 || echo "       (npm ci for $PREV_NAME failed too: run it in server/ by hand)" >&2
+    echo "       Rolled back to $PREV_NAME; the server was not restarted. Check the npm output above." >&2
+    trap - ERR; exit 1
+  fi
+  echo "==> Database driver loads"
+fi
 
 # ⚠️ NOT EVERY INSTALL IS A SYSTEMD UNIT CALLED screentinker. The README's quick start is
 # `npm start`, and people put that under pm2; a hard-coded `systemctl restart` then failed at the
