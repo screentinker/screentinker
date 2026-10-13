@@ -3,7 +3,7 @@
 # (Seeed Studio reTerminal Sticky, TRMNL, Inky, ESP32-S3 E-Paper displays).
 
 # --- builder: install production + optional deps (better-sqlite3, puppeteer-core) ---
-FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS builder
+FROM node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS builder
 WORKDIR /app/server
 # build toolchain in case a native prebuild is missing for the target arch
 RUN apt-get update \
@@ -13,7 +13,7 @@ COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev
 
 # --- runtime ---
-FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+FROM node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0
 # ffmpeg (video thumbnails/duration extraction) + chromium & fonts for headless rendering
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
