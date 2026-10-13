@@ -76,7 +76,8 @@
    * The session id is the server's dedupe key (UNIQUE(device_id, client_id)), not a secret — but a
    * collision silently drops a session (INSERT OR IGNORE), so it should be properly random.
    * randomUUID is Chromium 92+ (Tizen 7+); getRandomValues is in every Chromium-based Tizen (3.0+)
-   * and in WebKit since 2013. Math.random stays only as the last resort for an engine with neither.
+   * and in WebKit since 2013. An engine with neither (none we support) gets time + a per-load counter
+   * stirred through xorshift: unique enough for a dedupe key, which is all this id is.
    */
   function randomBytes(n) {
     try {
@@ -89,12 +90,19 @@
     } catch (e) {}
     return null;
   }
+  var uuidSeq = 0;
+  function fallbackBytes(n) {
+    var x = (Date.now() ^ (++uuidSeq * 0x9e3779b1)) >>> 0 || 1;
+    var a = [];
+    for (var k = 0; k < n; k++) { x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0; a.push(x & 0xff); }
+    return a;
+  }
   function uuid() {
     try { if (root.crypto && typeof root.crypto.randomUUID === 'function') return root.crypto.randomUUID(); } catch (e) {}
-    var b = randomBytes(32);   // one byte per hex digit (31 used); low nibble only
+    var b = randomBytes(32) || fallbackBytes(32);   // one byte per hex digit (31 used); low nibble only
     var i = 0;
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (ch) {
-      var r = b ? (b[i++] & 0xf) : ((Math.random() * 16) | 0);
+      var r = b[i++] & 0xf;
       return (ch === 'x' ? r : (r & 0x3) | 0x8).toString(16);
     });
   }
