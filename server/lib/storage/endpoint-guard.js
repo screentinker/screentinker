@@ -4,7 +4,7 @@ const dns = require('dns');
 const net = require('net');
 const http = require('http');
 const https = require('https');
-const { isBlockedIp, SsrfError } = require('../ssrf-guard');
+const { isBlockedIp, isBlockedFor, SsrfError } = require('../ssrf-guard');
 
 /*
  * ⚠️ A STORAGE ENDPOINT IS A URL AN ORG ADMIN TYPED, AND THE SERVER CONNECTS TO IT.
@@ -78,11 +78,14 @@ function isPrivateOrLoopback(ip) {
   return s === '::1' || /^f[cd][0-9a-f]{2}:/.test(s);
 }
 
-function vetAddress(ip, { allowPrivate = false } = {}) {
+function vetAddress(ip, { allowPrivate = false } = {}, hostname) {
   if (!net.isIP(ip)) throw new SsrfError('blocked-ip:' + ip);
   if (isNeverAllowed(ip)) throw new SsrfError('blocked-ip:' + ip);
   if (!isBlockedIp(ip)) return true;
   if (allowPrivate && isPrivateOrLoopback(ip)) return true;
+  // The instance-wide OUTBOUND_ALLOW_HOSTS / OUTBOUND_ALLOW_PRIVATE (lib/ssrf-guard, #618), so a LAN
+  // IdP or AI server is opened the same way as a LAN calendar. isNeverAllowed above still wins.
+  if (!isBlockedFor(ip, hostname)) return true;
   throw new SsrfError('blocked-ip:' + ip);
 }
 
@@ -100,13 +103,13 @@ function parseEndpoint(urlString) {
 async function checkEndpoint(urlString, opts = {}) {
   const url = parseEndpoint(urlString);
   const host = url.hostname.replace(/^\[|\]$/g, '');
-  if (net.isIP(host)) { vetAddress(host, opts); return url; }
+  if (net.isIP(host)) { vetAddress(host, opts, host); return url; }
   if (/^(metadata|metadata\.google\.internal|instance-data)$/i.test(host)) throw new SsrfError('blocked-host');
   let addrs;
   try { addrs = await dns.promises.lookup(host, { all: true, verbatim: true }); }
   catch (e) { throw new SsrfError('dns-fail'); }
   if (!addrs.length) throw new SsrfError('no-address');
-  for (const a of addrs) vetAddress(a.address, opts);
+  for (const a of addrs) vetAddress(a.address, opts, host);
   return url;
 }
 
@@ -117,7 +120,7 @@ function guardedLookup(opts = {}) {
     const host = String(hostname).replace(/^\[|\]$/g, '');
     const done = (err, list) => {
       if (err) return cb(err);
-      try { for (const a of list) vetAddress(a.address, opts); }
+      try { for (const a of list) vetAddress(a.address, opts, host); }
       catch (e) { return cb(Object.assign(new Error('storage endpoint address refused'), { code: 'ECONNREFUSED', name: 'SsrfError' })); }
       if (options && options.all) return cb(null, list);
       return cb(null, list[0].address, list[0].family);
@@ -135,7 +138,7 @@ function guardedLookup(opts = {}) {
  */
 function vetRequestHost(host, opts = {}) {
   const h = String(host || '').replace(/^\[|\]$/g, '');
-  if (net.isIP(h)) vetAddress(h, opts);
+  if (net.isIP(h)) vetAddress(h, opts, h);
   else if (/^(metadata|metadata\.google\.internal|instance-data)$/i.test(h)) throw new SsrfError('blocked-host');
 }
 
