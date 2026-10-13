@@ -25,6 +25,7 @@ const { canRead, isOrgAdmin } = require('../lib/permissions');
 const { requirePlatformAdmin } = require('../middleware/auth');
 const { logActivity, getClientIp } = require('../services/activity');
 const stripeClient = require('../lib/stripe-client');
+const { trimTrailing } = require('../lib/trim-trailing');
 
 // Content-edit rights, as routes/ai.js has them — EXCEPT a platform operator acting as an org. On
 // the BYO path that cost nothing; here every image spends the CUSTOMER'S credits on the platform's
@@ -178,7 +179,7 @@ router.post('/checkout', async (req, res) => {
     return res.status(503).json({ error: 'Online purchase is not available on this server — contact your administrator.', code: 'checkout_unavailable' });
   }
   const raw = req.headers.origin || process.env.APP_URL || `${req.protocol}://${req.get('host') || ''}`;
-  const base = `${String(raw).replace(/\/+$/, '')}/app`;
+  const base = `${trimTrailing(raw, '/')}/app`;
   try {
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',

@@ -13,6 +13,7 @@ const express = require('express');
 const http = require('http');
 const https = require('https');
 const { Server } = require('socket.io');
+const { trimTrailing } = require('./lib/trim-trailing');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
@@ -2736,7 +2737,7 @@ const DEVICE_ADMIN_SIGNATURE_CHECKSUM =
   process.env.DEVICE_ADMIN_SIGNATURE_CHECKSUM || 's9ZOWAvn3qFYJxaaR0j41ZttQK1r6_XgaTMcB7rIqqI';
 app.get('/api/provision/device-owner-qr', requireAuth, async (req, res) => {
   try {
-    const base = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+    const base = trimTrailing(process.env.APP_URL || `${req.protocol}://${req.get('host')}`, '/');
     const apkUrl = `${base}/download/apk`;
     // Derive the signature checksum from the APK the device will actually download, so it can
     // never drift from the served build. Fall back to the configured constant if the APK isn't

@@ -29,6 +29,7 @@
  */
 
 const crypto = require('crypto');
+const { trimTrailing } = require('./trim-trailing');
 
 /*
  * 32 bytes, base64url. This is a bearer credential that lives in a URL for years, so it is sized
@@ -85,7 +86,7 @@ function clearEnrolKey(db, deviceId) {
  * and a shorter query string is a smaller chance of a truncated paste.
  */
 function playerUrl(origin, key) {
-  return `${String(origin).replace(/\/+$/, '')}/player?k=${encodeURIComponent(key)}`;
+  return `${trimTrailing(origin, '/')}/player?k=${encodeURIComponent(key)}`;
 }
 
 module.exports = {

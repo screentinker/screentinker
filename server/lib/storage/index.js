@@ -7,6 +7,7 @@ const secretbox = require('../secretbox');
 const { LocalBackend } = require('./local');
 const { StorageError, StorageRefusedError } = require('./errors');
 const breaker = require('./breaker');
+const { trimTrailing } = require('../trim-trailing');
 
 /*
  * ⚠️ THE ONE PLACE THAT DECIDES WHERE A CONTENT ROW'S BYTES LIVE. Callers ask this module for a
@@ -105,7 +106,7 @@ function sanitizePrefix(p) {
   if (s.includes('\\') || s.startsWith('/') || s.split('/').some((seg) => seg === '..' || seg === '.')) {
     throw new StorageRefusedError('A storage prefix may not contain "..", a backslash, or start with "/".');
   }
-  const out = s.replace(/\/+$/, '');
+  const out = trimTrailing(s, '/');
   if (out.split('/').some((seg) => seg === '')) throw new StorageRefusedError('A storage prefix may not contain empty segments.');
   return out;
 }

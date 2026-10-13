@@ -13,8 +13,12 @@
 // There is deliberately no separate param schema. If you find yourself adding one,
 // the shader and the UI have already drifted.
 
+// A number is `1`, `1.`, `1.5` or `.5`. It used to be `[\d.]+`, which also matches the `..` of the
+// range, so `[0.0..1.5]` could be cut several ways and a run of dots went quadratic (custom shaders
+// are uploaded by users and parsed on the server). Every real shader's params parse the same:
+// parseFloat stopped at the second dot of a `1.2.3` anyway.
 const PARAM_RE =
-  /uniform\s+float\s+(\w+)\s*;\s*\/\/\s*=\s*(-?[\d.]+)\s*(?:\[\s*(-?[\d.]+)\s*\.\.\s*(-?[\d.]+)\s*\])?/g;
+  /uniform\s+float\s+(\w+)\s*;\s*\/\/\s*=\s*(-?(?:\d+(?:\.\d*)?|\.\d+))\s*(?:\[\s*(-?(?:\d+(?:\.\d*)?|\.\d+))\s*\.\.\s*(-?(?:\d+(?:\.\d*)?|\.\d+))\s*\])?/g;
 
 /**
  * Parse param declarations out of a GLSL source string.

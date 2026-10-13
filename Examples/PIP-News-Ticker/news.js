@@ -14,19 +14,54 @@ const path = require('path');
 
 // ---- pure helpers (exported for the offline test) -------------------------
 
+// Unwrap every <![CDATA[...]]> in place, payload verbatim. Same result as
+// .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1'), but that regex rescans to the end of the text
+// from every unterminated opener (quadratic on a hostile feed); here, once no ]]> follows an
+// opener, none follows a later one, so the rest is left as it is.
+function unwrapCdata(t) {
+  const OPEN = '<![CDATA[';
+  const CLOSE = ']]>';
+  let out = '';
+  let pos = 0;
+  for (;;) {
+    const o = t.indexOf(OPEN, pos);
+    if (o === -1) break;
+    const c = t.indexOf(CLOSE, o + OPEN.length);
+    if (c === -1) break;
+    out += t.slice(pos, o) + t.slice(o + OPEN.length, c);
+    pos = c + CLOSE.length;
+  }
+  return out + t.slice(pos);
+}
+
+// Drop every <...> tag: same result as .replace(/<[^>]+>/g, ''), which rescans to the end from
+// every '<' when no '>' follows (quadratic on a run of them). A match runs from a '<' to the next
+// '>' with at least one character between; "<>" is not one and stays, as before.
+function stripTags(t) {
+  let out = '';
+  let pos = 0;
+  let from = 0;
+  for (;;) {
+    const o = t.indexOf('<', from);
+    if (o === -1) break;
+    const c = t.indexOf('>', o + 1);
+    if (c === -1) break;
+    if (c === o + 1) { from = o + 1; continue; }
+    out += t.slice(pos, o);
+    pos = c + 1;
+    from = c + 1;
+  }
+  return out + t.slice(pos);
+}
+
 // Decode CDATA sections and the handful of XML entities feeds actually use.
 function decodeText(s) {
   if (s == null) return '';
   let t = String(s);
   // pull CDATA payloads out verbatim
-  t = t.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1');
-  // strip any stray tags (some feeds put markup in titles). Until stable, so a stripped tag can never
-  // leave the halves around it joined into a new one. The ticker shows this as text either way.
-  let prev;
-  do {
-    prev = t;
-    t = t.replace(/<[^>]+>/g, '');
-  } while (t !== prev);
+  t = unwrapCdata(t);
+  // strip any stray tags (some feeds put markup in titles)
+  t = stripTags(t);
   // named + numeric entities
   t = t
     .replace(/&lt;/g, '<')

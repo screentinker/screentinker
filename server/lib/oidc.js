@@ -27,6 +27,7 @@
 const crypto = require('crypto');
 const net = require('net');
 const jwt = require('jsonwebtoken');
+const { trimTrailing } = require('./trim-trailing');
 
 /*
  * `alg: "none"` is the oldest JWT attack there is, and HMAC is nearly as bad here: an HS256 token is
@@ -173,7 +174,7 @@ async function getJson(url) {
  * be accepted under a name it does not own.
  */
 async function discover(issuer) {
-  const key = String(issuer).replace(/\/+$/, '');
+  const key = trimTrailing(issuer, '/');
   const hit = discoveryCache.get(key);
   if (hit && Date.now() - hit.at < DISCOVERY_TTL_MS) return hit.doc;
 

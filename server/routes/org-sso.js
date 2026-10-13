@@ -24,6 +24,7 @@ const { logActivity, getClientIp } = require('../services/activity');
 const { isPublicEmailDomain } = require('../lib/public-email-domains');
 const domainVerify = require('../lib/domain-verify');
 const emailSvc = require('../services/email');
+const { trimTrailing } = require('../lib/trim-trailing');
 
 /*
  * Only an org owner/admin may configure how their people sign in — it is the most security-relevant
@@ -164,7 +165,11 @@ function normaliseDomains(raw) {
       e.status = 400;
       throw e;
     }
-    let d = part.trim().toLowerCase().replace(/^@/, '').replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    let d = part.trim().toLowerCase().replace(/^@/, '').replace(/^https?:\/\//, '');
+    // Drop any path. indexOf, not `.replace(/\/.*$/, '')`: that retries from every slash and is
+    // quadratic on a run of them. `part` has no line terminators (split on \s), so it is the same cut.
+    const slash = d.indexOf('/');
+    if (slash !== -1) d = d.slice(0, slash);
     if (!d) continue;
     if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(d)) {
       throw new Error(`"${part.trim()}" is not a valid email domain`);
@@ -508,7 +513,7 @@ router.post('/:orgId/sso', requireOrgAdmin, requireVerifiedAdmin, asyncRoute(asy
    * home page someone pasted.
    */
   try {
-    await oidc.discover(String(issuer).trim().replace(/\/+$/, ''));
+    await oidc.discover(trimTrailing(String(issuer).trim(), '/'));
   } catch (e) {
     return res.status(400).json({ error: `Could not read OpenID configuration from that issuer: ${discoveryErrorMessage(e, issuer)}` });
   }
@@ -528,7 +533,7 @@ router.post('/:orgId/sso', requireOrgAdmin, requireVerifiedAdmin, asyncRoute(asy
       db.prepare(`
         INSERT INTO org_sso_providers (id, organization_id, slug, name, issuer, client_id, client_secret_enc, scopes, email_domains, enabled)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-      `).run(id, req.orgId, slug, String(name).trim(), String(issuer).trim().replace(/\/+$/, ''), String(clientId).trim(),
+      `).run(id, req.orgId, slug, String(name).trim(), trimTrailing(String(issuer).trim(), '/'), String(clientId).trim(),
         clientSecret ? secretbox.encrypt(String(clientSecret)) : null,
         String(scopes || 'openid email profile').trim(), cleanDomains);
       newlyClaimed = syncDomains(id, req.orgId, cleanDomains);
@@ -605,7 +610,7 @@ router.put('/:orgId/sso/:id', requireOrgAdmin, requireVerifiedAdmin, asyncRoute(
     if (samlNext.error) return res.status(400).json({ error: samlNext.error });
   }
   const nextIssuer = isSaml ? (samlNext.issuer !== undefined ? samlNext.issuer : existing.issuer)
-    : (issuer !== undefined ? String(issuer).trim().replace(/\/+$/, '') : existing.issuer);
+    : (issuer !== undefined ? trimTrailing(String(issuer).trim(), '/') : existing.issuer);
   if (!isSaml && nextIssuer !== existing.issuer) {
     try { await oidc.discover(nextIssuer); }
     catch (e) { return res.status(400).json({ error: `Could not read OpenID configuration from that issuer: ${discoveryErrorMessage(e, nextIssuer)}` }); }
@@ -1040,3 +1045,4 @@ router.delete('/:orgId/sso/:id', requireOrgAdmin, requireVerifiedAdmin, (req, re
 });
 
 module.exports = router;
+module.exports.normaliseDomains = normaliseDomains;

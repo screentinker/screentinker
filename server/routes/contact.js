@@ -12,8 +12,16 @@ const express = require('express');
 const router = express.Router();
 const { sendEmail } = require('../services/email');
 
+/*
+ * Same rule as /^[^\s@]+@[^\s@]+\.[^\s@]+$/ — no whitespace, exactly one @ with something before
+ * it, and a dot in the domain with at least one character either side — done with string ops. The
+ * regex is quadratic on a domain of many dots (each split between the two [^\s@]+ is retried).
+ */
 function isEmail(s) {
-  return typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+  if (typeof s !== 'string' || /\s/.test(s)) return false;
+  const at = s.indexOf('@');
+  if (at < 1 || s.indexOf('@', at + 1) !== -1) return false;
+  return s.slice(at + 2, -1).includes('.');
 }
 function clamp(s, max) {
   return String(s || '').slice(0, max);
@@ -83,3 +91,4 @@ Source IP: ${req.ip}
 });
 
 module.exports = router;
+module.exports.isEmail = isEmail;

@@ -23,6 +23,8 @@
  * no special code path — the only difference is that their issuer is filled in for you.
  */
 
+const { trimTrailing } = require('./trim-trailing');
+
 const GOOGLE_ISSUER = 'https://accounts.google.com';
 const DEFAULT_SCOPES = 'openid email profile';
 
@@ -387,7 +389,7 @@ function ssoOnlyForEmail(email) {
   if (at === -1) return null;
   // A trailing root dot is the same domain; `acme.test.` slipped the match and let someone
   // register at an SSO-only domain (a distinct string, so no squat — but a hole in the gate).
-  const domain = String(email).slice(at + 1).toLowerCase().trim().replace(/\.+$/, '');
+  const domain = trimTrailing(String(email).slice(at + 1).toLowerCase().trim(), '.');
   if (!domain) return null;
   try {
     return conn.prepare(`

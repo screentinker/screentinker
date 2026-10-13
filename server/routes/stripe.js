@@ -6,6 +6,7 @@ const { requireAuth } = require('../middleware/auth');
 const subscriptions = require('../middleware/subscription');
 const config = require('../config');
 const { periodEndOf, subscriptionIdOf, invoicePriceIdOf } = require('../lib/stripe-fields');
+const { trimTrailing } = require('../lib/trim-trailing');
 
 const appUrl = process.env.APP_URL || '';
 
@@ -39,7 +40,7 @@ const appBase = (req) => {
    * only thing left that is true, and it can only ever affect the caller's own redirect.
    */
   const raw = req.headers.origin || appUrl || `${req.protocol}://${req.get('host') || ''}`;
-  return `${String(raw).replace(/\/+$/, '')}/app`;
+  return `${trimTrailing(raw, '/')}/app`;
 };
 
 // Resolved per request (lib/stripe-client.js) so a test can substitute a double; null when

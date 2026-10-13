@@ -609,6 +609,7 @@ router.put('/telemetry', requirePlatformAdmin, async (req, res) => {
 
 const ghcrCheck = require('../lib/ghcr-check');
 const VERSION = require('../version');
+const { trimTrailing } = require('../lib/trim-trailing');
 
 // POST /api/admin/check-update — force a fresh GHCR poll (bypasses cache)
 // and return version comparison.
@@ -980,7 +981,7 @@ router.post('/cleanup/stale-accounts/warn', requirePlatformAdmin, async (req, re
   if (!isConfigured()) {
     return res.status(503).json({ error: 'Email is not configured on this server, so no notice can be sent. Configure email, or delete without notice.' });
   }
-  const appUrl = String(process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+  const appUrl = trimTrailing(process.env.APP_URL || `${req.protocol}://${req.get('host')}`, '/');
   const { ids, days, notice_days: noticeDays } = req.body || {};
   try {
     const out = await cleanup.warn(db, {

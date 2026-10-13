@@ -49,13 +49,55 @@ const NAME_ATTRS = [
 
 /* ============================== certificates & metadata ============================== */
 
+const PEM_BEGIN = '-----BEGIN CERTIFICATE-----';
+const PEM_END = '-----END CERTIFICATE-----';
+
+// Every BEGIN…END block, in order: what the lazy `[\s\S]*?` match between the two markers returned.
+// That regex is quadratic on a paste of many BEGINs and no END (each one scans to the end of the
+// input before failing), so walk it with indexOf: once no END follows a BEGIN, none follows a
+// later one either.
+function pemBlocks(raw) {
+  const out = [];
+  let pos = 0;
+  for (;;) {
+    const b = raw.indexOf(PEM_BEGIN, pos);
+    if (b === -1) break;
+    const e = raw.indexOf(PEM_END, b + PEM_BEGIN.length);
+    if (e === -1) break;
+    out.push(raw.slice(b, e + PEM_END.length));
+    pos = e + PEM_END.length;
+  }
+  return out;
+}
+
+// Bare base64 certificates separated by commas or blank lines: the pieces the old split on
+// `\s*\n\s*\n\s*` or `\s*,\s*` (then filter(Boolean)) produced. Those overlapping \s* runs are
+// quadratic on a long stretch of whitespace. A "blank line" is two newlines with only whitespace
+// between, i.e. a whitespace-only line. A piece may keep surrounding whitespace the regex would have
+// eaten; the only caller strips all whitespace from each piece, so the certificates are the same,
+// in the same order and number (it takes the first four).
+function bareBlocks(raw) {
+  const out = [];
+  for (const piece of raw.split(',')) {
+    let cur = [];
+    for (const line of piece.split('\n')) {
+      if (line.trim() === '') {
+        if (cur.length) out.push(cur.join('\n'));
+        cur = [];
+      } else {
+        cur.push(line);
+      }
+    }
+    if (cur.length) out.push(cur.join('\n'));
+  }
+  return out;
+}
+
 /** One or more certificates as PEM strings; accepts PEM blocks or bare base64. false if none valid. */
 function normaliseCerts(input) {
   const raw = String(input || '').trim();
   if (!raw) return false;
-  const blocks = raw.includes('-----BEGIN CERTIFICATE-----')
-    ? raw.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) || []
-    : raw.split(/\s*\n\s*\n\s*|\s*,\s*/).filter(Boolean);
+  const blocks = raw.includes(PEM_BEGIN) ? pemBlocks(raw) : bareBlocks(raw);
   const out = [];
   for (const b of blocks.slice(0, 4)) {
     const b64 = b.replace(/-----(BEGIN|END) CERTIFICATE-----/g, '').replace(/\s+/g, '');
@@ -234,4 +276,5 @@ function consumeAssertion(id) {
 module.exports = {
   assertionIdOf, normaliseCerts, certInfo, parseIdpMetadata, samlFor, profileToClaims, consumeAssertion,
   spEntityIdFor, acsUrlFor, cacheProvider, newRequestId, issuerMatches, isTransientNameId,
+  pemBlocks, bareBlocks,
 };

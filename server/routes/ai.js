@@ -21,6 +21,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { ingestUploadedFile } = require('../lib/content-ingest');
 const { logActivity, getClientIp } = require('../services/activity');
+const { trimTrailing } = require('../lib/trim-trailing');
 
 /*
  * ⚠️ NOT 502, THOUGH THAT IS WHAT THESE FAILURES ARE. Cloudflare REPLACES a 502 body with its own
@@ -200,9 +201,9 @@ router.get('/settings', (req, res) => {
 // PUT /api/ai/settings — workspace admin
 router.put('/settings', (req, res) => {
   if (!isWorkspaceAdmin(req)) return res.status(403).json({ error: 'Workspace admin required' });
-  const base_url = String(req.body && req.body.base_url || '').trim().replace(/\/+$/, '');
+  const base_url = trimTrailing(String(req.body && req.body.base_url || '').trim(), '/');
   const model = String(req.body && req.body.model || '').trim();
-  const image_base_url = String(req.body && req.body.image_base_url || '').trim().replace(/\/+$/, '');
+  const image_base_url = trimTrailing(String(req.body && req.body.image_base_url || '').trim(), '/');
   const image_model = String(req.body && req.body.image_model || '').trim();
   const image_provider = ['comfyui', 'openai', 'sdcpp'].includes(req.body && req.body.image_provider) ? req.body.image_provider : null;
   if (base_url && !endpointAllowed(base_url)) return res.status(400).json({ error: 'Endpoint URL not allowed (private/internal addresses are blocked on this instance).' });
@@ -232,7 +233,7 @@ router.put('/settings', (req, res) => {
 // for the settings dropdown. Admin only. Uses the posted key, or the saved one.
 router.post('/models', async (req, res) => {
   if (!isWorkspaceAdmin(req)) return res.status(403).json({ error: 'Workspace admin required' });
-  const base_url = String(req.body && req.body.base_url || '').trim().replace(/\/+$/, '');
+  const base_url = trimTrailing(String(req.body && req.body.base_url || '').trim(), '/');
   if (!base_url) return res.status(400).json({ error: 'Endpoint base URL required' });
   if (!endpointAllowed(base_url)) return res.status(400).json({ error: 'Endpoint URL not allowed (private/internal addresses are blocked on this instance).' });
   let key = (req.body && typeof req.body.api_key === 'string' && req.body.api_key.length) ? req.body.api_key : null;
