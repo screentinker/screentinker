@@ -41,7 +41,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm ci
@@ -124,7 +124,7 @@ jobs:
       # Re-run the job. The real fix is better-sqlite3 13.x, which moved to the N-API and structurally
       # deletes the ObjectWrap path that aborts — but the 12.9.0 pin is exact on purpose (see
       # CHANGELOG) and it is the last native dep on every production server, so that is a deliberate
-      # upgrade with its own validation, not a drive-by. Production and every other job run Node 20,
+      # upgrade with its own validation, not a drive-by. Production and every other job run Node 22,
       # where this has never appeared.
       - run: npm test
         env:
@@ -136,7 +136,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # brs-node (the BrightScript simulator) needs Node 22; the server runs on it too for the
-      # end-to-end protocol run. The server's own unit tests stay on Node 20 in the test job.
+      # end-to-end protocol run. Every server job runs Node 22 too (the production floor is 22.12).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
@@ -171,7 +171,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Lint the public API spec
         run: npx --yes @redocly/cli@latest lint docs/openapi.yaml
       # Contract integrity: the spec documents ONLY the token-reachable public surface.
@@ -227,7 +227,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: server/package-lock.json
 
@@ -255,7 +255,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: server/package-lock.json
 

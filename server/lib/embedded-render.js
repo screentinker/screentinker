@@ -92,18 +92,27 @@ function getPuppeteer() {
   return null;
 }
 
+/** The Chromium this server was pointed at: CHROME_PATH, or puppeteer's own variable. */
+function chromePath() {
+  return process.env.CHROME_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || '';
+}
+
+/*
+ * ⚠️ NEVER CALL puppeteer.executablePath() HERE. In puppeteer-core 25 it became ASYNC: it returns
+ * a Promise, which `Boolean()` calls true, and which then REJECTS (no browser in puppeteer's cache)
+ * with nobody listening. server.js treats an unhandled rejection as fatal, so on a host with no
+ * CHROME_PATH (the Docker image ships no Chromium) the first render request took the server down.
+ * In 24 the same call threw synchronously and the catch below it answered false.
+ *
+ * puppeteer-core never downloads a browser, so an explicit path is the only way one exists here.
+ */
 function isBrowserAvailable() {
   const p = getPuppeteer();
   if (!p) return false;
-  if (process.env.CHROME_PATH) {
-    try {
-      return fs.existsSync(process.env.CHROME_PATH);
-    } catch (_) {
-      return false;
-    }
-  }
+  const exe = chromePath();
+  if (!exe) return false;
   try {
-    return Boolean(p.executablePath && p.executablePath());
+    return fs.existsSync(exe);
   } catch (_) {
     return false;
   }
@@ -130,18 +139,12 @@ async function getBrowser() {
       '--disable-software-rasterizer',
       '--mute-audio',
     ];
-    if (process.env.CHROME_PATH) {
-      browserInstance = await puppeteer.launch({
-        executablePath: process.env.CHROME_PATH,
-        headless: 'new',
-        args: launchArgs,
-      });
-    } else {
-      browserInstance = await puppeteer.launch({
-        headless: 'new',
-        args: launchArgs,
-      });
-    }
+    // isBrowserAvailable() guarantees a path; puppeteer-core 25 refuses to launch without one.
+    browserInstance = await puppeteer.launch({
+      executablePath: chromePath(),
+      headless: 'new',
+      args: launchArgs,
+    });
     browserInstance.on('disconnected', () => {
       browserInstance = null;
       browserPromise = null;

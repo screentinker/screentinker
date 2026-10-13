@@ -8,11 +8,15 @@ updates:
     schedule:
       interval: weekly
     groups:
+      # Minor and patch only. A major (checkout 4 -> 7, build-push 6 -> 7) gets its own PR: most of
+      # these run only in release.yml on a tag, so a green PR proves nothing about them.
       actions:
         patterns: ["*"]
+        update-types: [minor, patch]
 
   # The server. Minor and patch updates are grouped into one PR; a major version gets its own PR,
-  # because it needs reading (nodemailer 10 needed Node 20; puppeteer-core 25 needs Node 22.12).
+  # because it needs reading (nodemailer 10 needed Node 20; puppeteer-core 25 needs Node 22.12). A minor can
+  # raise the Node floor too (@azure/storage-blob 12.34 and node-ical 0.27 did): check `engines`.
   - package-ecosystem: npm
     directory: /server
     schedule:
@@ -23,8 +27,18 @@ updates:
         update-types: [minor, patch]
 
   # Base images are pinned by digest (Dockerfile, Dockerfile.embedded, docker/updater). Without this
-  # a pinned digest would never pick up a patched node:20-slim.
+  # a pinned digest would never pick up a patched node:22-slim.
+  #
+  # ⚠️ NO MAJOR VERSIONS. node 20 -> 26 arrived this way and was merged; it put Docker on a different
+  # Node from production and CI. Moving Node is a migration (prod's nodesource repo, every CI pin,
+  # the installers), and docker:N-cli talks to the HOST's daemon, so its floor is the customer's
+  # Docker. Both are decided by hand.
   - package-ecosystem: docker
     directories: ["/", "/docker/updater"]
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "docker"
+        update-types: ["version-update:semver-major"]

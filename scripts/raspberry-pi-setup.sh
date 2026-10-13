@@ -20,7 +20,7 @@ set -euo pipefail
 # -- Configuration --
 SCREENTINKER_DIR="/opt/screentinker"
 SCREENTINKER_PORT=3001
-NODE_MAJOR=20
+NODE_MAJOR=22
 LOG_FILE="/var/log/screentinker-setup.log"
 
 # -- Colors --

@@ -272,10 +272,20 @@ both the old and new Node major first, confirm it on the runtime you already hav
 change Node. Each half is then independently reversible. Doing both at once means a failure gives
 you nothing to bisect and no single step to undo.
 
-**Check the version floor.** `npm start` uses `node --env-file-if-exists=.env`. That flag reached
-the Node 22 line only in **22.9.0** — it works on Node 20 because it was separately backported
-there. On Node 22.0–22.8 the server refuses to start with `node: bad option`. Target 22.9.0 or
-newer.
+**Check the version floor: Node 22.12 or newer** (`engines` in `server/package.json`).
+
+- `puppeteer-core` 25, which renders widgets and slides for players that cannot (Roku, BrightSign
+  frames), needs **22.12**. On an older Node, npm skips it: the server still starts, preflight warns
+  that it is below the floor, and Chromium rendering is off until Node is upgraded.
+- `npm start` uses `node --env-file-if-exists=.env`, which reached the Node 22 line only in
+  **22.9.0**. On Node 22.0–22.8 the server refuses to start with `node: bad option`.
+- Node 20 reached end of life on 2026-04-30, and several dependencies now declare Node 22.
+
+**Moving from Node 20: change Node FIRST, on the release you already run, then upgrade the app.**
+Releases up to 2.6.x run on both Node 20 and Node 22, so that order is the two-step path above:
+upgrade Node, confirm the server on it, then run `scripts/upgrade.sh` to the release that needs 22.
+`upgrade.sh` warns before it changes anything if the target release needs a newer Node than the
+host has (`ST_REQUIRE_NODE_FLOOR=1` makes that a refusal).
 
 **One native module has to survive the move.** `better-sqlite3` is compiled against a single Node
 ABI, so changing Node invalidates it. Two things make this survivable:

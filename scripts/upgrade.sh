@@ -160,6 +160,26 @@ else
   echo "==> No db at $DB yet (fresh install) - skipping backup"
 fi
 
+# The Node the TARGET release declares, checked before anything changes. Read from the tag with
+# git show, because the copy of this script that runs is the one from the release being LEFT: a
+# check that only looked at the checkout would see the old floor.
+#
+# A warning, not a refusal. The server still starts on an older Node (preflight says what is
+# missing), and refusing here would leave an operator who cannot change Node today on the old
+# release. ST_REQUIRE_NODE_FLOOR=1 makes it a refusal for those who would rather stop.
+STEP="checking the Node version $TARGET needs"
+NODE_FLOOR="$(git show "$TARGET:server/package.json" 2>/dev/null | sed -n 's/.*"node": *">= *v\{0,1\}\([0-9][0-9.]*\)".*/\1/p' | head -1)"
+NODE_HAVE="$(node -p 'process.versions.node' 2>/dev/null || echo 0)"
+if [ -n "$NODE_FLOOR" ] && [ "$(printf '%s\n%s\n' "$NODE_FLOOR" "$NODE_HAVE" | sort -V | head -1)" != "$NODE_FLOOR" ]; then
+  echo "WARNING: $TARGET needs Node >= $NODE_FLOOR; this host has Node $NODE_HAVE." >&2
+  echo "         It will start, but optional features (Chromium rendering) may be missing." >&2
+  echo "         See \"Upgrading Node.js\" in docs/operations.md." >&2
+  if [ "${ST_REQUIRE_NODE_FLOOR:-0}" = "1" ]; then
+    echo "ERROR: ST_REQUIRE_NODE_FLOOR=1 - stopping. Nothing has been changed." >&2
+    trap - ERR; exit 1
+  fi
+fi
+
 STEP="checking out $TARGET"
 echo "==> Checking out $TARGET"
 git checkout -q "$TARGET"

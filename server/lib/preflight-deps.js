@@ -68,8 +68,34 @@ const INSTALL_TIMEOUT_MS = 10 * 60 * 1000;   // a cold install on a Pi is genuin
  */
 function requiredDeps(pkg, builtinDriver) {
   const names = Object.keys((pkg && pkg.dependencies) || {});
-  if (!builtinDriver) names.push(...Object.keys((pkg && pkg.optionalDependencies) || {}));
+  /*
+   * ⚠️ ONLY THE DATABASE DRIVER, NOT EVERY OPTIONAL PACKAGE. This used to require all of them,
+   * which was harmless while the only other one (puppeteer-core 24) installed everywhere. 25 needs
+   * Node 22.12, so on Node 20 npm SKIPS it, correctly — and this then refused to boot a server that
+   * had nothing wrong with it except no Chromium rendering, after a `git pull` to the release that
+   * moved to Node 22. A missing optional package is a missing feature; only a missing driver, with
+   * nothing to fall back to, is a server that cannot start.
+   */
+  const optional = Object.keys((pkg && pkg.optionalDependencies) || {});
+  if (!builtinDriver && optional.includes('better-sqlite3')) names.push('better-sqlite3');
   return names;
+}
+
+/**
+ * The `engines.node` floor this host is below, or null. Only the `>=X.Y.Z` form the server uses.
+ * A warning, never a refusal: a server on an older Node mostly still works, and refusing to start
+ * would turn an upgrade into an outage for someone who cannot change Node today.
+ */
+function nodeBelowFloor(pkg, version = process.versions.node) {
+  const m = String((pkg && pkg.engines && pkg.engines.node) || '').match(/^>=\s*v?(\d+)\.(\d+)\.(\d+)\s*$/);
+  if (!m) return null;
+  const want = m.slice(1).map(Number);
+  const have = String(version).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if (have[i] > want[i]) return null;
+    if (have[i] < want[i]) return want.join('.');
+  }
+  return null;
 }
 
 /** Which declared dependencies are not on disk. */
@@ -235,6 +261,15 @@ function preflight() {
   // does not silently get a boot that reaches for the registry anyway.
   if (['1', 'true', 'yes'].includes(String(process.env.ST_SKIP_DEP_PREFLIGHT || '').toLowerCase())) return;
 
+  try {
+    const floor = nodeBelowFloor(JSON.parse(fs.readFileSync(path.join(SERVER_DIR, 'package.json'), 'utf8')));
+    if (floor) {
+      console.warn(`[preflight] ⚠️ Node ${process.versions.node} is older than this release needs (>= ${floor}).`);
+      console.warn('[preflight]    The server will start, but optional features may be missing (Chromium rendering needs puppeteer-core, which npm skips on this Node).');
+      console.warn('[preflight]    Upgrade Node: see "Upgrading Node.js" in docs/operations.md.');
+    }
+  } catch { /* no package.json: missingDeps() reports nothing either */ }
+
   const missing = missingDeps();
   const nodeModulesAbsent = !fs.existsSync(NODE_MODULES);
 
@@ -348,4 +383,4 @@ function preflight() {
   }
 }
 
-module.exports = { preflight, missingDeps, nativeModuleBroken, requiredDeps, staleDeps, productionTree, npmEnv, reconcileArgs };
+module.exports = { preflight, missingDeps, nativeModuleBroken, requiredDeps, nodeBelowFloor, staleDeps, productionTree, npmEnv, reconcileArgs };

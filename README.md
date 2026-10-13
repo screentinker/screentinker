@@ -1159,7 +1159,7 @@ scripts/          Device setup scripts + admin recovery
 
 ## Tech Stack
 
-- **Backend:** Node.js 20.6+, Express, Socket.IO, SQLite (better-sqlite3)
+- **Backend:** Node.js 22.12+, Express, Socket.IO, SQLite (better-sqlite3)
 - **Frontend:** Vanilla JS SPA (no framework, no build step), ES modules, Service Worker for offline support
 - **Android:** Kotlin, ExoPlayer, Socket.IO client
 - **Auth:** JWT with bcrypt, Google/Microsoft OAuth (optional)

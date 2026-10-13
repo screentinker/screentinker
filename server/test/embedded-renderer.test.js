@@ -1376,3 +1376,29 @@ describe('Embedded Device Liveness & Telemetry Ingestion', () => {
   });
 });
 
+
+// puppeteer-core 25: executablePath() became async. Calling it made isBrowserAvailable() say true on a
+// host with no Chromium and left a rejection with no handler, which server.js treats as fatal.
+test('isBrowserAvailable never calls puppeteer.executablePath() (async in v25: a fatal unhandled rejection)', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'lib', 'embedded-render.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function isBrowserAvailable'), src.indexOf('async function getBrowser'));
+  assert.ok(!/\.executablePath\s*\(/.test(fn), 'isBrowserAvailable must decide from CHROME_PATH, not puppeteer');
+});
+
+test('with no CHROME_PATH there is no browser, and no stray rejection', async () => {
+  const saved = { c: process.env.CHROME_PATH, p: process.env.PUPPETEER_EXECUTABLE_PATH };
+  delete process.env.CHROME_PATH; delete process.env.PUPPETEER_EXECUTABLE_PATH;
+  const rejections = [];
+  const onRej = (r) => rejections.push(r);
+  process.on('unhandledRejection', onRej);
+  try {
+    const { isBrowserAvailable } = require('../lib/embedded-render');
+    assert.equal(isBrowserAvailable(), false);
+    await new Promise((r) => setTimeout(r, 200));
+    assert.deepEqual(rejections, [], 'nothing may be left rejecting in the background');
+  } finally {
+    process.off('unhandledRejection', onRej);
+    if (saved.c !== undefined) process.env.CHROME_PATH = saved.c;
+    if (saved.p !== undefined) process.env.PUPPETEER_EXECUTABLE_PATH = saved.p;
+  }
+});

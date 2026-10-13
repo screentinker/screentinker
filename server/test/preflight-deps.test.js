@@ -117,7 +117,8 @@ test('an optional dependency counts as required where node:sqlite is unavailable
 
 test('requiredDeps copes with a package.json missing either section', () => {
   assert.deepEqual(preflight.requiredDeps({}, false), []);
-  assert.deepEqual(preflight.requiredDeps({ optionalDependencies: { a: '1' } }, false), ['a']);
+  assert.deepEqual(preflight.requiredDeps({ optionalDependencies: { a: '1' } }, false), [],
+    'an optional package that is not the database driver is never required');
   assert.deepEqual(preflight.requiredDeps({ dependencies: { b: '1' } }, false), ['b']);
 });
 
@@ -201,4 +202,28 @@ test('npm gets a writable cache when the service user has no home', () => {
 
 test('this checkout itself is not stale (or every boot would reinstall)', () => {
   assert.deepEqual(preflight.staleDeps(), [], 'node_modules should match package-lock.json after npm ci');
+});
+
+test('⚠️ an optional package npm skipped is NOT a reason to refuse to boot (puppeteer-core on Node 20)', () => {
+  // puppeteer-core 25 needs Node 22.12; on Node 20 npm skips it. The server must still start there.
+  const pkg = { dependencies: { express: '^4' }, optionalDependencies: { 'better-sqlite3': '12.9.0', 'puppeteer-core': '^25.13.0' } };
+  assert.deepEqual(preflight.requiredDeps(pkg, false).sort(), ['better-sqlite3', 'express'],
+    'no built-in driver: the native driver is required, puppeteer-core is not');
+  assert.deepEqual(preflight.requiredDeps(pkg, true), ['express']);
+});
+
+test('the Node floor comes from engines, and only a lower Node is reported', () => {
+  const pkg = { engines: { node: '>=22.12.0' } };
+  assert.equal(preflight.nodeBelowFloor(pkg, '20.20.2'), '22.12.0');
+  assert.equal(preflight.nodeBelowFloor(pkg, '22.11.9'), '22.12.0');
+  assert.equal(preflight.nodeBelowFloor(pkg, '22.12.0'), null);
+  assert.equal(preflight.nodeBelowFloor(pkg, '22.23.2'), null);
+  assert.equal(preflight.nodeBelowFloor(pkg, '24.1.0'), null);
+  assert.equal(preflight.nodeBelowFloor({}, '18.0.0'), null, 'no floor declared, nothing to say');
+  assert.equal(preflight.nodeBelowFloor({ engines: { node: '20.x || >=22' } }, '18.0.0'), null, 'a range it does not parse is not guessed at');
+});
+
+test('this checkout declares the Node floor the release needs', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  assert.equal(pkg.engines && pkg.engines.node, '>=22.12.0', 'puppeteer-core 25 is the floor-setter');
 });

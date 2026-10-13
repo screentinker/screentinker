@@ -30,7 +30,7 @@ services:
       # To enable OTA APK downloads, mount a built APK read-only:
       # - ./ScreenTinker.apk:/data/ScreenTinker.apk:ro
     healthcheck:
-      # image is node:20-slim (no curl) - use node's built-in fetch
+      # image is node:22-slim (no curl) - use node's built-in fetch
       test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
