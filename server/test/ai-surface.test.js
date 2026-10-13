@@ -199,13 +199,13 @@ test('⚠️ an unknown /.well-known path 404s instead of returning the app shel
    * with index.html and a 200 — so /.well-known/oauth-protected-resource replied with 21 KB of HTML
    * and a success code. "We do not do OAuth" is a useful answer that only a 404 conveys.
    */
-  assert.match(SERVER_SRC, /app\.all\('\/\.well-known\/\*'/);
-  const guard = SERVER_SRC.indexOf("app.all('/.well-known/*'");
+  assert.match(SERVER_SRC, /app\.all\('\/\.well-known\/\{\*rest\}'/);
+  const guard = SERVER_SRC.indexOf("app.all('/.well-known/{*rest}'");
   // After the real routes, or it would swallow them.
   assert.ok(SERVER_SRC.indexOf("app.get('/.well-known/api-catalog'") < guard);
   assert.ok(SERVER_SRC.indexOf("app.get('/.well-known/auth.md', serveAuthMarkdown)") < guard);
   // Before the SPA catch-all, or the shell answers first and the guard never runs.
-  assert.ok(guard < SERVER_SRC.lastIndexOf("app.get('*'"));
+  assert.ok(guard < SERVER_SRC.lastIndexOf("app.get('/{*splat}'"));
   /*
    * ⚠️ AND AFTER express.static. Above it, this would have swallowed
    * /.well-known/acme-challenge/... — certbot's webroot proof of domain control — so a self-hoster's
@@ -226,9 +226,9 @@ test('⚠️ an unknown /.well-known path 404s instead of returning the app shel
   // and names the documents it used to hand-list, so the raw text always "contains" them. Third
   // suite this has caught out.
   const code = body.split('\n').filter((l) => !/^\s*(\*|\/\*|\/\/)/.test(l)).join('\n');
-  assert.match(code, /app\._router\.stack/, 'the published list must be derived from the routes');
+  assert.match(code, /app\.router\.stack/, 'the published list must be derived from the routes');
   assert.ok(!/auth\.md and/.test(code), 'do not hand-list the published documents');
-  assert.match(code, /!path\.endsWith\('\*'\)/, 'the guard route must not list itself');
+  assert.match(code, /!path\.endsWith\('\{\*rest\}'\)/, 'the guard route must not list itself');
 });
 
 test('the discovery documents point at the root copy we actually serve', () => {

@@ -15,7 +15,7 @@ const router = express.Router();
 //
 // When the new design lands, this router file is the replacement point:
 // drop in the new handlers and remove the catch-all below.
-router.all('*', (req, res) => {
+router.all('/{*splat}', (req, res) => {
   res.status(503).json({
     error: 'Teams temporarily unavailable',
     message: 'The Teams feature is being redesigned to work within the new Workspaces system. It will return in a future release. Existing team data is preserved and will be migrated forward.',

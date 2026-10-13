@@ -49,6 +49,9 @@ process.on('unhandledRejection', (reason) => logFatalAndExit('unhandledRejection
 });
 
 const app = express();
+// First, before anything can send a file: Express 5 refuses a dot-directory anywhere in an absolute
+// sendFile path, so an install under ~/.local (or any dot-dir) would 404 every page. See the module.
+app.use(require('./middleware/send-file-compat').sendFileCompat);
 const { trustedProxies } = require('./config/cloudflareIps');
 const { getClientIp } = require('./services/activity');
 // Trust loopback / link-local / unique-local (local dev, LAN reverse proxies)
@@ -336,6 +339,8 @@ const jsonBody = express.json({ limit: '12mb' });
  * the parser and the error handler both.
  */
 app.use((req, res, next) => (req.path === '/api/templates/import' || req.path.startsWith('/api/hooks/in/') || isMcpPath(req.path) ? next() : jsonBody(req, res, next)));
+// Express 5 / body-parser 2 leave req.body undefined when no body was parsed (v4 gave {}).
+app.use((req, res, next) => { if (req.body === undefined) req.body = {}; next(); });
 const { sanitizeBody } = require('./middleware/sanitize');
 app.use(sanitizeBody);
 
@@ -646,6 +651,8 @@ app.get(['/solutions', '/solutions/'], (req, res) => {
   res.sendFile(path.join(config.frontendDir, 'solutions', 'index.html'));
 });
 
+// Express 5 (send 1.x) ignores dotfile paths by default: certbot webroot needs this mount.
+app.use('/.well-known/acme-challenge', express.static(path.join(config.frontendDir, '.well-known', 'acme-challenge'), { index: false }));
 // Serve frontend static files
 // JS/CSS/HTML: no-cache (always revalidate, uses ETag/304)
 // Images/fonts/icons: long cache for Cloudflare + browser
@@ -3229,17 +3236,17 @@ const NOT_FOUND_PAGE = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-
  * days later, a long way from this change. Anything genuinely served by an earlier route or by
  * static has already answered by the time we get here.
  */
-app.all('/.well-known/*', (req, res) => {
+app.all('/.well-known/{*rest}', (req, res) => {
   /*
    * ⚠️ THE LIST IS DERIVED FROM THE ROUTES, NOT TYPED OUT. The first version named auth.md and
    * api-catalog by hand and was already wrong the same day, once the protected-resource metadata and
    * the MCP server card were added — a 404 that misdescribes what the server publishes is worse than
    * a bare one, because it is the document a client reads when it is already lost.
    */
-  const published = app._router.stack
+  const published = app.router.stack
     .map((l) => l.route && l.route.path)
     // …excluding this catch-all itself, which is a guard and not a document.
-    .filter((path) => typeof path === 'string' && path.startsWith('/.well-known/') && !path.endsWith('*'))
+    .filter((path) => typeof path === 'string' && path.startsWith('/.well-known/') && !path.endsWith('{*rest}'))
     .sort();
   res.status(404).type('text/plain; charset=utf-8').send(
     `Not found.\n\nThis instance publishes:\n${published.map((x) => `  ${x}\n`).join('')}`
@@ -3248,7 +3255,7 @@ app.all('/.well-known/*', (req, res) => {
     + 'at /auth.md: a human issues a scoped token, and there is no programmatic registration.\n');
 });
 
-app.get('*', (req, res) => {
+app.get('/{*splat}', (req, res) => {
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: 'Not found' });
   }

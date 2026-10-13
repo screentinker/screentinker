@@ -93,7 +93,7 @@ router.get('/:type/:id/:rev/file', requireWorkspaceRead, (req, res) => {
   if (!abs) return res.status(404).json({ error: 'The media for this revision is no longer retained' });
   res.setHeader('Cache-Control', 'private, max-age=300');
   if (req.query.thumb !== '1' && state.mime_type) res.setHeader('Content-Type', state.mime_type);
-  res.sendFile(abs);
+  res.sendFile(abs, { dotfiles: 'allow' });
 });
 
 // A widget revision rendered as the player would render it, for an srcdoc preview.

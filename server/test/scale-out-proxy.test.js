@@ -36,7 +36,7 @@ async function fakePrimary(handler) {
 async function replicaApp(config, opts) {
   const app = express();
   app.use(express.json({ limit: '12mb' }));
-  app.all('/api/*', (req, res) => proxy.proxyToPrimary(req, res, config, opts));
+  app.all('/api/{*rest}', (req, res) => proxy.proxyToPrimary(req, res, config, opts));
   const { srv, port } = await listen(app);
   return { url: `http://127.0.0.1:${port}`, close: () => srv.close() };
 }

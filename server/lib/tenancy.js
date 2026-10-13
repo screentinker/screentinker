@@ -119,7 +119,7 @@ function resolveTenancy(req, res, next) {
   const candidates = [];
   const headerWs = (req.headers['x-workspace-id'] || '').trim();
   if (headerWs) candidates.push(headerWs);
-  if (req.query && req.query.workspace_id) candidates.push(String(req.query.workspace_id));
+  if (!req.viaToken && req.query && req.query.workspace_id) candidates.push(String(req.query.workspace_id));
   if (req.jwtWorkspaceId) candidates.push(req.jwtWorkspaceId);
 
   let workspace = null;

@@ -146,7 +146,7 @@ function proxyToPrimary(req, res, config, { timeoutMs = TIMEOUT_MS, transport } 
   // the stream is intact).
   let body = null;
   const ctype = String(req.headers['content-type'] || '');
-  const parsed = req.body && typeof req.body === 'object' && /application\/json/i.test(ctype);
+  const parsed = !!(req.body && typeof req.body === 'object' && /application\/json/i.test(ctype));
   if (parsed) {
     body = Buffer.from(JSON.stringify(req.body));
     headers['content-type'] = 'application/json';
