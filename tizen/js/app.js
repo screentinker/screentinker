@@ -679,9 +679,11 @@
     o.id = 'infoOverlay';
     o.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.82);color:#e6e6e6;' +
       'font:16px/1.7 sans-serif;padding:6vh 6vw;box-sizing:border-box';
+    // Values are escaped: the server URL is typed on the remote and "Now playing" is an uploaded
+    // filename, and both used to be parsed as markup here.
     function row(k, val) {
       return '<div><span style="color:#8ab4f8;display:inline-block;min-width:210px">' + k + '</span>' +
-        (val == null || val === '' ? '—' : String(val)) + '</div>';
+        (val == null || val === '' ? '—' : esc(val)) + '</div>';
     }
     o.innerHTML = '<h2 style="margin:0 0 14px;color:#fff">ScreenTinker — Tizen Player</h2>' +
       row('Device ID', deviceId) +

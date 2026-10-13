@@ -1197,7 +1197,7 @@ function readCookie(req, name) {
  */
 function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch((err) => {
-    console.error(`[auth] unhandled error in ${req.method} ${req.path}:`, err && err.message);
+    console.error('[auth] unhandled error in %s %s:', req.method, req.path, err && err.message);
     // Wrapped: if responding THROWS, the rejection has no handler and kills the process — the
     // guard against process death causing process death.
     try {

@@ -253,7 +253,7 @@ export function render(container) {
 function selectHtml(id, labelKey, options, value) {
   return `<div class="lib-select">
     <label for="${id}" class="lib-visually-hidden">${esc(t(labelKey))}</label>
-    <select id="${id}" class="input">${options.map(([v, k]) => `<option value="${v}" ${v === value ? 'selected' : ''}>${esc(t(k))}</option>`).join('')}</select>
+    <select id="${id}" class="input">${options.map(([v, k]) => `<option value="${esc(v)}" ${v === value ? 'selected' : ''}>${esc(t(k))}</option>`).join('')}</select>
   </div>`;
 }
 function sortLabelKey(s) {
@@ -387,7 +387,7 @@ function renderNav() {
   const l = state.location;
   const item = (kind, icon, label, count) => `
     <li><button type="button" class="lib-nav-item${l.kind === kind ? ' is-current' : ''}" data-nav="${kind}" ${l.kind === kind ? 'aria-current="page"' : ''}>
-      ${icon}<span class="lib-nav-label">${esc(label)}</span>${count != null ? `<span class="lib-nav-count">${count}</span>` : ''}
+      ${icon}<span class="lib-nav-label">${esc(label)}</span>${count != null ? `<span class="lib-nav-count">${esc(count)}</span>` : ''}
     </button></li>`;
   const icons = {
     all: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
@@ -517,7 +517,7 @@ function renderChrome() {
   // The sort select shows a header-chosen sort too.
   const sortSel = document.getElementById('libSort');
   if (sortSel && sortSel.value !== state.sort) {
-    if (![...sortSel.options].some((o) => o.value === state.sort)) sortSel.insertAdjacentHTML('beforeend', `<option value="${state.sort}">${esc(t(sortLabelKey(state.sort)))}</option>`);
+    if (![...sortSel.options].some((o) => o.value === state.sort)) sortSel.insertAdjacentHTML('beforeend', `<option value="${esc(state.sort)}">${esc(t(sortLabelKey(state.sort)))}</option>`);
     sortSel.value = state.sort;
   }
   for (const [id, key] of [['libType', 'type'], ['libStatus', 'status'], ['libUsage', 'usage']]) { const el = document.getElementById(id); if (el) el.value = state[key]; }
@@ -1277,7 +1277,7 @@ function showEditModal(contentItem, onSave, { focus = null } = {}) {
           <label>${t('content.label_folder')}</label>
           <select id="editFolderId" class="input" style="background:var(--bg-input)">
             <option value="">${t('content.folder_root_option')}</option>
-            ${state.folders.map(f => `<option value="${f.id}" ${contentItem.folder_id === f.id ? 'selected' : ''}>${esc(folderPath(f, state.folders))}</option>`).join('')}
+            ${state.folders.map(f => `<option value="${esc(f.id)}" ${contentItem.folder_id === f.id ? 'selected' : ''}>${esc(folderPath(f, state.folders))}</option>`).join('')}
           </select>
         </div>
         <div class="form-group">
@@ -1530,7 +1530,7 @@ async function showPreview(content) {
       <button style="position:absolute;top:8px;right:8px;z-index:1;background:rgba(0,0,0,0.7);border:none;color:white;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer" id="closePreview">&times;</button>
       <div style="max-width:80vw;max-height:80vh">
         ${isYoutube
-          ? `<iframe referrerpolicy="strict-origin-when-cross-origin" src="${(() => { /* #YT153 ROOT CAUSE: the dashboard sends Referrer-Policy: no-referrer (helmet default), so a raw YouTube iframe reaches youtube.com with NO Referer -> YouTube can't identify the embedding site -> "Video player configuration error" (153). referrerpolicy on THIS iframe overrides the page policy to send just our origin, which YouTube uses to validate the embed. (The device player dodges no-referrer differently: YT.Player's iframe_api origin postMessage handshake, which doesn't rely on Referer.) The enablejsapi/origin URL params are inert in a raw iframe (no API loaded), so they're dropped. */ try { const u = new URL(src); u.searchParams.set('mute', '1'); u.searchParams.delete('enablejsapi'); u.searchParams.delete('origin'); return u.toString(); } catch { return src; } })()}" style="width:80vw;height:45vw;max-height:80vh;display:block;border:none" allow="autoplay;encrypted-media" allowfullscreen></iframe>`
+          ? `<iframe referrerpolicy="strict-origin-when-cross-origin" src="${esc((() => { /* #YT153 ROOT CAUSE: the dashboard sends Referrer-Policy: no-referrer (helmet default), so a raw YouTube iframe reaches youtube.com with NO Referer -> YouTube can't identify the embedding site -> "Video player configuration error" (153). referrerpolicy on THIS iframe overrides the page policy to send just our origin, which YouTube uses to validate the embed. (The device player dodges no-referrer differently: YT.Player's iframe_api origin postMessage handshake, which doesn't rely on Referer.) The enablejsapi/origin URL params are inert in a raw iframe (no API loaded), so they're dropped. */ try { const u = new URL(src); if (u.protocol !== 'https:' && u.protocol !== 'http:') return 'about:blank'; /* a javascript: remote_url must never become a frame source */ u.searchParams.set('mute', '1'); u.searchParams.delete('enablejsapi'); u.searchParams.delete('origin'); return u.toString(); } catch { return src; } })())}" style="width:80vw;height:45vw;max-height:80vh;display:block;border:none" allow="autoplay;encrypted-media" allowfullscreen></iframe>`
           : isHdmiIn
             ? `<div style="padding:48px 56px;max-width:520px;color:var(--text-primary)"><div style="font-weight:600;font-size:18px;margin-bottom:8px">${esc(content.filename)}</div><div style="color:var(--text-muted);font-size:14px">${t('content.hdmi_in_desc')}</div></div>`
           : isVideo

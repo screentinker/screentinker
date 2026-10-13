@@ -96,7 +96,10 @@ async function renderList(container) {
   } catch (err) { showToast(err.message, 'error'); }
 }
 
-async function renderEditor(container, pageId) {
+async function renderEditor(container, rawPageId) {
+  // The id comes straight from location.hash and is interpolated into URLs and markup below; ids are
+  // UUIDs, so encoding is a no-op for every real page and only defangs a hand-crafted hash.
+  const pageId = encodeURIComponent(rawPageId);
   let page;
   try { page = await API(`/kiosk/${pageId}`); } catch { container.innerHTML = `<div class="empty-state"><h3>${t('kiosk.not_found')}</h3></div>`; return; }
 

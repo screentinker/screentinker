@@ -257,11 +257,19 @@
   setInterval(loadRadar, 4 * 60 * 1000);
   setInterval(loadWarnings, 60 * 1000);
 
-  // legend
+  // legend (built from nodes: the event names come from the URL, so they are text, never markup)
   (function () {
     var el = document.getElementById('legend');
-    el.innerHTML = events.map(function (ev) {
-      return '<div class="row"><span class="sw" style="background:' + colorFor(ev) + '"></span>' + ev + '</div>';
-    }).join('');
+    el.textContent = '';
+    events.forEach(function (ev) {
+      var row = document.createElement('div');
+      row.className = 'row';
+      var sw = document.createElement('span');
+      sw.className = 'sw';
+      sw.style.background = colorFor(ev);
+      row.appendChild(sw);
+      row.appendChild(document.createTextNode(ev));
+      el.appendChild(row);
+    });
   })();
 })();

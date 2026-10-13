@@ -390,7 +390,7 @@ router.put('/:id', requireWorkspaceWrite, (req, res) => {
   if (configChanged) {
     const updatedRow = db.prepare('SELECT * FROM data_sources WHERE id = ?').get(req.params.id);
     syncDataSource(updatedRow, true).catch(err => {
-      console.warn(`[data-sources] background update sync failed for ${req.params.id}:`, err.message);
+      console.warn('[data-sources] background update sync failed for %s:', req.params.id, err.message);
     });
   }
 

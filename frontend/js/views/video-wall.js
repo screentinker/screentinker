@@ -1039,7 +1039,7 @@ async function renderWallEditor(container, wallId) {
     const sel = document.getElementById('wallLayout');
     if (sel) sel.value = wall.layout_id || '';
     const link = document.getElementById('editWallLayoutLink');
-    if (link) { link.style.display = wall.layout_id ? '' : 'none'; link.href = '#/layout/' + (wall.layout_id || '') + '?wall=' + wallId; }
+    if (link) { link.style.display = wall.layout_id ? '' : 'none'; link.href = '#/layout/' + encodeURIComponent(wall.layout_id || '') + '?wall=' + encodeURIComponent(wallId); }
     renderAll();
     renderZoneWarn();
     renderZoneItems();

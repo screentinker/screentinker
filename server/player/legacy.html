@@ -690,7 +690,7 @@ function restartPlayer(reason) {
   }
   try {
     if ((onVega() || onIOS()) && HOST && HOST.command("restart")) {
-      console.log("[" + HOST.platform + "] restart delegated to shell:", reason);
+      console.log("[%s] restart delegated to shell:", HOST.platform, reason);
       return;
     }
   } catch (e) {

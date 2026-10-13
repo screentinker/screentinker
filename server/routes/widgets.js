@@ -736,7 +736,7 @@ function renderWidgetHtml(type, config, opts = {}) {
           });
           if (typeof html === 'string' && html.length) return html;
         } catch (e) {
-          console.warn(`[plugins] render failed for type "${type}":`, e.message);
+          console.warn('[plugins] render failed for type "%s":', type, e.message);
         }
       }
       return '<html><body style="color:white;background:black;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h1>Unknown widget</h1></body></html>';

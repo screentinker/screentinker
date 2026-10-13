@@ -55,7 +55,12 @@
     return m ? decodeURIComponent(m[1]) : null;
   }
 
-  var server = qs('server') || '';
+  // The host always passes an http(s) origin. Anything else in the query (javascript:, data:) is
+  // not a server, and must never reach fetch() or the location.href fallback below. Rebuilt with a
+  // literal scheme rather than kept as typed, so what follows can only ever be an http(s) URL.
+  var server = '';
+  var given = /^(https?):\/\/(\S+)$/i.exec(qs('server') || '');
+  if (given) server = (given[1].toLowerCase() === 'https' ? 'https://' : 'http://') + given[2];
   var attempt = 0;
   var startedAt = Date.now();
 

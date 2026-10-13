@@ -52,7 +52,7 @@ function access(req, res, { admin = false, write = false, adminError = 'Only a w
  */
 function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch((err) => {
-    console.error(`[zapier] unhandled error in ${req.method} ${req.path}:`, err && err.message);
+    console.error('[zapier] unhandled error in %s %s:', req.method, req.path, err && err.message);
     try {
       if (!res.headersSent) res.status(500).json({ error: 'Something went wrong' });
     } catch (e2) {

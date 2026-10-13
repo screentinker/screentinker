@@ -472,7 +472,7 @@ function discoveryErrorMessage(e, issuer) {
  */
 function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch((err) => {
-    console.error(`[org-sso] unhandled error in ${req.method} ${req.path}:`, err && err.message);
+    console.error('[org-sso] unhandled error in %s %s:', req.method, req.path, err && err.message);
     // Wrapped for the same reason as in routes/auth.js: a throw while REPORTING an error would
     // become an unhandled rejection and take the process down.
     try {

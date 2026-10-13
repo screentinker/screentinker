@@ -40,7 +40,7 @@ function access(req, res, { write = false } = {}) {
  */
 function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch((err) => {
-    console.error(`[automation] unhandled error in ${req.method} ${req.path}:`, err && err.message);
+    console.error('[automation] unhandled error in %s %s:', req.method, req.path, err && err.message);
     try {
       if (!res.headersSent) res.status(500).json({ error: 'Something went wrong' });
     } catch (e2) {

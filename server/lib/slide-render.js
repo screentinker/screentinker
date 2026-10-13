@@ -139,8 +139,9 @@ const clamp = (v, lo, hi, dflt) => {
  * everything a slide editor needs to emit and nothing it does not.
  */
 function color(v, dflt) {
-  return (typeof v === 'string' && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v.trim()))
-    ? v.trim() : dflt;
+  // Tested and returned as the SAME value, so the allowlist visibly covers what is emitted.
+  const s = typeof v === 'string' ? v.trim() : '';
+  return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(s) ? s : dflt;
 }
 
 /*
