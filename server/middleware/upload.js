@@ -8,21 +8,9 @@ const storage = multer.diskStorage({
     cb(null, config.contentDir);
   },
   filename: (req, file, cb) => {
-    // busboy decodes the Content-Disposition filename header as latin1 by
-    // default. Modern clients send raw UTF-8 bytes for non-ASCII filenames
-    // (e.g. browsers + curl on UTF-8 locales send "Begrussungsscreens.jpg"
-    // with c3 bc for u-umlaut). Reading those bytes as latin1 produces the
-    // string "A-tilde + quarter-mark" which JS then re-encodes as 4 UTF-8
-    // bytes on the way to the DB - classic double-encoding mojibake.
-    //
-    // The `defParamCharset: 'utf8'` option below only takes effect for
-    // RFC 5987 encoded `filename*=...` params, which most clients don't send.
-    // For the plain `filename="..."` case, re-decode here to recover the
-    // original UTF-8 byte sequence. Mutating originalname here propagates to
-    // every downstream consumer (route handlers reading req.file.originalname).
-    if (file.originalname) {
-      file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
-    }
+    // file.originalname arrives already decoded as UTF-8 (`defParamCharset` below). Don't
+    // re-decode it: the old latin1 → utf8 workaround here turned every non-ASCII name into
+    // U+FFFD once multer 2 started passing that option through to busboy.
     // Deliberately NOT path.extname(file.originalname): the extension decides how a
     // browser interprets the file, and these are served from the dashboard's own origin,
     // so a caller must not choose it. multer picks the name before any bytes exist, so we
@@ -83,12 +71,9 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// `defParamCharset: 'utf8'` only takes effect for RFC 5987 encoded
-// `filename*=utf-8''...` params. Most real clients (browsers, curl, programmatic
-// HTTP) send the plain `filename="..."` form, where busboy still reads the bytes
-// as latin1 regardless of this option. The actual UTF-8 recovery happens in the
-// storage.filename callback above via Buffer.from(name,'latin1').toString('utf8').
-// Kept here as defense-in-depth for the rare RFC 5987 case.
+// Browsers and curl send non-ASCII filenames as raw UTF-8 in the plain `filename="..."` param.
+// busboy reads params as latin1 unless told otherwise (mojibake: "ü" becomes "Ã¼"), so tell it.
+// multer 1 never passed this option on; multer 2 does, and it covers `filename*=` too.
 const upload = multer({
   storage,
   fileFilter,
