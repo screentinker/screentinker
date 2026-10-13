@@ -42,7 +42,7 @@
   },
   "optionalDependencies": {
     "better-sqlite3": "12.9.0",
-    "puppeteer-core": "^24.43.1"
+    "puppeteer-core": "^25.13.0"
   },
   "devDependencies": {
     "esbuild": "0.28.2",
