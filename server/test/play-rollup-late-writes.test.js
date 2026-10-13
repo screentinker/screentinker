@@ -35,8 +35,6 @@ before(() => {
   db.prepare("INSERT INTO users (id, email, password_hash, role) VALUES ('u-l','l@t.local','x','admin')").run();
   db.prepare("INSERT INTO organizations (id, name, owner_user_id) VALUES ('org-l','L','u-l')").run();
   db.prepare("INSERT INTO workspaces (id, organization_id, name) VALUES (?, 'org-l', 'W')").run(WS);
-  db.prepare("INSERT INTO content (id, filename, filepath, mime_type, file_size, workspace_id) VALUES (?,?,?,?,?,?)")
-    .run(CONTENT, 'a.mp4', 'a.mp4', 'video/mp4', 1, WS);
 });
 
 beforeEach(() => {
@@ -48,6 +46,10 @@ beforeEach(() => {
   db.prepare("INSERT OR IGNORE INTO schema_migrations (id) VALUES ('play_rollup_late_writes_reroll_v1')").run();
   db.prepare('INSERT INTO devices (id, name, workspace_id) VALUES (?,?,?)').run(DEV, 'D', WS);
   db.prepare('INSERT INTO devices (id, name, workspace_id) VALUES (?,?,?)').run(DEV2, 'D2', WS);
+  // Per test, not restored by the test that deletes it: a failed assertion there would otherwise
+  // leave every later insert failing its content FK.
+  db.prepare("INSERT OR IGNORE INTO content (id, filename, filepath, mime_type, file_size, workspace_id) VALUES (?,?,?,?,?,?)")
+    .run(CONTENT, 'a.mp4', 'a.mp4', 'video/mp4', 1, WS);
 });
 
 function play(at, { dev = DEV, dur = 10, open = false } = {}) {
@@ -63,10 +65,12 @@ function settle() {
   assert.equal(r.dirtyLeft, 0, 'the dirty queue drains');
 }
 
-const hourly = (hour, dev = DEV) => db.prepare(
-  "SELECT COALESCE(SUM(play_count),0) AS plays, COALESCE(SUM(duration_sec),0) AS secs FROM play_log_hourly WHERE hour_utc = ? AND device_id = ?").get(hour, dev);
-const raw = (hour, dev = DEV) => db.prepare(
-  'SELECT COUNT(*) AS plays, COALESCE(SUM(duration_sec),0) AS secs FROM play_logs WHERE started_at >= ? AND started_at < ? AND device_id = ?').get(hour, hour + HOUR, dev);
+// Spread: node:sqlite (ST_SQLITE_DRIVER=node) returns null-prototype rows, which strict deepEqual
+// never matches against a literal.
+const hourly = (hour, dev = DEV) => ({ ...db.prepare(
+  "SELECT COALESCE(SUM(play_count),0) AS plays, COALESCE(SUM(duration_sec),0) AS secs FROM play_log_hourly WHERE hour_utc = ? AND device_id = ?").get(hour, dev) });
+const raw = (hour, dev = DEV) => ({ ...db.prepare(
+  'SELECT COUNT(*) AS plays, COALESCE(SUM(duration_sec),0) AS secs FROM play_logs WHERE started_at >= ? AND started_at < ? AND device_id = ?').get(hour, hour + HOUR, dev) });
 
 test('a play closed after its hour was rolled up gets its duration counted', () => {
   const id = play(T0 + 3500, { open: true });     // starts 100 s before the hour ends, still playing
@@ -102,9 +106,7 @@ test('deleting content moves its plays to no-content without counting them twice
   db.prepare('DELETE FROM content WHERE id = ?').run(CONTENT); // content_id SET NULL on raw
   settle();
   const rows = db.prepare('SELECT content_id, play_count FROM play_log_hourly WHERE hour_utc = ?').all(T0);
-  assert.deepEqual(rows, [{ content_id: '', play_count: 1 }]);
-  db.prepare("INSERT INTO content (id, filename, filepath, mime_type, file_size, workspace_id) VALUES (?,?,?,?,?,?)")
-    .run(CONTENT, 'a.mp4', 'a.mp4', 'video/mp4', 1, WS);
+  assert.deepEqual(rows.map((r) => ({ ...r })), [{ content_id: '', play_count: 1 }]);
 });
 
 test('⚠️ the retention prune never recomputes (and so never empties) the hours it deletes', () => {
