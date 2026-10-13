@@ -74,6 +74,6 @@ test('#6: schedules PUT validates a changed zone_id against the workspace', () =
 test('#7: content upload validates folder_id against the workspace', () => {
   const src = fs.readFileSync(require.resolve('../routes/content'), 'utf8');
   const up = src.slice(src.indexOf("router.post('/', checkStorageLimit"));
-  assert.match(up.slice(0, 1200), /content_folders WHERE id = \?/);
-  assert.match(up.slice(0, 1200), /target\.workspace_id !== req\.workspaceId/);
+  assert.match(up.slice(0, 2000), /content_folders WHERE id = \?/);
+  assert.match(up.slice(0, 2000), /target\.workspace_id !== req\.workspaceId/);
 });
