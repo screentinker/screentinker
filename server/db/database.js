@@ -2225,6 +2225,47 @@ const migrations = [
   'INSERT OR IGNORE INTO play_log_rollup_state (id, rolled_through_hour, updated_at) VALUES (1, 0, 0)',
 
   /*
+   * ⚠️ RAW KEEPS CHANGING AFTER ITS HOUR IS ROLLED UP. The rollup computes an hour once, when it
+   * completes, but plays are closed (duration_sec written) when they END, an offline player's
+   * backlog arrives with past started_at, and a device delete cascades its rows away. Measured on
+   * production 2026-10-13: seconds up to 40% short in some workspaces, deleted devices still
+   * counted. Pruning raw would have made every one of those permanent.
+   *
+   * ⚠️ NOT EXISTS, NOT `INSERT OR IGNORE`: the statement that fires a trigger overrides the
+   * trigger's conflict clause, and an FK action (content delete → SET NULL) runs with ABORT, so
+   * marking an hour twice raised UNIQUE and aborted the delete itself.
+   *
+   * So every write to an already-rolled hour marks it dirty, and services/play-rollup recomputes
+   * dirty hours from raw. Triggers rather than call sites: they cannot be forgotten by the next
+   * writer, and they see FK cascades (device delete, content/workspace SET NULL), which no call
+   * site does.
+   *
+   * raw_floor_hour is where the PRUNE has deleted up to. The prune raises it BEFORE it deletes, so
+   * the delete trigger can tell "a device was deleted" (recompute the hour) from "retention aged
+   * this out" (the aggregate is now the only copy — recomputing it would empty it).
+   */
+  'ALTER TABLE play_log_rollup_state ADD COLUMN raw_floor_hour INTEGER NOT NULL DEFAULT 0',
+  'CREATE TABLE IF NOT EXISTS play_log_rollup_dirty (hour_utc INTEGER PRIMARY KEY)',
+  `CREATE TRIGGER IF NOT EXISTS trg_play_logs_rollup_dirty_ins AFTER INSERT ON play_logs
+     WHEN NEW.started_at < (SELECT rolled_through_hour + 3600 FROM play_log_rollup_state WHERE id = 1)
+     BEGIN
+       INSERT INTO play_log_rollup_dirty (hour_utc) SELECT CAST(NEW.started_at / 3600 AS INTEGER) * 3600 WHERE NOT EXISTS (SELECT 1 FROM play_log_rollup_dirty WHERE hour_utc = CAST(NEW.started_at / 3600 AS INTEGER) * 3600);
+     END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_play_logs_rollup_dirty_upd
+     AFTER UPDATE OF started_at, duration_sec, device_id, content_id, workspace_id ON play_logs
+     WHEN MIN(OLD.started_at, NEW.started_at) < (SELECT rolled_through_hour + 3600 FROM play_log_rollup_state WHERE id = 1)
+     BEGIN
+       INSERT INTO play_log_rollup_dirty (hour_utc) SELECT CAST(OLD.started_at / 3600 AS INTEGER) * 3600 WHERE NOT EXISTS (SELECT 1 FROM play_log_rollup_dirty WHERE hour_utc = CAST(OLD.started_at / 3600 AS INTEGER) * 3600);
+       INSERT INTO play_log_rollup_dirty (hour_utc) SELECT CAST(NEW.started_at / 3600 AS INTEGER) * 3600 WHERE NOT EXISTS (SELECT 1 FROM play_log_rollup_dirty WHERE hour_utc = CAST(NEW.started_at / 3600 AS INTEGER) * 3600);
+     END`,
+  `CREATE TRIGGER IF NOT EXISTS trg_play_logs_rollup_dirty_del AFTER DELETE ON play_logs
+     WHEN OLD.started_at >= (SELECT raw_floor_hour FROM play_log_rollup_state WHERE id = 1)
+      AND OLD.started_at < (SELECT rolled_through_hour + 3600 FROM play_log_rollup_state WHERE id = 1)
+     BEGIN
+       INSERT INTO play_log_rollup_dirty (hour_utc) SELECT CAST(OLD.started_at / 3600 AS INTEGER) * 3600 WHERE NOT EXISTS (SELECT 1 FROM play_log_rollup_dirty WHERE hour_utc = CAST(OLD.started_at / 3600 AS INTEGER) * 3600);
+     END`,
+
+  /*
    * ⚠️ DROP idx_play_logs_content — 263 MB serving nothing.
    *
    * Verified on production 2026-09-29 rather than assumed: EXPLAIN QUERY PLAN on every report

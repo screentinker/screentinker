@@ -167,8 +167,14 @@ const _delPlayLogs = db.prepare('DELETE FROM play_logs WHERE rowid IN (SELECT ro
  * device_events and event_loop_lag. It was the only retention in the system that was hardcoded.
  */
 async function prunePlayLogs() {
-  const cutoff = playRollup.prunableBefore();
+  /*
+   * ⚠️ WHOLE HOURS, AND THE FLOOR RAISED FIRST. An hour pruned partway can never be recomputed
+   * (its raw is short), and the delete trigger only ignores rows below the floor, so raising it
+   * after the delete would mark every pruned hour dirty and recompute its aggregate from nothing.
+   */
+  const cutoff = Math.floor(playRollup.prunableBefore() / playRollup.HOUR) * playRollup.HOUR;
   if (!(cutoff > 0)) return 0;   // nothing aggregated yet: never prune on the first boot
+  playRollup.setRawFloor(cutoff);
   return (await chunkedDelete((lim) => _delPlayLogs.run(cutoff, lim).changes, { batch: config.statusLogPruneBatch })).deleted;
 }
 
@@ -467,6 +473,7 @@ module.exports = {
   recentReconnects,     // FIX 2
   livenessFor,          // FIX 2
   pruneProvisioningDevices,
+  prunePlayLogs,       // proof-of-play retention (exported for tests)
   pruneDeviceEvents,   // offline-cause log: incident-feed retention
   capDeviceEvents,     // offline-cause log: per-device incident cap
   accrueUsage,

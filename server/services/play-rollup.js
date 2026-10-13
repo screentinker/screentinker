@@ -109,6 +109,7 @@ const _rollupHour = db.prepare(`
  * pass; the sweep runs again on the next tick and catches up over several.
  */
 function rollupOnce({ maxHours = 48, now = Math.floor(Date.now() / 1000) } = {}) {
+  repairOnce();
   const target = lastCompleteHour(now);
   let from = watermark();
 
@@ -130,7 +131,126 @@ function rollupOnce({ maxHours = 48, now = Math.floor(Date.now() / 1000) } = {})
     })();
     hours++;
   }
-  return { hours, rows, upTo: watermark() };
+  const re = rerollDirty();
+  return { hours, rows, upTo: watermark(), rerolled: re.rerolled, dirtyLeft: re.left };
+}
+
+/* ─────────────────────────── late writes: recompute dirty hours ─────────────────────────── */
+
+/** Where the prune has deleted up to: every raw row below this hour is gone. 0 = never pruned. */
+function rawFloor() {
+  const row = db.prepare('SELECT raw_floor_hour FROM play_log_rollup_state WHERE id = 1').get();
+  return row ? row.raw_floor_hour : 0;
+}
+
+/**
+ * Raise the raw floor. Called by the prune BEFORE it deletes, so the delete trigger knows those
+ * rows are being aged out rather than removed (see db/database.js). Never lowered: rows below it
+ * are gone whatever retention is set to later.
+ */
+function setRawFloor(hour) {
+  db.prepare('UPDATE play_log_rollup_state SET raw_floor_hour = MAX(raw_floor_hour, ?) WHERE id = 1')
+    .run(Math.floor(hour / HOUR) * HOUR);
+}
+
+/**
+ * The first hour whose raw rows are all still on disk; only hours from here on can be recomputed.
+ * Exact, because the prune deletes whole hours and raises the floor first. 0 on an install that has
+ * never pruned, where every hour is whole.
+ */
+function recomputableFrom() {
+  return rawFloor();
+}
+
+/**
+ * One-time, on upgrade: where the floor is on a database pruned by the OLD prune, which stopped
+ * mid-hour wherever retention fell. The oldest surviving row's hour is therefore assumed partial
+ * (scripts/verify-play-rollup.js assumes the same), and with no raw left at all nothing rolled up
+ * is recomputable.
+ */
+function initRawFloorFromLegacyPrune() {
+  if (rawFloor() > 0) return rawFloor();
+  const oldest = db.prepare('SELECT MIN(started_at) AS t FROM play_logs').get();
+  const wm = watermark();
+  if (oldest && oldest.t != null) setRawFloor(Math.floor(oldest.t / HOUR) * HOUR + HOUR);
+  else if (wm > 0) setRawFloor(wm + HOUR);
+  return rawFloor();
+}
+
+const _rerollHour = db.transaction((hour) => {
+  // Delete first: an UPSERT alone leaves behind groups that no longer exist in raw (a deleted
+  // device, a content id SET NULL), which is exactly the overcounting this exists to fix.
+  db.prepare('DELETE FROM play_log_hourly WHERE hour_utc >= ? AND hour_utc < ?').run(hour, hour + HOUR);
+  _rollupHour.run(hour, hour + HOUR);
+  db.prepare('DELETE FROM play_log_rollup_dirty WHERE hour_utc = ?').run(hour);
+});
+
+/**
+ * Recompute dirty hours from raw, oldest first, until the time budget is spent. Runs on the
+ * maintenance sweep, so it is bounded: each hour is one indexed range over play_logs, but a deploy
+ * that marks every hour (markAllForReroll) leaves thousands queued, and they drain over many sweeps.
+ *
+ * A dirty hour that is not rolled up yet is simply dropped: the forward pass will compute it. One
+ * below recomputableFrom() is dropped too — its raw is partly or wholly pruned, so the aggregate is
+ * the better record — and counted, because that is a play reported later than retention allows.
+ */
+function rerollDirty({ budgetMs = 50, maxHours = 24 } = {}) {
+  const started = Date.now();
+  const wm = watermark();
+  const from = recomputableFrom();
+  let rerolled = 0, dropped = 0;
+  const hours = db.prepare('SELECT hour_utc FROM play_log_rollup_dirty ORDER BY hour_utc LIMIT ?').all(maxHours);
+  for (const { hour_utc: hour } of hours) {
+    if (hour > wm || hour < from) {
+      db.prepare('DELETE FROM play_log_rollup_dirty WHERE hour_utc = ?').run(hour);
+      if (hour < from) dropped++;
+    } else {
+      _rerollHour(hour);
+      rerolled++;
+    }
+    if (Date.now() - started >= budgetMs) break;
+  }
+  if (dropped) console.warn(`[play-rollup] ${dropped} late write(s) landed in hours whose raw is already pruned; the aggregate is kept`);
+  const left = db.prepare('SELECT COUNT(*) AS n FROM play_log_rollup_dirty').get().n;
+  return { rerolled, dropped, left };
+}
+
+/*
+ * Once per database: aggregates written before late writes were tracked are wrong wherever raw
+ * changed after its hour was rolled up, so set the floor and queue every hour that can still be
+ * recomputed. schema_migrations, not a boot flag, so it runs exactly once, on the first sweep.
+ */
+const REPAIR_ID = 'play_rollup_late_writes_reroll_v1';
+let _repairChecked = false;
+function repairOnce() {
+  if (_repairChecked) return;
+  _repairChecked = true;
+  if (db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(REPAIR_ID)) return;
+  db.transaction(() => {
+    initRawFloorFromLegacyPrune();
+    const n = markAllForReroll();
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(REPAIR_ID);
+    if (n) console.log(`[play-rollup] queued ${n} hour(s) to recompute from raw (late-write repair)`);
+  })();
+}
+
+/**
+ * Queue every recomputable rolled-up hour. One-time repair for aggregates written before late
+ * writes were tracked (db/database.js runs it once); the sweep then drains the queue.
+ */
+function markAllForReroll() {
+  const from = recomputableFrom();
+  const wm = watermark();
+  if (!(wm > 0) || from > wm) return 0;
+  // An install that never pruned has floor 0: start at its first play, not at 1970.
+  const first = from > 0 ? from : (() => {
+    const o = db.prepare('SELECT MIN(started_at) AS t FROM play_logs').get();
+    return o && o.t != null ? Math.floor(o.t / HOUR) * HOUR : wm + HOUR;
+  })();
+  let n = 0;
+  const ins = db.prepare('INSERT OR IGNORE INTO play_log_rollup_dirty (hour_utc) VALUES (?)');
+  db.transaction(() => { for (let h = first; h <= wm; h += HOUR) n += ins.run(h).changes; })();
+  return n;
 }
 
 /**
@@ -148,4 +268,8 @@ function prunableBefore(now = Math.floor(Date.now() / 1000)) {
   return Math.min(retention, rolled > 0 ? rolled + HOUR : 0);
 }
 
-module.exports = { rollupOnce, prunableBefore, watermark, setWatermark, lastCompleteHour, HOUR };
+module.exports = {
+  rollupOnce, prunableBefore, watermark, setWatermark, lastCompleteHour, HOUR,
+  rerollDirty, markAllForReroll, rawFloor, setRawFloor, recomputableFrom, initRawFloorFromLegacyPrune,
+  __resetRepairForTests: () => { _repairChecked = false; },
+};
