@@ -21,6 +21,7 @@ const { devicesPlayingContent } = require('../lib/devices-playing');
 const upload = require('../middleware/upload');
 const multer = require('multer');   // for MulterError only — the configured instance is `upload` above
 const config = require('../config');
+const { resolveWithin } = require('../lib/safe-path');
 const replicaProxy = require('../lib/replica-proxy');
 const { checkStorageLimit, checkRemoteUrl } = require('../middleware/subscription');
 const { cleanUserText } = require('../middleware/sanitize');
@@ -279,7 +280,9 @@ function discardUploads(req, files = null) {
     ...(Array.isArray(req.files) ? req.files : Object.values(req.files || {}).flat()),
   ];
   for (const f of list) {
-    if (f && f.path) { try { fs.unlinkSync(f.path); } catch (_) { /* already gone */ } }
+    // Every uploader on this router writes into contentDir; never unlink anything outside it.
+    const staged = f && f.path ? resolveWithin(config.contentDir, f.path) : null;
+    if (staged) { try { fs.unlinkSync(staged); } catch (_) { /* already gone */ } }
   }
 }
 
@@ -1242,7 +1245,7 @@ router.post('/:id/subtitle', upload.subtitleUpload.single('subtitle'), async (re
   const content = checkContentWrite(req, res);
   if (!content) {
     // checkContentWrite already sent the response; clean up the orphaned upload.
-    if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
+    discardUploads(req);
     return;
   }
   if (!req.file) return res.status(400).json({ error: 'No subtitle file provided' });

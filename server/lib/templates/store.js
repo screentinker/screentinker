@@ -15,6 +15,7 @@ const path = require('path');
 const { db } = require('../../db/database');
 const config = require('../../config');
 const pkgLib = require('./package');
+const { resolveWithin } = require('../safe-path');
 
 function root() {
   return process.env.TEMPLATES_DIR || path.join(config.dataDir, 'templates');
@@ -23,7 +24,11 @@ function packagesDir() { return path.join(root(), 'packages'); }
 
 function packagePath(sha256) {
   if (!/^[0-9a-f]{64}$/.test(String(sha256))) throw new Error('bad sha256');
-  return path.join(packagesDir(), `${sha256}.sttemplate`);
+  // The hex check is the contract and already rules out any separator; the containment check
+  // says the same thing in the form every fs call below can rely on without re-reading the regex.
+  const p = resolveWithin(packagesDir(), `${sha256}.sttemplate`);
+  if (!p) throw new Error('bad sha256');
+  return p;
 }
 
 /** Write a package file (the envelope bytes) under its sha. Idempotent. */

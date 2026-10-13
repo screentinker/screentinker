@@ -30,10 +30,14 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const config = require('../config');
+const { resolveWithin } = require('./safe-path');
 
 const RESOURCE_TYPES = ['content', 'playlist', 'layout', 'slide_deck', 'widget'];
 const TABLE = { content: 'content', playlist: 'playlists', layout: 'layouts', slide_deck: 'slide_decks', widget: 'widgets' };
 const HISTORY_DIR = '.history';
+// Content ids are uuids; the check keeps a malformed one from ever naming .history itself or
+// anything outside it.
+const RETAINED_DIR_ID_RE = /^[A-Za-z0-9_-]+$/;
 const SECRET_KEY_RE = /(api[_-]?key|secret|token|password|passwd|credential|auth)/i;
 
 function nowSec() { return Math.floor(Date.now() / 1000); }
@@ -313,7 +317,11 @@ function retainContentFile(db, contentId, relPath, tag) {
     const kind = relPath === row.thumbnail_path && relPath !== row.filepath ? 'thumb' : 'asset';
     return require('./storage/locations').retainRemote(contentId, kind, tag, relPath);
   }
-  const dir = path.join(historyDir(), contentId);
+  // contentId names a directory under .history, so it gets the same shape check removeRetainedFiles
+  // applies before it deletes one. Callers pass a row id that was just read, but this is the
+  // function that creates the directory and moves bytes into it, so it does not take that on trust.
+  const dir = RETAINED_DIR_ID_RE.test(String(contentId || '')) ? resolveWithin(historyDir(), String(contentId)) : null;
+  if (!dir) throw new Error('retainContentFile: invalid content id');
   fs.mkdirSync(dir, { recursive: true });
   const dest = path.join(dir, `${tag}__${path.basename(src)}`);
   const rel = path.join(HISTORY_DIR, contentId, path.basename(dest));
@@ -363,9 +371,6 @@ function deleteHistoryRows(db, resourceType, resourceId) {
   db.prepare('DELETE FROM revisions WHERE resource_type = ? AND resource_id = ?').run(resourceType, resourceId);
 }
 
-// Content ids are uuids; the check keeps a malformed one from ever naming .history itself or
-// anything outside it.
-const RETAINED_DIR_ID_RE = /^[A-Za-z0-9_-]+$/;
 
 /** Remove <contentDir>/.history/<contentId>/ (the retained copies of a DELETED content row). */
 function removeRetainedFiles(contentId) {

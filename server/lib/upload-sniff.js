@@ -17,6 +17,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { resolveWithin } = require('./safe-path');
 
 // The ONLY extensions an upload may land on. Keyed by the mime the sniffer reports.
 // Anything not here is refused — an allowlist, so a new container format is a deliberate
@@ -176,26 +177,35 @@ class UnsupportedUploadError extends Error {
 // it actually is. Throws UnsupportedUploadError (and removes the file) when the bytes are
 // not a supported media type — the caller maps that to a 400.
 //
-// Returns { filepath, mime, ext } where filepath is the basename now on disk.
-function finalizeUpload(file) {
+// Returns { filepath, mime, ext, abs } where filepath is the basename now on disk and abs is its
+// contained absolute path — the one callers should hand to anything that opens the file.
+//
+// ⚠️ THE FILE MUST ALREADY BE IN contentDir, and that is now checked rather than assumed. Every
+// caller stages it there (multer's storage, upload-session.stageForIngest, the Canva / cloud-folder
+// / storage-import / AI downloaders), because the row this feeds names `contentDir/<filepath>` —
+// a file renamed anywhere else gives a 201 and an unplayable row. A path outside it is refused
+// before anything opens, unlinks or renames it.
+function finalizeUpload(file, root = require('../config').contentDir) {
+  const src = resolveWithin(root, (file && file.path) || '');
+  if (!src) throw new UnsupportedUploadError('Upload is not in the content directory');
   const mime = (() => {
-    try { return sniffMime(readHead(file.path)); } catch { return null; }
+    try { return sniffMime(readHead(src)); } catch { return null; }
   })();
   const ext = mime ? MIME_TO_EXT[mime] : null;
   if (!mime || !ext) {
-    try { fs.unlinkSync(file.path); } catch { /* best effort */ }
+    try { fs.unlinkSync(src); } catch { /* best effort */ }
     throw new UnsupportedUploadError('Unsupported file type — only image, video and audio files are accepted');
   }
   // `<uuid>.part` -> `<uuid><ext>`; keep the uuid multer already generated.
-  const base = path.basename(file.path).replace(/\.part$/i, '');
+  const base = path.basename(src).replace(/\.part$/i, '');
   const finalName = base + ext;
-  const finalPath = path.join(path.dirname(file.path), finalName);
-  fs.renameSync(file.path, finalPath);
+  const finalPath = resolveWithin(path.dirname(src), finalName);
+  fs.renameSync(src, finalPath);
   // Keep the multer object consistent for any downstream reader.
   file.path = finalPath;
   file.filename = finalName;
   file.mimetype = mime;
-  return { filepath: finalName, mime, ext };
+  return { filepath: finalName, mime, ext, abs: finalPath };
 }
 
 module.exports = {

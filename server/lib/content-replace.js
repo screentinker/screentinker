@@ -27,6 +27,7 @@
 const path = require('path');
 const fs = require('fs');
 const config = require('../config');
+const { resolveWithin } = require('./safe-path');
 const { db } = require('../db/database');
 const htmlBundle = require('./html-bundle');
 const { finalizeUpload } = require('./upload-sniff');
@@ -57,7 +58,9 @@ async function replaceContentBytes({ content, file, actor, writer = null, reqOrI
     try { guard.assertMediaWritable(writer, 'content', content.id); } catch (e) {
       const r = guard.toResponse(e);
       if (!r) throw e;
-      try { fs.unlinkSync(file.path); } catch (_) { /* best effort */ }
+      // Contained to contentDir like every other touch of the staged file (lib/upload-sniff).
+      const staged = resolveWithin(config.contentDir, file.path || '');
+      if (staged) { try { fs.unlinkSync(staged); } catch (_) { /* best effort */ } }
       return reply(r.status, r.body);
     }
   }
@@ -67,8 +70,8 @@ async function replaceContentBytes({ content, file, actor, writer = null, reqOrI
 
   // Same content-derived naming as the main ingest path (lib/upload-sniff) — the caller
   // does not choose the extension here either. A non-media upload 400s.
-  let filepath, mime;
-  try { ({ filepath, mime } = finalizeUpload(file)); }
+  let filepath, mime, abs;
+  try { ({ filepath, mime, abs } = finalizeUpload(file)); }
   catch (e) { return reply(e.status || 400, { error: e.message }); }
 
   /*
@@ -116,7 +119,7 @@ async function replaceContentBytes({ content, file, actor, writer = null, reqOrI
   //     thumbnailed without .rotate(), re-introducing the EXIF-orientation bug (#170) that
   //     ingest fixes — a portrait photo came back landscape with blue bars;
   //   - both left width/height NULL for video, which is what the orientation-aware paths read.
-  const { width, height, durationSec, thumbnailPath } = await deriveMediaMetadata(file.path, filepath, mime);
+  const { width, height, durationSec, thumbnailPath } = await deriveMediaMetadata(abs, filepath, mime);
 
   // Bump the revision: this is the ONLY operation in the product that changes an asset's bytes
   // without changing its id, so it is the only thing that can make a player's cached copy wrong.

@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 const { copyFileBytes } = require('../lib/fsutil'); // exFAT-safe; see lib/fsutil.js
 const fs = require('fs');
+const { resolveWithin } = require('../lib/safe-path');
 const config = require('../config');
 const replicaProxy = require('../lib/replica-proxy');
 const { sixDigitCode } = require('../lib/numeric-code');
@@ -381,7 +382,17 @@ router.get('/export', async (req, res) => {
 
 // User data import (JSON or ZIP with files)
 const multer = require('multer');
-const importUpload = multer({ dest: path.join(os.tmpdir(), 'screentinker-import'), limits: { fileSize: 2 * 1024 * 1024 * 1024 } }); // 2GB max
+const IMPORT_UPLOAD_DIR = path.join(os.tmpdir(), 'screentinker-import');
+const importUpload = multer({ dest: IMPORT_UPLOAD_DIR, limits: { fileSize: 2 * 1024 * 1024 * 1024 } }); // 2GB max
+// The uploaded zip's path, contained to the directory multer writes it into. Every open and unlink
+// below goes through this, so none of them can be pointed outside that directory.
+function importZipPath(req) {
+  return req.file && req.file.path ? resolveWithin(IMPORT_UPLOAD_DIR, req.file.path) : null;
+}
+function discardImportZip(req) {
+  const p = importZipPath(req);
+  if (p) { try { fs.unlinkSync(p); } catch (_) { /* already gone */ } }
+}
 
 /*
  * Scale-out (docs/scale-out.md): an import WRITES into the session's workspace. When that workspace
@@ -438,11 +449,11 @@ router.post('/import', proxyImportIfCopied, importUpload.single('file'), async (
     const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
     const ctx = ws && accessContext(userId, sessionRole, ws);
     if (!ctx || (!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer')) {
-      if (req.file) fs.unlink(req.file.path, () => {});
+      discardImportZip(req);
       return res.status(403).json({ error: 'Read-only access' });
     }
   } catch (err) {
-    if (req.file) fs.unlink(req.file.path, () => {});
+    discardImportZip(req);
     return res.status(403).json({ error: 'Access denied' });
   }
   const importerIsPlatformAdmin = PLATFORM_ROLES.includes(sessionRole);
@@ -452,13 +463,15 @@ router.post('/import', proxyImportIfCopied, importUpload.single('file'), async (
 
   if (req.file) {
     // ZIP upload — extract export.json and files/
+    const zipPath = importZipPath(req);
+    if (!zipPath) return res.status(400).json({ error: 'Upload not found' });
     try {
       const unzipper = require('unzipper');
       const extractDir = path.join(os.tmpdir(), `screentinker-import-${Date.now()}`);
       fs.mkdirSync(extractDir, { recursive: true });
 
       await new Promise((resolve, reject) => {
-        fs.createReadStream(req.file.path)
+        fs.createReadStream(zipPath)
           .pipe(unzipper.Extract({ path: extractDir }))
           .on('close', resolve)
           .on('error', reject);
@@ -467,34 +480,33 @@ router.post('/import', proxyImportIfCopied, importUpload.single('file'), async (
       // Read the JSON manifest
       const jsonPath = path.join(extractDir, 'export.json');
       if (!fs.existsSync(jsonPath)) {
-        fs.unlinkSync(req.file.path);
+        discardImportZip(req);
         return res.status(400).json({ error: 'ZIP does not contain export.json' });
       }
       data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
 
       // Map extracted files by content ID, with path traversal validation
       const filesDir = path.join(extractDir, 'files');
-      const resolvedExtractDir = path.resolve(extractDir);
       if (fs.existsSync(filesDir)) {
         for (const contentDir of fs.readdirSync(filesDir)) {
-          const contentPath = path.resolve(filesDir, contentDir);
-          // Validate path is within extractDir to prevent directory traversal
-          if (!contentPath.startsWith(resolvedExtractDir)) continue;
+          // Contained to files/ (lib/safe-path). The bare startsWith(extractDir) this replaced
+          // also admitted a sibling sharing the prefix, `screentinker-import-<ts>x/...`.
+          const contentPath = resolveWithin(filesDir, contentDir);
+          if (!contentPath) continue;
           if (!fs.statSync(contentPath).isDirectory()) continue;
           const files = fs.readdirSync(contentPath);
           extractedFiles[contentDir] = files.map(f => {
-            const filePath = path.resolve(contentPath, f);
-            // Validate each file path is within extractDir
-            if (!filePath.startsWith(resolvedExtractDir)) return null;
+            const filePath = resolveWithin(contentPath, f);
+            if (!filePath) return null;
             return { name: f, path: filePath };
           }).filter(Boolean);
         }
       }
 
       // Cleanup uploaded zip
-      fs.unlinkSync(req.file.path);
+      discardImportZip(req);
     } catch (err) {
-      if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch {}
+      discardImportZip(req);
       return res.status(400).json({ error: 'Failed to extract ZIP: ' + err.message });
     }
   } else {
