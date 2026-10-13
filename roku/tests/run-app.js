@@ -18,11 +18,18 @@
  * The simulator reports Autoplay as OFF, so this also runs Roku's autoplay policy: the player must
  * wait with nothing playing, and start when OK (Select) is pressed — sent here over the simulator's
  * ECP port, as a remote would.
+ *
+ * --drop-first-register puts a proxy between the app and the server that delivers the first
+ * device:register POST to the server and then drops the connection. That is the CI "flake" of
+ * 2026-10-12/13: the server creates the unclaimed row, the app's 15 s post timeout rebuilds the
+ * session, and the re-register is ADOPTED by the server (same pairing code + fingerprint) with
+ * status 'online' and deliberately no device:paired. The app must still show its pairing code.
  */
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const http = require('http');
 const { spawn } = require('child_process');
 const { start, packageApp, REPO } = require('./lib/st-server');
 
@@ -30,6 +37,46 @@ const ROKU = path.join(REPO, 'roku');
 const BRS_CLI = process.env.BRS_CLI || path.join(ROKU, 'node_modules/brs-node/bin/brs.cli.js');
 const ECP_PORT = 8060;
 const SECONDS = Number((process.argv.find((a, i) => process.argv[i - 1] === '--seconds')) || 90);
+const DROP_FIRST_REGISTER = process.argv.includes('--drop-first-register');
+
+/**
+ * Forward everything to `target`, except the first POST carrying device:register: deliver that one
+ * (the server must act on it) and swallow the reply, so the app sees a POST that never completes.
+ */
+function dropFirstRegisterProxy(target) {
+  const up = new URL(target);
+  let dropped = false;
+  const held = [];
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const body = Buffer.concat(chunks);
+      const swallow = !dropped && req.method === 'POST' && body.includes('device:register');
+      const fwd = http.request({ host: up.hostname, port: up.port, method: req.method, path: req.url,
+        headers: { ...req.headers, host: up.host } }, (r) => {
+        // The server has acted on it; the app gets a dropped connection instead of the reply.
+        // (Dropped, not held: brs-node's roUrlTransfer blocks the whole task on a reply that never
+        // comes, where a real Roku's async transfer would let the app's 15 s post timeout fire.)
+        if (swallow) { r.resume(); r.on('end', () => setTimeout(() => res.socket && res.socket.destroy(), 500)); return; }
+        res.writeHead(r.statusCode, r.headers);
+        r.pipe(res);
+      });
+      fwd.on('error', () => { if (!swallow) { res.writeHead(502); res.end(); } });
+      fwd.end(body);
+      if (swallow) {
+        dropped = true;
+        held.push(res);
+        console.log('  test> delivered the first device:register to the server and dropped the reply');
+      }
+    });
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({
+    base: `http://127.0.0.1:${server.address().port}`,
+    wasDropped: () => dropped,
+    close: () => { for (const r of held) r.destroy(); server.close(); },
+  })));
+}
 
 (async () => {
   let exitCode = 0;
@@ -37,6 +84,7 @@ const SECONDS = Number((process.argv.find((a, i) => process.argv[i - 1] === '--s
   const seen = [];
   let srv = null;
   let brs = null;
+  let proxy = null;
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'st-roku-app-'));
   try {
     srv = await start();
@@ -49,7 +97,9 @@ const SECONDS = Number((process.argv.find((a, i) => process.argv[i - 1] === '--s
     console.log(`content: image ${img.id}, video ${vid.id}, clock widget ${clock.id}`);
 
     const zip = packageApp(work);
-    brs = spawn(process.execPath, [BRS_CLI, '-c', '0', '-g', 'warning', '-e', '-k', `server=${srv.base}`, zip], { cwd: work, stdio: ['ignore', 'pipe', 'pipe'] });
+    if (DROP_FIRST_REGISTER) proxy = await dropFirstRegisterProxy(srv.base);
+    const appServer = proxy ? proxy.base : srv.base;
+    brs = spawn(process.execPath, [BRS_CLI, '-c', '0', '-g', 'warning', '-e', '-k', `server=${appServer}`, zip], { cwd: work, stdio: ['ignore', 'pipe', 'pipe'] });
     let deviceId = null;
     let pairing = false;
     let pressedAt = -1;
@@ -86,6 +136,8 @@ const SECONDS = Number((process.argv.find((a, i) => process.argv[i - 1] === '--s
     await new Promise((r) => setTimeout(r, SECONDS * 1000));
 
     const has = (re) => seen.some((l) => re.test(l));
+    if (proxy && !proxy.wasDropped()) fail('--drop-first-register: no device:register POST was ever seen to drop');
+    if (proxy && !has(/session closed: post (timeout|rejected)/)) fail('--drop-first-register: the app never gave up on the dropped POST');
     if (!has(/\[st\] pairing: code \d{6}/)) fail('the app never showed a pairing code');
     if (!has(/\[st\] payload: items=4/)) fail('the app never received the 4-item playlist');
     if (!has(/\[st\] launch: complete/)) fail('the AppLaunchComplete beacon was never signalled');
@@ -107,11 +159,27 @@ const SECONDS = Number((process.argv.find((a, i) => process.argv[i - 1] === '--s
     const crashes = seen.filter((l) => /BRIGHTSCRIPT: ERROR|Runtime Error/i.test(l));
     if (crashes.length) { fail('BrightScript errors:'); for (const c of crashes.slice(0, 10)) console.log('   ' + c); }
     // A playlist push must not restart playback from item one (#234).
-    const rebuilds = seen.filter((l) => /structure changed, rebuilding/.test(l)).length;
-    if (rebuilds > 1) fail(`the stage was rebuilt ${rebuilds} times for one structure`);
+    // Rebuilds are counted per payload (keyed by the payload line before each rebuild): one payload
+    // must rebuild the stage at most once. Two DIFFERENT payloads may each rebuild it, as when an
+    // adopted re-register (--drop-first-register) gets an empty playlist before the paired one.
+    const rebuildsPer = new Map();
+    let lastPayload = '';
+    for (const l of seen) {
+      const pm = l.match(/\[st\] payload: (items=.*)$/);
+      if (pm) lastPayload = pm[1];
+      else if (/structure changed, rebuilding/.test(l)) rebuildsPer.set(lastPayload, (rebuildsPer.get(lastPayload) || 0) + 1);
+    }
+    for (const [payload, n] of rebuildsPer) if (n > 1) fail(`the stage was rebuilt ${n} times for one structure (${payload})`);
 
     if (deviceId) {
-      const d = await srv.device(deviceId);
+      // Online at SOME point in the next 15 s, not at this one instant: a run can end in the gap of a
+      // session rebuild (the simulator's own stalls), and "offline for 3 s while reconnecting" is not
+      // the regression this check is for.
+      let d = await srv.device(deviceId);
+      for (let i = 0; i < 15 && (!d || d.status !== 'online'); i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        d = await srv.device(deviceId);
+      }
       console.log(`  server> status=${d && d.status} platform=${d && d.platform} client_type=${d && d.client_type} family=${d && d.platform_family}`);
       if (!d || d.status !== 'online') fail('the display is not online on the server');
       if (process.env.EXPECT_FAMILY && d.platform_family !== 'roku') fail(`platform_family is ${d.platform_family}, expected roku`);
@@ -134,6 +202,7 @@ const SECONDS = Number((process.argv.find((a, i) => process.argv[i - 1] === '--s
     if (srv) console.log(srv.log().slice(-2000));
   } finally {
     if (brs) brs.kill('SIGKILL');
+    if (proxy) proxy.close();
     if (srv) await srv.stop();
     fs.rmSync(work, { recursive: true, force: true });
     process.exit(exitCode);

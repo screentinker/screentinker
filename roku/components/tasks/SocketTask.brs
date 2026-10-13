@@ -283,6 +283,16 @@ sub closeSession(reason as string)
     ST_Log("socket", "session closed: " + reason + " (" + m.top.lastError + ")")
     if m.poll <> invalid then m.poll.AsyncCancel()
     if m.post <> invalid then m.post.AsyncCancel()
+    ' ⚠️ TELL THE SERVER WHEN WE ARE THE ONES GIVING UP. Dropping a session silently left it live on
+    ' the server until its ping timeout (30 s+), and every re-register in that window was refused as
+    ' "active on another connection" (the anti-hijack check), so a display whose register reply was
+    ' lost stayed locked out. An Engine.IO close packet ends it now, which is the reconnect the
+    ' server's deferred-offline grace is built for. Best effort, fire and forget; pointless when the
+    ' server is the one that ended it.
+    if m.sid <> "" and reason <> "server closed" and reason <> "poll rejected" then
+        bye = newTransfer(ST_EioUrl(m.server, m.sid))
+        if bye.AsyncPostFromString("1") then m.goodbye = bye   ' held, so it is not collected mid-flight
+    end if
     for i = m.inFlight.Count() - 1 to 0 step -1
         m.queue.Unshift(m.inFlight[i])
     end for

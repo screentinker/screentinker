@@ -13,13 +13,37 @@ const { spawn, spawnSync } = require('child_process');
 
 const REPO = path.resolve(__dirname, '..', '..', '..');
 
+/** A port nothing is listening on, from the OS. A random pick could land on a server another run left up. */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const s = require('net').createServer();
+    s.unref();
+    s.on('error', reject);
+    s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
+  });
+}
+
 async function start({ serverDir = process.env.SERVER_DIR || path.join(REPO, 'server'), node = process.env.NODE_FOR_SERVER || process.execPath, env = {} } = {}) {
-  const port = 3500 + Math.floor(Math.random() * 400);
+  const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'st-roku-srv-'));
   const proc = spawn(node, ['server.js'], {
     cwd: serverDir,
-    env: { ...process.env, PORT: String(port), DATA_DIR: path.join(work, 'data'), SELF_HOSTED: 'true', NODE_ENV: 'development', JWT_SECRET: crypto.randomBytes(16).toString('hex'), ...env },
+    /*
+     * ⚠️ THE SIMULATOR NEEDS ITS OWN HEARTBEAT, NOT PRODUCTION'S. Neither applies to a real Roku.
+     *
+     * PING_INTERVAL 5 s, not 15. brs-node runs "async" roUrlTransfers one at a time, synchronously,
+     * when the app waits on its port. If the long-poll GET is queued ahead of the device:register
+     * POST, the server holds that GET for the reply the POST has not delivered yet, until its next
+     * ping. At 15 s that is exactly the app's post timeout, so the session was torn down on some runs
+     * and not others (CI, 2026-10-12/13). Measured: 1 post timeout per run at 15 s, 0 at 4-5 s.
+     *
+     * PING_TIMEOUT 60 s, not 30. brs-node runs every SceneGraph thread on one JavaScript thread, so
+     * while playback is busy the socket task can miss a pong deadline; at a 4 s interval and 30 s
+     * timeout the server closed the session for "ping timeout" ~4 times a run. The app derives its
+     * own deadline from the open packet, so it relaxes with it.
+     */
+    env: { ...process.env, PORT: String(port), DATA_DIR: path.join(work, 'data'), SELF_HOSTED: 'true', NODE_ENV: 'development', JWT_SECRET: crypto.randomBytes(16).toString('hex'), PING_INTERVAL: '5000', PING_TIMEOUT: '60000', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';

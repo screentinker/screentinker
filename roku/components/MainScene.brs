@@ -282,13 +282,17 @@ sub onRegistered(data as object)
         m.cfg.deviceToken = tok
         ST_RegWrite("device_token", tok)
     end if
+    ' ⚠️ ONLY device:paired MAKES US PAIRED, never the status here. The server answers a re-register
+    ' of an UNCLAIMED display it adopts (same pairing code + fingerprint: the first register reached
+    ' it, its reply was lost with the session) with status "online" and deliberately no
+    ' device:paired. Reading "not provisioning" as paired hid the code for good: the operator had
+    ' nothing to claim and the display sat on an empty playlist (CI, 2026-10-12/13, three times).
+    ' A claimed display gets device:paired straight after this, on every register (#143/#146).
     if ST_Str(data, "status") = "provisioning" then
         m.cfg.paired = false
         ST_RegWrite("paired", "0")
-        showPairing()
-    else
-        markPaired()
     end if
+    if not m.cfg.paired then showPairing()
 end sub
 
 sub onPaired(data as object)
