@@ -24,7 +24,7 @@
     "@jsquash/webp": "^1.5.0",
     "@node-saml/node-saml": "^5.1.0",
     "@xmldom/xmldom": "^0.9.12",
-    "archiver": "^7.0.1",
+    "archiver": "^8.0.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "express": "^4.18.2",
