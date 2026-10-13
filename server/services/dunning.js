@@ -177,7 +177,7 @@ async function sendPaymentFailedEmail(userId) {
  */
 async function reconcileFromStripe() {
   if (!isEnabled() || !config.stripeSecretKey) return { checked: 0, corrected: 0, skipped: 'not_configured' };
-  const stripe = require('stripe')(config.stripeSecretKey);
+  const stripe = require('../lib/stripe-client').create(config.stripeSecretKey);
   const rows = db.prepare(`SELECT id, plan_id, plan_comped, subscription_status, subscription_ends, stripe_subscription_id, past_due_since
                              FROM users
                             WHERE stripe_subscription_id IS NOT NULL AND stripe_subscription_id <> ''`).all();
