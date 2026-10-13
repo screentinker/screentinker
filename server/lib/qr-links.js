@@ -21,10 +21,10 @@ const BOT_RE = /bot\b|crawl|spider|preview|slack|whatsapp|facebookexternalhit|tw
 
 const recent = new Map();   // `${linkId}|${ip}` -> ms (in memory only)
 
+// randomInt rather than `byte % 54`, which favoured the first 40 symbols (256 = 4*54 + 40).
 function newCode() {
-  const bytes = crypto.randomBytes(CODE_LEN);
   let s = '';
-  for (let i = 0; i < CODE_LEN; i++) s += ALPHABET[bytes[i] % ALPHABET.length];
+  for (let i = 0; i < CODE_LEN; i++) s += ALPHABET[crypto.randomInt(ALPHABET.length)];
   return s;
 }
 

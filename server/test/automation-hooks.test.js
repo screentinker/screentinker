@@ -324,6 +324,11 @@ test('zapier: token scopes, subscriptions and polling', async () => {
 
   const opts = await api('/api/zapier/options/playlists', J(undefined, 'GET', read));
   assert.ok(Array.isArray(opts.body) && opts.body.length >= 1);
+  // Inherited members of an object are not option lists: these used to answer 200 with `{}`.
+  for (const kind of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+    const r = await api(`/api/zapier/options/${kind}`, J(undefined, 'GET', read));
+    assert.equal(r.status, 404, `/options/${kind}`);
+  }
 
   assert.equal((await api(`/api/zapier/subscriptions/${sub.body.id}`, J(undefined, 'DELETE', write))).body.removed, true);
   assert.equal((await api(`/api/zapier/subscriptions/${sub.body.id}`, J(undefined, 'DELETE', write))).body.removed, false, 'idempotent');

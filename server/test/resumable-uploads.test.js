@@ -188,6 +188,29 @@ test('a chunk from the future is refused too — no sparse files', async () => {
 
 /* ------------------------------------------------------------------- limits and lying clients */
 
+test('a chunk that is not raw bytes is a 400, not appended and not a 500', async () => {
+  // Sent as JSON, the global parser turns the body into an array or an object (one with its own
+  // `length`, even) before express.raw ever sees it. Neither may reach appendFileSync.
+  const bytes = pngOf(60 * 1024);
+  const { body } = await createSession(bytes, 'json.png');
+  for (const wrong of ['[1,2,3]', '{"length":5}']) {
+    const r = await fetch(api(`/uploads/${body.id}`), {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json', 'Upload-Offset': '0' },
+      body: wrong,
+    });
+    assert.equal(r.status, 400, `body ${wrong}`);
+    assert.equal((await r.json()).offset, 0, 'nothing was written');
+  }
+  // An empty PATCH is still the harmless no-op it always was, and real bytes still land.
+  const empty = await fetch(api(`/uploads/${body.id}`), {
+    method: 'PATCH', headers: { Authorization: `Bearer ${jwt}`, 'Upload-Offset': '0' },
+  });
+  assert.equal(empty.status, 200);
+  assert.equal((await empty.json()).offset, 0);
+  assert.equal((await patch(body.id, 0, bytes)).status, 200);
+});
+
 test('⚠️ the declared size is a CEILING, not a promise', async () => {
   /*
    * The storage allowance is checked at create against a number the CLIENT chose. If the ceiling

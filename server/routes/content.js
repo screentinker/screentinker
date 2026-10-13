@@ -300,7 +300,14 @@ function uploadPreflight(req, res, next) {
 }
 
 router.post('/', checkStorageLimit, uploadPreflight, uploadContentFilesGuarded, async (req, res) => {
-  const files = [...((req.files && req.files.files) || []), ...((req.files && req.files.file) || [])];
+  // Only ever arrays multer built (upload.fields caps each), checked as such rather than assumed, and
+  // the total bounded again here so the ingest loop below never runs on a length nobody vetted.
+  const field = (name) => (req.files && Array.isArray(req.files[name]) ? req.files[name] : []);
+  const files = [...field('files'), ...field('file')];
+  if (files.length > MAX_FILES_PER_UPLOAD + 1) {
+    discardUploads(req);
+    return res.status(400).json({ error: `Too many files in one upload (at most ${MAX_FILES_PER_UPLOAD}).` });
+  }
   // Index of the first file NOT yet ingested; everything from here on is still a `.part` on disk.
   let next = 0;
   try {
@@ -496,7 +503,17 @@ router.patch('/uploads/:id',
       return res.status(400).json({ error: 'Upload-Offset header is required' });
     }
 
-    const result = uploadSession.append(session, declaredOffset, req.body);
+    /*
+     * express.raw leaves an already-parsed body alone, so a chunk sent as application/json arrives
+     * as whatever JSON it was. An empty body is still `{}` (body-parser's default) and means "no
+     * bytes", exactly as before; anything else that is not a Buffer is refused, not appended.
+     */
+    let chunk = null;
+    if (Buffer.isBuffer(req.body)) chunk = req.body;
+    else if (req.body != null && (typeof req.body !== 'object' || Array.isArray(req.body) || Object.keys(req.body).length > 0)) {
+      return res.status(400).json({ error: 'Send the chunk as raw bytes (Content-Type: application/octet-stream)', offset: uploadSession.offsetOf(session) });
+    }
+    const result = uploadSession.append(session, declaredOffset, chunk);
     if (!result.ok) {
       // The refusal NAMES the offset, so a client that lost a response corrects itself in one
       // round trip instead of starting again.

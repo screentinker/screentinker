@@ -113,6 +113,19 @@ test('request codes survive being read out: any case, with or without dashes', (
   assert.equal(support.normaliseRequestCode('ABCD-EFGH-JKMN'), null, 'too short');
 });
 
+test('request codes: same alphabet, same XXXX-XXXX-XXXX-XXXX shape, every symbol reachable', () => {
+  // Drawn with crypto.randomInt now (the old `byte % 30` favoured the first 16 symbols). The format
+  // is what issueToken signs and normaliseRequestCode accepts, so it must not move at all.
+  const seen = new Set();
+  for (let i = 0; i < 400; i++) {
+    const c = support.newRequestCode();
+    assert.match(c, /^[ABCDEFGHJKMNPQRSTVWXYZ2-9]{4}(-[ABCDEFGHJKMNPQRSTVWXYZ2-9]{4}){3}$/);
+    assert.equal(support.normaliseRequestCode(c), c, 'a fresh code round-trips unchanged');
+    for (const ch of c.replace(/-/g, '')) seen.add(ch);
+  }
+  assert.equal(seen.size, 30, 'all 30 symbols turn up in 6400 draws');
+});
+
 // ---------------------------------------------------------------------------
 // The session
 // ---------------------------------------------------------------------------

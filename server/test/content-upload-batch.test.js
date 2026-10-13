@@ -77,6 +77,17 @@ test('REGRESSION #317: going over the cap says so, instead of a bare 500', async
   assert.match(body.error, /batch/i, 'and says what to do instead');
 });
 
+test('the ingest-loop bound is exactly what multer admits: 60 `files` + 1 `file` still lands', async () => {
+  // routes/content.js re-checks the total before looping over it. That bound must not be tighter
+  // than the two multer fields allow together, or a legal request would start being refused.
+  const fd = form(60);
+  fd.append('file', new Blob([PNG], { type: 'image/png' }), 'single.png');
+  const r = await send(fd);
+  assert.equal(r.status, 201);
+  const body = await r.json();
+  assert.equal(body.length, 61);
+});
+
 test('a single-file upload is unchanged', async () => {
   const fd = new FormData();
   fd.append('files', new Blob([PNG], { type: 'image/png' }), 'one.png');

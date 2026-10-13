@@ -56,6 +56,14 @@ after(() => { try { server.close(); } catch { /* */ } });
 
 test('codes avoid look-alike characters; targets must be http(s); platform is coarse', () => {
   for (let i = 0; i < 50; i++) assert.match(qr.newCode(), /^[a-km-np-zA-HJ-NP-Z2-9]{7}$/);
+  // crypto.randomInt per symbol: still 7 characters from the same 54, and all of them reachable.
+  const seen = new Set();
+  for (let i = 0; i < 600; i++) {
+    const c = qr.newCode();
+    assert.match(c, /^[abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ2-9]{7}$/);
+    for (const ch of c) seen.add(ch);
+  }
+  assert.equal(seen.size, 54);
   assert.match(qr.checkTarget('javascript:alert(1)'), /http/);
   assert.match(qr.checkTarget('https://u:p@x.example/'), /username/);
   assert.equal(qr.checkTarget('https://example.org/menu?x=1'), null);

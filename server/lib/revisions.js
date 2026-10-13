@@ -161,12 +161,24 @@ function captureContent(db, row) {
   return state;
 }
 
+/*
+ * A switch over the five names, never `obj[type]()`: `type` reaches here from route params, and on
+ * an object literal 'constructor' / '__proto__' / 'toString' are truthy inherited members — the old
+ * `if (!TABLE[type])` guard let them through to a SELECT FROM "function Object()...".
+ */
 function captureState(db, type, id) {
-  const table = TABLE[type];
-  if (!table) throw new Error(`unknown resource type: ${type}`);
-  const row = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+  if (!Object.prototype.hasOwnProperty.call(TABLE, type)) throw new Error(`unknown resource type: ${type}`);
+  const row = db.prepare(`SELECT * FROM ${TABLE[type]} WHERE id = ?`).get(id);
   if (!row) return null;
-  const state = { content: captureContent, playlist: capturePlaylist, layout: captureLayout, slide_deck: captureDeck, widget: captureWidget }[type](db, row);
+  let state;
+  switch (type) {
+    case 'content': state = captureContent(db, row); break;
+    case 'playlist': state = capturePlaylist(db, row); break;
+    case 'layout': state = captureLayout(db, row); break;
+    case 'slide_deck': state = captureDeck(db, row); break;
+    case 'widget': state = captureWidget(db, row); break;
+    default: throw new Error(`unknown resource type: ${type}`);
+  }
   return { row, state };
 }
 

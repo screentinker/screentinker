@@ -88,7 +88,7 @@ function find(root, pred) {
 const byClass = (root, cls) => find(root, (c) => c.className === cls)[0] || null;
 
 // ---------------- loader ----------------
-function load({ withPlayer = false, ua = 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.5) AppleWebKit/537.36 (KHTML, like Gecko) 85.0.4183.93/6.5 TV Safari/537.36' } = {}) {
+function load({ withPlayer = false, globals = null, ua = 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.5) AppleWebKit/537.36 (KHTML, like Gecko) 85.0.4183.93/6.5 TV Safari/537.36' } = {}) {
   const c = clock();
   const doc = makeDoc();
   const store = new Map();
@@ -103,6 +103,7 @@ function load({ withPlayer = false, ua = 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.
     removeEventListener(t, fn) { winListeners[t] = (winListeners[t] || []).filter((f) => f !== fn); },
     focus() {},
   };
+  if (globals) Object.assign(sandbox, globals);
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(read('tizen/js/kiosk-logic.js'), sandbox, { filename: 'kiosk-logic.js' });
@@ -203,6 +204,27 @@ test('mounts the SITE in its own frame (not the server render), sandboxed agains
   // Same item re-issued (playlist refresh): the page is kept, not remounted.
   k.show('w1|0', cfgOf(env.sb), 'w1');
   assert.equal(frameOf(stage), f);
+});
+
+test('session ids come from crypto.getRandomValues when randomUUID is missing (Tizen < 7), v4-shaped', () => {
+  let calls = 0;
+  const mathNoRandom = Object.create(Math);
+  mathNoRandom.random = () => { throw new Error('Math.random used although getRandomValues exists'); };
+  const env = load({ globals: {
+    Math: mathNoRandom,
+    crypto: { getRandomValues(a) { calls++; require('node:crypto').randomFillSync(a); return a; } },
+  } });
+  const ids = new Set();
+  for (let i = 0; i < 3; i++) {
+    const { k, stage } = makeSession(env);
+    k.show('w1|0', cfgOf(env.sb), 'w1');
+    frameOf(stage).fire('load');
+    tapIntoFrame(env, stage);
+    assert.match(k.sessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    ids.add(k.sessionId);
+  }
+  assert.equal(ids.size, 3);
+  assert.ok(calls >= 3, 'getRandomValues was the source');
 });
 
 test('first touch holds; idle shows "Still there?"; a tap resumes; idle again resets, wipes and releases', () => {

@@ -130,6 +130,15 @@ function append(session, expectedOffset, buffer) {
     };
   }
 
+  /*
+   * Bytes or nothing. A chunk sent as Content-Type: application/json is parsed by the global JSON
+   * parser before express.raw sees it, so the "buffer" can be an array or an object with its own
+   * `length` — which would pass the size check and then throw inside appendFileSync. The route
+   * refuses that with a 400; this is the same rule for any other caller.
+   */
+  if (Array.isArray(buffer) || (buffer != null && !Buffer.isBuffer(buffer))) {
+    return { ok: false, status: 400, offset: current, error: 'the chunk must be raw bytes (Content-Type: application/octet-stream)' };
+  }
   const size = buffer ? buffer.length : 0;
   if (size === 0) return { ok: true, offset: current };
 

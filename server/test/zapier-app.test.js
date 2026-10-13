@@ -33,7 +33,8 @@ test('every action and dropdown has a server route behind it', () => {
   for (const p of ['emergency', 'playlist', 'trigger', 'data']) {
     assert.match(routes, new RegExp(`router\\.post\\('/actions/${p}'`), `routes/zapier.js serves /actions/${p}`);
   }
-  const optionKinds = /const q = \{([\s\S]*?)\}\[req\.params\.kind\]/.exec(routes)[1].match(/^\s+(\w+): \(\)/gm).map((s) => s.trim().split(':')[0]);
+  const optionKinds = [.../const OPTION_LISTS = new Map\(\[([\s\S]*?)\]\);/.exec(routes)[1].matchAll(/^\s+\['(\w+)', /gm)].map((m) => m[1]);
+  assert.ok(optionKinds.length >= 5, 'option lists parsed');
   for (const c of Object.values(app.creates)) {
     for (const f of c.operation.inputFields) {
       if (!f.dynamic) continue;

@@ -101,10 +101,12 @@ function _resetKeyCache() { cachedPublicKey = null; }
 // out over the phone. 16 symbols = 80 bits: far past guessing within a 24h window under the
 // per-IP limiter, and still short enough to type.
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
+// randomInt, not `byte % 30`: 256 is not a multiple of 30, so the modulo made the first 16 symbols
+// ~1.2x likelier than the rest. randomInt rejection-samples, so every symbol is equally likely.
+// Same alphabet, same length, same XXXX-XXXX-XXXX-XXXX shape: normaliseRequestCode is unchanged.
 function newRequestCode() {
-  const bytes = crypto.randomBytes(16);
   let s = '';
-  for (let i = 0; i < 16; i++) s += CODE_ALPHABET[bytes[i] % CODE_ALPHABET.length];
+  for (let i = 0; i < 16; i++) s += CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)];
   return s.match(/.{4}/g).join('-');
 }
 

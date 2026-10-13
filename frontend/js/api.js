@@ -675,7 +675,9 @@ export const api = {
   deleteGroup: (id, opts = {}) => request(`/groups/${id}${ackQuery(opts)}`, { method: 'DELETE' }),
   getGroupDevices: (id) => request(`/groups/${id}/devices`),
   addDeviceToGroup: (groupId, device_id, opts = {}) => request(`/groups/${groupId}/devices`, { method: 'POST', body: JSON.stringify({ device_id, ...opts }) }),
-  removeDeviceFromGroup: (groupId, deviceId, opts = {}) => request(`/groups/${groupId}/devices/${deviceId}${ackQuery(opts)}`, { method: 'DELETE' }),
+  // Encoded: the dashboard's drag-and-drop reads deviceId from dataTransfer, which a drag from any
+  // other page can fill, and a raw `../` there would aim this DELETE at a different endpoint.
+  removeDeviceFromGroup: (groupId, deviceId, opts = {}) => request(`/groups/${encodeURIComponent(groupId)}/devices/${encodeURIComponent(deviceId)}${ackQuery(opts)}`, { method: 'DELETE' }),
   sendGroupCommand: (groupId, type, payload) => request(`/groups/${groupId}/command`, { method: 'POST', body: JSON.stringify({ type, payload }) }),
   // #312 follow-up: fan a command out to every device in a workspace (admin-gated server-side).
   // Used for the workspace-wide server-URL rewrite when a server is relocated.
