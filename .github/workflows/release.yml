@@ -56,7 +56,9 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # create the GitHub Release and upload its assets
+      contents: write       # create the GitHub Release and upload its assets
+      id-token: write       # sign the build provenance with Sigstore (keyless, this run's OIDC identity)
+      attestations: write   # record that provenance in the repository's attestation store
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -216,6 +218,10 @@ jobs:
             fi
             echo "- \`ScreenTinker.apk\` - signed Android player (attached during release finalization)."
             echo "- \`screentinker-sbom-${{ steps.ver.outputs.version }}.cdx.json\` - CycloneDX 1.5 software bill of materials for the server's production dependencies, with the licence of every component."
+            echo "- \`screentinker-${{ steps.ver.outputs.version }}.provenance.sigstore.json\` - signed SLSA build provenance for every file above that this workflow built (the APK and Roku package are attached later, from a workstation, and are not covered)."
+            echo
+            echo "Verify a download came from this repository's release workflow:"
+            echo "\`gh attestation verify <file> --repo screentinker/screentinker\`"
           } > RELEASE_NOTES.md
           cat RELEASE_NOTES.md
 
@@ -239,6 +245,33 @@ jobs:
             "screentinker-sbom-${{ steps.ver.outputs.version }}.cdx.json" \
             tizen/ScreenTinker.wgt \
             ScreenTinker.ipk
+
+      # ⚠️ AFTER the release is published, so a Sigstore outage cannot block a release: a failure
+      # here leaves the release up and this job red, and re-running the job adds the provenance.
+      # OpenSSF Scorecard (Signed-Releases) reads it from the uploaded bundle; anyone can verify a
+      # file with `gh attestation verify`, which reads the attestation store instead.
+      - name: Sign build provenance for the release assets
+        id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            ${{ env.TARBALL }}
+            autorun.zip
+            autorun-server.zip
+            server-payload.zip
+            server-payload.json
+            screentinker-sbom-${{ steps.ver.outputs.version }}.cdx.json
+            tizen/ScreenTinker.wgt
+            ScreenTinker.ipk
+
+      - name: Attach the provenance bundle to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          OUT="screentinker-${{ steps.ver.outputs.version }}.provenance.sigstore.json"
+          cp "$BUNDLE" "$OUT"
+          gh release upload "${{ steps.ver.outputs.tag }}" "$OUT" --clobber
 
   docker:
     name: Docker image (amd64 + arm64) -> ghcr
