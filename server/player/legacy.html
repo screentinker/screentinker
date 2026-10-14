@@ -4879,26 +4879,65 @@ function loadYoutubeApi(cb) {
     };
   }
 }
-function createYoutubeEmbed(src, item, container) {
+function createYoutubeEmbed(src, item, container, opts) {
+  const zoneMode = !!(opts && opts.zone);
+  const done = zoneMode ? opts.onEnded || null : nextItem;
   const videoId = extractVideoId(src);
   if (!videoId) {
     console.error("Could not extract YouTube video ID from:", src);
-    if (playlist.length > 1) setTimeout(nextItem, 2e3);
+    if (zoneMode) {
+      if (done) setTimeout(done, 2e3);
+    } else if (playlist.length > 1) setTimeout(nextItem, 2e3);
     return null;
   }
-  const myGeneration = ++ytGeneration;
-  cancelPlaybackResume();
-  if (ytSafetyNet) {
-    clearTimeout(ytSafetyNet);
-    ytSafetyNet = null;
-  }
-  if (activeYtPlayer) {
-    try {
-      activeYtPlayer.destroy();
-    } catch (e) {
+  let alive;
+  if (zoneMode) {
+    const token = (container.__stYtToken || 0) + 1;
+    container.__stYtToken = token;
+    if (container.__stYtSafety) {
+      clearTimeout(container.__stYtSafety);
+      container.__stYtSafety = null;
     }
-    activeYtPlayer = null;
+    alive = () => container.__stYtToken === token && document.contains(container);
+  } else {
+    const myGeneration = ++ytGeneration;
+    cancelPlaybackResume();
+    if (ytSafetyNet) {
+      clearTimeout(ytSafetyNet);
+      ytSafetyNet = null;
+    }
+    if (activeYtPlayer) {
+      try {
+        activeYtPlayer.destroy();
+      } catch (e) {
+      }
+      activeYtPlayer = null;
+    }
+    alive = () => myGeneration === ytGeneration;
   }
+  const setSafety = (ms) => {
+    const fire = () => {
+      if (!alive()) return;
+      console.log("YouTube safety net fired for:", item.filename);
+      done();
+    };
+    if (zoneMode) {
+      clearTimeout(container.__stYtSafety);
+      container.__stYtSafety = setTimeout(fire, ms);
+    } else {
+      clearTimeout(ytSafetyNet);
+      ytSafetyNet = setTimeout(fire, ms);
+    }
+  };
+  const clearSafety = () => {
+    if (zoneMode) {
+      clearTimeout(container.__stYtSafety);
+      container.__stYtSafety = null;
+    } else {
+      clearTimeout(ytSafetyNet);
+      ytSafetyNet = null;
+    }
+  };
   const isVertical = /st_aspect=vertical/i.test(src || "") || /st_aspect=vertical/i.test(item && item.remote_url || "");
   const playerDiv = document.createElement("div");
   playerDiv.id = "yt-player-" + Date.now();
@@ -4929,8 +4968,8 @@ function createYoutubeEmbed(src, item, container) {
     container.appendChild(overlay);
   }
   loadYoutubeApi(() => {
-    if (myGeneration !== ytGeneration) return;
-    const shouldLoop = playlist.length <= 1;
+    if (!alive()) return;
+    const shouldLoop = zoneMode ? !!opts.loop : playlist.length <= 1;
     let playStartTime = 0;
     activeYtPlayer = new YT.Player(playerDiv.id, {
       videoId,
@@ -4956,7 +4995,7 @@ function createYoutubeEmbed(src, item, container) {
       },
       events: {
         onReady: (event) => {
-          if (myGeneration !== ytGeneration) return;
+          if (!alive()) return;
           console.log("YouTube player ready:", item.filename);
           event.target.playVideo();
           if (applyMuteWanted(item)) {
@@ -4965,20 +5004,14 @@ function createYoutubeEmbed(src, item, container) {
             event.target.unMute();
             event.target.setVolume(mediaVolume != null ? Math.round(mediaVolume * 100) : 100);
           }
-          if (!shouldLoop) {
+          if (!shouldLoop && done) {
             let duration = 0;
             try {
               duration = event.target.getDuration();
             } catch (e) {
             }
-            if (duration > 0) {
-              clearTimeout(ytSafetyNet);
-              ytSafetyNet = setTimeout(() => {
-                if (myGeneration !== ytGeneration) return;
-                console.log("YouTube safety net fired for:", item.filename);
-                nextItem();
-              }, (duration + 3) * 1e3);
-            }
+            if (duration > 0) setSafety((duration + 3) * 1e3);
+            else if (item.play_to_end) setSafety(Math.max(1, Number(item.duration_sec) || 10) * 1e3);
           }
           if (item.unstable_connection) {
             try {
@@ -4998,27 +5031,29 @@ function createYoutubeEmbed(src, item, container) {
           }
         },
         onError: (event) => {
-          if (myGeneration !== ytGeneration) return;
-          clearTimeout(ytSafetyNet);
-          ytSafetyNet = null;
+          if (!alive()) return;
+          clearSafety();
           console.error("YouTube error", event.data, "for:", item.filename);
-          if (playlist.length > 1) {
+          if (zoneMode) {
+            if (done) setTimeout(() => {
+              if (alive()) done();
+            }, 2e3);
+          } else if (playlist.length > 1) {
             console.log("Skipping unplayable YouTube video");
             setTimeout(nextItem, 2e3);
           }
         },
         onAutoplayBlocked: () => {
-          if (myGeneration !== ytGeneration) return;
+          if (!alive()) return;
           console.warn("YouTube autoplay blocked:", item.filename);
         },
         onStateChange: (event) => {
-          if (myGeneration !== ytGeneration) return;
+          if (!alive()) return;
           if (event.data === 1) playStartTime = Date.now();
-          if (event.data === 0 && !shouldLoop && Date.now() - playStartTime > 3e3) {
-            clearTimeout(ytSafetyNet);
-            ytSafetyNet = null;
+          if (event.data === 0 && !shouldLoop && done && Date.now() - playStartTime > 3e3) {
+            clearSafety();
             console.log("YouTube video ended:", item.filename);
-            nextItem();
+            done();
           }
         }
       }
@@ -6141,6 +6176,11 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     clearTimeout(timers[zone.id]);
     delete timers[zone.id];
   }
+  div.__stYtToken = (div.__stYtToken || 0) + 1;
+  if (div.__stYtSafety) {
+    clearTimeout(div.__stYtSafety);
+    div.__stYtSafety = null;
+  }
   const activeIdx = zoneNextActive(items, index, zone.id);
   if (activeIdx === -1) {
     showZoneEmpty(zone, div, items, timers);
@@ -6201,8 +6241,9 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     if (PREVIEW_MODE && a.widget_type === "webpage") addWebpageNote(div);
     if (multi) timers[zone.id] = setTimeout(advance, dur);
   } else if (isYoutube) {
-    createYoutubeEmbed(src, a, div);
-    if (multi) timers[zone.id] = setTimeout(advance, dur);
+    const toEnd = !!a.play_to_end && multi;
+    createYoutubeEmbed(src, a, div, { zone: true, loop: !toEnd, onEnded: toEnd ? advance : null });
+    if (multi && !toEnd) timers[zone.id] = setTimeout(advance, dur);
   } else if (isHls) {
     const video = newVideoElement();
     video.autoplay = true;

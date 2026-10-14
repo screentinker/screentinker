@@ -35,7 +35,7 @@ function freshDb({ views = true, guards = true } = {}) {
       content_id TEXT REFERENCES content(id) ON DELETE CASCADE, widget_id TEXT, child_playlist_id TEXT REFERENCES playlists(id) ON DELETE RESTRICT,
       zone_id TEXT, sort_order INTEGER NOT NULL DEFAULT 0, duration_sec INTEGER, muted INTEGER NOT NULL DEFAULT 0,
       play_from TEXT, play_until TEXT, enabled INTEGER NOT NULL DEFAULT 1, log_play INTEGER NOT NULL DEFAULT 1, fit_mode TEXT,
-      play_when TEXT, weight INTEGER NOT NULL DEFAULT 1, repeat_every_sec INTEGER);
+      play_when TEXT, weight INTEGER NOT NULL DEFAULT 1, repeat_every_sec INTEGER, play_to_end INTEGER);
     CREATE INDEX idx_playlist_items_child ON playlist_items(child_playlist_id);
     CREATE TABLE playlist_item_schedules (id TEXT PRIMARY KEY, playlist_item_id INTEGER NOT NULL REFERENCES playlist_items(id) ON DELETE CASCADE,
       active_days TEXT, start_time TEXT, end_time TEXT, start_date TEXT, end_date TEXT, sort_order INTEGER NOT NULL DEFAULT 0);

@@ -13,6 +13,7 @@ const { resolveItemDuration } = require('../lib/item-duration');
 const { parseTags, parseMeta } = require('../lib/content-tags');
 const smartPlaylist = require('../lib/smart-playlist');
 const { applyRepeatEvery, normalizeRepeatEvery } = require('../lib/repeat-every');
+const playToEnd = require('../lib/play-to-end');
 const { emitMuteChanged } = require('../lib/mute-sync');
 const corpGuard = require('../lib/corporate/guard');
 const corpActor = require('../lib/corporate/actor');
@@ -251,6 +252,8 @@ function decorateSnapshotItem(it) {
   delete it.content_meta;
   if (it.weight && Number(it.weight) !== 1) it.weight = Number(it.weight); else delete it.weight;
   if (!it.repeat_every_sec) delete it.repeat_every_sec;
+  // #624: sent only when set and only on YouTube, so every other snapshot stays byte-identical.
+  if (it.play_to_end && playToEnd.appliesTo(it.mime_type)) it.play_to_end = 1; else delete it.play_to_end;
   delete it._iid;
   attachSlideAudio(it);
   return it;
@@ -275,7 +278,7 @@ function snapshotItemForRef({ content_id = null, widget_id = null, duration_sec 
   const it = db.prepare(`
     SELECT NULL AS _iid, ? AS content_id, ? AS widget_id, NULL AS child_playlist_id, ? AS zone_id, 0 AS sort_order,
            ? AS duration_sec, 0 AS muted, NULL AS play_from, NULL AS play_until, 1 AS enabled, 1 AS log_play,
-           NULL AS fit_mode, NULL AS play_when, 1 AS weight, NULL AS repeat_every_sec,
+           NULL AS fit_mode, NULL AS play_when, 1 AS weight, NULL AS repeat_every_sec, NULL AS play_to_end,
            ${SNAPSHOT_MEDIA_COLS}
       FROM (SELECT 1) one
       LEFT JOIN content c ON c.id = ?
@@ -343,7 +346,7 @@ function buildSnapshotItems(playlistId, _depth = 0, _ancestors = null, opts = {}
   const hasSlots = schemaProbe.hasColumn(db, 'playlist_items', 'slot_id');
   const items = db.prepare(`
     SELECT pi.id AS _iid, pi.content_id, pi.widget_id, pi.child_playlist_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted,
-           pi.play_from, pi.play_until, pi.enabled, pi.log_play, pi.fit_mode, pi.play_when, pi.weight, pi.repeat_every_sec,
+           pi.play_from, pi.play_until, pi.enabled, pi.log_play, pi.fit_mode, pi.play_when, pi.weight, pi.repeat_every_sec, pi.play_to_end,
            ${SNAPSHOT_MEDIA_COLS}${hasSlots ? ', pi.slot_id' : ''}
     FROM playlist_items pi
     LEFT JOIN content c ON pi.content_id = c.id
@@ -651,7 +654,7 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
   // the nesting audit's exact shape. Only present when set, so every other structure is unchanged.
   const hasSlots = schemaProbe.hasColumn(db, 'playlist_items', 'slot_id');
   const structureRows = db.prepare(`
-    SELECT id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec${hasSlots ? ', slot_id' : ''}
+    SELECT id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec, play_to_end${hasSlots ? ', slot_id' : ''}
       FROM playlist_items WHERE playlist_id = ? ORDER BY sort_order ASC
   `).all(playlistId);
   // ⚠️ Per-item schedule blocks (dayparting/validity) must be captured too, or a discard rebuilds
@@ -659,8 +662,10 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
   // fetch the blocks and is dropped from the stored structure.
   const structure = JSON.stringify(structureRows.map((row) => {
     const blocks = schedulesForItem(row.id);
-    const { id, slot_id, ...rest } = row;
+    const { id, slot_id, play_to_end, ...rest } = row;
     const out = blocks.length ? { ...rest, schedules: blocks } : rest;
+    // play_to_end (#624) only when set, like slot_id, so every existing structure stays byte-identical.
+    if (play_to_end) out.play_to_end = 1;
     return slot_id ? { ...out, slot_id } : out;
   }));
 
@@ -1074,7 +1079,7 @@ router.post('/:id/discard', requirePlaylistWrite, (req, res) => {
     // ⚠️ slot_id rides along (a local slot placement, published_structure carries it): without it a
     // discarded corporate draft brought every slot back as an all-NULL ghost item (spec §6.1-1).
     const hasSlots = schemaProbe.hasColumn(db, 'playlist_items', 'slot_id');
-    const insert = db.prepare(`INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec${hasSlots ? ', slot_id' : ''}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${hasSlots ? ', ?' : ''})`);
+    const insert = db.prepare(`INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec, play_to_end${hasSlots ? ', slot_id' : ''}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${hasSlots ? ', ?' : ''})`);
     const insSched = db.prepare('INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?,?,?,?,?,?,?,?)');
     const restoredSlots = [];
     for (const item of publishedItems) {
@@ -1083,7 +1088,7 @@ router.post('/:id/discard', requirePlaylistWrite, (req, res) => {
                    item.child_playlist_id || null, item.zone_id || null, item.sort_order, item.duration_sec,
                    item.muted ? 1 : 0, item.play_from || null, item.play_until || null,
                    item.enabled === 0 ? 0 : 1, item.log_play === 0 ? 0 : 1, item.fit_mode || null, item.play_when ? (typeof item.play_when === 'string' ? item.play_when : JSON.stringify(item.play_when)) : null, item.weight || 1,
-                   item.repeat_every_sec || null, ...(hasSlots ? [item.slot_id || null] : []));
+                   item.repeat_every_sec || null, playToEnd.normalizePlayToEnd(item.play_to_end), ...(hasSlots ? [item.slot_id || null] : []));
         if (item.slot_id) restoredSlots.push(item.slot_id);
         // Restore per-item schedule blocks (DELETE above cascaded them away). Both the structure and
         // the snapshot carry them in the same {days,start,end,...} shape.
@@ -1371,6 +1376,8 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
       }
     }
     duration_sec = resolveItemDuration(duration_sec, content);
+    // #624: a YouTube item plays to the end unless the request says otherwise.
+    const playToEndValue = playToEnd.resolvePlayToEnd(req.body.play_to_end, content && content.mime_type);
     if (widget_id) {
       const widget = db.prepare('SELECT id, workspace_id FROM widgets WHERE id = ?').get(widget_id);
       if (!widget) return res.status(404).json({ error: 'Widget not found' });
@@ -1399,10 +1406,10 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
     }
 
     const result = db.prepare(`
-      INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_to_end)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(req.params.id, content_id || null, widget_id || null, child_playlist_id || null,
-           zone_id || null, order, duration_sec);
+           zone_id || null, order, duration_sec, playToEndValue);
 
     // Mark as draft (items changed since last publish)
     markDraft(req.params.id, req, 'Added item');
@@ -1529,6 +1536,16 @@ router.put('/:id/items/:itemId', requirePlaylistWrite, (req, res) => {
     if (every && item.child_playlist_id) return res.status(400).json({ error: 'A nested playlist cannot repeat on its own interval; set it on the items inside it' });
     updates.push('repeat_every_sec = ?'); values.push(every);
   }
+  // #624 "Play to end" (lib/play-to-end.js): YouTube only. Turning it off is always allowed; a row
+  // later swapped to other content keeps the column, but the snapshot drops it for non-YouTube.
+  if (has('play_to_end')) {
+    const on = playToEnd.normalizePlayToEnd(req.body.play_to_end);
+    if (on) {
+      const c = item.content_id ? db.prepare('SELECT mime_type FROM content WHERE id = ?').get(item.content_id) : null;
+      if (!c || !playToEnd.appliesTo(c.mime_type)) return res.status(400).json({ error: 'play_to_end applies to YouTube items only' });
+    }
+    updates.push('play_to_end = ?'); values.push(on);
+  }
   /*
    * ⚠️ #129's per-item mute, which this route never read.
    *
@@ -1639,9 +1656,9 @@ router.post('/:id/items/:itemId/duplicate', requirePlaylistWrite, (req, res) => 
     // content_id, widget_id AND child_playlist_id all NULL — a ghost that renders as nothing. No
     // depth check is needed here, because the copy lands in the playlist that already holds it.
     const result = db.prepare(`
-      INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_from, play_until, muted, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(req.params.id, item.content_id, item.widget_id, item.child_playlist_id, item.zone_id, order, item.duration_sec, item.play_from || null, item.play_until || null, item.muted ? 1 : 0, item.enabled === 0 ? 0 : 1, item.log_play === 0 ? 0 : 1, item.fit_mode || null, item.play_when || null, item.weight || 1, item.repeat_every_sec || null);
+      INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_from, play_until, muted, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec, play_to_end)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(req.params.id, item.content_id, item.widget_id, item.child_playlist_id, item.zone_id, order, item.duration_sec, item.play_from || null, item.play_until || null, item.muted ? 1 : 0, item.enabled === 0 ? 0 : 1, item.log_play === 0 ? 0 : 1, item.fit_mode || null, item.play_when || null, item.weight || 1, item.repeat_every_sec || null, playToEnd.normalizePlayToEnd(item.play_to_end));
     const newId = result.lastInsertRowid;
     const scheds = db.prepare('SELECT active_days, start_time, end_time, start_date, end_date, sort_order FROM playlist_item_schedules WHERE playlist_item_id = ?').all(req.params.itemId);
     const insSched = db.prepare('INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?,?,?,?,?,?,?,?)');
@@ -1675,7 +1692,7 @@ router.post('/:id/items/:itemId/duplicate', requirePlaylistWrite, (req, res) => 
 const MAX_SELECTION = 500;
 const SELECTION_ACTIONS = new Set([
   'delete', 'duplicate', 'duration', 'play_window', 'enabled', 'log_play',
-  'fit_mode', 'mute', 'schedules', 'play_when', 'transition', 'paste', 'weight',
+  'fit_mode', 'mute', 'schedules', 'play_when', 'transition', 'paste', 'weight', 'play_to_end',
 ]);
 
 function loadSelectionItems(playlistId, ids) {
@@ -1708,8 +1725,8 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
       const max = db.prepare('SELECT MAX(sort_order) as m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
       let order = (max && max.m) || 0;
       const ins = db.prepare(`INSERT INTO playlist_items
-        (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec, play_to_end)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
       const insSched = db.prepare('INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?,?,?,?,?,?,?,?)');
       // A pasted zone_id from another playlist may not exist in this workspace's layouts. Keep it
       // only if it resolves here; otherwise drop to the default zone so the item still renders
@@ -1766,7 +1783,8 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
           const r = ins.run(req.params.id, it.content_id || null, it.widget_id || null, it.child_playlist_id || null,
             resolveZone(it.zone_id), ++order, it.duration_sec || 10, it.muted ? 1 : 0,
             it.play_from || null, it.play_until || null, it.enabled === 0 ? 0 : 1, it.log_play === 0 ? 0 : 1,
-            fit, when ? JSON.stringify(when) : null, it.weight || 1, normalizeRepeatEvery(it.repeat_every_sec) || null);
+            fit, when ? JSON.stringify(when) : null, it.weight || 1, normalizeRepeatEvery(it.repeat_every_sec) || null,
+            playToEnd.normalizePlayToEnd(it.play_to_end));
           added.push(r.lastInsertRowid);
           const blocks = Array.isArray(it.schedules) ? it.schedules : [];
           blocks.forEach((b, i) => {
@@ -1813,10 +1831,10 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
           const max = db.prepare('SELECT MAX(sort_order) as m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
           const order = ((max && max.m) || 0) + 1;
           const result = db.prepare(`INSERT INTO playlist_items
-            (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_from, play_until, muted, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+            (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_from, play_until, muted, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec, play_to_end)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
             req.params.id, r.content_id, r.widget_id, r.child_playlist_id, r.zone_id, order, r.duration_sec,
-            r.play_from, r.play_until, r.muted ? 1 : 0, r.enabled === 0 ? 0 : 1, r.log_play === 0 ? 0 : 1, r.fit_mode, r.play_when, r.weight || 1, r.repeat_every_sec || null);
+            r.play_from, r.play_until, r.muted ? 1 : 0, r.enabled === 0 ? 0 : 1, r.log_play === 0 ? 0 : 1, r.fit_mode, r.play_when, r.weight || 1, r.repeat_every_sec || null, playToEnd.normalizePlayToEnd(r.play_to_end));
           const scheds = db.prepare('SELECT active_days, start_time, end_time, start_date, end_date, sort_order FROM playlist_item_schedules WHERE playlist_item_id = ?').all(r.id);
           const insSched = db.prepare('INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?,?,?,?,?,?,?,?)');
           for (const s of scheds) insSched.run(uuidv4(), result.lastInsertRowid, s.active_days, s.start_time, s.end_time, s.start_date, s.end_date, s.sort_order);
@@ -1868,6 +1886,18 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
       // bulk mute would only take effect on the next publish.
       if (action === 'mute') { for (const r of rows) emitMuteChanged(req, r, on); }
       return res.json({ updated: rows.length });
+    }
+
+    // #624: switch "Play to end" on or off across a selection. Only the YouTube items in it change;
+    // the rest are reported as skipped, so "select all, play to end" is safe on a mixed playlist.
+    if (action === 'play_to_end') {
+      const on = playToEnd.normalizePlayToEnd(req.body.play_to_end);
+      const mimeOf = db.prepare('SELECT mime_type FROM content WHERE id = ?');
+      const target = rows.filter((r) => r.content_id && playToEnd.appliesTo((mimeOf.get(r.content_id) || {}).mime_type));
+      const up = db.prepare("UPDATE playlist_items SET play_to_end = ?, updated_at = strftime('%s','now') WHERE id = ?");
+      db.transaction(() => { for (const r of target) up.run(on, r.id); })();
+      if (target.length) markDraft(req.params.id, req, `Set play to end on ${target.length} item(s)`);
+      return res.json({ updated: target.length, skipped: rows.length - target.length });
     }
 
     if (action === 'fit_mode') {
@@ -2009,7 +2039,7 @@ router.post('/:id/items/bulk', requirePlaylistWrite, async (req, res) => {
       if (content.duration_sec === undefined || content.duration_sec === null) {
         content.duration_sec = await probeAndUpdateDuration(content);
       }
-      ready.push({ content_id: cid, duration_sec: resolveItemDuration(undefined, content) });
+      ready.push({ content_id: cid, duration_sec: resolveItemDuration(undefined, content), play_to_end: playToEnd.resolvePlayToEnd(undefined, content.mime_type) });
     }
 
     /*
@@ -2036,15 +2066,15 @@ router.post('/:id/items/bulk', requirePlaylistWrite, async (req, res) => {
         .get(req.params.id);
       let order = (max.max_order || 0) + 1;
       const ins = db.prepare(`
-        INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec)
-        VALUES (?, ?, NULL, NULL, ?, ?, ?)
+        INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_to_end)
+        VALUES (?, ?, NULL, NULL, ?, ?, ?, ?)
       `);
       const ids = [];
       // One transaction: 160 photos are one operation to the person who asked for them, so a
       // failure halfway must not leave half a party in the playlist.
       db.transaction(() => {
         for (const r of ready) {
-          ids.push(ins.run(req.params.id, r.content_id, zone_id || null, order++, r.duration_sec).lastInsertRowid);
+          ids.push(ins.run(req.params.id, r.content_id, zone_id || null, order++, r.duration_sec, r.play_to_end || null).lastInsertRowid);
         }
       })();
 

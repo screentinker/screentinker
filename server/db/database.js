@@ -3432,6 +3432,9 @@ migrationStep('smart playlists', () => {
   try { db.prepare('ALTER TABLE playlists ADD COLUMN published_smart_rules TEXT').run(); } catch (_) { /* present */ }
   // "Play every N seconds" (lib/repeat-every.js): NULL = plays once per loop, as before.
   try { db.prepare('ALTER TABLE playlist_items ADD COLUMN repeat_every_sec INTEGER').run(); console.log('[migrate] playlist_items.repeat_every_sec added'); } catch (_) { /* present */ }
+  // #624 "Play to end" (lib/play-to-end.js): a YouTube item advances when the video ends, and its
+  // duration_sec becomes the most it may run. NULL = the item's duration decides, as before.
+  try { db.prepare('ALTER TABLE playlist_items ADD COLUMN play_to_end INTEGER').run(); console.log('[migrate] playlist_items.play_to_end added'); } catch (_) { /* present */ }
 });
 
 migrationStep('SAML', () => {

@@ -232,12 +232,18 @@ object WebViewSupport {
      * IFrame API postMessage bridge (MediaPlayerManager.setYoutubeMuted) without a
      * flicker-y reload.
      */
-    fun youtubeEmbedHtml(url: String, muted: Boolean = true): String? {
+    fun youtubeEmbedHtml(url: String, muted: Boolean = true, bridgeToken: Long? = null): String? {
         val id = extractYoutubeId(url) ?: return null
         val mute = if (muted) 1 else 0
         // Vertical (Shorts) content is tagged st_aspect=vertical at ingest.
         val vertical = url.contains("st_aspect=vertical")
-        val src = "$YT_BASE/embed/$id?autoplay=1&mute=$mute&controls=0&rel=0&modestbranding=1&loop=1&playlist=$id&playsinline=1&enablejsapi=1"
+        // #624: with a bridgeToken the video plays to the end — no loop, and the IFrame API reports
+        // its length and end through the STYoutube bridge (PlayToEnd.bridgeScript). Without one the
+        // page is exactly what it was. origin is what the IFrame API checks postMessage against.
+        val playToEnd = bridgeToken != null
+        val loop = com.remotedisplay.player.player.PlayToEnd.loopParams(id, playToEnd)
+        val origin = if (playToEnd) "&origin=" + java.net.URLEncoder.encode(EMBED_BASE, "UTF-8") else ""
+        val src = "$YT_BASE/embed/$id?autoplay=1&mute=$mute&controls=0&rel=0&modestbranding=1$loop&playsinline=1&enablejsapi=1$origin"
         // Vertical: center a 9:16 iframe so it fills a portrait panel and pillarboxes
         // cleanly on landscape, instead of a 100%x100% landscape frame.
         val css = if (vertical)
@@ -247,6 +253,7 @@ object WebViewSupport {
             "html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}"
         return "<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
             "<style>$css</style>" +
-            "</head><body><iframe src=\"$src\" allow=\"autoplay; encrypted-media\" allowfullscreen></iframe></body></html>"
+            "</head><body><iframe" + (if (playToEnd) " id=\"st-yt\"" else "") + " src=\"$src\" allow=\"autoplay; encrypted-media\" allowfullscreen></iframe>" +
+            com.remotedisplay.player.player.PlayToEnd.bridgeScript(bridgeToken) + "</body></html>"
     }
 }

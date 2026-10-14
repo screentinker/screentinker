@@ -421,7 +421,10 @@ class MainActivity : AppCompatActivity() {
                 Log.w("MainActivity", "Image failed to load, skipping to next item")
                 handler.postDelayed({ playlistController.next() }, 500)
             },
-            transitionView = transitionView
+            transitionView = transitionView,
+            // #624 play to end: the YouTube page reports the video's length and its end.
+            onYoutubeLength = { sec -> playlistController.onYoutubeLength(sec) },
+            onYoutubeEnded = { playlistController.onYoutubeEnded() }
         )
 
         /*
@@ -485,6 +488,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+        // #624: play to end is ignored while a shared clock drives the screen (a sync group or a wall).
+        playlistController.syncDriven = { groupSchedule.isActive || wallController.isActive }
 
         // Restore cached playlist for offline cold-start (play immediately from disk cache).
         // Catch Throwable (not just Exception) so an OOM or corrupt entry can't kill the app
@@ -1575,7 +1580,7 @@ class MainActivity : AppCompatActivity() {
         // YouTube content - play in WebView
         if (item.mimeType == "video/youtube" && !item.remoteUrl.isNullOrEmpty()) {
             Log.i("MainActivity", "Playing YouTube: ${item.remoteUrl}")
-            mediaPlayer.playYoutube(item.remoteUrl!!, item.durationSec, item.muted)
+            mediaPlayer.playYoutube(item.remoteUrl!!, item.durationSec, item.muted, playlistController.playsToEnd(item))
             wsService?.sendPlaybackState(item.contentId, 0f)
             return
         }

@@ -146,19 +146,19 @@ function copyItems(db, srcId, dstId) {
   const map = new Map();
   if (!srcId) return map;
   const items = db.prepare(`SELECT id, content_id, widget_id, zone_id, sort_order, duration_sec, muted, play_from, play_until,
-                                   enabled, log_play, fit_mode, play_when, weight, repeat_every_sec
+                                   enabled, log_play, fit_mode, play_when, weight, repeat_every_sec, play_to_end
                               FROM playlist_items WHERE playlist_id = ? AND child_playlist_id IS NULL AND slot_id IS NULL
                              ORDER BY sort_order ASC, id ASC`).all(srcId);
   const ins = db.prepare(`INSERT INTO playlist_items
-      (playlist_id, content_id, widget_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      (playlist_id, content_id, widget_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec, play_to_end)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const scheds = db.prepare('SELECT active_days, start_time, end_time, start_date, end_date, sort_order FROM playlist_item_schedules WHERE playlist_item_id = ?');
   const insSched = db.prepare(`INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
   for (const it of items) {
     const r = ins.run(dstId, it.content_id, it.widget_id, it.zone_id, it.sort_order, it.duration_sec, it.muted ? 1 : 0,
       it.play_from || null, it.play_until || null, it.enabled === 0 ? 0 : 1, it.log_play === 0 ? 0 : 1, it.fit_mode || null,
-      it.play_when || null, it.weight || 1, it.repeat_every_sec || null);
+      it.play_when || null, it.weight || 1, it.repeat_every_sec || null, it.play_to_end ? 1 : null);
     map.set(it.id, r.lastInsertRowid);
     for (const s of scheds.all(it.id)) insSched.run(uuidv4(), r.lastInsertRowid, s.active_days, s.start_time, s.end_time, s.start_date, s.end_date, s.sort_order);
   }

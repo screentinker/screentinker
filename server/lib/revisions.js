@@ -87,7 +87,7 @@ function capturePlaylist(db, row) {
   // slot_id (a corporate local slot placement) only when set — with its name, so a restore can say
   // which slot it could not bring back — and only where the column exists (hand-built fixtures).
   const hasSlots = require('./corporate/schema-probe').hasColumn(db, 'playlist_items', 'slot_id');
-  const items = db.prepare(`SELECT pi.id, pi.content_id, pi.widget_id, pi.child_playlist_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted, pi.play_from, pi.play_until, pi.enabled, pi.log_play, pi.fit_mode, pi.play_when, pi.weight, pi.repeat_every_sec
+  const items = db.prepare(`SELECT pi.id, pi.content_id, pi.widget_id, pi.child_playlist_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted, pi.play_from, pi.play_until, pi.enabled, pi.log_play, pi.fit_mode, pi.play_when, pi.weight, pi.repeat_every_sec, pi.play_to_end
                                    ${hasSlots ? ', pi.slot_id, (SELECT s.name FROM corporate_slots s WHERE s.id = pi.slot_id) AS slot_name' : ''}
                               FROM playlist_items pi WHERE pi.playlist_id = ? ORDER BY pi.sort_order ASC, pi.id ASC`).all(row.id)
     .map((it) => ({
@@ -98,6 +98,7 @@ function capturePlaylist(db, row) {
       fit_mode: it.fit_mode || null, play_when: it.play_when || null, weight: it.weight || 1,
       // Only when set, so capturing an unchanged pre-feature playlist yields the same state as before.
       ...(it.repeat_every_sec ? { repeat_every_sec: it.repeat_every_sec } : {}),
+      ...(it.play_to_end ? { play_to_end: 1 } : {}),
       ...(it.slot_id ? { slot_id: it.slot_id, slot_name: it.slot_name || null } : {}),
       schedules: scheduleBlocksFor(db, it.id),
     }));
@@ -544,7 +545,7 @@ function restoreToDraft(db, { type, id, revisionId, actor, materialized = null }
       db.prepare('DELETE FROM playlist_items WHERE playlist_id = ?').run(id);
       // ⚠️ slot_id is restored too, or a corporate revision brings its local slots back as all-NULL
       // ghost items (spec §6.1-6).
-      const ins = db.prepare(`INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec${hasSlots ? ', slot_id' : ''}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${hasSlots ? ', ?' : ''})`);
+      const ins = db.prepare(`INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec, play_to_end${hasSlots ? ', slot_id' : ''}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${hasSlots ? ', ?' : ''})`);
       // A smart revision's items are its matches at the time, not rows to recreate.
       for (const it of (state.smart_rules ? [] : (state.items || []))) {
         /*
@@ -559,7 +560,7 @@ function restoreToDraft(db, { type, id, revisionId, actor, materialized = null }
           db.prepare('UPDATE corporate_slots SET retired_at = NULL WHERE id = ?').run(it.slot_id);
         }
         try {
-          const r = ins.run(id, it.content_id || null, it.widget_id || null, it.child_playlist_id || null, it.zone_id || null, it.sort_order, it.duration_sec, it.muted ? 1 : 0, it.play_from || null, it.play_until || null, it.enabled === 0 ? 0 : 1, it.log_play === 0 ? 0 : 1, it.fit_mode || null, it.play_when || null, it.weight || 1, it.repeat_every_sec || null, ...(hasSlots ? [it.slot_id || null] : []));
+          const r = ins.run(id, it.content_id || null, it.widget_id || null, it.child_playlist_id || null, it.zone_id || null, it.sort_order, it.duration_sec, it.muted ? 1 : 0, it.play_from || null, it.play_until || null, it.enabled === 0 ? 0 : 1, it.log_play === 0 ? 0 : 1, it.fit_mode || null, it.play_when || null, it.weight || 1, it.repeat_every_sec || null, it.play_to_end ? 1 : null, ...(hasSlots ? [it.slot_id || null] : []));
           for (const b of it.schedules || []) {
             const cols = Object.keys(b);
             if (!cols.length) continue;

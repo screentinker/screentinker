@@ -302,14 +302,18 @@ class ZoneManager(
             // YouTube - render via an embed wrapper with a valid origin (Error 153 fix)
             mimeType == "video/youtube" && !remoteUrl.isNullOrEmpty() -> {
                 val webView = createWebView()
+                // #624 play to end: the zone moves on when the video ends; its duration is only the
+                // fallback while the page has not reported the video's length. A one-item zone loops.
+                val toEnd = multi && a.optInt("play_to_end", 0) == 1
+                if (toEnd) webView.addJavascriptInterface(ZoneYoutubeBridge(zone.id, gen, System.currentTimeMillis(), advance), PlayToEnd.BRIDGE)
                 // #129: initial mute from the per-item flag (was hardcoded mute=1). Live
                 // per-zone mute isn't wired (device:mute-changed targets the fullscreen item).
-                val html = com.remotedisplay.player.util.WebViewSupport.youtubeEmbedHtml(remoteUrl, isMuted)
+                val html = com.remotedisplay.player.util.WebViewSupport.youtubeEmbedHtml(remoteUrl, isMuted, if (toEnd) gen.toLong() else null)
                 if (html != null) webView.loadDataWithBaseURL(com.remotedisplay.player.util.WebViewSupport.EMBED_BASE, html, "text/html", "UTF-8", null)
                 else webView.loadUrl(remoteUrl)
                 webView.layoutParams = params
                 addZoneView(zone, webView)
-                if (multi) scheduleZoneAdvance(zone.id, durationMs, advance)
+                if (multi) scheduleZoneAdvance(zone.id, if (toEnd) PlayToEnd.waitMs(durationMs) else durationMs, advance)
             }
             // The screen's HDMI input, boxed into the zone (verified on a Fire TV Cube). Before the
             // video branch: it is a video/* mime with a remote_url, but there is nothing to stream.
@@ -430,6 +434,34 @@ class ZoneManager(
             }
             // Unknown / empty assignment - keep rotating so it doesn't get stuck.
             else -> { if (multi) scheduleZoneAdvance(zone.id, durationMs, advance) }
+        }
+    }
+
+    /*
+     * #624: one zone's play-to-end YouTube page reporting back (PlayToEnd.bridgeScript). Counts only
+     * while the zone still shows the item it was created for — the same generation check every other
+     * zone callback makes.
+     */
+    private inner class ZoneYoutubeBridge(val zoneId: String, val gen: Int, val startedAt: Long, val advance: () -> Unit) {
+        private fun current() = zoneGeneration[zoneId] == gen
+
+        @android.webkit.JavascriptInterface
+        fun duration(token: Long, sec: Double) {
+            handler.post {
+                if (!current()) return@post
+                val ms = PlayToEnd.safetyMs(sec, System.currentTimeMillis() - startedAt) ?: return@post
+                cancelZoneRotation(zoneId)
+                scheduleZoneAdvance(zoneId, ms, advance)
+            }
+        }
+
+        @android.webkit.JavascriptInterface
+        fun ended(token: Long) {
+            handler.post {
+                if (!current() || !PlayToEnd.endedCounts(System.currentTimeMillis() - startedAt)) return@post
+                cancelZoneRotation(zoneId)
+                advance()
+            }
         }
     }
 

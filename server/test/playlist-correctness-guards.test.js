@@ -24,6 +24,9 @@ test('#7: paste rejects a schedule block with empty days (would never play)', ()
 test('#3: discard restores per-item schedules (structure captures them + re-insert writes them)', () => {
   // structure capture attaches schedules; the discard re-insert writes playlist_item_schedules.
   assert.match(src, /blocks\.length \? \{ \.\.\.rest, schedules: blocks \} : rest/, 'publish captures schedules into structure');
-  const discard = src.slice(src.indexOf("router.post('/:id/discard'"));
-  assert.match(discard.slice(0, 2500), /INSERT INTO playlist_item_schedules/, 'discard re-inserts schedules');
+  // The whole discard route, up to the next route: a fixed character window broke as soon as the
+  // re-insert above it grew a column (#624).
+  const start = src.indexOf("router.post('/:id/discard'");
+  const discard = src.slice(start, src.indexOf('\nrouter.', start + 1));
+  assert.match(discard, /INSERT INTO playlist_item_schedules/, 'discard re-inserts schedules');
 });

@@ -6067,21 +6067,49 @@
       }
     }
 
-    function createYoutubeEmbed(src, item, container) {
+    /*
+     * opts.zone (#624): a layout zone's YouTube is its OWN. It used to share the fullscreen state: a
+     * second YouTube zone destroyed the first one's player, and a zone video that ended advanced the
+     * MAIN playlist (nextItem) instead of its zone. In zone mode the generation and the safety-net
+     * timer live on the zone's element, no other player is torn down, the end calls opts.onEnded
+     * (null = the zone's own timer moves it on), and opts.loop decides looping.
+     */
+    function createYoutubeEmbed(src, item, container, opts) {
+      const zoneMode = !!(opts && opts.zone);
+      const done = zoneMode ? (opts.onEnded || null) : nextItem;
       const videoId = extractVideoId(src);
       if (!videoId) {
         console.error('Could not extract YouTube video ID from:', src);
-        if (playlist.length > 1) setTimeout(nextItem, 2000);
+        if (zoneMode) { if (done) setTimeout(done, 2000); }
+        else if (playlist.length > 1) setTimeout(nextItem, 2000);
         return null;
       }
 
-      // Invalidate any previous player's callbacks
-      const myGeneration = ++ytGeneration;
-      cancelPlaybackResume();
+      let alive;
+      if (zoneMode) {
+        const token = (container.__stYtToken || 0) + 1;
+        container.__stYtToken = token;
+        if (container.__stYtSafety) { clearTimeout(container.__stYtSafety); container.__stYtSafety = null; }
+        alive = () => container.__stYtToken === token && document.contains(container);
+      } else {
+        // Invalidate any previous player's callbacks
+        const myGeneration = ++ytGeneration;
+        cancelPlaybackResume();
 
-      // Destroy old player without triggering side effects (callbacks check generation)
-      if (ytSafetyNet) { clearTimeout(ytSafetyNet); ytSafetyNet = null; }
-      if (activeYtPlayer) { try { activeYtPlayer.destroy(); } catch {} activeYtPlayer = null; }
+        // Destroy old player without triggering side effects (callbacks check generation)
+        if (ytSafetyNet) { clearTimeout(ytSafetyNet); ytSafetyNet = null; }
+        if (activeYtPlayer) { try { activeYtPlayer.destroy(); } catch {} activeYtPlayer = null; }
+        alive = () => myGeneration === ytGeneration;
+      }
+      const setSafety = (ms) => {
+        const fire = () => { if (!alive()) return; console.log('YouTube safety net fired for:', item.filename); done(); };
+        if (zoneMode) { clearTimeout(container.__stYtSafety); container.__stYtSafety = setTimeout(fire, ms); }
+        else { clearTimeout(ytSafetyNet); ytSafetyNet = setTimeout(fire, ms); }
+      };
+      const clearSafety = () => {
+        if (zoneMode) { clearTimeout(container.__stYtSafety); container.__stYtSafety = null; }
+        else { clearTimeout(ytSafetyNet); ytSafetyNet = null; }
+      };
 
       // Vertical (Shorts) content is tagged st_aspect=vertical at ingest. Render it
       // in a centered 9:16 box so it fills a portrait screen and pillarboxes cleanly
@@ -6128,9 +6156,9 @@
 
       loadYoutubeApi(() => {
         // Bail if a newer player was created while we waited for the API
-        if (myGeneration !== ytGeneration) return;
+        if (!alive()) return;
 
-        const shouldLoop = playlist.length <= 1;
+        const shouldLoop = zoneMode ? !!opts.loop : playlist.length <= 1;
         let playStartTime = 0;
         activeYtPlayer = new YT.Player(playerDiv.id, {
           videoId: videoId,
@@ -6156,7 +6184,7 @@
           },
           events: {
             onReady: (event) => {
-              if (myGeneration !== ytGeneration) return;
+              if (!alive()) return;
               console.log('YouTube player ready:', item.filename);
               event.target.playVideo();
               // Re-resolve here too: playerVars are read once at construction, and a mute toggle can
@@ -6171,17 +6199,13 @@
               // WebViews), advance from the reported duration + 3s slack. Cleared
               // on a real ENDED, on error, or on teardown. Skip when looping (a
               // single-item playlist intentionally loops forever).
-              if (!shouldLoop) {
+              if (!shouldLoop && done) {
                 let duration = 0;
                 try { duration = event.target.getDuration(); } catch {}
-                if (duration > 0) {
-                  clearTimeout(ytSafetyNet);
-                  ytSafetyNet = setTimeout(() => {
-                    if (myGeneration !== ytGeneration) return;
-                    console.log('YouTube safety net fired for:', item.filename);
-                    nextItem();
-                  }, (duration + 3) * 1000);
-                }
+                if (duration > 0) setSafety((duration + 3) * 1000);
+                // #624 play to end: with no length to go on, the item's duration is the fallback,
+                // so a video whose ENDED never comes cannot hold the screen forever.
+                else if (item.play_to_end) setSafety(Math.max(1, Number(item.duration_sec) || 10) * 1000);
               }
               // #217: best-effort quality cap for weak WiFi. setPlaybackQuality is a
               // hint (YouTube may still adapt), but combined with the vq playerVar it
@@ -6199,28 +6223,30 @@
               }
             },
             onError: (event) => {
-              if (myGeneration !== ytGeneration) return;
-              clearTimeout(ytSafetyNet); ytSafetyNet = null;
+              if (!alive()) return;
+              clearSafety();
               console.error('YouTube error', event.data, 'for:', item.filename);
-              if (playlist.length > 1) {
+              if (zoneMode) {
+                if (done) setTimeout(() => { if (alive()) done(); }, 2000);
+              } else if (playlist.length > 1) {
                 console.log('Skipping unplayable YouTube video');
                 setTimeout(nextItem, 2000);
               }
             },
             onAutoplayBlocked: () => {
-              if (myGeneration !== ytGeneration) return;
+              if (!alive()) return;
               console.warn('YouTube autoplay blocked:', item.filename);
             },
             onStateChange: (event) => {
-              if (myGeneration !== ytGeneration) return;
+              if (!alive()) return;
               // Track when video actually starts playing
               if (event.data === 1) playStartTime = Date.now();
               // YT.PlayerState.ENDED = 0 — advance to next video
               // Ignore ENDED if video played for less than 3 seconds (spurious during init)
-              if (event.data === 0 && !shouldLoop && (Date.now() - playStartTime) > 3000) {
-                clearTimeout(ytSafetyNet); ytSafetyNet = null;
+              if (event.data === 0 && !shouldLoop && done && (Date.now() - playStartTime) > 3000) {
+                clearSafety();
                 console.log('YouTube video ended:', item.filename);
-                nextItem();
+                done();
               }
             },
           },
@@ -7594,6 +7620,10 @@
      */
     function showZoneItem(zone, div, items, index, timers = zoneTimers) {
       if (timers[zone.id]) { clearTimeout(timers[zone.id]); delete timers[zone.id]; }
+      // #624: whatever this zone showed before is gone, so a YouTube player it held must not move
+      // the zone on later (its callbacks check this token; see createYoutubeEmbed's zone mode).
+      div.__stYtToken = (div.__stYtToken || 0) + 1;
+      if (div.__stYtSafety) { clearTimeout(div.__stYtSafety); div.__stYtSafety = null; }
       // #74/#75: skip items whose schedule excludes them now; idle the zone if none.
       const activeIdx = zoneNextActive(items, index, zone.id);
       if (activeIdx === -1) { showZoneEmpty(zone, div, items, timers); return; }
@@ -7639,8 +7669,12 @@
         if (PREVIEW_MODE && a.widget_type === 'webpage') addWebpageNote(div); // #104
         if (multi) timers[zone.id] = setTimeout(advance, dur);
       } else if (isYoutube) {
-        createYoutubeEmbed(src, a, div);
-        if (multi) timers[zone.id] = setTimeout(advance, dur);
+        // #624: play to end moves the ZONE on when the video ends (the embed's safety net covers a
+        // missing ENDED). Otherwise the zone's own timer does, and the clip loops until then. A
+        // single-item zone loops either way.
+        const toEnd = !!a.play_to_end && multi;
+        createYoutubeEmbed(src, a, div, { zone: true, loop: !toEnd, onEnded: toEnd ? advance : null });
+        if (multi && !toEnd) timers[zone.id] = setTimeout(advance, dur);
       } else if (isHls) {
         // IPTV in a zone: a live stream, native-HLS first with the vendored hls.js fallback (same as
         // the fullscreen path), per-zone so several zones can each run one. Duration is DWELL: a

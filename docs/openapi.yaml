@@ -433,6 +433,12 @@ components:
           type: integer
         duration_sec:
           type: integer
+        play_to_end:
+          type: [integer, "null"]
+          description: >
+            YouTube items only. 1 = move on when the video ends; duration_sec is then only the
+            fallback for a screen that cannot read the video's length. Synced groups and video walls
+            keep the fixed duration. Null = off.
         slot_id:
           type: [string, "null"]
           description: >
@@ -985,6 +991,11 @@ paths:
                   description: >
                     Omit to let the server choose: video content defaults to the clip's own
                     length (rounded up to a whole second), anything else to 10s.
+                play_to_end:
+                  type: boolean
+                  description: >
+                    YouTube items only; ignored for anything else. Omit for the default, which is on
+                    for YouTube (the item moves on when the video ends).
       responses:
         '201': { description: Created playlist item. }
   /playlists/{id}/items/bulk:
@@ -1068,6 +1079,9 @@ paths:
                 sort_order: { type: integer }
                 duration_sec: { type: integer }
                 zone_id: { type: [string, "null"] }
+                play_to_end:
+                  type: boolean
+                  description: YouTube items only (400 otherwise). Turning it off is always allowed.
       responses:
         '200': { description: Updated item. }
     delete:

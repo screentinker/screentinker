@@ -446,6 +446,8 @@ CREATE TABLE IF NOT EXISTS playlist_items (
     weight          INTEGER NOT NULL DEFAULT 1,
     -- Sequential playlists only: weave this item in every N seconds (lib/repeat-every.js). NULL = once per loop.
     repeat_every_sec INTEGER,
+    -- YouTube only: 1 = advance when the video ends; duration_sec is then the cap (lib/play-to-end.js). NULL = off.
+    play_to_end     INTEGER,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );

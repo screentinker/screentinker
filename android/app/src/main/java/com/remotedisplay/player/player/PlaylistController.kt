@@ -46,6 +46,8 @@ data class PlaylistItem(
     val tags: List<String> = emptyList(),
     val meta: JSONObject? = null,
     val weight: Int = 1,
+    // #624: YouTube only — move on when the video ends (PlayToEnd). The server sends it only when set.
+    val playToEnd: Boolean = false,
     /* Slide voiceover + deck music bed. Metadata on the ITEM, not inside the slide document — a
      * player that only renders the widget iframe makes no sound, which is why this exists. */
     val slideAudio: SlideAudio? = null,
@@ -277,6 +279,34 @@ class PlaylistController(
     // Wall-clock at which the current item started playing, for non-video sync position.
     private var itemStartedAt = 0L
 
+    /*
+     * #624: whether the screen's playback is driven by a shared clock (a sync group, or a wall), where
+     * play to end is ignored and every item keeps its fixed duration. Wired by MainActivity, which owns
+     * the group and wall controllers; false until then.
+     */
+    var syncDriven: () -> Boolean = { false }
+
+    /** Whether [item] plays to the end here and now (PlayToEnd.applies). */
+    fun playsToEnd(item: PlaylistItem): Boolean =
+        !wallFollower && PlayToEnd.applies(item.mimeType, item.playToEnd, syncDriven(), items.size)
+
+    /** #624: the YouTube page reported the video's length: wait for the rest of it, plus slack. */
+    fun onYoutubeLength(lengthSec: Double) {
+        val item = currentItem ?: return
+        if (!playsToEnd(item)) return
+        val ms = PlayToEnd.safetyMs(lengthSec, System.currentTimeMillis() - itemStartedAt) ?: return
+        scheduleAdvance(ms)
+    }
+
+    /** #624: the YouTube page reported that the video ended. */
+    fun onYoutubeEnded() {
+        val item = currentItem ?: return
+        if (!playsToEnd(item)) return
+        if (!PlayToEnd.endedCounts(System.currentTimeMillis() - itemStartedAt)) return
+        Log.i("PlaylistController", "YouTube video ended: ${item.filename}")
+        next()
+    }
+
     val isPlaying: Boolean get() = isRunning && currentIndex >= 0
 
     /**
@@ -392,6 +422,7 @@ class PlaylistController(
                     tags = parseTags(obj.optJSONArray("tags")),
                     meta = obj.optJSONObject("meta"),
                     weight = obj.optInt("weight", 1).coerceAtLeast(1),
+                    playToEnd = obj.optInt("play_to_end", 0) == 1,
                     transition = Transitions.parse(obj.optJSONObject("transition")),
                     slideAudio = parseSlideAudio(obj.optJSONObject("audio")),
                     interrupt = obj.optBoolean("interrupt", false)
@@ -442,8 +473,8 @@ class PlaylistController(
             var durChanged = false
             for (i in items.indices) {
                 val ni = newItems.getOrNull(i) ?: continue
-                if (items[i].durationSec != ni.durationSec || items[i].weight != ni.weight) {
-                    items[i] = items[i].copy(durationSec = ni.durationSec, weight = ni.weight)
+                if (items[i].durationSec != ni.durationSec || items[i].weight != ni.weight || items[i].playToEnd != ni.playToEnd) {
+                    items[i] = items[i].copy(durationSec = ni.durationSec, weight = ni.weight, playToEnd = ni.playToEnd)
                     durChanged = true
                 }
             }
@@ -793,7 +824,9 @@ class PlaylistController(
             // slotMs() floors a zero/negative duration to 10s (the max(1, duration||10)
             // contract shared with the web/Tizen players). A raw durationSec*1000 here let a
             // solo fullscreen widget with duration_sec=0 schedule a 0ms advance -> self-loop.
-            scheduleAdvance(slotMs(item))
+            // #624: a play-to-end YouTube item waits for the page to report the video's length
+            // (onYoutubeLength) or its end (onYoutubeEnded); this timer is only the fallback.
+            scheduleAdvance(if (playsToEnd(item)) PlayToEnd.waitMs(slotMs(item)) else slotMs(item))
         } else if (!wallFollower && isLiveStream(item)) {
             // Live HLS channel. It ends on NEITHER a timer (endsOnTimer is false for a video mime) nor
             // a completion callback (the stream never fires STATE_ENDED), so without one of these two
