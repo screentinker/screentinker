@@ -1485,6 +1485,11 @@ function scheduleAdvance(fn, ms) {
   advanceTimer = setTimeout(fn, ms);
   return advanceTimer;
 }
+function newVideoElement() {
+  const v = document.createElement("video");
+  v.poster = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+  return v;
+}
 const MEDIA_ERR_NAME = { 1: "ABORTED", 2: "NETWORK", 3: "DECODE", 4: "SRC_NOT_SUPPORTED" };
 function mediaFailureSkip(el, label, src, mayAdvance = true) {
   const err = el && el.error;
@@ -4256,7 +4261,7 @@ function groupPreloadNext(idx) {
       } catch (e) {
       }
     }
-    const v = document.createElement("video");
+    const v = newVideoElement();
     v.src = url;
     v.muted = true;
     v.playsInline = true;
@@ -5513,7 +5518,7 @@ function hdmiInCard(item) {
 }
 function renderLiveStream(item, src, mount, opts) {
   const o = opts || {};
-  const video = document.createElement("video");
+  const video = newVideoElement();
   video.autoplay = true;
   video.muted = !!(o.forceMuted || !userHasInteracted || !!item.muted);
   if (!o.forceMuted) video.volume = 1;
@@ -5687,7 +5692,7 @@ function renderVideoBuffered(item) {
     } catch (e) {
     }
   }
-  const video = document.createElement("video");
+  const video = newVideoElement();
   video.crossOrigin = "anonymous";
   video.playsInline = true;
   video.preload = "auto";
@@ -5896,7 +5901,7 @@ function renderContent(item) {
       if (!isFollower) scheduleAdvance(nextItem, (item.duration_sec || 300) * 1e3);
     } else if (isVideo) {
       const preloaded = scheduleDriven ? takeGroupPreload(currentIndex) : null;
-      const video = preloaded || document.createElement("video");
+      const video = preloaded || newVideoElement();
       if (!preloaded) video.src = src;
       video.autoplay = true;
       attachSubtitleTrack(video, item);
@@ -6036,7 +6041,7 @@ function renderWallBuffered(item) {
     stage.appendChild(img);
     if (!isFollower) scheduleAdvance(nextItem, (item.duration_sec || 10) * 1e3);
   } else {
-    const video = document.createElement("video");
+    const video = newVideoElement();
     video.src = src;
     video.autoplay = true;
     attachSubtitleTrack(video, item);
@@ -6199,7 +6204,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     createYoutubeEmbed(src, a, div);
     if (multi) timers[zone.id] = setTimeout(advance, dur);
   } else if (isHls) {
-    const video = document.createElement("video");
+    const video = newVideoElement();
     video.autoplay = true;
     video.__stOverlay = !!div.__stOverlay;
     video.muted = div.__stOverlay ? false : zone.sort_order > 0;
@@ -6227,7 +6232,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
       }
     }
   } else if (isVideo) {
-    const video = document.createElement("video");
+    const video = newVideoElement();
     video.src = src;
     video.autoplay = true;
     video.__stOverlay = !!div.__stOverlay;
@@ -6480,7 +6485,7 @@ function wallZoneElement(zs, a, opts) {
     return { el: img, video: null };
   }
   if (typeof a.mime_type === "string" && a.mime_type.startsWith("video/") && a.mime_type !== "video/youtube") {
-    const video = document.createElement("video");
+    const video = newVideoElement();
     video.playsInline = true;
     video.crossOrigin = "anonymous";
     video.style.cssText = "width:100%;height:100%;object-fit:".concat(fit);

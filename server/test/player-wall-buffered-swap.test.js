@@ -18,6 +18,9 @@ const path = require('path');
 
 const PLAYER = fs.readFileSync(path.join(__dirname, '..', 'player', 'index.html'), 'utf8');
 const SRC = PLAYER.slice(PLAYER.indexOf('const WALL_SWAP_TIMEOUT_MS'), PLAYER.indexOf('// #74/#75 zone-level schedule helpers.'));
+// The swap creates its <video> through the player's newVideoElement(); bring the real helper along.
+const NEW_VIDEO = PLAYER.slice(PLAYER.indexOf('function newVideoElement()'),
+  PLAYER.indexOf('\n    }', PLAYER.indexOf('function newVideoElement()')) + 6);
 
 // ---------------------------------------------------------------- a fake DOM, just enough
 class El {
@@ -68,6 +71,7 @@ function harness({ wall = { is_leader: true }, zones = false, group = null, play
   const names = Object.keys(env);
   const body = `let ytSafetyNet = null;
     let renderSeq = __s.renderSeq; let currentVideoEl = __s.currentVideoEl;
+    ${NEW_VIDEO}
     ${SRC}
     return {
       isWallSwappable, renderWallBuffered,

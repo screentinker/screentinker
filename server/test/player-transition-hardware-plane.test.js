@@ -202,7 +202,7 @@ function harnessBuffered({ transition = null, planeOk = true, rvfc = true, inter
     BOX,
   };
   const names = Object.keys(env);
-  const body = `${extract('wireSoloVideoPlayback')};${extract('attachSubtitleTrack')};` +
+  const body = `${extract('newVideoElement')};${extract('wireSoloVideoPlayback')};${extract('attachSubtitleTrack')};` +
     extract('renderVideoBuffered')
       .replace(/\brenderSeq\b/g, 'SEQ.v')
       .replace(/\bcurrentVideoEl\b/g, 'BOX.cur')

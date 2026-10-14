@@ -209,6 +209,8 @@ Schema migrations run automatically on first boot — no manual migration comman
 | `HTTPS_PORT` | HTTPS port (used when SSL certs are present) | `3443` |
 | `NODE_ENV` | Runtime env (`production` enables Express production optimizations + stricter error handling) | _(none)_ |
 | `SELF_HOSTED` | First user gets all features unlocked | `false` |
+| `OUTBOUND_ALLOW_HOSTS` | Hosts, `*.suffixes`, IPs or CIDRs that calendars, data sources, webhooks, OIDC and AI may reach on a private network (refused by default). Cloud metadata stays blocked. See [Outbound requests](docs/outbound-requests.md). | _(none)_ |
+| `OUTBOUND_ALLOW_PRIVATE` | Open every private-network range at once (single-tenant installs) | `false` |
 | `HIDE_BILLING` | Hide the Subscription nav item + billing view; `#/billing` redirects to the dashboard (UI-only, opt-in) | `false` |
 | `DISABLE_REGISTRATION` | Block new account creation (including OAuth auto-signup). First-user setup on an empty DB is still allowed. | `false` |
 | `DISABLE_HOMEPAGE` | Redirect `/` to `/app` instead of serving the marketing landing page. For internal-only self-hosted deployments. | `false` |

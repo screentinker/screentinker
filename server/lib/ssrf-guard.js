@@ -125,6 +125,113 @@ function isBlockedIp(ip) {
   return true; // not a valid literal IP → block
 }
 
+/* ---------- the operator's outbound policy: private addresses on purpose (#618) ----------
+ *
+ * Every user-supplied URL the server fetches comes through here: data sources and calendars,
+ * alert-channel and automation webhooks, OIDC, Canva, embedded renders, the media proxy, plugin
+ * egress, hosted AI. A self-hoster whose calendar, Home Assistant or IdP lives on the LAN was
+ * refused with "The address is not allowed" and had no way to say "that is exactly where it is".
+ *
+ *   OUTBOUND_ALLOW_HOSTS=calendar.lan,*.home.arpa,192.168.1.0/24,10.0.0.5
+ *     A NAME (exact, or *.suffix) may resolve to a private address; an IP or CIDR opens that range.
+ *   OUTBOUND_ALLOW_PRIVATE=1
+ *     Every private-network range (RFC 1918, loopback, CGNAT, unique-local / link-local IPv6),
+ *     for a single-tenant home install. ⚠️ Any member who can enter a URL then reaches those.
+ *
+ * Both are off unless set, so a hosted instance is unchanged.
+ *
+ * ⚠️ CLOUD METADATA STAYS BLOCKED WHATEVER IS CONFIGURED. No calendar needs 169.254.169.254, and
+ * it is the one internal address whose answer is credentials.
+ */
+const METADATA_IPS = new Set(['169.254.169.254', '169.254.170.2', '169.254.170.23', '100.100.100.200']);
+const METADATA_V6 = ['fd00:ec2:0:0:0:0:0:254', 'fd00:ec2:0:0:0:0:0:23'];
+
+// The v4 address a mapped / NAT64 v6 carries, else null.
+function embeddedV4(ip) {
+  const h = net.isIP(ip) === 6 ? expandV6(ip) : null;
+  if (!h) return null;
+  const mapped = h.slice(0, 5).every((x) => x === 0) && h[5] === 0xffff;
+  const nat64 = h[0] === 0x0064 && h[1] === 0xff9b;
+  return mapped || nat64 ? [(h[6] >> 8) & 255, h[6] & 255, (h[7] >> 8) & 255, h[7] & 255].join('.') : null;
+}
+
+function isMetadataIp(ip) {
+  const v4 = net.isIP(ip) === 4 ? ip : embeddedV4(ip);
+  if (v4) return METADATA_IPS.has(v4);
+  const h = expandV6(ip);
+  return !!h && METADATA_V6.includes(h.map((x) => x.toString(16)).join(':'));
+}
+
+// Genuinely private-network space: what OUTBOUND_ALLOW_PRIVATE opens. Not multicast, 0.0.0.0, the
+// documentation ranges or the v4-in-v6 tricks, which stay blocked.
+const V4_PRIVATE = ['10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16', '172.16.0.0/12', '192.168.0.0/16'];
+function isPrivateNetworkIp(ip) {
+  const v4 = net.isIP(ip) === 4 ? ip : embeddedV4(ip);
+  if (v4) return V4_PRIVATE.some((c) => inV4(v4, c));
+  const h = expandV6(ip);
+  if (!h) return false;
+  if (h.slice(0, 7).every((x) => x === 0) && h[7] === 1) return true;   // ::1
+  if ((h[0] & 0xfe00) === 0xfc00) return true;                           // fc00::/7
+  if ((h[0] & 0xffc0) === 0xfe80) return true;                           // fe80::/10
+  return false;
+}
+
+function inV6(ip, cidr) {
+  const [base, bitsStr] = cidr.split('/');
+  const a = expandV6(ip), b = expandV6(base);
+  if (!a || !b) return false;
+  let bits = bitsStr === undefined ? 128 : Number(bitsStr);
+  for (let i = 0; i < 8 && bits > 0; i++, bits -= 16) {
+    const m = bits >= 16 ? 0xffff : (0xffff << (16 - bits)) & 0xffff;
+    if ((a[i] & m) !== (b[i] & m)) return false;
+  }
+  return true;
+}
+
+let _policyRaw = null, _policy = null;
+function outboundPolicy() {
+  const raw = `${process.env.OUTBOUND_ALLOW_PRIVATE || ''}|${process.env.OUTBOUND_ALLOW_HOSTS || ''}`;
+  if (raw === _policyRaw) return _policy;
+  const names = [], suffixes = [], v4 = [], v6 = [];
+  for (const entry of String(process.env.OUTBOUND_ALLOW_HOSTS || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean)) {
+    const [addr, bits] = entry.split('/');
+    if (net.isIP(addr) === 4) v4.push(bits === undefined ? addr + '/32' : entry);
+    else if (net.isIP(addr) === 6) v6.push(entry);
+    else if (entry.startsWith('*.')) suffixes.push(entry.slice(1));          // ".home.arpa"
+    else names.push(entry.replace(/\.$/, ''));
+  }
+  _policyRaw = raw;
+  _policy = {
+    allowPrivate: ['1', 'true', 'yes'].includes(String(process.env.OUTBOUND_ALLOW_PRIVATE || '').toLowerCase()),
+    names: new Set(names), suffixes, v4, v6,
+  };
+  return _policy;
+}
+
+/** Is this an address the operator has opened for this host? Never metadata, never 0.0.0.0/::. */
+function allowedByPolicy(ip, hostname) {
+  if (isMetadataIp(ip)) return false;
+  const v4 = net.isIP(ip) === 4 ? ip : embeddedV4(ip);
+  if (v4 === '0.0.0.0' || (net.isIP(ip) === 6 && (expandV6(ip) || [1]).every((x) => x === 0))) return false;
+  const p = outboundPolicy();
+  if (p.allowPrivate && isPrivateNetworkIp(ip)) return true;
+  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  if (host && (p.names.has(host) || p.suffixes.some((sfx) => host.endsWith(sfx)))) return true;
+  if (v4 && p.v4.some((c) => inV4(v4, c))) return true;
+  if (net.isIP(ip) === 6 && p.v6.some((c) => inV6(ip, c))) return true;
+  return false;
+}
+
+/** The guard's verdict for one address on the way to `hostname`: blocked unless public or opened. */
+function isBlockedFor(ip, hostname) {
+  return isBlockedIp(ip) && !allowedByPolicy(ip, hostname);
+}
+
+/** For an error a person reads: how a refused private address can be allowed (self-hosted only). */
+function privateAddressHint() {
+  return 'It is on a private network. An administrator can allow it with OUTBOUND_ALLOW_HOSTS or OUTBOUND_ALLOW_PRIVATE (docs/outbound-requests.md).';
+}
+
 // Parse + scheme-check + DNS-resolve + vet EVERY resolved address. Returns { url, addresses } where
 // `addresses` are the vetted IPs to pin the socket to. Throws SsrfError on anything unsafe.
 // Parse + scheme-check + credentials check + literal IP vet (sync).
@@ -147,7 +254,7 @@ function parseSafeUrl(urlString) {
 
   const host = url.hostname.replace(/^\[|\]$/g, '');
   if (net.isIP(host)) {
-    if (isBlockedIp(host)) throw new SsrfError('blocked-ip:' + host);
+    if (isBlockedFor(host, host)) throw new SsrfError('blocked-ip:' + host);
     return { url, host, normalized, isLiteralIp: true, addresses: [host] };
   }
   return { url, host, normalized, isLiteralIp: false };
@@ -171,7 +278,7 @@ async function assertSafeUrl(urlString) {
     throw new SsrfError('no-address');
   }
   for (const a of resolved) {
-    if (isBlockedIp(a.address)) throw new SsrfError('blocked-ip:' + a.address);
+    if (isBlockedFor(a.address, parsed.host)) throw new SsrfError('blocked-ip:' + a.address);
   }
   return { url: parsed.url, addresses: resolved.map((a) => a.address) };
 }
@@ -387,5 +494,8 @@ function guardedRequest(urlString, options = {}) {
   return follow(urlString, maxRedirects);
 }
 
-module.exports = { parseSafeUrl, assertSafeUrl, isBlockedIp, isBlockedV4, isBlockedV6, pinnedLookup, SsrfError, GuardedRequestError, guardedRequest, stripSensitiveHeaders };
+module.exports = {
+  parseSafeUrl, assertSafeUrl, isBlockedIp, isBlockedV4, isBlockedV6, pinnedLookup, SsrfError, GuardedRequestError,
+  guardedRequest, stripSensitiveHeaders, isBlockedFor, isMetadataIp, isPrivateNetworkIp, privateAddressHint,
+};
 

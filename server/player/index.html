@@ -1561,6 +1561,28 @@
       return advanceTimer;
     }
 
+    /*
+     * Every <video> the player creates comes from here, with an empty poster.
+     *
+     * Without a poster, Android WebView (Fully Kiosk and other kiosk shells, Chromium-based WebViews
+     * at least through 119/138) fetches its built-in default poster,
+     * `android-webview-video-poster:default_video_poster/…`. Our clips are crossOrigin='anonymous', so
+     * that fetch fails CORS and the element raises `error` with NO MediaError. A small, cached clip
+     * is usually at readyState >= 3 by then and mediaFailureSkip ignores it; a large clip still
+     * buffering is not, so it is skipped ~3 s in as "failed (no MediaError)" and never plays.
+     * Seen on an Android 7.1 RK3368 and Android 8.1 RK3288 kiosk: 12–23 MB clips stopped at 3–4 s,
+     * every time. With a poster set, the same clips played to the end.
+     *
+     * A 1×1 transparent GIF is enough: the WebView then has a poster and never asks for its own.
+     * Desktop browsers and other platforms are unaffected (the poster is invisible and replaced by
+     * the first frame). A function declaration, so it is hoisted and safe to call during boot.
+     */
+    function newVideoElement() {
+      const v = document.createElement('video');
+      v.poster = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+      return v;
+    }
+
     const MEDIA_ERR_NAME = { 1: 'ABORTED', 2: 'NETWORK', 3: 'DECODE', 4: 'SRC_NOT_SUPPORTED' };
 
     /*
@@ -5228,7 +5250,7 @@
       const url = mediaUrl(item);
       try {
         if (groupPreloadEl) { try { groupPreloadEl.remove(); } catch (e) {} }
-        const v = document.createElement('video');
+        const v = newVideoElement();
         v.src = url; v.muted = true; v.playsInline = true; v.preload = 'auto';
         v.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px';
         v.load();
@@ -6842,7 +6864,7 @@
 
     function renderLiveStream(item, src, mount, opts) {
       const o = opts || {};
-      const video = document.createElement('video');
+      const video = newVideoElement();
       video.autoplay = true;
       video.muted = !!(o.forceMuted || !userHasInteracted || !!item.muted);
       if (!o.forceMuted) video.volume = 1.0;
@@ -7010,7 +7032,7 @@
           if (!wantsWipe || (typeof onVega === 'function' && onVega())) outgoing.pause();
         } catch (e) {}
       }
-      const video = document.createElement('video');
+      const video = newVideoElement();
       video.crossOrigin = 'anonymous';                  // texturable (CORS-clean) + matches the legacy branch
       video.playsInline = true;
       video.preload = 'auto';
@@ -7300,7 +7322,7 @@
           // Double buffer: reuse the pre-buffered element for this index if we warmed it (no black
           // hold). Its src is already set + buffered; a fresh element otherwise.
           const preloaded = scheduleDriven ? takeGroupPreload(currentIndex) : null;
-          const video = preloaded || document.createElement('video');
+          const video = preloaded || newVideoElement();
           if (!preloaded) video.src = src;
           video.autoplay = true;
           // Followers stay muted unconditionally (leader-only audio); leaders
@@ -7451,7 +7473,7 @@
         // Same as the legacy branch: the leader / a single screen drives an image's advance.
         if (!isFollower) scheduleAdvance(nextItem, (item.duration_sec || 10) * 1000);
       } else {
-        const video = document.createElement('video');
+        const video = newVideoElement();
         video.src = src;
         video.autoplay = true;
         attachSubtitleTrack(video, item);
@@ -7625,7 +7647,7 @@
         // rotating zone advances after duration_sec (>0); a dwell-0 (or sole-item) zone stays, and on
         // the slow re-check cadence only advances if this stops being the active pick (windows still
         // re-evaluate, without remounting the stream every minute).
-        const video = document.createElement('video');
+        const video = newVideoElement();
         video.autoplay = true;
         video.__stOverlay = !!div.__stOverlay;
         video.muted = div.__stOverlay ? false : (zone.sort_order > 0);
@@ -7649,7 +7671,7 @@
           }
         }
       } else if (isVideo) {
-        const video = document.createElement('video');
+        const video = newVideoElement();
         video.src = src;
         video.autoplay = true;
         // Propagate the overlay latch from the container: this same function renders BOTH real
@@ -7903,7 +7925,7 @@
         return { el: img, video: null };
       }
       if (typeof a.mime_type === 'string' && a.mime_type.startsWith('video/') && a.mime_type !== 'video/youtube') {
-        const video = document.createElement('video');
+        const video = newVideoElement();
         video.playsInline = true;
         video.crossOrigin = 'anonymous';
         video.style.cssText = `width:100%;height:100%;object-fit:${fit}`;

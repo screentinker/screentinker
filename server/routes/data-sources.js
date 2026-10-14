@@ -97,7 +97,7 @@ function validateDataSourceConfig(type, config) {
     // than failing on every sync. (The guarded request re-checks every hop regardless.)
     if (builtin.network && config.url) {
       try { parseSafeUrl(String(config.url).trim()); } catch (err) {
-        return err.reason && err.reason.startsWith('blocked-ip') ? 'The address is not allowed' : 'Invalid URL format';
+        return err.reason && err.reason.startsWith('blocked-ip') ? require('../lib/data-sources/service').notAllowedMessage() : 'Invalid URL format';
       }
     }
     return null;
@@ -122,7 +122,7 @@ function validateDataSourceConfig(type, config) {
         return 'URL must use HTTP, HTTPS, or webcal protocol';
       }
       if (err.reason && err.reason.startsWith('blocked-ip')) {
-        return 'The address is not allowed';
+        return require('../lib/data-sources/service').notAllowedMessage();
       }
       return 'Invalid URL format';
     }
