@@ -287,3 +287,54 @@ def test_THE_0_00_FREEZE_a_failed_preload_is_not_promoted_warm():
     assert s.claim("/a.mp4", True) is Claim.COLD
     s.park("/a.mp4")
     assert s.claim("/a.mp4", True) is Claim.WARM_NEEDS_PREPARE
+
+
+# ================= PlayToEnd (#624) =================
+# Android PlayToEndTest, the same rules.
+
+def test_only_a_flagged_youtube_item_in_a_multi_item_unsynced_playlist_plays_to_the_end():
+    assert pl.play_to_end_applies("video/youtube", True, False, 2)
+    assert not pl.play_to_end_applies("video/youtube", False, False, 2)   # opt-in per item
+    assert not pl.play_to_end_applies("video/mp4", True, False, 2)       # already ends on its own
+    assert not pl.play_to_end_applies("image/jpeg", True, False, 2)      # images keep their duration
+    assert not pl.play_to_end_applies("video/youtube", True, True, 2)    # a group or wall keeps the clock
+    assert not pl.play_to_end_applies("video/youtube", True, False, 1)   # a one-item playlist loops
+
+
+def test_THE_BUG_the_10s_default_never_ends_a_play_to_end_video():
+    assert pl.play_to_end_wait_ms(10_000) == pl.PLAY_TO_END_LENGTH_WAIT_MS
+    assert pl.play_to_end_wait_ms(120_000) == 120_000
+    assert pl.play_to_end_safety_ms(212, 2_000) == 212_000 - 2_000 + pl.PLAY_TO_END_SLACK_MS
+
+
+def test_an_unusable_length_leaves_the_wait_in_place():
+    for bad in (0, -1, float("nan"), float("inf"), None, "abc"):
+        assert pl.play_to_end_safety_ms(bad, 0) is None, bad
+    assert pl.play_to_end_safety_ms("95.5", 0) == 95_500 + pl.PLAY_TO_END_SLACK_MS   # QML sends a string
+
+
+def test_a_late_length_never_drops_below_the_slack():
+    assert pl.play_to_end_safety_ms(30, 45_000) == pl.PLAY_TO_END_SLACK_MS
+
+
+def test_an_ended_in_the_first_seconds_is_spurious():
+    assert not pl.play_to_end_ended_counts(500)
+    assert pl.play_to_end_ended_counts(pl.PLAY_TO_END_MIN_PLAY_MS)
+
+
+def test_the_embed_loops_unless_the_video_must_end():
+    assert pl.youtube_loop_params("abc123", False) == "&loop=1&playlist=abc123"
+    assert pl.youtube_loop_params("abc123", True) == ""
+
+
+def test_the_bridge_script_matches_android_byte_for_byte():
+    # The Kotlin source holds the same string, built with $BRIDGE = STYoutube and $token.
+    import os, re
+    kt = open(os.path.join(os.path.dirname(__file__), "..", "..", "android", "app", "src", "main", "java",
+                           "com", "remotedisplay", "player", "player", "PlayToEnd.kt"), encoding="utf-8").read()
+    body = kt[kt.index("fun bridgeScript"):]
+    body = body[body.index("return "):body.index("</script>\"", body.index("iframe_api")) + len("</script>\"")]
+    parts = re.findall(r'"((?:[^"\\]|\\.)*)"', body)
+    android = "".join(parts).replace('\\"', '"').replace("$BRIDGE", "STYoutube").replace("$token", "7")
+    assert pl.youtube_bridge_script(7) == android
+    assert pl.youtube_bridge_script(None) == ""

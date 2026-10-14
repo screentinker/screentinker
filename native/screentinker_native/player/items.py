@@ -46,6 +46,8 @@ class Item:
     fit_mode: str = None
     log_play: bool = True
     weight: int = 1
+    # #624: YouTube only — move on when the video ends (logic/playlist_logic.py PlayToEnd).
+    play_to_end: bool = False
     zone_id: str = None
     transition: dict = None
     audio: dict = None
@@ -78,6 +80,7 @@ class Item:
             fit_mode=_s(o.get("fit_mode")),
             log_play=_i(o.get("log_play"), 1) != 0,
             weight=max(1, _i(o.get("weight"), 1)),
+            play_to_end=_i(o.get("play_to_end")) == 1 if not isinstance(o.get("play_to_end"), bool) else o.get("play_to_end"),
             zone_id=_s(o.get("zone_id")),
             transition=transitions.parse(o.get("transition")),
             audio=o.get("audio") if isinstance(o.get("audio"), dict) else None,

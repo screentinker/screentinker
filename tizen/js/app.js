@@ -947,6 +947,8 @@
     function () { return deviceId; },
     function () { return authenticated && !!socket && socket.connected; }
   );
+  // #624: a wall keeps every item's fixed duration (the shared clock), so play to end is off there.
+  player.wallActive = function () { return wallController.active(); };
   // #group-sync: clock/schedule group sync (no leader, offline-native). Separate from WallController.
   var groupSync = new GroupSyncController(player, function () { return clockOffsetMs; }, reportSync);
   // Wall zones: a video wall's own layout, every zone paced by the SAME server-disciplined clock

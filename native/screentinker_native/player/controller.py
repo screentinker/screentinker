@@ -65,6 +65,9 @@ class PlaylistController:
         self.default_showing = False
         self.wall_follower = False
         self.item_started_at = 0
+        # #624: whether a shared clock drives the screen (a sync group or a wall), where play to end
+        # is ignored and every item keeps its fixed duration. Injected by the engine.
+        self.sync_driven = lambda: False
         self.fault = PL.PlaybackFault()
         # Injected by the engine, which owns the cache: READY = revision confirmed, USABLE = bytes present.
         self.content_ready = lambda item: True
@@ -223,8 +226,8 @@ class PlaylistController:
             changed = False
             for i, ni in enumerate(new_items):
                 cur = self.items[i]
-                if cur.duration_sec != ni.duration_sec or cur.weight != ni.weight:
-                    cur.duration_sec, cur.weight = ni.duration_sec, ni.weight
+                if cur.duration_sec != ni.duration_sec or cur.weight != ni.weight or cur.play_to_end != ni.play_to_end:
+                    cur.duration_sec, cur.weight, cur.play_to_end = ni.duration_sec, ni.weight, ni.play_to_end
                     cur.raw = ni.raw
                     changed = True
                 elif cur.raw.get("_ds") != ni.raw.get("_ds"):
@@ -403,6 +406,28 @@ class PlaylistController:
             return
         self.next()
 
+    # ------------------------------------------------------------------ #624 play to end
+    def plays_to_end(self, item):
+        return (item is not None and not self.wall_follower
+                and PL.play_to_end_applies(item.mime_type, item.play_to_end, self.sync_driven(), len(self.items)))
+
+    def on_youtube_length(self, length_sec):
+        """The YouTube page reported the video's length: wait for the rest of it, plus slack."""
+        item = self.current_item
+        if not self.plays_to_end(item):
+            return
+        ms = PL.play_to_end_safety_ms(length_sec, _now_ms() - self.item_started_at)
+        if ms is not None:
+            self._schedule_advance(ms)
+
+    def on_youtube_ended(self):
+        """The YouTube page reported that the video ended."""
+        item = self.current_item
+        if not self.plays_to_end(item) or not PL.play_to_end_ended_counts(_now_ms() - self.item_started_at):
+            return
+        log.info("YouTube video ended: %s", item.filename)
+        self.next()
+
     def on_video_fault(self):
         r = self.fault.recovery(self.wall_follower, self.current_index, _now_ms())
         if r == PL.Recovery.ADVANCE:
@@ -444,7 +469,9 @@ class PlaylistController:
                 self.on_play_log("play_start", item, False)
             self.logged_item = item if item.log_play else None
         if not self.wall_follower and PL.ends_on_timer(item.mime_type, item.is_widget):
-            self._schedule_advance(slot_ms(item))
+            # #624: a play-to-end YouTube item waits for the page to report the length or the end;
+            # this timer is only the fallback.
+            self._schedule_advance(PL.play_to_end_wait_ms(slot_ms(item)) if self.plays_to_end(item) else slot_ms(item))
         elif not self.wall_follower and item.is_live:
             if item.duration_sec > 0:
                 self._schedule_advance(item.duration_sec * 1000)

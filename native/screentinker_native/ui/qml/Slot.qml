@@ -19,6 +19,8 @@ Item {
     signal ready()
     signal ended()
     signal failed(string msg)
+    // #624: a play-to-end YouTube page reported the video's length (ended() reports its end).
+    signal ytLength(real sec)
     signal position(real posMs, real durMs)
 
     function fillFor(fit, forVideo) {
@@ -216,6 +218,16 @@ Item {
                     retry.interval = Math.min(60000, 2000 * Math.pow(2, Math.min(attempts - 1, 5)))
                     retry.start()
                     slot.markReady()
+                }
+            }
+            // #624: a play-to-end YouTube page (engine.youtube_html) reports through the console:
+            // "ST_YT duration <sec>" and "ST_YT ended". Nothing else logs with that prefix.
+            onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
+                if (!slot.item || slot.item.kind !== "youtube" || typeof message !== "string") return
+                if (message === "ST_YT ended") slot.ended()
+                else if (message.indexOf("ST_YT duration ") === 0) {
+                    var d = parseFloat(message.substring(15))
+                    if (d > 0) slot.ytLength(d)
                 }
             }
             Timer { id: retry; onTriggered: web.start() }

@@ -23,6 +23,7 @@ import urllib.parse
 from PySide6.QtCore import QTimer
 
 from ..logic import kiosk as kiosk_logic
+from ..logic import playlist_logic as PL
 from ..logic import schedule_eval
 from ..logic import wall_zones as wz
 from . import transitions
@@ -49,15 +50,25 @@ def youtube_id(url):
     return None
 
 
-def youtube_html(url, muted):
-    """Android WebViewSupport.youtubeEmbedHtml, byte-compatible. Loaded with a screentinker.com base so
-    the iframe has a valid origin (a bare embed load gives YouTube's Error 153)."""
+# #624: QtWebEngine has no Android-style JavaScript bridge, so a play-to-end page reports through the
+# console instead: Slot.qml turns these lines into slot events ("yt_length", "ended"), which reach the
+# engine with the slot's item token — the same token check every other slot event gets.
+YT_CONSOLE_SHIM = ("<script>window.STYoutube={duration:function(t,d){console.log('ST_YT duration '+d)},"
+                   "ended:function(t){console.log('ST_YT ended')}};</script>")
+
+
+def youtube_html(url, muted, play_to_end=False):
+    """Android WebViewSupport.youtubeEmbedHtml, byte-compatible when the video loops. Loaded with a
+    screentinker.com base so the iframe has a valid origin (a bare embed load gives YouTube's Error 153).
+    `play_to_end` (#624): no loop, and the IFrame API reports the length and the end (YT_CONSOLE_SHIM)."""
     vid = youtube_id(url)
     if not vid:
         return None
     vertical = "st_aspect=vertical" in (url or "")
-    src = ("%s/embed/%s?autoplay=1&mute=%d&controls=0&rel=0&modestbranding=1&loop=1&playlist=%s"
-           "&playsinline=1&enablejsapi=1") % (YT_BASE, vid, 1 if muted else 0, vid)
+    origin = ("&origin=" + urllib.parse.quote(EMBED_BASE, safe="")) if play_to_end else ""
+    src = ("%s/embed/%s?autoplay=1&mute=%d&controls=0&rel=0&modestbranding=1%s"
+           "&playsinline=1&enablejsapi=1%s") % (YT_BASE, vid, 1 if muted else 0,
+                                                PL.youtube_loop_params(vid, play_to_end), origin)
     if vertical:
         css = ("html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden;display:flex;"
                "align-items:center;justify-content:center}iframe{display:block;height:100%;aspect-ratio:9/16;"
@@ -66,8 +77,9 @@ def youtube_html(url, muted):
         css = ("html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden}"
                "iframe{display:block;width:100%;height:100%;border:0}")
     return ('<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<style>%s</style></head><body><iframe src="%s" allow="autoplay; encrypted-media" allowfullscreen>'
-            '</iframe></body></html>') % (css, src)
+            '<style>%s</style></head><body><iframe%s src="%s" allow="autoplay; encrypted-media" allowfullscreen>'
+            '</iframe>%s</body></html>') % (css, ' id="st-yt"' if play_to_end else "", src,
+                                            (YT_CONSOLE_SHIM + PL.youtube_bridge_script(0)) if play_to_end else "")
 
 
 def orientation_rot(o, window_portrait):
@@ -125,6 +137,8 @@ class ZoneRunner:
         self.sid = "zone:" + zone["id"]
         self.index = -1
         self.token = None
+        self.to_end = False                # #624: the item shown plays to the end
+        self.started_ms = 0.0
         self.timer = QTimer()
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.advance)
@@ -163,9 +177,12 @@ class ZoneRunner:
         # A zone transitions only into a DIFFERENT item, after its first: a zone left with one
         # playable item (the rest dayparted out) re-shows it every dwell, and must not play an
         # effect into itself.
+        # #624: a play-to-end YouTube item moves the zone on when the video ends (a one-item zone loops).
+        self.to_end = self.multi and it.mime_type == PL.YOUTUBE_MIME and bool(it.play_to_end)
+        self.started_ms = time.monotonic() * 1000
         rendered = self.e.render(it, surface=self.sid, loop=(not self.multi and not it.is_live),
                                  fit=it.fit_mode or self.zone.get("fit_mode") or "cover",
-                                 transition=prev >= 0 and idx != prev)
+                                 transition=prev >= 0 and idx != prev, play_to_end=self.to_end)
         if rendered is None:
             if self.multi:
                 self.timer.start(1000)
@@ -180,6 +197,8 @@ class ZoneRunner:
                 else:
                     self.timer.start(LIVE_RECHECK_MS)
             # non-live video advances on "ended"; no timer
+        elif self.to_end:
+            self.timer.start(PL.play_to_end_wait_ms(max(ZONE_MIN_SEC, it.duration_sec or 10) * 1000))
         else:
             self.timer.start(max(ZONE_MIN_SEC, it.duration_sec or 10) * 1000)
 
@@ -192,9 +211,18 @@ class ZoneRunner:
                 return
         self.show((self.index + 1) if self.index >= 0 else 0)
 
-    def on_event(self, token, event):
+    def on_event(self, token, event, detail=""):
         if token != self.token:
             return
+        elapsed = time.monotonic() * 1000 - self.started_ms
+        if event == "yt_length":
+            if self.to_end:
+                ms = PL.play_to_end_safety_ms(detail, elapsed)
+                if ms is not None:
+                    self.timer.start(int(ms))
+            return
+        if event == "ended" and self.to_end and not PL.play_to_end_ended_counts(elapsed):
+            return                         # an ENDED in the first seconds is spurious (#215)
         if event in ("ended", "failed") and self.multi:
             self.advance()
 
@@ -239,6 +267,8 @@ class PlaybackEngine:
             on_play_log=self._on_play_log,
             load_resume=self._load_resume, save_resume=self._save_resume)
         self.controller.content_ready = self._ready
+        # #624: play to end is ignored while a shared clock drives the screen (a wall or a sync group).
+        self.controller.sync_driven = lambda: bool(self.wall or self.group_id)
         self.controller.content_usable = self._usable
         self.timezone = None
         self.mode = "single"
@@ -520,7 +550,7 @@ class PlaybackEngine:
                 self.tokens.pop(k, None)
         return tok
 
-    def item_dict(self, it, fit=None, loop=False, muted=None):
+    def item_dict(self, it, fit=None, loop=False, muted=None, play_to_end=False):
         """Item -> the dict a Slot renders, or None when there is nothing renderable. `muted` overrides
         the wall rule (wall zones decide sound per zone)."""
         server = self.config.server_url
@@ -553,7 +583,7 @@ class PlaybackEngine:
                 d.update(kind="html", html=html, baseUrl=server + "/")
             return d
         if it.mime_type == "video/youtube" and it.remote_url:
-            html = youtube_html(it.remote_url, muted)
+            html = youtube_html(it.remote_url, muted, play_to_end=play_to_end)
             if html:
                 d.update(kind="youtube", html=html, baseUrl=EMBED_BASE, source=it.remote_url)
             else:
@@ -579,11 +609,11 @@ class PlaybackEngine:
             return None
         return d
 
-    def render(self, it, surface="main", loop=False, fit=None, transition=None):
+    def render(self, it, surface="main", loop=False, fit=None, transition=None, play_to_end=False):
         """`transition`: whether the item's transition plays — by default on the main surface only.
         Layout zones pass it (each zone's Surface has its own TransitionRunner, so zones transition
         independently). Wall zones never come through here: they cut on the shared wall clock."""
-        d = self.item_dict(it, fit=fit, loop=loop)
+        d = self.item_dict(it, fit=fit, loop=loop, play_to_end=play_to_end)
         if d is None:
             return None
         tok = self._new_token(surface, it)
@@ -623,7 +653,7 @@ class PlaybackEngine:
             return
         # Group/wall followers loop video so they never freeze between leader updates.
         loop = bool(self.controller.wall_follower and it.mime_type.startswith("video/"))
-        tok = self.render(it, "main", loop=loop)
+        tok = self.render(it, "main", loop=loop, play_to_end=self.controller.plays_to_end(it))
         if tok is None:
             if it.content_id and not it.is_remote:
                 self.app.ensure_downloads([(it.content_id, it.filename, it.mime_type, it.content_rev)], prune=False)
@@ -650,7 +680,7 @@ class PlaybackEngine:
         if surface.startswith("zone:"):
             r = self.zone_runners.get(surface[5:])
             if r:
-                r.on_event(token, event)
+                r.on_event(token, event, detail)
             if event == "failed":
                 self.app.log_remote("warn", "Zone", "%s: %s" % (surface, detail))
             return
@@ -661,7 +691,12 @@ class PlaybackEngine:
             return
         it = self.main_item
         if event == "ended":
-            self.controller.on_video_complete()
+            if it and it.mime_type == "video/youtube":
+                self.controller.on_youtube_ended()       # #624: only a play-to-end page reports this
+            else:
+                self.controller.on_video_complete()
+        elif event == "yt_length":
+            self.controller.on_youtube_length(detail)
         elif event == "failed":
             self.app.log_remote("warn", "Player", "playback failed: %s (%s)" % (it.filename if it else "?", detail))
             if it and it.mime_type.startswith("video/"):

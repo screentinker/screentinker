@@ -128,6 +128,10 @@ function PlaylistPlayer(stageEl, getBase, getDeviceId) {
   // #157: schedule-driven (group-sync) mode — set by app.js. Group-sync advances via its own tick,
   // not the solo timer, and Tizen group-sync doesn't use wallFollower, so this gates the deferral.
   this.scheduleDriven = false;
+  // #624 play to end: the YouTube embed's listener (StPlayToEnd.listen), and whether a wall drives
+  // the screen (app.js wires it to WallController.active()). A wall or group ignores play to end.
+  this._ytStop = null;
+  this.wallActive = function () { return false; };
   // #157 deferred rotation-out: when a removed-but-live item should finish before we swap in the list.
   this._deferredRotation = false;
   this._deferredSuccessorId = null;
@@ -435,6 +439,7 @@ PlaylistPlayer.prototype.stop = function () {
 
 PlaylistPlayer.prototype.clearStage = function () {
   this._holdShowing = false;
+  if (this._ytStop) { try { this._ytStop(); } catch (e) {} this._ytStop = null; }   // #624
   if (this.avActive) this.avStop(); // #170: tear down any AVPlay session (portrait video)
   // #473: the interactive page lives in the stage; leaving it must end (and wipe) the session, not
   // just drop its DOM. hide() is a no-op when nothing is showing.
@@ -1303,10 +1308,29 @@ PlaylistPlayer.prototype.renderYouTube = function (item, single) {
   var muted = this.wallFollower ? true : !!item.muted;
   // enablejsapi lets a live mute toggle reach the embed by postMessage without reloading it —
   // reloading would restart the video from zero every time an operator touched the control.
+  //
+  // #624 play to end: no loop, and the embed's own length/ENDED reports move the playlist on
+  // (js/play-to-end.js). The item's duration is only the fallback until the length arrives.
+  var P = typeof StPlayToEnd !== 'undefined' ? StPlayToEnd : null;
+  var toEnd = !single && !!P && P.applies(item, this.wallFollower || this.scheduleDriven || this.wallActive(), this.items.length);
+  var loop = P ? P.loopParams(id, toEnd) : '&loop=1&playlist=' + id;
   var src = 'https://www.youtube.com/embed/' + id +
     '?autoplay=1&mute=' + (muted ? 1 : 0) +
-    '&controls=0&rel=0&modestbranding=1&loop=1&playlist=' + id + '&playsinline=1&enablejsapi=1';
-  this.renderFrame(src, single ? 0 : this.durationMs(item), 'autoplay; encrypted-media', vertical);
+    '&controls=0&rel=0&modestbranding=1' + loop + '&playsinline=1&enablejsapi=1';
+  var ms = single ? 0 : (toEnd ? P.waitMs(this.durationMs(item)) : this.durationMs(item));
+  var f = this.renderFrame(src, ms, 'autoplay; encrypted-media', vertical);
+  if (!toEnd || !f) return;
+  var self = this, seq = this._playSeq, started = Date.now();
+  if (this._ytStop) { try { this._ytStop(); } catch (e) {} }
+  this._ytStop = P.listen(f, function (lengthSec) {
+    if (seq !== self._playSeq) return;
+    var safety = P.safetyMs(lengthSec, Date.now() - started);
+    if (safety !== null) self.schedule(safety);
+  }, function () {
+    if (seq !== self._playSeq || !P.endedCounts(Date.now() - started)) return;
+    if (self._ytStop) { try { self._ytStop(); } catch (e) {} self._ytStop = null; }
+    self.advance();
+  });
 };
 
 PlaylistPlayer.prototype.renderWidget = function (item, single) {
@@ -1437,6 +1461,7 @@ PlaylistPlayer.prototype.renderFrame = function (src, advanceMs, allow, vertical
   f.src = src;
   this.stage.appendChild(f);
   if (advanceMs > 0) this.schedule(advanceMs);
+  return f;
 };
 
 PlaylistPlayer.prototype.youtubeId = function (url) {
@@ -1479,6 +1504,10 @@ ZoneRenderer.prototype.invalidate = function () { this.sig = ''; };
 ZoneRenderer.prototype.cancelAll = function () {
   for (var k in this.timers) { if (this.timers.hasOwnProperty(k) && this.timers[k]) clearTimeout(this.timers[k]); }
   this.timers = {};
+  // #624: a play-to-end YouTube zone's listener must not move a zone that is gone.
+  var stops = this.ytStops || {};
+  for (var z in stops) { if (stops.hasOwnProperty(z) && stops[z]) { try { stops[z](); } catch (e) {} } }
+  this.ytStops = {};
 };
 
 ZoneRenderer.prototype.clear = function () {
@@ -1615,6 +1644,9 @@ ZoneRenderer.prototype.contentUrl = function (item) {
 
 ZoneRenderer.prototype.showItem = function (zone, list, index) {
   if (this.timers[zone.id]) { clearTimeout(this.timers[zone.id]); this.timers[zone.id] = null; }
+  // #624: whatever this zone showed before is gone, so its YouTube listener must not move it on.
+  if (!this.ytStops) this.ytStops = {};
+  if (this.ytStops[zone.id]) { try { this.ytStops[zone.id](); } catch (e) {} this.ytStops[zone.id] = null; }
 
   var self = this;
   // #74/#75: skip items whose schedule excludes them now; blank-idle the zone and
@@ -1655,10 +1687,27 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
       var yid = zrYoutubeId(a.remote_url);
       if (!yid) { if (multi) this.scheduleAdvance(zone, 2000, advance); return; }
       var yvert = /st_aspect=vertical/.test(a.remote_url || '');
+      // #624 play to end: the zone moves on when the video ends (a one-item zone loops); its duration
+      // is only the fallback until the embed reports the length (js/play-to-end.js).
+      var YP = typeof StPlayToEnd !== 'undefined' ? StPlayToEnd : null;
+      var yToEnd = multi && !!YP && YP.applies(a, false, list.length);
       var ysrc = 'https://www.youtube.com/embed/' + yid +
-        '?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&loop=1&playlist=' + yid + '&playsinline=1';
-      zone.el.appendChild(zrFrame(ysrc, 'autoplay; encrypted-media', yvert));
-      if (multi) this.scheduleAdvance(zone, dur, advance);
+        '?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1' +
+        (YP ? YP.loopParams(yid, yToEnd) : '&loop=1&playlist=' + yid) + '&playsinline=1' + (yToEnd ? '&enablejsapi=1' : '');
+      var yframe = zrFrame(ysrc, 'autoplay; encrypted-media', yvert);
+      zone.el.appendChild(yframe);
+      if (multi) this.scheduleAdvance(zone, yToEnd ? YP.waitMs(dur) : dur, advance);
+      if (yToEnd) {
+        var ystarted = Date.now();
+        this.ytStops[zone.id] = YP.listen(yframe, function (lengthSec) {
+          var safety = YP.safetyMs(lengthSec, Date.now() - ystarted);
+          if (safety !== null) self.scheduleAdvance(zone, safety, advance);
+        }, function () {
+          if (!YP.endedCounts(Date.now() - ystarted)) return;
+          if (self.timers[zone.id]) { clearTimeout(self.timers[zone.id]); self.timers[zone.id] = null; }
+          advance();
+        });
+      }
     } else if (a.widget_type || (a.widget_id && !a.content_id)) {
       zone.el.appendChild(zrFrame(this.getBase() + '/api/widgets/' + a.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '?d=') + '&rev=' + (a.widget_rev || 0)));
       if (multi) this.scheduleAdvance(zone, dur, advance);

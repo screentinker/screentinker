@@ -157,6 +157,66 @@ BUNDLE_MIME = "application/vnd.screentinker.bundle+zip"
 HOLD_MIME = "application/x-st-hold"
 
 
+# ============================== PlayToEnd ==============================
+#
+# #624 "Play to end": a YouTube item moves on when the video ends, not after its duration_sec.
+# Android PlayToEnd.kt, the same contract (server/lib/play-to-end.js):
+#  - duration_sec is NOT a cap — only the fallback while, or if, the video's length never arrives;
+#  - a sync group or wall ignores the flag (the shared clock needs fixed durations);
+#  - a one-item playlist keeps looping;
+#  - ENDED is unreliable (#215), so the reported length + slack is the safety net, and an ENDED in the
+#    first seconds is spurious.
+
+YOUTUBE_MIME = "video/youtube"
+PLAY_TO_END_LENGTH_WAIT_MS = 30_000
+PLAY_TO_END_SLACK_MS = 3_000
+PLAY_TO_END_MIN_PLAY_MS = 3_000
+
+
+def play_to_end_applies(mime_type, flag, synced, playable_count):
+    return bool(flag) and mime_type == YOUTUBE_MIME and not synced and playable_count > 1
+
+
+def play_to_end_wait_ms(slot_ms_value):
+    """Before the embed reports the length: the item's duration, never less than the wait."""
+    return max(int(slot_ms_value), PLAY_TO_END_LENGTH_WAIT_MS)
+
+
+def play_to_end_safety_ms(length_sec, elapsed_ms):
+    """Once the length is known: the rest of the video + slack, from the item's start. None when the
+    length is unusable (0 before metadata, NaN, infinite), so the wait stands."""
+    try:
+        n = float(length_sec)
+    except (TypeError, ValueError):
+        return None
+    if n != n or n in (float("inf"), float("-inf")) or n <= 0:
+        return None
+    rest = int(n * 1000) - max(int(elapsed_ms), 0)
+    return max(rest, 0) + PLAY_TO_END_SLACK_MS
+
+
+def play_to_end_ended_counts(elapsed_ms):
+    return elapsed_ms >= PLAY_TO_END_MIN_PLAY_MS
+
+
+def youtube_loop_params(video_id, play_to_end):
+    """The embed's loop parameters: none when the video must be allowed to end."""
+    return "" if play_to_end else "&loop=1&playlist=%s" % video_id
+
+
+def youtube_bridge_script(token):
+    """Android PlayToEnd.bridgeScript, byte-identical: the IFrame API on the existing iframe (id
+    st-yt) reporting length and ENDED to window.STYoutube. Empty for a looping page."""
+    if token is None:
+        return ""
+    return ("<script src=\"https://www.youtube.com/iframe_api\"></script><script>"
+            "function onYouTubeIframeAPIReady(){try{new YT.Player('st-yt',{events:{"
+            "onReady:function(e){try{var d=e.target.getDuration();if(window.STYoutube)STYoutube.duration(%(t)s,d||0);}catch(x){}},"
+            "onStateChange:function(e){try{if(e.data===1){var d=e.target.getDuration();if(d>0&&window.STYoutube)STYoutube.duration(%(t)s,d);}"
+            "if(e.data===0&&window.STYoutube)STYoutube.ended(%(t)s);}catch(x){}}"
+            "}});}catch(x){}}</script>") % {"t": token}
+
+
 def ends_on_timer(mime_type: str, is_widget: bool) -> bool:
     """Which items end on a TIMER versus a completion callback.
 

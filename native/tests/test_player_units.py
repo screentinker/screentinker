@@ -73,6 +73,19 @@ def test_youtube_embed_matches_android_wrapper():
     assert e.youtube_html("https://example.com/", False) is None
 
 
+def test_youtube_play_to_end_page_reports_length_and_end_instead_of_looping():
+    # #624: the looping page above is unchanged; a play-to-end page drops the loop and reports back
+    # through the console, which Slot.qml turns into "yt_length" / "ended" slot events.
+    e = _engine_helpers()
+    html = e.youtube_html("https://www.youtube.com/watch?v=dQw4w9WgXcQ", muted=True, play_to_end=True)
+    assert "loop=1" not in html and "playlist=" not in html
+    assert '<iframe id="st-yt" src="https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1&mute=1' in html
+    assert "&origin=https%3A%2F%2Fscreentinker.com" in html
+    assert "https://www.youtube.com/iframe_api" in html
+    assert "console.log('ST_YT duration '+d)" in html and "console.log('ST_YT ended')" in html
+    assert html.index("window.STYoutube=") < html.index("iframe_api"), "the shim must exist before the API calls it"
+
+
 # --- transitions -----------------------------------------------------------------------------
 
 def test_every_library_shader_wraps_with_its_params_in_order():
