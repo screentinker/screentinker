@@ -1630,6 +1630,8 @@ function isWallFollower() {
 let ytApiReady = false;
 let ytApiCallbacks = [];
 let activeYtPlayer = null;
+let playbackResumeTimer = null;
+let suspendedPlayback = null;
 let activeMuteItem = null;
 let remoteMuteOverride = null;
 let baseAudioSuppressed = false;
@@ -4880,6 +4882,7 @@ function createYoutubeEmbed(src, item, container) {
     return null;
   }
   const myGeneration = ++ytGeneration;
+  cancelPlaybackResume();
   if (ytSafetyNet) {
     clearTimeout(ytSafetyNet);
     ytSafetyNet = null;
@@ -4999,6 +5002,10 @@ function createYoutubeEmbed(src, item, container) {
             setTimeout(nextItem, 2e3);
           }
         },
+        onAutoplayBlocked: () => {
+          if (myGeneration !== ytGeneration) return;
+          console.warn("YouTube autoplay blocked:", item.filename);
+        },
         onStateChange: (event) => {
           if (myGeneration !== ytGeneration) return;
           if (event.data === 1) playStartTime = Date.now();
@@ -5032,6 +5039,8 @@ function teardownCurrentMedia(keep) {
     clearTimeout(ytSafetyNet);
     ytSafetyNet = null;
   }
+  cancelPlaybackResume();
+  suspendedPlayback = null;
   if (pendingWidgetSwap && pendingWidgetSwap.iframe !== keep) {
     clearTimeout(pendingWidgetSwap.timer);
     pendingWidgetSwap = null;
@@ -7119,16 +7128,84 @@ function requestWakeLock() {
   });
 }
 requestWakeLock();
+function cancelPlaybackResume() {
+  if (playbackResumeTimer !== null) {
+    clearTimeout(playbackResumeTimer);
+    playbackResumeTimer = null;
+  }
+}
+function rememberPlayback() {
+  if (suspendedPlayback) return;
+  const videos = Array.from(document.querySelectorAll("video")).filter((video) => {
+    if (video.paused || video.ended || video.error) return false;
+    for (let el = video; el; el = el.parentElement) {
+      const style = getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+    }
+    return true;
+  });
+  suspendedPlayback = { seq: renderSeq, videos };
+}
+function resumePlayback() {
+  cancelPlaybackResume();
+  const videos = suspendedPlayback && suspendedPlayback.seq === renderSeq ? suspendedPlayback.videos : [];
+  suspendedPlayback = null;
+  const player = activeYtPlayer;
+  const generation = ytGeneration;
+  const seq = renderSeq;
+  let attempts = 0;
+  function attempt() {
+    playbackResumeTimer = null;
+    if (document.visibilityState !== "visible" || !isPlaying || screenIsOff || seq !== renderSeq || kiosk && kiosk.isShowing()) return;
+    let pending = false;
+    for (const video of videos) {
+      if (!document.contains(video) || video.ended || video.error || !video.paused || talkDucking && !video.__stOverlay) continue;
+      pending = true;
+      try {
+        const result = video.play();
+        if (result && result.catch) result.catch(() => {
+        });
+      } catch (e) {
+      }
+    }
+    if (player && player === activeYtPlayer && generation === ytGeneration && !talkDucking) {
+      try {
+        if (document.contains(player.getIframe())) {
+          const state = player.getPlayerState();
+          if (state !== 1 && state !== 0) {
+            pending = true;
+            if (state === 2 || state === -1 || state === 5) player.playVideo();
+          }
+        }
+      } catch (e) {
+        pending = true;
+      }
+    }
+    if (pending && ++attempts < 3) playbackResumeTimer = setTimeout(attempt, attempts === 1 ? 250 : 1e3);
+  }
+  attempt();
+}
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     requestWakeLock();
     verifyLivenessSoon();
-  } else if (glTxAbort) {
-    glTxAbort();
+    resumePlayback();
+  } else {
+    rememberPlayback();
+    cancelPlaybackResume();
+    if (glTxAbort) {
+      glTxAbort();
+    }
   }
 });
+window.addEventListener("pagehide", (ev) => {
+  if (ev && ev.persisted) rememberPlayback();
+});
 window.addEventListener("pageshow", (ev) => {
-  if (ev && ev.persisted) verifyLivenessSoon();
+  if (ev && ev.persisted) {
+    verifyLivenessSoon();
+    resumePlayback();
+  }
 });
 window.addEventListener("online", verifyLivenessSoon);
 document.addEventListener("visibilitychange", () => {

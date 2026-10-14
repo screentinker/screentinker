@@ -1769,6 +1769,8 @@
     let ytApiReady = false;
     let ytApiCallbacks = [];
     let activeYtPlayer = null;
+    let playbackResumeTimer = null;
+    let suspendedPlayback = null;
     // The item currently mounted, so a live mute toggle can re-resolve without waiting for the
     // next advance, and #129's per-item flag survives a remote override being cleared.
     let activeMuteItem = null;
@@ -6053,6 +6055,7 @@
 
       // Invalidate any previous player's callbacks
       const myGeneration = ++ytGeneration;
+      cancelPlaybackResume();
 
       // Destroy old player without triggering side effects (callbacks check generation)
       if (ytSafetyNet) { clearTimeout(ytSafetyNet); ytSafetyNet = null; }
@@ -6182,6 +6185,10 @@
                 setTimeout(nextItem, 2000);
               }
             },
+            onAutoplayBlocked: () => {
+              if (myGeneration !== ytGeneration) return;
+              console.warn('YouTube autoplay blocked:', item.filename);
+            },
             onStateChange: (event) => {
               if (myGeneration !== ytGeneration) return;
               // Track when video actually starts playing
@@ -6231,6 +6238,8 @@
       // #215: a stale YouTube safety-net timer must never fire into a torn-down/rotated
       // playlist and force a spurious advance.
       if (ytSafetyNet) { clearTimeout(ytSafetyNet); ytSafetyNet = null; }
+      cancelPlaybackResume();
+      suspendedPlayback = null;
       // Cancel any in-flight buffered widget swap so its deferred reveal can't fire after
       // we've torn down (which would drop the incoming content). reveal() nulls this before
       // calling teardownCurrentMedia(iframe), so preserving `keep` is safe.
@@ -8627,6 +8636,65 @@
       } catch {}
     }
     requestWakeLock();
+    function cancelPlaybackResume() {
+      if (playbackResumeTimer !== null) { clearTimeout(playbackResumeTimer); playbackResumeTimer = null; }
+    }
+
+    function rememberPlayback() {
+      // A paused video may be a user pause, a frozen hold, or an outgoing buffer.
+      // Retain only visible videos that were running before suspension.
+      if (suspendedPlayback) return;
+      const videos = Array.from(document.querySelectorAll('video')).filter(video => {
+        if (video.paused || video.ended || video.error) return false;
+        for (let el = video; el; el = el.parentElement) {
+          const style = getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+        }
+        return true;
+      });
+      suspendedPlayback = { seq: renderSeq, videos };
+    }
+
+    function resumePlayback() {
+      cancelPlaybackResume();
+      const videos = suspendedPlayback && suspendedPlayback.seq === renderSeq ? suspendedPlayback.videos : [];
+      suspendedPlayback = null;
+      const player = activeYtPlayer;
+      const generation = ytGeneration;
+      const seq = renderSeq;
+      let attempts = 0;
+      function attempt() {
+        playbackResumeTimer = null;
+        if (document.visibilityState !== 'visible' || !isPlaying || screenIsOff
+            || seq !== renderSeq || (kiosk && kiosk.isShowing())) return;
+        let pending = false;
+        for (const video of videos) {
+          if (!document.contains(video) || video.ended || video.error || !video.paused
+              || (talkDucking && !video.__stOverlay)) continue;
+          pending = true;
+          try {
+            const result = video.play();
+            if (result && result.catch) result.catch(() => {});
+          } catch (e) { /* retry after the WebView finishes resuming */ }
+        }
+        // YouTube lives in a cross-origin iframe; reuse its existing IFrame API handle.
+        if (player && player === activeYtPlayer && generation === ytGeneration && !talkDucking) {
+          try {
+            if (document.contains(player.getIframe())) {
+              const state = player.getPlayerState();
+              if (state !== 1 && state !== 0) {
+                pending = true;
+                if (state === 2 || state === -1 || state === 5) player.playVideo();
+              }
+            }
+          } catch (e) { pending = true; /* iframe may not be ready yet */ }
+        }
+        // WebView timers can resume before its media surfaces are ready.
+        if (pending && ++attempts < 3) playbackResumeTimer = setTimeout(attempt, attempts === 1 ? 250 : 1000);
+      }
+      attempt();
+    }
+
     // v4 browser half-open triggers: tab foreground / bfcache resume / network change all drive the
     // SAME liveness check + #148 teardown-first reconnect (checkLiveness -> connect() only if the
     // socket is armed+connected+silent-past-window). checkLiveness no-ops on a healthy socket, so a
@@ -8635,8 +8703,12 @@
       // On becoming visible after a (possibly throttled/frozen) background stint, do the fresh
       // liveness check — reset the grace and reconnect ONLY if genuinely dead; never spuriously
       // tear down a live socket on the hidden->visible gap.
-      if (document.visibilityState === 'visible') { requestWakeLock(); verifyLivenessSoon(); }
-      else if (glTxAbort) { glTxAbort(); } // tab hidden mid-wipe: hard-cut NOW (before rAF freezes) so nothing sticks
+      if (document.visibilityState === 'visible') { requestWakeLock(); verifyLivenessSoon(); resumePlayback(); }
+      else {
+        rememberPlayback();
+        cancelPlaybackResume();
+        if (glTxAbort) { glTxAbort(); } // tab hidden mid-wipe: hard-cut NOW (before rAF freezes) so nothing sticks
+      }
     });
     // pairing-race fix: pageshow fires on EVERY load (persisted=false), not only bfcache restores.
     // Unfiltered it ran verifyLivenessSoon() on the initial cold load, which opened the socket EARLY
@@ -8645,7 +8717,10 @@
     // connect->register->disconnect->reconnect flap that collided with the server's offline grace and
     // produced the UNIQUE pairing_code collision). Only act on a REAL bfcache restore (persisted=true),
     // mirroring the pagehide guard above; the cold-boot connect is owned solely by the boot path.
-    window.addEventListener('pageshow', (ev) => { if (ev && ev.persisted) verifyLivenessSoon(); }); // sleep/resume via bfcache restore
+    window.addEventListener('pagehide', (ev) => { if (ev && ev.persisted) rememberPlayback(); });
+    window.addEventListener('pageshow', (ev) => {
+      if (ev && ev.persisted) { verifyLivenessSoon(); resumePlayback(); }
+    }); // sleep/resume via bfcache restore
     window.addEventListener('online', verifyLivenessSoon);     // network switch (wifi<->cellular)
 
     // feat/offline-cause-log: display sleep / backgrounding proxy — screen off/on on a TV.
