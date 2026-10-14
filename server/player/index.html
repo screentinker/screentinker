@@ -7585,7 +7585,7 @@
       // not the HOLD_MIME helpers: showZoneItem is extracted + eval'd in isolation by a test.
       if (a.mime_type === 'application/x-st-hold') {
         if (a.remote_url === 'hold://freeze') {
-          div.querySelectorAll('video').forEach(v => { try { v.onended = null; v.onerror = null; v.pause(); } catch (e) {} });
+          div.querySelectorAll('video').forEach(v => { try { v.__stHoldFrozen = true; v.onended = null; v.onerror = null; v.pause(); } catch (e) {} });
         } else {
           div.querySelectorAll('video').forEach(v => { try { destroyHls(v); v.onended = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} });
           div.innerHTML = '';
@@ -7917,6 +7917,7 @@
         video.src = src;
         video.loop = true;    // a clip shorter than its slot holds until the clock moves the zone on
         if (opts && opts.frozenAtEnd) {
+          video.__stHoldFrozen = true;
           video.autoplay = false;
           video.addEventListener('loadedmetadata', () => {
             try { video.currentTime = Math.max(0, (video.duration || 0) - 0.05); video.pause(); } catch (e) {}
@@ -7942,7 +7943,7 @@
       if (isHoldItem(a)) {
         if (holdMode(a) === 'freeze') {
           if (zs.div.firstChild) {
-            zs.div.querySelectorAll('video').forEach((v) => { try { v.pause(); } catch (e) {} });
+            zs.div.querySelectorAll('video').forEach((v) => { try { v.__stHoldFrozen = true; v.pause(); } catch (e) {} });
             zs.video = null;
             return;
           }
@@ -8645,7 +8646,7 @@
       // Retain only visible videos that were running before suspension.
       if (suspendedPlayback) return;
       const videos = Array.from(document.querySelectorAll('video')).filter(video => {
-        if (video.paused || video.ended || video.error) return false;
+        if (video.paused || video.ended || video.error || video.__stHoldFrozen) return false;
         for (let el = video; el; el = el.parentElement) {
           const style = getComputedStyle(el);
           if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
@@ -8656,9 +8657,9 @@
     }
 
     function resumePlayback() {
-      cancelPlaybackResume();
+      // pageshow and visibilitychange can describe the same foreground transition.
+      if (document.visibilityState !== 'visible' || playbackResumeTimer !== null) return;
       const videos = suspendedPlayback && suspendedPlayback.seq === renderSeq ? suspendedPlayback.videos : [];
-      suspendedPlayback = null;
       const player = activeYtPlayer;
       const generation = ytGeneration;
       const seq = renderSeq;
@@ -8666,10 +8667,13 @@
       function attempt() {
         playbackResumeTimer = null;
         if (document.visibilityState !== 'visible' || !isPlaying || screenIsOff
-            || seq !== renderSeq || (kiosk && kiosk.isShowing())) return;
+            || seq !== renderSeq || (kiosk && kiosk.isShowing())) {
+          if (document.visibilityState === 'visible') suspendedPlayback = null;
+          return;
+        }
         let pending = false;
         for (const video of videos) {
-          if (!document.contains(video) || video.ended || video.error || !video.paused
+          if (!document.contains(video) || video.ended || video.error || video.__stHoldFrozen || !video.paused
               || (talkDucking && !video.__stOverlay)) continue;
           pending = true;
           try {
@@ -8691,6 +8695,7 @@
         }
         // WebView timers can resume before its media surfaces are ready.
         if (pending && ++attempts < 3) playbackResumeTimer = setTimeout(attempt, attempts === 1 ? 250 : 1000);
+        else suspendedPlayback = null;
       }
       attempt();
     }

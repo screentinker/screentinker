@@ -6149,6 +6149,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     if (a.remote_url === "hold://freeze") {
       div.querySelectorAll("video").forEach((v) => {
         try {
+          v.__stHoldFrozen = true;
           v.onended = null;
           v.onerror = null;
           v.pause();
@@ -6492,6 +6493,7 @@ function wallZoneElement(zs, a, opts) {
     video.src = src;
     video.loop = true;
     if (opts && opts.frozenAtEnd) {
+      video.__stHoldFrozen = true;
       video.autoplay = false;
       video.addEventListener("loadedmetadata", () => {
         try {
@@ -6527,6 +6529,7 @@ function mountWallZoneItem(zs, a, t, prevItem) {
       if (zs.div.firstChild) {
         zs.div.querySelectorAll("video").forEach((v) => {
           try {
+            v.__stHoldFrozen = true;
             v.pause();
           } catch (e) {
           }
@@ -7137,7 +7140,7 @@ function cancelPlaybackResume() {
 function rememberPlayback() {
   if (suspendedPlayback) return;
   const videos = Array.from(document.querySelectorAll("video")).filter((video) => {
-    if (video.paused || video.ended || video.error) return false;
+    if (video.paused || video.ended || video.error || video.__stHoldFrozen) return false;
     for (let el = video; el; el = el.parentElement) {
       const style = getComputedStyle(el);
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
@@ -7147,19 +7150,21 @@ function rememberPlayback() {
   suspendedPlayback = { seq: renderSeq, videos };
 }
 function resumePlayback() {
-  cancelPlaybackResume();
+  if (document.visibilityState !== "visible" || playbackResumeTimer !== null) return;
   const videos = suspendedPlayback && suspendedPlayback.seq === renderSeq ? suspendedPlayback.videos : [];
-  suspendedPlayback = null;
   const player = activeYtPlayer;
   const generation = ytGeneration;
   const seq = renderSeq;
   let attempts = 0;
   function attempt() {
     playbackResumeTimer = null;
-    if (document.visibilityState !== "visible" || !isPlaying || screenIsOff || seq !== renderSeq || kiosk && kiosk.isShowing()) return;
+    if (document.visibilityState !== "visible" || !isPlaying || screenIsOff || seq !== renderSeq || kiosk && kiosk.isShowing()) {
+      if (document.visibilityState === "visible") suspendedPlayback = null;
+      return;
+    }
     let pending = false;
     for (const video of videos) {
-      if (!document.contains(video) || video.ended || video.error || !video.paused || talkDucking && !video.__stOverlay) continue;
+      if (!document.contains(video) || video.ended || video.error || video.__stHoldFrozen || !video.paused || talkDucking && !video.__stOverlay) continue;
       pending = true;
       try {
         const result = video.play();
@@ -7182,6 +7187,7 @@ function resumePlayback() {
       }
     }
     if (pending && ++attempts < 3) playbackResumeTimer = setTimeout(attempt, attempts === 1 ? 250 : 1e3);
+    else suspendedPlayback = null;
   }
   attempt();
 }

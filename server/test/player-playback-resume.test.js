@@ -26,6 +26,7 @@ function harness(overrides = {}) {
     activeYtPlayer: player, ytGeneration: 1, playbackResumeTimer: null, suspendedPlayback: null, renderSeq: 1,
     talkDucking: false,
     getComputedStyle: el => el.style || {},
+    zoneTimers: {}, scheduleAllows: () => true, HOLD_MIME: 'application/x-st-hold',
     isPlaying: true, screenIsOff: false, kiosk: { isShowing: () => false },
     setTimeout: fn => { timers.set(++timerId, fn); return timerId; },
     clearTimeout: id => timers.delete(id),
@@ -33,6 +34,10 @@ function harness(overrides = {}) {
     console,
     ...overrides,
   };
+  const zoneStart = html.indexOf('    // #74/#75 zone-level schedule helpers.');
+  const zoneEnd = html.indexOf('    // ==================== Screenshots ====================', zoneStart);
+  assert.ok(zoneStart > 0 && zoneEnd > zoneStart);
+  vm.runInNewContext(html.slice(zoneStart, zoneEnd), ctx);
   // Run the production recovery functions and lifecycle handlers, replacing only browser/API boundaries.
   const helperStart = html.indexOf('    function cancelPlaybackResume(');
   if (helperStart >= 0) {
@@ -71,6 +76,7 @@ test('Home then reopen resumes the retained paused YouTube embed', () => {
 
 function video(overrides = {}) {
   return { paused: false, ended: false, error: null, style: {}, currentTime: 12, plays: 0,
+    pause() { this.paused = true; },
     play() { this.plays++; this.paused = false; return Promise.resolve(); }, ...overrides };
 }
 
@@ -114,14 +120,48 @@ test('image foregrounding preserves the existing image and its advance timer', (
   h.tick(); assert.equal(advances, 1);
 });
 
-test('a running clip changed to a frozen hold while hidden is not resumed', () => {
-  const h = harness({ activeYtPlayer: null });
-  const v = video(); h.videos.push(v);
-  h.visibility('hidden');
-  h.ctx.renderSeq++; v.paused = true;
-  h.visibility('visible'); h.tick();
-  assert.equal(v.plays, 0);
-});
+for (const kind of ['zone', 'wall zone']) {
+  for (const phase of ['hidden', 'retry pending']) {
+    test(`${kind} entering freeze while ${phase} invalidates its remembered playback`, () => {
+      const h = harness({ activeYtPlayer: null });
+      const v = video({ play() { this.plays++; return Promise.reject(new Error('not ready')); } });
+      h.videos.push(v); h.visibility('hidden');
+      if (phase === 'retry pending') { v.paused = true; h.visibility('visible'); }
+      const playsBeforeFreeze = v.plays;
+      const hold = { mime_type: 'application/x-st-hold', remote_url: 'hold://freeze' };
+      const div = { firstChild: v, querySelectorAll: () => [v] };
+      if (kind === 'zone') h.ctx.showZoneItem({ id: 'z1' }, div, [hold], 0);
+      else h.ctx.mountWallZoneItem({ div, video: v }, hold, {}, null);
+      assert.equal(h.ctx.renderSeq, 1, 'zone transitions retain the global render sequence');
+      if (phase === 'hidden') h.visibility('visible');
+      h.tick();
+      assert.equal(v.plays, playsBeforeFreeze);
+      assert.equal(v.paused, true);
+    });
+  }
+}
+
+for (const events of [['pageshow', 'visibility'], ['visibility', 'pageshow']]) {
+  test(`duplicate foreground events (${events.join(' then ')}) preserve a native video retry`, () => {
+    const h = harness({ activeYtPlayer: null });
+    const v = video({ play() {
+      this.plays++;
+      if (this.plays === 1) return Promise.reject(new Error('not ready'));
+      this.paused = false;
+      return Promise.resolve();
+    } });
+    h.videos.push(v); h.pagehide(true); v.paused = true;
+    for (const event of events) {
+      if (event === 'pageshow') h.pageshow(true);
+      else h.visibility('visible');
+    }
+    assert.equal(v.plays, 1, 'duplicate events must not reset or repeat the first attempt');
+    assert.equal(h.pending, 1, 'the delayed retry is retained');
+    h.tick(); assert.equal(v.plays, 2);
+    assert.equal(v.paused, false);
+    h.tick(); assert.equal(h.pending, 0);
+  });
+}
 
 test('a replacement video is not restarted by a retry for its predecessor', () => {
   const h = harness({ activeYtPlayer: null });
