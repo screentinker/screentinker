@@ -7,7 +7,8 @@
 #   3. assemble a COMPLETE source tarball that bundles BOTH binaries
 #      (extract it and ScreenTinker.apk sits at the root, ready for /download/apk),
 #   4. build the Roku sideload zip (roku/, packaged by bsc),
-#   5. upload the APK + the complete tarball + the Roku zip to the release (replacing the
+#   5. build the native Raspberry Pi player .deb (#634) and bundle it in the tarball at native/dist/,
+#   6. upload the APK + the complete tarball + the Roku zip + the Pi .deb to the release (replacing the
 #      source-only tarball CI uploaded).
 #
 #   KEYSTORE_PASSWORD=... KEY_PASSWORD=... scripts/finalize-release.sh
@@ -36,7 +37,14 @@ printf '%s\n' "$VERSION" > ScreenTinker.apk.version
 echo "==> Pulling the CI-built unsigned .wgt from release $TAG"
 gh release download "$TAG" -p ScreenTinker.wgt --clobber
 
-echo "==> Assembling complete tarball (source + apk + wgt)"
+# #634: the native Raspberry Pi player, which a server offers at /download/pi. It is not in git, so
+# without it here a server installed from this tarball answered 404 there.
+echo "==> Building the Raspberry Pi player package $VERSION"
+rm -f native/dist/screentinker-pi_*_all.deb
+PI_DEB="native/dist/screentinker-pi_${VERSION}_all.deb"
+native/packaging/linux/build-deb.sh "$VERSION" >/dev/null
+[ -s "$PI_DEB" ] || { echo "ERROR: $PI_DEB was not built" >&2; exit 1; }
+echo "==> Assembling complete tarball (source + apk + wgt + Pi package)"
 OUT="screentinker-$VERSION.tar.gz"
 # NOTE: `tar` archives DOTFILES too, so anything secret sitting under server/ ships
 # unless it is excluded by name. server/.env (Graph credentials) is gitignored, which
@@ -60,7 +68,7 @@ tar cf "$TMPTAR" \
   --exclude='.claude' --exclude='.cc-writes' \
   --exclude='brightsign/*.zip' --exclude='brightsign/server-payload.json' \
   server frontend scripts VERSION README.md LICENSE \
-  ScreenTinker.apk ScreenTinker.apk.version ScreenTinker.wgt
+  ScreenTinker.apk ScreenTinker.apk.version ScreenTinker.wgt "$PI_DEB"
 tar rf "$TMPTAR" .env.example      # the one .env* that is meant to ship
 gzip -f "$TMPTAR"                  # -> $OUT
 
@@ -142,8 +150,8 @@ if [ "$ROKU_TITLE" != "ScreenTinker" ]; then
 fi
 echo "==> Roku zip OK: $(du -h "$ROKU_ZIP" | cut -f1), app $ROKU_VER"
 
-echo "==> Uploading APK + complete tarball + Vega package + Roku zip to $TAG"
-gh release upload "$TAG" "$OUT" ScreenTinker.apk ScreenTinker.apk.version "$VPKG" "$ROKU_ZIP" --clobber
+echo "==> Uploading APK + complete tarball + Vega package + Roku zip + Pi package to $TAG"
+gh release upload "$TAG" "$OUT" ScreenTinker.apk ScreenTinker.apk.version "$VPKG" "$ROKU_ZIP" "$PI_DEB" --clobber
 
 echo "==> Done: $TAG now carries the standalone APK, the Vega .vpkg, the Roku zip and a tarball bundling apk + wgt."
 

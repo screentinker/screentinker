@@ -19,6 +19,19 @@ COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev
 
 # --- runtime ---
+# --- pi-deb: the native Raspberry Pi player this server offers at /download/pi (#634). It is not in
+# git (native/dist/ is ignored), so an image without this stage answered 404 there. Architecture
+# "all" (Python + QML), so one build serves the amd64 and arm64 images alike.
+FROM node:22-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS pi-deb
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends rsync \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY VERSION /build/VERSION
+COPY shared/Transitions/ /build/shared/Transitions/
+COPY native/ /build/native/
+RUN rm -rf native/dist && native/packaging/linux/build-deb.sh
+
 FROM node:22-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
 # ffmpeg (ships ffprobe) powers video thumbnails + duration extraction at upload.
 # Without it videos still upload and play, but arrive with no thumbnail or duration.
@@ -68,6 +81,8 @@ COPY brightsign/ /app/brightsign/
 # Bundled plugins (countdown sample, etc.). Loaded only when PLUGINS_ENABLED=true;
 # operator-installed copies live on the /data volume at $DATA_DIR/plugins.
 COPY plugins/ /app/plugins/
+# #634: the native Raspberry Pi player for /download/pi (lib/deb-cache.js reads /app/native/dist).
+COPY --from=pi-deb /build/native/dist/ /app/native/dist/
 VOLUME ["/data"]
 EXPOSE 3001
 CMD ["node", "server.js"]

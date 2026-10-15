@@ -247,6 +247,12 @@ security notes: `docs/v3-review.md`. Upgrade steps: `docs/upgrading-to-3.0.md`.
 - **Web player: a display link (`/player?k=…`) wins over an identity left in the browser.** A casting
   device or kiosk that had been paired before (or whose server was rebuilt) showed a pairing code as a
   new display; it now becomes the link's display, and an unrecognised link says so on screen (#630).
+- **Self-hosted servers serve the native Raspberry Pi player** (#634). `/download/pi` answered 404 on
+  every self-hosted install, so `raspberry-pi-setup.sh --native` could not install it: the `.deb` is
+  not in git and nothing built it. The Docker image, `scripts/upgrade.sh`, `scripts/debian-13-setup.sh`
+  and the release tarball now build or carry it, and the release has it attached. When a server still
+  has none, the setup script says so and points at the browser player, instead of asking whether the
+  server is 2.3 or later.
 - **ScreenTinker Manager: password sign-in threw in the app** (a 3.0 pre-release regression).
 - **Simple view:** workspace switching, read-only handling for view-only members, and the
   "No TV handy?" card on phones.

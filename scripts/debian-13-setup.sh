@@ -275,6 +275,12 @@ if [ "$NEED_SERVER" = true ]; then
     # From the lockfile, exactly: the versions CI tested, integrity-checked (`npm install` re-resolves).
     npm ci --omit=dev --no-audit --no-fund >> "$LOG_FILE" 2>&1
 
+    # #634: the native Raspberry Pi player this server offers at /download/pi. Not in git.
+    log "Building the Raspberry Pi player package..."
+    command -v rsync >/dev/null || apt-get install -y -qq rsync >> "$LOG_FILE" 2>&1 || true
+    "$SCREENTINKER_DIR/native/packaging/linux/build-deb.sh" >> "$LOG_FILE" 2>&1 \
+        || warn "Could not build the Raspberry Pi player package; /download/pi will not offer it."
+
     mkdir -p "$SCREENTINKER_DIR/server/db"
     mkdir -p "$SCREENTINKER_DIR/server/uploads"
     chown -R "$RUNTIME_USER":"$RUNTIME_USER" "$SCREENTINKER_DIR"

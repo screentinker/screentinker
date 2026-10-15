@@ -347,6 +347,20 @@ if [ "$NATIVE_DRIVER" = 1 ]; then
   echo "==> Database driver loads"
 fi
 
+# #634: build the native Raspberry Pi player for the release just checked out, so /download/pi
+# serves it. The .deb is not in git (native/dist/ is ignored), so a git install never had one and
+# `raspberry-pi-setup.sh --native` got a 404. Best effort: the server runs fine without it.
+STEP="building the Raspberry Pi player package"
+if command -v dpkg-deb >/dev/null 2>&1 && command -v rsync >/dev/null 2>&1; then
+  if PI_DEB="$(native/packaging/linux/build-deb.sh 2>&1 | tail -1)" && [ -s "$PI_DEB" ]; then
+    echo "==> Raspberry Pi player package: ${PI_DEB#"$PWD"/}"
+  else
+    echo "WARNING: could not build the Raspberry Pi player package; /download/pi will not offer it." >&2
+  fi
+else
+  echo "NOTE: dpkg-deb or rsync is missing, so the Raspberry Pi player package was not built (/download/pi)." >&2
+fi
+
 # ⚠️ NOT EVERY INSTALL IS A SYSTEMD UNIT CALLED screentinker. The README's quick start is
 # `npm start`, and people put that under pm2; a hard-coded `systemctl restart` then failed at the
 # very end, leaving the new code on disk and the old process serving it. Find how this server is

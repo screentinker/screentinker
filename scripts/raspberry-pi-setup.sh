@@ -245,8 +245,13 @@ if [ "$NATIVE" = true ]; then
     fi
     command -v curl >/dev/null || { apt-get update -qq; apt-get install -y -qq curl; }
     DEB=$(mktemp --suffix=.deb)
-    curl -fSL --retry 3 -o "$DEB" "$SERVER_URL/download/pi" \
-        || err "Could not download the native player from $SERVER_URL/download/pi (is the server 2.3 or later?)"
+    PI_HTTP=$(curl -sSL --retry 3 -o "$DEB" -w '%{http_code}' "$SERVER_URL/download/pi") || true
+    PI_HTTP=${PI_HTTP:-000}
+    if [ "$PI_HTTP" = 404 ]; then
+        err "$SERVER_URL does not host the native Raspberry Pi player (/download/pi answered 404). Upgrading the server to 3.0 or later builds it (scripts/upgrade.sh, or pull the new Docker image). Meanwhile, run this script without --native for the browser player."
+    elif [ "$PI_HTTP" != 200 ]; then
+        err "Could not download the native player from $SERVER_URL/download/pi (HTTP $PI_HTTP). Check the address and that the server is reachable."
+    fi
     chmod 0644 "$DEB"
     apt-get update -qq
     DEBIAN_FRONTEND=noninteractive apt-get install -y "$DEB" || err "Package install failed (see $LOG_FILE)"
