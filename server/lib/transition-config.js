@@ -53,7 +53,13 @@ function resolveTransitionConfig(configJsonOrObj, extra) {
 // item each applies to (the one you transition INTO). scope:'all' sets a playlist-wide default;
 // scope:'next' overrides the immediately-following visible item. A trailing scope:'next' with no
 // following item wraps onto the first item (playlists loop, so last->first is a real advance).
-function normalizeTransitions(items, extra) {
+//
+// ⚠️ PER ZONE. A transition widget is a playlist item placed in a zone (zone_id; null = full screen),
+// and each zone advances on its own. The items of every zone arrive here in one list, so resolving
+// them in one pass made a scope:'all' transition in zone A the default for zone B too, and a
+// trailing scope:'next' in zone A land on zone B's first item. Each zone is now resolved alone;
+// the visible items keep their original order.
+function normalizeZone(items, extra) {
   const visible = [];
   let pendingNext = null, playlistDefault = null;
   for (const it of items) {
@@ -72,7 +78,18 @@ function normalizeTransitions(items, extra) {
     delete it.__override;
     if (t) it.transition = { effects: t.effects, durationMs: t.durationMs };
   }
-  return visible;
+}
+
+function normalizeTransitions(items, extra) {
+  const list = Array.isArray(items) ? items : [];
+  const byZone = new Map();
+  for (const it of list) {
+    const key = (it && it.zone_id) || '';
+    if (!byZone.has(key)) byZone.set(key, []);
+    byZone.get(key).push(it);
+  }
+  for (const zoneItems of byZone.values()) normalizeZone(zoneItems, extra);
+  return list.filter((it) => !(it && it.widget_type === 'transition'));
 }
 
 module.exports = { resolveTransitionConfig, normalizeTransitions, MANIFEST };

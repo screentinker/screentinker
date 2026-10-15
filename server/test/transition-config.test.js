@@ -106,3 +106,24 @@ test('Crossfade heads the manifest, so it is the default effect a new transition
   const lower = ids.map((s) => s.toLowerCase());
   assert.deepEqual(lower, lower.slice().sort(), 'manifest order is case-insensitive alphabetical');
 });
+
+// ── Per zone: a transition widget is an item placed in a zone, and each zone advances on its own ──
+const ZIMG = (id, zone) => ({ content_id: id, mime_type: 'image/png', zone_id: zone });
+const ZT = (cfg, zone) => ({ ...T(cfg), zone_id: zone });
+const marks = (out) => out.map((i) => `${i.content_id}${i.transition ? '+T' : ''}`);
+
+test('per zone: a whole-playlist transition in zone A does not become zone B\'s default', () => {
+  const out = normalizeTransitions([ZIMG('a1', 'A'), ZT({ shader: 'Crossfade' }, 'A'), ZIMG('a2', 'A'), ZIMG('b1', 'B'), ZIMG('b2', 'B')]);
+  assert.deepStrictEqual(marks(out), ['a1+T', 'a2+T', 'b1', 'b2']);
+});
+
+test('per zone: a trailing "next" in zone A wraps to A\'s first item, never zone B\'s', () => {
+  const out = normalizeTransitions([ZIMG('a1', 'A'), ZIMG('a2', 'A'), ZT({ shader: 'Crossfade', scope: 'next' }, 'A'), ZIMG('b1', 'B'), ZIMG('b2', 'B')]);
+  assert.deepStrictEqual(marks(out), ['a1+T', 'a2', 'b1', 'b2']);
+});
+
+test('per zone: each zone keeps its own transition, and items keep their original order', () => {
+  const out = normalizeTransitions([ZIMG('b1', 'B'), ZT({ shader: 'Crossfade' }, 'B'), ZIMG('a1', 'A'), ZIMG('b2', 'B'), ZIMG('a2', 'A')]);
+  assert.deepStrictEqual(out.map((i) => i.content_id), ['b1', 'a1', 'b2', 'a2'], 'original order kept');
+  assert.deepStrictEqual(marks(out), ['b1+T', 'a1', 'b2+T', 'a2'], 'only zone B transitions');
+});
