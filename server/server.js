@@ -3212,8 +3212,12 @@ app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (
   // Notify the device via WebSocket — or, scale-out C2, through the replica it is attached to.
   const pairedMsg = { device_id: device.id, name: pairedName, settings_pin: settingsPin };
   const pairedRoom = deviceNs.adapter.rooms.get(device.id);
-  if (pairedRoom && pairedRoom.size > 0) deviceNs.to(device.id).emit('device:paired', pairedMsg);
-  else if (device.attached_node_id) { try { require('./lib/mesh/command-relay').relayToAttached(db, device.id, 'device:paired', pairedMsg); } catch (e) { /* the screen learns on its next register */ } }
+  if (pairedRoom && pairedRoom.size > 0) {
+    deviceNs.to(device.id).emit('device:paired', pairedMsg);
+    // 3.0.1: the card's preview is the pairing code until somebody asks for a screenshot. Ask once
+    // the screen has drawn its content (lib/preview-refresh.js; bounded, never fatal).
+    try { require('./lib/preview-refresh').noteChange(device.id); } catch (e) { /* best effort */ }
+  } else if (device.attached_node_id) { try { require('./lib/mesh/command-relay').relayToAttached(db, device.id, 'device:paired', pairedMsg); } catch (e) { /* the screen learns on its next register */ } }
 
   // Time zone fallback: a display still on its image's default zone (Pi OS ships Europe/London)
   // gets the pairing admin's browser zone, when it can set its own (system.time: the native

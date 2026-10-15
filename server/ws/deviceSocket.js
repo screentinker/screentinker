@@ -17,6 +17,8 @@ const commandQueue = require('../lib/command-queue');
 const nowPlaying = require('../lib/now-playing');
 // 3.0 screen verification: judges the screenshots that pass through ingestScreenshot below.
 const screenVerify = require('../lib/screen-verify');
+// 3.0.1: one fresh screenshot after pairing / new content, so the screen cards stop showing the old picture.
+const previewRefresh = require('../lib/preview-refresh');
 const reconnectThrottle = require('../lib/reconnect-throttle');
 const contentAckLimiter = require('../lib/content-ack-limiter');
 const statusLogWriter = require('../lib/status-log-writer');
@@ -1599,6 +1601,7 @@ function ingestScreenshot(deviceId, imageB64) {
   }
   // Screen verification looks at the same frame. Throttled and off-thread inside; never throws.
   try { screenVerify.noteFrame(deviceId, imageB64); } catch (_) { /* verification is best-effort */ }
+  previewRefresh.noteFrame(deviceId);
   return true;
 }
 
@@ -2254,6 +2257,7 @@ const EVENT_APPLIERS = Object.freeze({
       delete lastScreenshots[deviceId];
     }
     screenshotPersistedAt.delete(deviceId);
+    previewRefresh.forget(deviceId);
   },
 
   /*
@@ -2303,6 +2307,18 @@ module.exports = function setupDeviceSocket(io) {
    */
   screenVerify.setRequester((deviceId) => {
     if (!heartbeat.getConnection(deviceId)) return false;
+    deviceNs.to(deviceId).emit('device:screenshot-request', {});
+    return true;
+  });
+  /*
+   * The preview refresh (lib/preview-refresh.js) asks the same way, and checks at the moment it
+   * fires — not when the change was queued — that the screen is still here, online, and can take
+   * a screenshot at all. A false return costs it nothing against its per-minute budget.
+   */
+  previewRefresh.setRequester((deviceId) => {
+    if (!heartbeat.getConnection(deviceId)) return false;
+    const d = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);
+    if (!d || d.status !== 'online' || !capsLib.supports(d, 'remote.screenshot')) return false;
     deviceNs.to(deviceId).emit('device:screenshot-request', {});
     return true;
   });

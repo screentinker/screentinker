@@ -65,6 +65,9 @@ function queueOrEmitPlaylistUpdate(deviceNs, deviceId, buildPayload, _mirrorHop)
   const room = deviceNs.adapter.rooms.get(deviceId);
   if (room && room.size > 0) {
     deviceNs.to(deviceId).emit('device:playlist-update', buildPayload(deviceId));
+    // 3.0.1: the screen is about to draw something new — refresh its preview once it has
+    // (lib/preview-refresh.js: debounced, a floor per screen, a cap per node). Lazy, never fatal.
+    try { require('./preview-refresh').noteChange(deviceId); } catch (e) { /* best effort */ }
     return { delivered: true };
   }
   pendingPlaylistUpdate.set(deviceId, { expiresAt: Date.now() + config.commandQueueTtlMs });

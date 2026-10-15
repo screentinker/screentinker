@@ -42,6 +42,7 @@ import { loadStates as loadVerification, plainStatus } from '../components/scree
 import { upcomingChanges } from '../components/preview-at-time.js';
 import { mountMigrate, cleanup as cleanupMigrate } from './migrate.js';
 import { renderNews } from './simple-news.js';
+import { on, off } from '../socket.js';
 
 const SAMPLE_URL = '/assets/samples/welcome-screen.jpg';
 const ACCEPT = 'image/*,video/*,audio/*';
@@ -216,7 +217,7 @@ async function renderHome(container) {
   host.innerHTML = devices.filter((d) => !(d.mirror_of && originals.has(d.mirror_of))).map((d) => {
     const card = `
     <${tag} class="simple-screen" ${canChange ? `href="#/simple/change?device=${encodeURIComponent(d.id)}" title="${esc(t('simple.task.change'))}"` : ''}>
-      <span class="simple-screen-shot">${d.screenshot_path ? `<img src="${screenshotUrl(d.id, d.screenshot_at || '')}" alt="">` : '&#128250;'}</span>
+      <span class="simple-screen-shot" data-shot="${esc(d.id)}">${d.screenshot_path ? `<img src="${screenshotUrl(d.id, d.screenshot_at || '')}" alt="">` : '&#128250;'}</span>
       <span class="simple-screen-name">${esc(d.name)}</span>
       <span class="simple-screen-status ${online(d) ? 'on' : 'off'}" data-sv-plain="${esc(d.id)}">${esc(d.plan_paused ? t('simple.status.paused') : online(d) ? t('simple.status.online') : t('simple.status.offline'))}</span>
     </${tag}>`;
@@ -227,6 +228,12 @@ async function renderHome(container) {
     <details class="simple-coming" data-coming="${esc(d.id)}"><summary>${esc(t('simple.coming.title'))}</summary><div class="simple-coming-body"></div></details>
     </div>`;
   }).join('');
+  // 3.0.1: a screenshot that arrives while the page is open replaces the card's picture — the server
+  // asks for one after pairing and after new content (server/lib/preview-refresh.js), so a card no
+  // longer shows the pairing code under "Playing" until somebody presses Screenshot.
+  const onShot = (data) => applyScreenshot(host, data);
+  on('screenshot-ready', onShot);
+  cleanupFns.push(() => off('screenshot-ready', onShot));
   host.querySelectorAll('details[data-coming]').forEach((el) => el.addEventListener('toggle', () => {
     if (el.open && !el.dataset.loaded) { el.dataset.loaded = '1'; showComing(el.querySelector('.simple-coming-body'), el.dataset.coming); }
   }));
@@ -244,6 +251,28 @@ async function renderHome(container) {
     const el = host.querySelector(`[data-sv-plain="${CSS.escape(d.id)}"]`);
     if (el && words) { el.textContent = words; el.classList.remove('on'); el.classList.add('warn'); }
   }
+}
+
+/*
+ * A live screenshot (dashboard:screenshot-ready) onto the home cards. Only an inline image the
+ * server relayed (data:image/…) is used; a card that had no picture yet gets one.
+ */
+export function applyScreenshot(host, data) {
+  if (!host || !data || typeof data.device_id !== 'string') return 0;
+  if (typeof data.image_data !== 'string' || !data.image_data.startsWith('data:image/')) return 0;
+  let n = 0;
+  host.querySelectorAll(`[data-shot="${CSS.escape(data.device_id)}"]`).forEach((el) => {
+    let img = el.querySelector('img');
+    if (!img) {
+      el.textContent = '';
+      img = document.createElement('img');
+      img.alt = '';
+      el.appendChild(img);
+    }
+    img.src = data.image_data;
+    n++;
+  });
+  return n;
 }
 
 /*

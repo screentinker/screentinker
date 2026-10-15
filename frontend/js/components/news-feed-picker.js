@@ -52,6 +52,22 @@ function itemsHtml(items, max = 5) {
       <span>${esc(it.title)}</span></li>`).join('')}</ul>`;
 }
 
+/*
+ * Pictures come through this server's image proxy (routes/news-feeds.js), which answers 404 when
+ * the publisher's picture cannot be had (gone, not an image, the per-site budget). A picture that
+ * fails becomes the same placeholder an item without one gets, never a broken-image icon. Listeners,
+ * not an onerror attribute: the dashboard's CSP refuses inline handlers.
+ */
+function placeholderOnError(root) {
+  root.querySelectorAll('.news-picker-items img').forEach((img) => img.addEventListener('error', () => {
+    const ph = document.createElement('span');
+    ph.className = 'news-picker-noimg';
+    ph.setAttribute('aria-hidden', 'true');
+    ph.textContent = '\u{1F4F0}';
+    img.replaceWith(ph);
+  }, { once: true }));
+}
+
 /**
  * Mount the picker into host. opts: { url, mode, simple, onChange(choice) }.
  * Returns { get(), find() }; the same object is kept on host for readFeedPicker.
@@ -90,6 +106,7 @@ export function mountFeedPicker(host, { url = '', mode = 'feed', simple = false,
       const r = await api.newsPreview(state.url, state.mode);
       if (mine !== seq) return;
       preview.innerHTML = `<div class="news-picker-preview"><div class="news-picker-preview-head">${esc(t('news.picker.preview_title'))}${r.title ? ` &middot; ${esc(r.title)}` : ''}</div>${itemsHtml(r.items)}</div>`;
+      placeholderOnError(preview);
     } catch (err) {
       if (mine !== seq) return;
       preview.innerHTML = `<p class="news-picker-error">${esc(feedErrorText(err.code, err.message))}</p>`;
@@ -132,6 +149,7 @@ export function mountFeedPicker(host, { url = '', mode = 'feed', simple = false,
         <p class="news-picker-error">${esc(feedErrorText(found.page.reason, found.page.message))}</p></div>`;
     }
     results.innerHTML = html;
+    placeholderOnError(results);
     results.querySelectorAll(`input[name="${uid}Pick"]`).forEach((r) => r.addEventListener('change', () => {
       if (r.value === 'page') { choose({ url: found.url, mode: 'page' }); preview.innerHTML = ''; return; }
       const f = feeds[Number(r.value)];

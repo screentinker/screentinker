@@ -360,6 +360,43 @@ test('dashboard API: discover and preview for editors; a view-only member is ref
   });
 });
 
+test('3.0.1 dashboard preview: pictures come through this server\'s signed image proxy, never the publisher\'s (http) URL', async () => {
+  // The dashboard's CSP allows only https: images from elsewhere, so an http feed's pictures drawn
+  // straight from the publisher were broken images in "Find feeds". The fixture IS plain http.
+  noFeeds = true;
+  await withApp('workspace_editor', async (base) => {
+    const post = (p, body) => fetch(base + p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const check = async (items, what) => {
+      const withPic = items.filter((i) => i.image);
+      assert.ok(withPic.length >= 1, `${what}: some items have pictures`);
+      for (const it of withPic) {
+        assert.match(it.image, /^\/api\/news-feeds\/image\?u=[^&]+&s=[\w-]+$/, `${what}: ${it.image}`);
+        assert.ok(!it.image.startsWith('http'), `${what}: a same-origin address, which img-src 'self' allows`);
+      }
+      // The address works: the real picture comes back through the proxy.
+      const first = withPic.find((i) => decodeURIComponent(i.image).includes('/img/a.jpg'));
+      const img = await fetch(base + first.image);
+      assert.equal(img.status, 200);
+      assert.equal(img.headers.get('content-type'), 'image/jpeg');
+      assert.deepEqual(Buffer.from(await img.arrayBuffer()), JPEG);
+    };
+
+    let r = await post('/api/news-feeds/discover', { url: `${origin}/withimg/` });
+    assert.equal(r.status, 200);
+    const found = await r.json();
+    assert.equal(found.page.available, true);
+    await check(found.page.items, 'discover (built from the page)');
+
+    r = await post('/api/news-feeds/preview', { url: `${origin}/withimg/`, mode: 'page' });
+    assert.equal(r.status, 200);
+    const prev = await r.json();
+    await check(prev.items, 'preview');
+    assert.ok(!JSON.stringify(prev.items.map((i) => i.image)).includes(origin), 'no publisher picture URL reaches the editor\'s browser');
+  });
+  // The shared cache keeps the publisher's URL (screens get their own signed paths from it).
+  assert.ok(news.peek(`${origin}/withimg/`, 'page').items.some((i) => i.image === `${origin}/img/a.jpg`));
+});
+
 /* ───────────── rendering ───────────── */
 
 test('the news widget page reads its signed items path and is seeded from the cache; text widgets lose rss2json', async () => {

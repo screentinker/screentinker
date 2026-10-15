@@ -42,12 +42,21 @@ function fail(res, err) {
 
 const modeOf = (v) => (news.MODES.includes(v) ? v : 'feed');
 
+/*
+ * 3.0.1: the editor's preview shows each picture through this server's signed image proxy (GET
+ * /image, the one screens use: SSRF guard, size cap, sniffed type), never the publisher's URL. The
+ * dashboard's CSP allows only https: images from elsewhere, so an http feed's pictures came out as
+ * broken images — and the CSP stays as it is. Copies: the cached feed is shared and not ours to edit.
+ */
+const viaThisServer = (items) => (Array.isArray(items) ? items.map((it) => ({ ...it, image: it.image ? news.imagePath(it.image) : '' })) : items);
+
 router.post('/discover', async (req, res) => {
   if (!editor(req, res)) return;
   try {
     const out = await news.discoverFeeds((req.body || {}).url);
-    // Built-from-page previews go to the dashboard, which draws them with esc(): publisher image
-    // URLs are fine here (the editor's browser shows the preview), unlike on a screen.
+    // Built-from-page previews go to the dashboard, which draws them with esc(); their pictures go
+    // through the image proxy like a screen's (viaThisServer above).
+    if (out && out.page && Array.isArray(out.page.items)) out.page = { ...out.page, items: viaThisServer(out.page.items) };
     res.json(out);
   } catch (err) { fail(res, err); }
 });
@@ -57,7 +66,7 @@ router.post('/preview', async (req, res) => {
   const b = req.body || {};
   try {
     const data = await news.getFeed(b.url, modeOf(b.mode));
-    res.json({ title: data.title, source: data.source, stale: data.stale, fetched_at: data.fetched_at, items: data.items.slice(0, 20) });
+    res.json({ title: data.title, source: data.source, stale: data.stale, fetched_at: data.fetched_at, items: viaThisServer(data.items.slice(0, 20)) });
   } catch (err) { fail(res, err); }
 });
 
