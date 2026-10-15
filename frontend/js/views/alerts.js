@@ -124,7 +124,8 @@ function openForm(app, ch) {
     else if (k === 'telegram') host.innerHTML = `<div class="form-group"><label>${esc(t('alerts.f.tg_token'))}</label><input id="alSecret1" type="password" class="input" autocomplete="off" placeholder="${esc(ch && ch.bot_token_hint ? ch.bot_token_hint : '123456789:AA…')}">
       <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(keep)}</div></div>
       <div class="form-group"><label>${esc(t('alerts.f.tg_chat'))}</label><input id="alChat" class="input" autocomplete="off" value="${esc(ch && ch.chat_id ? ch.chat_id : '')}" placeholder="-1001234567890">
-      <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(t('alerts.f.tg_hint'))}</div></div>`;
+      <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(t('alerts.f.tg_hint'))}</div></div>
+      <div class="form-group"><label style="display:flex;align-items:center;gap:8px"><input id="alTgSilent" type="checkbox" ${ch && ch.silent_info ? 'checked' : ''}> ${esc(t('alerts.f.tg_silent'))}</label></div>`;
     else host.innerHTML = `<div class="form-group"><label>${esc(t(`alerts.f.url_${k}`))}</label><input id="alUrl" class="input" autocomplete="off" placeholder="${esc(ch && ch.url_hint ? ch.url_hint : 'https://…')}">
       <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(t(`alerts.f.url_${k}_hint`))} ${esc(keep)}</div></div>
       ${k === 'webhook' ? `<div class="form-group"><label>${esc(t('alerts.f.secret'))}</label><input id="alSecret2" class="input" autocomplete="off" placeholder="${esc(ch && ch.has_secret ? '••••••' : '')}">
@@ -153,7 +154,7 @@ function openForm(app, ch) {
       scopes: scope === 'workspace' ? [{ scope_kind: 'workspace' }] : ids.map((id) => ({ scope_kind: scope, scope_id: id })) };
     if (k === 'email') body.emails = $('alEmails').value;
     else if (k === 'pagerduty') body.routing_key = $('alSecret1').value.trim();
-    else if (k === 'telegram') { body.bot_token = $('alSecret1').value.trim(); body.chat_id = $('alChat').value.trim(); }
+    else if (k === 'telegram') { body.bot_token = $('alSecret1').value.trim(); body.chat_id = $('alChat').value.trim(); body.silent_info = $('alTgSilent').checked; }
     else { body.url = $('alUrl').value.trim(); if (k === 'webhook' && $('alSecret2').value) body.secret = $('alSecret2').value; }
     if (!body.scopes.length) { $('alError').textContent = t('alerts.scope_required'); return; }
     $('alSave').disabled = true;

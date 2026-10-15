@@ -3130,6 +3130,7 @@ export default {
   'alerts.f.tg_token': 'Jeton du bot Telegram',
   'alerts.f.tg_chat': 'ID de la discussion',
   'alerts.f.tg_hint': 'Créez un bot avec @BotFather et copiez son jeton. Ajoutez le bot à votre groupe ou canal (dans un canal, en tant qu’administrateur). Pour l’ID de la discussion, envoyez un message dans la discussion et ouvrez api.telegram.org/bot<token>/getUpdates : c’est l’« id » du chat (celui d’un groupe commence par -, celui d’un canal par -100). Un canal public peut utiliser son @nom.',
+  'alerts.f.tg_silent': "Envoyer les bonnes nouvelles en silence (de nouveau en ligne, écran OK) : seuls les problèmes sonnent",
   'forecast.tab': 'Aperçu à…',
   'forecast.tab_tip': 'Choisissez une date et une heure pour voir exactement ce que cet écran affichera à ce moment-là, et pourquoi.',
   'forecast.intro': 'Choisissez un moment pour voir ce que cet écran affichera alors, selon les mêmes règles que l’écran. Les heures sont celles de l’heure locale de l’écran.',

@@ -4095,6 +4095,7 @@ export default {
   'alerts.f.tg_token': 'Telegram-bottoken',
   'alerts.f.tg_chat': 'Chat-ID',
   'alerts.f.tg_hint': 'Maak een bot met @BotFather en kopieer het token. Voeg de bot toe aan je groep of kanaal (in een kanaal als beheerder). Voor de chat-ID stuur je een bericht in de chat en open je api.telegram.org/bot<token>/getUpdates: het is de "id" van de chat (die van een groep begint met -, die van een kanaal met -100). Een openbaar kanaal kan zijn @gebruikersnaam gebruiken.',
+  'alerts.f.tg_silent': "Goed nieuws stil versturen (weer online, scherm OK): alleen problemen maken geluid",
   'forecast.tab': 'Voorbeeld op…',
   'forecast.tab_tip': 'Kies een datum en tijd en zie precies wat dit scherm dan toont, en waarom.',
   'forecast.intro': 'Kies een moment om te zien wat dit scherm dan toont, volgens dezelfde regels die het scherm volgt. Tijden zijn de lokale tijd van het scherm.',

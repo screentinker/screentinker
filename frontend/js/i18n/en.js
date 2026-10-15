@@ -5180,6 +5180,7 @@ export default {
   'alerts.f.tg_token': 'Telegram bot token',
   'alerts.f.tg_chat': 'Chat ID',
   'alerts.f.tg_hint': 'Create a bot with @BotFather and copy its token. Add the bot to your group or channel (in a channel, as an admin). For the chat ID, send a message in the chat and open api.telegram.org/bot<token>/getUpdates: it is the chat "id" (a group\'s starts with -, a channel\'s with -100). A public channel can use its @username.',
+  'alerts.f.tg_silent': "Send good news silently (back online, screen OK): only problems make a sound",
   'alerts.f.keep_hint': 'Leave empty to keep the current one.',
   'alerts.f.events': 'Send when',
   'alerts.f.ev_off': 'a screen has been offline for',

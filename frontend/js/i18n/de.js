@@ -2499,6 +2499,7 @@ export default {
   'alerts.f.tg_token': 'Telegram-Bot-Token',
   'alerts.f.tg_chat': 'Chat-ID',
   'alerts.f.tg_hint': 'Erstellen Sie mit @BotFather einen Bot und kopieren Sie sein Token. Fügen Sie den Bot Ihrer Gruppe oder Ihrem Kanal hinzu (in einem Kanal als Administrator). Für die Chat-ID senden Sie eine Nachricht im Chat und öffnen api.telegram.org/bot<token>/getUpdates: Es ist die „id“ des Chats (bei Gruppen beginnt sie mit -, bei Kanälen mit -100). Ein öffentlicher Kanal kann seinen @Benutzernamen verwenden.',
+  'alerts.f.tg_silent': "Gute Nachrichten lautlos senden (wieder online, Bildschirm OK): nur Probleme machen einen Ton",
   'forecast.tab': 'Vorschau für…',
   'forecast.tab_tip': 'Wählen Sie ein beliebiges Datum und eine Uhrzeit und sehen Sie genau, was dieser Bildschirm dann zeigt und warum.',
   'forecast.intro': 'Wählen Sie einen Zeitpunkt, um zu sehen, was dieser Bildschirm dann zeigt – nach denselben Regeln, denen der Bildschirm folgt. Zeiten sind die Ortszeit des Bildschirms.',

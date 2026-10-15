@@ -435,3 +435,24 @@ test('guardedRequest acceptAnyStatus hands back a 4xx body instead of throwing i
     srv.close();
   }
 });
+
+test('telegram silent_info (#648): good news arrives without a sound, problems and tests always ring', () => {
+  // Stored, kept on an edit that leaves it out, and shown to the form.
+  const made = ch.normaliseInput({ kind: 'telegram', name: 'x', bot_token: TG_TOKEN, chat_id: '42', silent_info: true });
+  assert.equal(JSON.parse(made.fields.config).silent_info, true);
+  const kept = ch.normaliseInput({ name: 'Renamed' }, { kind: 'telegram', config: made.fields.config });
+  assert.equal(JSON.parse(kept.fields.config).silent_info, true, 'an edit without the field keeps it');
+  const off = ch.normaliseInput({ silent_info: false }, { kind: 'telegram', config: made.fields.config });
+  assert.equal(JSON.parse(off.fields.config).silent_info, false);
+  assert.equal(ch.present(db, { id: 'c-silent', kind: 'telegram', name: 'x', config: made.fields.config, events: '[]', enabled: 1 }).silent_info, true);
+
+  const dev = { id: 'd1', name: 'Lobby' };
+  const send = (silent, event, extra = {}) => ch.buildMessage(tgChannel(silent ? { silent_info: true } : {}), { event, device: dev, minutes: 12, nowIso: new Date().toISOString(), ...extra }).body;
+  for (const ev of ['device_online', 'screen_ok']) {
+    assert.equal(send(true, ev).disable_notification, true, `${ev} is silent when asked`);
+    assert.equal(send(false, ev).disable_notification, undefined, `${ev} rings by default`);
+  }
+  assert.equal(send(true, 'device_offline').disable_notification, undefined, 'an outage always rings');
+  assert.equal(send(true, 'screen_problem', { check: 'blank' }).disable_notification, undefined, 'a screen problem always rings');
+  assert.equal(send(true, 'test').disable_notification, undefined, 'a test rings, so you can hear the channel work');
+});

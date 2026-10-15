@@ -2041,6 +2041,7 @@ export default {
   'alerts.f.tg_token': 'Telegram 机器人令牌',
   'alerts.f.tg_chat': '聊天 ID',
   'alerts.f.tg_hint': '使用 @BotFather 创建机器人并复制其令牌。将机器人添加到您的群组或频道（在频道中需设为管理员）。获取聊天 ID：在聊天中发送一条消息，然后打开 api.telegram.org/bot<token>/getUpdates，chat 的 "id" 即是（群组以 - 开头，频道以 -100 开头）。公开频道也可以使用其 @用户名。',
+  'alerts.f.tg_silent': "静默发送好消息（重新上线、屏幕正常）：只有问题才会发出提示音",
   'forecast.tab': '预览时间点……',
   'forecast.tab_tip': '选择任意日期和时间，准确查看此屏幕届时会显示什么，以及原因。',
   'forecast.intro': '选择一个时间点，按照屏幕实际遵循的规则查看它届时会显示什么。时间为屏幕所在地的本地时间。',

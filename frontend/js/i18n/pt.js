@@ -2414,6 +2414,7 @@ export default {
   'alerts.f.tg_token': 'Token do bot do Telegram',
   'alerts.f.tg_chat': 'ID do chat',
   'alerts.f.tg_hint': 'Crie um bot com o @BotFather e copie o token. Adicione o bot ao seu grupo ou canal (num canal, como administrador). Para o ID do chat, envie uma mensagem no chat e abra api.telegram.org/bot<token>/getUpdates: é o "id" do chat (o de um grupo começa com -, o de um canal com -100). Um canal público pode usar o seu @usuário.',
+  'alerts.f.tg_silent': "Enviar boas notícias em silêncio (de volta online, ecrã OK): só os problemas fazem som",
   'forecast.tab': 'Prévia em…',
   'forecast.tab_tip': 'Escolha qualquer data e hora e veja exatamente o que esta tela vai mostrar nesse momento, e por quê.',
   'forecast.intro': 'Escolha um momento para ver o que esta tela vai mostrar, usando as mesmas regras que a tela segue. Os horários são o horário local da própria tela.',

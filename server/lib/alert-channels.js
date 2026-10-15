@@ -124,6 +124,9 @@ function normaliseInput(body, existing = null) {
     } else if (!existing || !prev.chat_id) {
       return { error: 'Enter the Telegram chat ID.' };
     }
+    // #648 (@arminfauland): good news (back online, screen OK) can arrive without a sound, so the
+    // group's notifications stay for what needs action. Absent on an edit keeps the stored choice.
+    if (b.silent_info !== undefined) cfg.silent_info = b.silent_info === true || b.silent_info === 'true' || b.silent_info === 1;
   }
   out.config = JSON.stringify(cfg);
   if (b.events !== undefined || !existing) {
@@ -190,6 +193,7 @@ function present(db, row) {
     // The chat id alone lets nobody post (that takes the token), so the form can show it to edit.
     if (cfg.bot_token) shown.bot_token_hint = `…${cfg.bot_token.slice(-4)}`;
     shown.chat_id = cfg.chat_id || null;
+    shown.silent_info = !!cfg.silent_info;
   }
   if (row.kind === 'webhook') shown.has_secret = !!cfg.secret;
   return {
@@ -283,6 +287,9 @@ function buildMessage(channel, ctx) {
       const text = `${icon} <b>${htmlEsc(d.title)}</b>\n${htmlEsc(d.text)}${ws ? `\n<i>${htmlEsc(ws)}</i>` : ''}${link ? `\n<a href="${htmlEsc(link)}">Open in ScreenTinker</a>` : ''}`;
       return { kind: 'http', service: 'telegram', url: `${TELEGRAM_API}/bot${cfg.bot_token}/sendMessage`, body: {
         chat_id: cfg.chat_id, text, parse_mode: 'HTML', disable_web_page_preview: true,
+        // Info-level events only (back online, screen OK, scheduled sleep); problems always ring,
+        // and so does a test, which is how you hear that the channel works.
+        ...(cfg.silent_info && d.severity === 'info' && ctx.event !== 'test' ? { disable_notification: true } : {}),
       } };
     }
     case 'webhook': {
