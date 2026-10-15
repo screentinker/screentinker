@@ -79,7 +79,10 @@ test('declining a content request needs a reason before Decline can be pressed',
   assert.match(dlg, /data-creq-decline disabled>/, 'Decline starts disabled');
   assert.match(dlg, /go\.disabled = busy \|\| !input\.value\.trim\(\)/, 'and is enabled only by a non-blank reason');
   assert.match(dlg, /if \(busy \|\| !reason\) return;/, 'and a blank reason is never sent');
-  assert.match(dlg, /\/reject`, \{ reason \}\)/);
+  assert.match(dlg, /\/reject`, \{ reason, version: r\.submission && r\.submission\.version \}\)/,
+    'Decline must send the version it was looking at, as Approve does, so a concurrent decision conflicts');
+  assert.match(REQUESTS, /\/approve`, \{ version: r\.submission && r\.submission\.version \}/, 'Approve still sends it too');
+  assert.match(dlg, /catch \(err\) \{[\s\S]*?errEl\.textContent = err\.message;/, 'a conflict is shown inside the dialog');
   assert.match(dlg, /e\.key === 'Enter' && \(e\.ctrlKey \|\| e\.metaKey\)/, 'Ctrl/Cmd+Enter declines from the keyboard');
 });
 

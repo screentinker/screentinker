@@ -139,6 +139,8 @@ async function renderInbox(body) {
  * the server refuses an empty one, and it is what the requester is mailed — so Decline stays
  * disabled until something is typed, and a refusal is shown in place with the text kept for another
  * try. Enter adds a line (the reason may be a paragraph); Ctrl/Cmd+Enter declines, Escape cancels.
+ * It sends the version the reviewer was looking at, as Approve does, so two people deciding the same
+ * request at once get a conflict instead of the second one silently winning.
  */
 function openDecline(r, done) {
   const m = openModal({
@@ -167,8 +169,10 @@ function openDecline(r, done) {
     go.disabled = true;
     input.disabled = true;
     try {
-      await api.post(`/content-requests/requests/${encodeURIComponent(r.id)}/reject`, { reason });
+      await api.post(`/content-requests/requests/${encodeURIComponent(r.id)}/reject`, { reason, version: r.submission && r.submission.version });
     } catch (err) {
+      // A conflict (someone else decided it first, or it changed since it was opened) is the
+      // server's own sentence, shown here rather than as a toast behind the dialog.
       busy = false;
       input.disabled = false;
       go.disabled = !input.value.trim();
