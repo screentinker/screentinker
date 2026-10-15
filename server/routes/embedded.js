@@ -229,10 +229,14 @@ function resolveAuth(req, res, next) {
     return bearerAuth(req, res, (err) => {
       if (err) return next(err);
       // This router was mounted outside the PUBLIC_ROUTERS bearerAuth+tokenScopeGate loop (it also
-      // takes device tokens), so it never applied a scope gate. Every route here is a device-content
-      // READ, so only read-ladder tokens (read/write/full) qualify. 'agency' (publish to designated
-      // playlists) and 'billing:read' (global billing read) are off-ladder narrow grants and must not
-      // be able to read arbitrary device renders in their bound workspace.
+      // takes device tokens), so it never applied a scope gate. What an API token may do here is
+      // READ device content, so only read-ladder tokens (read/write/full) qualify. 'agency' (publish
+      // to designated playlists) and 'billing:read' (global billing read) are off-ladder narrow grants
+      // and must not be able to read arbitrary device renders in their bound workspace.
+      //
+      // ⚠️ The routes that WRITE what a panel reports about itself — POST /logs, and the orientation
+      // touchDeviceHeartbeat remembers — are the device's alone and check req.device (the device-token
+      // path) themselves. A token reading a render is a dashboard looking, not the panel speaking.
       const READ_LADDER = new Set(['read', 'write', 'full']);
       if (req.viaToken && !READ_LADDER.has(req.tokenScope)) {
         return res.status(403).json({ error: `API token scope '${req.tokenScope}' cannot read device content` });
@@ -1563,18 +1567,28 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
 const LOG_BODY_LIMIT = '256kb';
 const MAX_LOG_ENTRIES = 100;
 const logJsonParser = express.json({ limit: LOG_BODY_LIMIT });
+// text/plain: one log line per line. server.js skips its global parser for this path, so without
+// this the plain-text branch of handleDeviceLogs could never run (req.body was {}).
+const logTextParser = express.text({ limit: LOG_BODY_LIMIT, type: 'text/plain' });
 
-router.post('/logs', deviceLogsLimiter, resolveAuth, (req, res, next) => {
-  logJsonParser(req, res, (err) => {
-    if (err) {
-      if (err.type === 'entity.too.large') {
-        return res.status(413).json({ error: `Log upload exceeds ${LOG_BODY_LIMIT}` });
-      }
-      return res.status(400).json({ error: 'Malformed JSON body' });
+function parseLogBody(req, res, next) {
+  const done = (err) => {
+    if (!err) return next();
+    if (err.type === 'entity.too.large') {
+      return res.status(413).json({ error: `Log upload exceeds ${LOG_BODY_LIMIT}` });
     }
-    handleDeviceLogs(req, res);
-  });
-});
+    return res.status(400).json({ error: 'Malformed log body' });
+  };
+  logJsonParser(req, res, (err) => (err ? done(err) : logTextParser(req, res, done)));
+}
+
+// Only the panel itself uploads its logs: an API token (even a 'full' one) is a reader here.
+function requireDevice(req, res, next) {
+  if (!req.device) return res.status(403).json({ error: 'Only the device itself can upload its diagnostic logs (device token required)' });
+  return next();
+}
+
+router.post('/logs', deviceLogsLimiter, resolveAuth, requireDevice, parseLogBody, (req, res) => handleDeviceLogs(req, res));
 
 function handleDeviceLogs(req, res) {
   const device = resolveDevice(req, res);
