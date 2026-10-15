@@ -831,7 +831,8 @@ async function renderChange(container, presetId) {
     container.querySelectorAll('input[name="simpleHow"]').forEach((r) => r.addEventListener('change', () => { how = r.value; }));
     const status = container.querySelector('[data-status]');
     const busy = (msg) => { status.textContent = msg; container.querySelectorAll('button, input').forEach((e) => { e.disabled = true; }); };
-    const fail = (err) => { status.textContent = (err && err.message) || t('onboarding.toast.upload_failed'); container.querySelectorAll('button, input').forEach((e) => { e.disabled = false; }); };
+    // At a storage limit the upgrade prompt (plan-nudges.js) says it; the status line does not repeat it.
+    const fail = (err) => { status.textContent = err && err.planPromptShown ? '' : ((err && err.message) || t('onboarding.toast.upload_failed')); container.querySelectorAll('button, input').forEach((e) => { e.disabled = false; }); };
 
     const go = async (files) => {
       busy(tn('simple.uploading', files.length));
@@ -926,7 +927,7 @@ async function renderUpload(container, presetIds = []) {
         uploaded = (Array.isArray(up) ? up : [up]).filter((c) => c && c.id);
         if (devices.length) screensStep();
         else doneOnly(tn('simple.upload.saved', uploaded.length));
-      } catch (err) { status.textContent = err.message || t('onboarding.toast.upload_failed'); }
+      } catch (err) { status.textContent = err.planPromptShown ? '' : (err.message || t('onboarding.toast.upload_failed')); }
     });
   }
 
