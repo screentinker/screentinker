@@ -683,6 +683,19 @@ app.get('/agency', (req, res) => {
   res.sendFile(path.join(config.frontendDir, 'agency.html'));
 });
 
+// Account deletion, explained (frontend/delete-account.html): the page Google Play's listing
+// links to, readable without signing in. Extension-less like /certified-hardware because the URL
+// is registered with the store. Static HTML under the dashboard CSP and the same no-cache as every
+// other static page; /account-deleted is where the dashboard lands after a deletion.
+app.get(['/delete-account', '/delete-account/'], (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(config.frontendDir, 'delete-account.html'));
+});
+app.get('/account-deleted', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(config.frontendDir, 'account-deleted.html'));
+});
+
 // The integrations hub is a directory index. express.static below runs with index:false,
 // so a bare /integrations/ would otherwise fall through to the SPA catch-all (login page).
 // Serve it explicitly (the spoke pages are real .html files and static already handles them).
@@ -1409,6 +1422,11 @@ app.use('/api/auth/oidc', rateLimit(60000, 120));
 app.use('/api/auth/forgot-password', rateLimit(60000, 5));
 app.use('/api/auth/reset-password', rateLimit(60000, 10));
 app.use('/api/auth/sso/app-exchange', rateLimit(60000, 20)); // 3.0: the Manager app's sign-in hand-off
+// Self-service account deletion (DELETE /api/auth/me): it checks a password and a TOTP code, so it
+// is capped like the other re-authentication endpoints. Method-gated, because GET /api/auth/me is
+// what every dashboard page load asks for and must never share this bucket.
+const deleteAccountLimit = rateLimit(60000, 5);
+app.use('/api/auth/me', (req, res, next) => (req.method === 'DELETE' ? deleteAccountLimit(req, res, next) : next()));
 // Admin password-reset endpoint: even if an admin's session is compromised,
 // cap the blast radius to 20 resets/min/IP. Express matches the longest
 // path prefix first, so this fires before /api/auth catches the request.

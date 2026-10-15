@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="How to delete your ScreenTinker account, in the dashboard or the ScreenTinker Manager app, what is deleted, and how long backups keep it.">
+  <link rel="canonical" href="https://screentinker.com/delete-account">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/delete-account.md">
+  <title>Delete your account - ScreenTinker</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:-apple-system,sans-serif; background:#111827; color:#e2e8f0; line-height:1.8; }
+    .container { max-width:800px; margin:0 auto; padding:40px 24px 80px; }
+    h1 { color:#3b82f6; font-size:32px; margin-bottom:8px; }
+    .updated { color:#64748b; font-size:14px; margin-bottom:40px; }
+    h2 { color:#f1f5f9; font-size:20px; margin:32px 0 12px; }
+    h3 { color:#cbd5e1; font-size:16px; margin:20px 0 8px; }
+    p, li { color:#94a3b8; font-size:15px; margin-bottom:12px; }
+    ul, ol { padding-left:24px; }
+    a { color:#3b82f6; }
+    strong { color:#cbd5e1; }
+    .back { display:inline-flex; align-items:center; gap:6px; color:#64748b; font-size:13px; margin-bottom:24px; text-decoration:none; }
+    .back:hover { color:#94a3b8; }
+    .cta { display:inline-block; margin:8px 0 16px; padding:10px 18px; border-radius:8px; background:#dc2626; color:#fff; text-decoration:none; font-weight:600; }
+    .cta:hover { background:#b91c1c; }
+    .note { border-left:3px solid #3b82f6; padding:8px 14px; background:#0f172a; border-radius:4px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="/" class="back">&larr; Back to ScreenTinker</a>
+    <h1>Delete your account</h1>
+    <p class="updated">Applies to screentinker.com and every ScreenTinker server version 3.0 or later.</p>
+
+    <p>You can delete your ScreenTinker account yourself, at any time, from the dashboard or from the ScreenTinker Manager app. Deletion is immediate and cannot be undone.</p>
+    <p><a class="cta" href="/app#/settings?section=delete-account" id="deleteAccountSignIn">Sign in to delete your account</a></p>
+
+    <h2>In the dashboard</h2>
+    <ol>
+      <li>Sign in at <a href="/app#/settings?section=delete-account">/app</a> (the link above opens the right place).</li>
+      <li>Open <strong>Settings</strong> and scroll to <strong>Delete my account</strong>. In the Simple view, open the menu under your name and choose <strong>Delete my account</strong>.</li>
+      <li>Read what will be deleted, then choose <strong>Delete my account&hellip;</strong>.</li>
+      <li>Type your email address to confirm, then enter your password (and the code from your authenticator app if you use two-factor sign-in). If you sign in with single sign-on, you are asked to sign in again first.</li>
+    </ol>
+
+    <h2>In the ScreenTinker Manager app (Android)</h2>
+    <ol>
+      <li>Open the app and tap the menu under your name, then <strong>Delete my account</strong>. Or, on the <strong>Your servers</strong> screen, tap <strong>Delete account</strong> next to the server.</li>
+      <li>Follow the same steps as in the dashboard: confirm your email, and your password or a fresh single sign-on.</li>
+    </ol>
+
+    <h2>What is deleted</h2>
+    <ul>
+      <li>Your account: email address, name, password hash, single sign-on link, two-factor secret and recovery codes, passkeys, preferences and API tokens. Every place you are signed in is signed out.</li>
+      <li>If you are the only member of your organization: the organization and all of its workspaces, screens, uploaded files, playlists, layouts, schedules, widgets, slides, and integrations with their saved credentials. Screens stop being managed and must be paired again to be used with another account.</li>
+      <li>Your connections to other services made under your name (for example Canva), which are revoked.</li>
+      <li>On screentinker.com, an active subscription is cancelled immediately, before anything is deleted. No further charges are made. Past invoices stay with our payment processor, Stripe, as tax law requires.</li>
+    </ul>
+
+    <h2>What is not deleted</h2>
+    <ul>
+      <li><strong>Organizations you belong to but do not own.</strong> What you made there (content, playlists, folders) belongs to that organization and stays; your name is removed from it.</li>
+      <li><strong>Organizations you own that have other members.</strong> Deletion is refused until you transfer ownership to another member or remove the other members, so nobody loses their workspace because you left.</li>
+      <li><strong>The audit log entry</strong> recording that an account was deleted. It names the account only by its internal id.</li>
+    </ul>
+
+    <h2>Backups</h2>
+    <p class="note">Deleted data is removed from the live service at once. Copies remain in backups until those backups expire, and are never restored into a deleted account.</p>
+    <ul>
+      <li><strong>screentinker.com:</strong> database backups are kept for 14 days, so your account's records are gone from every copy within 14 days. Backup copies of uploaded files are pruned on their own, longer schedule.</li>
+      <li><strong>Self-hosted servers:</strong> the person who runs the server decides how long backups are kept. The bundled backup script keeps database snapshots for 30 days unless they changed it. Ask them if you need to know.</li>
+    </ul>
+
+    <h2>If you cannot sign in</h2>
+    <p>Reset your password from the sign-in page first. If that is not possible (you no longer have the email address, or your organization's single sign-on is gone), email <a href="mailto:support@screentinker.com?subject=Account%20deletion%20request">support@screentinker.com</a> from the address on the account, with the subject <strong>Account deletion request</strong>. We confirm that the request comes from the account holder, then delete the account and reply when it is done.</p>
+    <p>On a self-hosted server, contact the server's administrator instead: a platform admin can delete any account from <strong>Platform &rarr; Users</strong>.</p>
+
+    <p>More about how we handle data: <a href="/legal/privacy.html">Privacy Policy</a>.</p>
+  </div>
+</body>
+</html>
