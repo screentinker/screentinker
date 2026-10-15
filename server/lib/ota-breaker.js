@@ -254,18 +254,6 @@ function forgiveDevice(deviceId) {
   b.hits = []; b.blockedUntil = 0; b.level = 0;
   return true;
 }
-// S3 — PROGRESS is recorded on every render that reports a version, not only on a render that
-// happens to carry a queued update. A reported version that differs from the one being held
-// against is real progress: clear the no-progress count so a later offer is allowed again.
-function noteReportedVersion(deviceId, version) {
-  if (!deviceId || !version) return false;
-  const b = state.get('d:' + deviceId);
-  if (!b || b.offerFrom === undefined) return false;
-  if (b.offerFrom === version) return false;
-  b.offerFrom = version;
-  b.offers = 0;
-  return true;
-}
 function _size() { return state.size; }
 // #146 observability — how many update checks the breaker is rate-backing-off (total +
 // last completed window). A device=none 1.8.x flood shows here as rateBackoffLastWindow.
@@ -273,4 +261,4 @@ function stats(now = Date.now()) {
   const rb = read(rateBackoffCtr, now);
   return { rateBackoffTotal: rb.total, rateBackoffLastWindow: rb.lastWindow };
 }
-module.exports = { decide, reset, forgiveDevice, noteReportedVersion, sweep, startSweep, cmp, parseVer, _size, stats, WINDOW_MS, THRESHOLD };
+module.exports = { decide, reset, forgiveDevice, sweep, startSweep, cmp, parseVer, _size, stats, WINDOW_MS, THRESHOLD };

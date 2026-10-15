@@ -368,11 +368,10 @@ function touchDeviceHeartbeat(device, req) {
     device.power_source = powerSource;
   }
   if (appVersion) {
+    // ⚠️ No separate "progress" call to the OTA breaker: decide() resets its no-progress count by
+    // itself the moment the version it is given differs from the one it held against, and every
+    // offer passes this poll's version. Recording it here as well changed nothing.
     device.app_version = appVersion;
-    // Progress for the OTA breaker (S3): every render that reports a version is evidence, whether or
-    // not an update was queued. Without this, a device that updated and then stopped being offered
-    // an update never clears its no-progress hold.
-    otaBreaker.noteReportedVersion(device.id, appVersion);
   }
 
   /*
