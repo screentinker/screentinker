@@ -103,6 +103,51 @@ function fitLength(s, max) {
   return (at > max * 0.6 ? cut.slice(0, at) : s.slice(0, max)).replace(/[\s,;:–-]+$/, '');
 }
 
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/*
+ * A sign's values. The asked-for shape is {"template","values":{...}}; qwen2.5 (14B and 32B) often
+ * leaves the wrapper out and puts the fields beside "template". Without a `values` key the sign's
+ * other keys ARE the values. A `values` that is there but is not an object is not repaired.
+ */
+function valuesOf(raw) {
+  if (Object.prototype.hasOwnProperty.call(raw, 'values')) return isObj(raw.values) ? raw.values : {};
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) if (k !== 'template') out[k] = v;
+  return out;
+}
+
+/** {"hours": {...}, "sale": {...}}: an object keyed by template ids, each one a sign. */
+function templateMap(o) {
+  const keys = Object.keys(o);
+  if (!keys.length || !keys.every((k) => Object.prototype.hasOwnProperty.call(OFFER, k.trim().toLowerCase()) && isObj(o[k]))) return null;
+  return keys.map((k) => ({ template: k, ...o[k] }));
+}
+
+/*
+ * The list of sign objects in a reply, and which shape it came in (for the log). Accepted: the
+ * asked-for {"signs":[...]}; a bare array; one sign object on its own; {"signs":{"hours":{...}}} or
+ * {"hours":{...}} keyed by template; or an object whose ONE key holds the array ({"suggestions":[...]}).
+ * Every sign then goes through validateProposal unchanged, so a lenient shape never means a
+ * lenient value.
+ */
+function signListOf(parsed) {
+  if (Array.isArray(parsed)) return { list: parsed, shape: 'array' };
+  if (!isObj(parsed)) return { list: null, shape: 'not_object' };
+  if (Array.isArray(parsed.signs)) return { list: parsed.signs, shape: 'signs' };
+  if (isObj(parsed.signs)) {
+    if (typeof parsed.signs.template === 'string') return { list: [parsed.signs], shape: 'signs_single' };
+    const m = templateMap(parsed.signs);
+    if (m) return { list: m, shape: 'signs_map' };
+  }
+  if (typeof parsed.template === 'string') return { list: [parsed], shape: 'single' };
+  const m = templateMap(parsed);
+  if (m) return { list: m, shape: 'map' };
+  const keys = Object.keys(parsed);
+  if (keys.length === 1 && Array.isArray(parsed[keys[0]])) return { list: parsed[keys[0]], shape: 'other_key' };
+  return { list: null, shape: 'unrecognised' };
+}
+
 /**
  * One proposal from the model → {template, values, dropped} or {reject}. Every value is checked
  * against the template's schema; a value that fails is dropped (named in `dropped`), never repaired
@@ -115,7 +160,7 @@ function validateProposal(raw, { brand = null, seen = new Set() } = {}) {
   if (seen.has(id)) return { reject: 'duplicate_template' };
   const tpl = signs.getTemplate(id);
   if (!tpl) return { reject: 'unknown_template' };
-  const src = raw.values && typeof raw.values === 'object' && !Array.isArray(raw.values) ? raw.values : {};
+  const src = valuesOf(raw);
   const has = (k) => Object.prototype.hasOwnProperty.call(src, k);
   const values = {};
   const dropped = [];
@@ -168,20 +213,35 @@ function validateProposal(raw, { brand = null, seen = new Set() } = {}) {
 
 /** A whole reply → the valid proposals, and why the others were not. */
 function validateReply(parsed, { brand = null } = {}) {
-  let list = null;
-  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.signs)) list = parsed.signs;
-  else if (Array.isArray(parsed)) list = parsed;   // a bare array is a common small-model answer
-  if (!list) return { proposals: [], problems: ['the reply was not {"signs":[...]}'] };
+  const { list, shape } = signListOf(parsed);
+  if (!list) return { proposals: [], problems: ['the reply was not {"signs":[...]}'], shape, rejects: [] };
   const seen = new Set();
   const proposals = [];
   const problems = [];
+  const rejects = [];   // reason codes only, for the server log
   for (const raw of list.slice(0, MAX_SIGNS * 2)) {
     const r = validateProposal(raw, { brand, seen });
-    if (r.reject) problems.push(`${r.template || (raw && raw.template) || '?'}: ${r.reject}`);
-    else proposals.push(r);
+    if (r.reject) {
+      problems.push(`${r.template || (raw && raw.template) || '?'}: ${r.reject}`);
+      rejects.push(r.reject);
+    } else proposals.push(r);
     if (proposals.length >= MAX_SIGNS) break;
   }
-  return { proposals, problems };
+  return { proposals, problems, shape, rejects };
+}
+
+/*
+ * Why one attempt gave nothing usable, for the server log. ⚠️ CODES AND COUNTS ONLY: never the
+ * description, the prompt, the reply or a value from it (not even a template name the model made
+ * up), because a private-AI customer chose that its words go nowhere else (lib/private-ai.js).
+ */
+function attemptSummary(answer, result) {
+  if (!answer) return 'not asked';
+  if (answer.error) return `error=${answer.code || 'unknown'}`;
+  const counts = {};
+  for (const r of result.rejects || []) counts[r] = (counts[r] || 0) + 1;
+  const rej = Object.entries(counts).map(([k, n]) => `${k}x${n}`).join(',') || 'none';
+  return `shape=${result.shape || '?'} valid=${result.proposals.length} rejected=${rej}`;
 }
 
 /**
@@ -196,16 +256,20 @@ async function suggest({ description, brand = null, ask }) {
 
   const first = await ask(system, userPrompt(text));
   if (first.error && first.code !== 'bad_json') return first;
-  let result = first.error ? { proposals: [], problems: ['the reply was not JSON'] } : validateReply(first.parsed, { brand });
+  const firstResult = first.error ? { proposals: [], problems: ['the reply was not JSON'] } : validateReply(first.parsed, { brand });
+  let result = firstResult;
   let retried = false;
+  let second = null;
+  let secondResult = null;
 
   if (result.proposals.length < MIN_SIGNS) {
     retried = true;
     const why = result.problems.slice(0, 6).join('; ') || 'too few valid signs';
-    const second = await ask(system, `${userPrompt(text)}\n\nYour previous answer could not be used (${why}). `
+    second = await ask(system, `${userPrompt(text)}\n\nYour previous answer could not be used (${why}). `
       + `Answer again with ONLY the JSON object, ${MIN_SIGNS} to ${MAX_SIGNS} signs, using only the listed templates and fields.`);
     if (!second.error) {
       const again = validateReply(second.parsed, { brand });
+      secondResult = again;
       // Keep the better answer, plus anything new the second one adds.
       const best = again.proposals.length >= result.proposals.length ? again : result;
       const other = best === again ? result : again;
@@ -217,9 +281,10 @@ async function suggest({ description, brand = null, ask }) {
     }
   }
   if (!result.proposals.length) {
+    console.warn(`[ai-starter] no usable signs: attempt 1 ${attemptSummary(first, firstResult)}; attempt 2 ${attemptSummary(second, secondResult)}`);
     return { error: 'The AI could not suggest usable signs this time. Try again, or describe the business a little differently.', status: 400, code: 'no_valid_signs' };
   }
   return { proposals: result.proposals, retried, problems: result.problems.length };
 }
 
-module.exports = { OFFER, MIN_SIGNS, MAX_SIGNS, systemPrompt, validateProposal, validateReply, suggest, offeredFields };
+module.exports = { OFFER, MIN_SIGNS, MAX_SIGNS, systemPrompt, validateProposal, validateReply, signListOf, suggest, offeredFields };
