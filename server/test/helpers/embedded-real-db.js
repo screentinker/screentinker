@@ -18,7 +18,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-function boot({ firmwareDir, beforeRouter } = {}) {
+function boot({ firmwareDir, beforeRouter, configure } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'st-emb-real-'));
   process.env.DATA_DIR = dataDir;
   process.env.EMBEDDED_CACHE_DIR = path.join(dataDir, 'embedded-cache');
@@ -39,6 +39,7 @@ function boot({ firmwareDir, beforeRouter } = {}) {
   const jsonBody = express.json({ limit: '12mb' });
   app.use((req, res, next) => (/^\/api\/embedded\/logs\/?$/i.test(req.path) ? next() : jsonBody(req, res, next)));
   app.use((req, res, next) => { if (req.body === undefined) req.body = {}; next(); });
+  if (typeof configure === 'function') configure(app);
   app.use('/api/embedded', router);
   const server = app.listen(0);
 
@@ -100,13 +101,19 @@ function boot({ firmwareDir, beforeRouter } = {}) {
     return `http://127.0.0.1:${server.address().port}/api/embedded`;
   }
 
+  // A dashboard session for the helper's workspace admin (routes behind requireAuth).
+  function sessionToken() {
+    const { generateToken } = require('../../middleware/auth');
+    return generateToken(db.prepare('SELECT id, email, role FROM users WHERE id = ?').get(ids.user), ids.ws);
+  }
+
   async function close() {
     await new Promise((r) => server.close(r));
     try { db.close(); } catch (_) { /* already */ }
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 
-  return { db, config, dataDir, ids, insert, mkToken, mkPanel, ready, close };
+  return { db, config, dataDir, ids, insert, mkToken, mkPanel, ready, sessionToken, close };
 }
 
 module.exports = { boot };

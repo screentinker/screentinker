@@ -15,8 +15,10 @@
  *    behind one address update in a single window, and stops a loop from streaming the file forever.
  *  - device logs: device-token authenticated; a panel uploads when asked (upload_logs) or on a fault,
  *    a handful of times per hour. 60/min per address is far above any real site.
- *  - dashboard reads: session authenticated; the device page polls these. 300/min per address leaves
- *    room for an office of dashboards and the public API walking a fleet.
+ *  - dashboard reads: GET /api/devices/:id/diagnostic-logs only (up to 20 stored uploads of 256 kB
+ *    each). 300/min per address leaves room for an office of dashboards. ⚠️ NOT on GET
+ *    /api/devices/:id itself: that is the core device read, bounded by the global backstop
+ *    (lib/backstop-limiter.js) like every other dashboard read.
  *
  * Every 429 is JSON ({ error }) so panels and the dashboard can parse it like any other error.
  */

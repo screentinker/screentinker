@@ -26,7 +26,9 @@ test('every flagged embedded / device route carries its limiter', () => {
   assert.ok(routeHas(embedded, 'get', '/firmware/:preset/latest.bin', limits.firmwareLimiter));
 
   const devices = require('../routes/devices');
-  assert.ok(routeHas(devices, 'get', '/:id', limits.dashboardDeviceReadLimiter));
+  // ⚠️ NOT on GET /:id: that is the core device read (the device page, the public API, the fleet
+  // walk), and a per-IP ceiling there throttled an office of dashboards behind one NAT.
+  assert.equal(routeHas(devices, 'get', '/:id', limits.dashboardDeviceReadLimiter), false);
   assert.ok(routeHas(devices, 'get', '/:id/diagnostic-logs', limits.dashboardDeviceReadLimiter));
 });
 

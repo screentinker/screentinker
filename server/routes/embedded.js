@@ -1713,15 +1713,17 @@ function handleDeviceLogs(req, res) {
     const dashboardNs = io ? io.of('/dashboard') : null;
     if (dashboardNs) {
       const { deviceRoom, emitToWorkspace } = require('../lib/socket-rooms');
+      // Metadata only: the body (up to 256 kB) is fetched by the page that is looking, from
+      // GET /api/devices/:id/diagnostic-logs, not pushed to every dashboard in the workspace.
       emitToWorkspace(dashboardNs, deviceRoom(device.id), 'dashboard:embedded-logs', {
         device_id: device.id,
         id: logId,
         log_id: logId,
         log_count: logCount,
+        size: Buffer.byteLength(logJson, 'utf8'),
         battery,
         wifi_rssi: wifiRssi,
         version,
-        logs: rawLogs.logs || rawLogs,
         uploaded_at: Math.floor(Date.now() / 1000)
       });
     }

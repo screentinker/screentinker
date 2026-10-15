@@ -327,6 +327,21 @@ function renderEmbeddedLogsData(data) {
 }
 
 /*
+ * The newest upload's BODY comes from GET /devices/:id/diagnostic-logs: GET /devices/:id carries
+ * only its metadata (diagnostic_logs_latest) and the socket event only says one arrived.
+ */
+async function refreshEmbeddedLogs(deviceId) {
+  try {
+    const r = await api.getDeviceDiagnosticLogs(deviceId);
+    const latest = r && Array.isArray(r.logs) ? r.logs[0] : null;
+    if (latest) renderEmbeddedLogsData(latest);
+    return Boolean(latest);
+  } catch (_) {
+    return false;
+  }
+}
+
+/*
  * Clipboard with a fallback, because a self-hosted dashboard on plain http is NOT a secure context
  * and `navigator.clipboard` is simply absent there — the copy buttons elsewhere in this app quietly
  * do nothing in that case. A debug log is precisely what a self-hoster wants to paste into an issue.
@@ -744,7 +759,7 @@ export function render(container, deviceId) {
 
   embeddedLogsHandler = (data) => {
     if (!currentDevice || data.device_id !== currentDevice.id) return;
-    renderEmbeddedLogsData(data);
+    refreshEmbeddedLogs(currentDevice.id);
     showToast(`Diagnostic logs received (${data.log_count || 0} entries)`);
   };
   on('embedded-logs', embeddedLogsHandler);
@@ -2829,12 +2844,14 @@ function setupActions(device) {
   });
 
   if (isEmbeddedDevice(device)) {
-    const initialLogs = device.diagnostic_logs && device.diagnostic_logs[0];
-    if (initialLogs) {
-      renderEmbeddedLogsData(initialLogs);
-    } else {
+    const showNoLogs = () => {
       const panelEl = document.getElementById('embeddedLogsPanel');
       if (panelEl) panelEl.textContent = 'No diagnostic logs uploaded yet. Click "Request Diagnostic Logs" to queue a fetch for the device\'s next poll.';
+    };
+    if (device.diagnostic_logs_latest) {
+      refreshEmbeddedLogs(device.id).then((found) => { if (!found) showNoLogs(); });
+    } else {
+      showNoLogs();
     }
 
     document.getElementById('requestDiagLogsBtn')?.addEventListener('click', () => {

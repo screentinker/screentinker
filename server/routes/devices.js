@@ -318,7 +318,7 @@ router.get('/geocode', async (req, res) => {
 });
 
 // Get single device with telemetry history
-router.get('/:id', dashboardDeviceReadLimiter, (req, res) => {
+router.get('/:id', (req, res) => {
   const device = db.prepare('SELECT d.*, u.email as owner_email, u.name as owner_name FROM devices d LEFT JOIN users u ON d.user_id = u.id WHERE d.id = ?').get(req.params.id);
   if (!device) return res.status(404).json({ error: 'Device not found' });
   // Phase 2.2a: workspace-aware read check. accessContext returns null when
@@ -506,9 +506,17 @@ router.get('/:id', dashboardDeviceReadLimiter, (req, res) => {
   // or ~440 existing displays lose their controls the moment this ships.
   const capabilities = playerCapabilities.capabilitiesFor(device);
 
-  const diagnostic_logs = (device.client_type === 'embedded' || String(device.platform || '').toLowerCase().includes('embedded'))
-    ? db.prepare('SELECT * FROM device_diagnostic_logs WHERE device_id = ? ORDER BY uploaded_at DESC, id DESC LIMIT 10').all(req.params.id)
-    : [];
+  /*
+   * Embedded diagnostic logs (#3): the NEWEST upload's metadata only. A full upload is up to 256 kB
+   * and this route is the device page's main read (and the public API's), so the bodies are not
+   * inlined here; GET /:id/diagnostic-logs serves them when the page asks.
+   */
+  let diagnostic_logs_latest = null;
+  if (device.client_type === 'embedded' || String(device.platform || '').toLowerCase().includes('embedded')) {
+    const row = db.prepare(`SELECT id, uploaded_at, length(log_json) AS size, log_count FROM device_diagnostic_logs
+                             WHERE device_id = ? ORDER BY uploaded_at DESC, id DESC LIMIT 1`).get(req.params.id);
+    if (row) diagnostic_logs_latest = { id: row.id, created_at: row.uploaded_at, size: row.size, count: row.log_count };
+  }
 
   // Parsed on READ, not on receipt. The raw block stays the stored truth, so adding a field later
   // is a server deploy rather than re-collecting from every panel in the field. Null for a device
@@ -519,7 +527,7 @@ router.get('/:id', dashboardDeviceReadLimiter, (req, res) => {
   let resolved_layout = null;
   try { resolved_layout = require('../lib/resolve-device-playlist').resolvedLayoutInfo(req.params.id); } catch (_) { resolved_layout = null; }
 
-  res.json({ ...stripDeviceSecrets(device), tags: parseTags(device.tags), group_ids: groupIdsByDevice([device.id])[device.id] || [], local_weather: require('../lib/local-conditions').readingFor(device), capabilities, edid, telemetry, diagnostic_logs, screenshot, assignments, active_layout_zones, resolved_layout, playlist_status, playlist_has_published, uptimeData, statusLog, deviceEvents, ...mirrorFields(device) });
+  res.json({ ...stripDeviceSecrets(device), tags: parseTags(device.tags), group_ids: groupIdsByDevice([device.id])[device.id] || [], local_weather: require('../lib/local-conditions').readingFor(device), capabilities, edid, telemetry, diagnostic_logs_latest, screenshot, assignments, active_layout_zones, resolved_layout, playlist_status, playlist_has_published, uptimeData, statusLog, deviceEvents, ...mirrorFields(device) });
 });
 
 /*
