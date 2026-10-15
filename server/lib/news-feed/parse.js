@@ -45,7 +45,21 @@ function decodeBody(buf, contentType = '') {
   return decodeAs(buf, label || 'utf-8');
 }
 function decodeAs(buf, label) {
-  try { return new TextDecoder(String(label).toLowerCase()).decode(buf); } catch (_) { return buf.toString('utf8'); }
+  let dec;
+  try { dec = new TextDecoder(String(label).toLowerCase()); } catch (_) { return buf.toString('utf8'); }
+  // windows-1252 (which the Encoding Standard also uses for latin1, iso-8859-1 and us-ascii) is
+  // decoded by hand. Node 22.14, the floor, decodes it as ISO-8859-1, so 0x80-0x9F (curly quotes,
+  // dashes, the euro sign) came out as C1 control characters.
+  if (dec.encoding === 'windows-1252') return decodeCp1252(buf);
+  return dec.decode(buf);
+}
+// 0x80-0x9F in windows-1252. The five undefined bytes map to the matching C1 code point, as the
+// Encoding Standard does.
+const CP1252_C1 = '\u20ac\u0081\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u008d\u017d\u008f'
+  + '\u0090\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\u009d\u017e\u0178';
+function decodeCp1252(buf) {
+  const s = buf.toString('latin1');
+  return /[\x80-\x9f]/.test(s) ? s.replace(/[\x80-\x9f]/g, (c) => CP1252_C1[c.charCodeAt(0) - 0x80]) : s;
 }
 
 /* ───────────── entities ───────────── */

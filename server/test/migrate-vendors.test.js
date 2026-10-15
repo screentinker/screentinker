@@ -331,7 +331,7 @@ test('Xibo: pages, retries, maps layouts/schedules/displays, survives a failed d
   assert.equal(view.report.failed[0].name, 'menu.png');
 
   const pl = db.prepare("SELECT id FROM playlists WHERE workspace_id = ? AND name = 'Welcome loop'").get(ws);
-  const items = db.prepare('SELECT c.filename, pi.duration_sec FROM playlist_items pi JOIN content c ON c.id = pi.content_id WHERE pi.playlist_id = ? ORDER BY pi.sort_order').all(pl.id);
+  const items = db.prepare('SELECT c.filename, pi.duration_sec FROM playlist_items pi JOIN content c ON c.id = pi.content_id WHERE pi.playlist_id = ? ORDER BY pi.sort_order').all(pl.id).map((r) => ({ ...r }));
   assert.deepEqual(items.map((i) => i.filename), ['lobby.png', 'promo.mp4'], 'displayOrder kept; the clock widget and the failed media dropped');
   assert.equal(items[0].duration_sec, 5);
 
@@ -457,7 +457,7 @@ test('Yodeck: limit/offset paging with a 429, originals only where the API has t
   assert.deepEqual(names, ['logo.png', 'promo.mp4']);
 
   const pl = db.prepare("SELECT id FROM playlists WHERE workspace_id = ? AND name = 'Lobby'").get(ws);
-  const items = db.prepare('SELECT c.filename, pi.duration_sec FROM playlist_items pi JOIN content c ON c.id = pi.content_id WHERE pi.playlist_id = ? ORDER BY pi.sort_order').all(pl.id);
+  const items = db.prepare('SELECT c.filename, pi.duration_sec FROM playlist_items pi JOIN content c ON c.id = pi.content_id WHERE pi.playlist_id = ? ORDER BY pi.sort_order').all(pl.id).map((r) => ({ ...r }));
   assert.deepEqual(items, [{ filename: 'logo.png', duration_sec: 8 }, { filename: 'promo.mp4', duration_sec: 30 }], 'priority order');
 
   const s = db.prepare('SELECT * FROM schedules WHERE workspace_id = ?').get(ws);
@@ -586,10 +586,10 @@ test('ScreenCloud: GraphQL cursors, channel zones from the layout CSS, files fro
   assert.equal(scan.summary.media, 2, 'the PDF is listed, not imported (both file pages read)');
   assert.ok(scan.unmapped.some((x) => /time rules/.test(x.reason)));
   const pl = db.prepare("SELECT id FROM playlists WHERE workspace_id = ? AND name = 'Morning'").get(ws);
-  const items = db.prepare('SELECT c.filename, pi.duration_sec FROM playlist_items pi JOIN content c ON c.id = pi.content_id WHERE pi.playlist_id = ? ORDER BY pi.sort_order').all(pl.id);
+  const items = db.prepare('SELECT c.filename, pi.duration_sec FROM playlist_items pi JOIN content c ON c.id = pi.content_id WHERE pi.playlist_id = ? ORDER BY pi.sort_order').all(pl.id).map((r) => ({ ...r }));
   assert.deepEqual(items, [{ filename: 'clip.mp4', duration_sec: 14 }, { filename: 'hello.png', duration_sec: 10 }], 'ms -> s, 0 -> the default');
   const lay = db.prepare("SELECT * FROM layouts WHERE workspace_id = ? AND name = 'Lobby channel'").get(ws);
-  const zones = db.prepare('SELECT x_percent, width_percent FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(lay.id);
+  const zones = db.prepare('SELECT x_percent, width_percent FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(lay.id).map((r) => ({ ...r }));
   assert.deepEqual(zones, [{ x_percent: 0, width_percent: 70 }, { x_percent: 70, width_percent: 30 }]);
   const ph = db.prepare('SELECT * FROM migration_screens WHERE workspace_id = ?').get(ws);
   assert.equal(ph.layout_id, lay.id);

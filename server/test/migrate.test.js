@@ -210,7 +210,7 @@ test('generic zip: run imports into a new folder, keeps names, order and duratio
   assert.deepEqual(names, ['a.png', 'b.png', 'c.png']);
 
   const lobby = db.prepare("SELECT * FROM playlists WHERE workspace_id = ? AND name = 'Lobby'").get(WS_A);
-  const items = db.prepare('SELECT c.filename, pi.duration_sec FROM playlist_items pi JOIN content c ON c.id = pi.content_id WHERE pi.playlist_id = ? ORDER BY pi.sort_order').all(lobby.id);
+  const items = db.prepare('SELECT c.filename, pi.duration_sec FROM playlist_items pi JOIN content c ON c.id = pi.content_id WHERE pi.playlist_id = ? ORDER BY pi.sort_order').all(lobby.id).map((r) => ({ ...r }));
   assert.deepEqual(items, [{ filename: 'a.png', duration_sec: 5 }, { filename: 'b.png', duration_sec: 7 }]);
   assert.ok(lobby.published_snapshot, 'published when asked');
 

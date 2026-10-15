@@ -40,7 +40,7 @@ const items = (dev) => {
   for (const a of buildPlaylistPayload(dev).assignments) out[a.content_id] = a;
   return out;
 };
-const queued = () => db.prepare('SELECT content_id, kind, status FROM content_video_variants ORDER BY content_id, kind').all();
+const queued = () => db.prepare('SELECT content_id, kind, status FROM content_video_variants ORDER BY content_id, kind').all().map((r) => ({ ...r }));
 
 before(() => {
   const httpServer = http.createServer(); const io = new Server(httpServer); setupDeviceSocket(io);

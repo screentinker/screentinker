@@ -112,7 +112,7 @@ test('a portrait screen gets the portrait version; a landscape one the default, 
   const sq = device('sq', { playlist: P, layout: L.id, w: 1024, h: 768 });
   const sqNow = payload(sq);
   assert.equal(sqNow.layout.variant, undefined);
-  assert.deepEqual(sqNow.layout, JSON.parse(before.land).layout);
+  assert.deepEqual(JSON.parse(JSON.stringify(sqNow.layout)), JSON.parse(before.land).layout);
   addVariant(L, 'square', { Menu: [0, 0, 65, 88], Promo: [65, 0, 35, 88], Ticker: [0, 88, 100, 12] });
   assert.equal(payload(sq).layout.variant, 'square');
   assert.deepEqual(geoOf(payload(sq).layout.zones.find((z) => z.id === L.zones.Ticker)), [0, 88, 100, 12]);

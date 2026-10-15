@@ -89,8 +89,12 @@ describe('#627 in a real browser', { skip: SKIP }, () => {
   test('allowed + ?autoplay_audio=1: no tap screen, starts with sound, connects, and never throws', async () => {
     const { ctx, page } = await open(allowing, '&autoplay_audio=1');
     try {
+      // The overlay check alone can pass before the player script has run (no overlay yet), and a
+      // slow runner then read userHasInteracted too early. Wait for the script first.
+      assert.ok(await waitFor(async () => (await player(page, 'typeof userHasInteracted')) === 'boolean', 5000, 50), 'the player script runs');
       // Well inside the 5 s muted fallback, so this can only be the automatic start.
-      const gone = await waitFor(async () => (await overlayUp(page)) === false, 3500, 100);
+      const gone = await waitFor(async () => (await player(page, 'userHasInteracted')) === true
+        && (await overlayUp(page)) === false, 3500, 100);
       assert.ok(gone, 'the tap screen should be skipped when the browser allows sound');
       assert.equal(await player(page, 'userHasInteracted'), true, 'audio is unlocked');
       assert.ok(await waitFor(() => player(page, '!!(socket && socket.connected)'), 10000), 'and the player connects');
