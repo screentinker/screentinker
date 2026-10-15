@@ -86,6 +86,7 @@ export function shell(container, inner) {
             ${inManagerApp() && window.STManager ? `<button type="button" data-change-server>${esc(t('simple.menu.change_server'))}</button>` : ''}
             ${passkeyMenuShown(u) ? `<a href="#/simple/passkey">${esc(t('passkey.simple_menu'))}</a>` : ''}
             <a href="#/simple/help">${esc(t('simple.menu.help'))}</a>
+            <a href="#/delete-account">${esc(t('account_delete.menu'))}</a>
             <button type="button" data-simple-signout>${esc(t('auth.sign_out'))}</button>
           </div>
         </details>

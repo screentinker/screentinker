@@ -17,6 +17,7 @@ export function render(container) {
         <h1 style="font-size:20px;font-weight:700;margin-bottom:8px">${t('noworkspace.title')}</h1>
         <p style="color:var(--text-secondary);font-size:14px;line-height:1.6;margin-bottom:24px">${t('noworkspace.body')}</p>
         <button class="btn btn-secondary" id="noWsSignOut" style="padding:8px 16px">${t('noworkspace.sign_out')}</button>
+        <p style="margin-top:16px;font-size:12px"><a href="#/delete-account" style="color:var(--text-muted)">${t('account_delete.menu')}</a></p>
       </div>
     </div>
   `;

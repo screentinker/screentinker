@@ -20,6 +20,9 @@
     <string name="servers_switch">切り替え</string>
     <string name="servers_remove">削除</string>
     <string name="servers_remove_confirm">%1$s をこのスマートフォンから削除しますか？そのサーバー上のアカウントや画面には影響しません。いつでも再度追加できます。</string>
+    <string name="servers_delete_account">アカウントを削除…</string>
+    <string name="servers_delete_account_confirm">%1$s のアカウントを完全に削除する手順を開きますか？何かが削除される前に、パスワード（または再サインイン）で確認します。</string>
+    <string name="servers_delete_account_continue">続ける</string>
     <string name="cancel">キャンセル</string>
     <string name="server_already_added">%1$s はすでに一覧にあります。</string>
     <string name="signing_in">サインインしています…</string>

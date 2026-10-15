@@ -20,6 +20,9 @@
     <string name="servers_switch">Passa a questo</string>
     <string name="servers_remove">Rimuovi</string>
     <string name="servers_remove_confirm">Rimuovere %1$s da questo telefono? Il tuo account e i tuoi schermi lì non cambiano; puoi aggiungerlo di nuovo quando vuoi.</string>
+    <string name="servers_delete_account">Elimina account…</string>
+    <string name="servers_delete_account_confirm">Aprire i passaggi per eliminare definitivamente il tuo account su %1$s? Confermi con la password (o accedendo di nuovo) prima che venga eliminato qualcosa.</string>
+    <string name="servers_delete_account_continue">Continua</string>
     <string name="cancel">Annulla</string>
     <string name="server_already_added">%1$s è già nel tuo elenco.</string>
     <string name="signing_in">Accesso in corso…</string>
