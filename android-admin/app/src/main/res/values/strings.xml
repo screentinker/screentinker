@@ -20,6 +20,9 @@
     <string name="servers_switch">Switch</string>
     <string name="servers_remove">Remove</string>
     <string name="servers_remove_confirm">Remove %1$s from this phone? Your account and screens there are not affected; you can add it again any time.</string>
+    <string name="servers_delete_account">Delete account…</string>
+    <string name="servers_delete_account_confirm">Open the steps to permanently delete your account on %1$s? You confirm with your password (or by signing in again) before anything is deleted.</string>
+    <string name="servers_delete_account_continue">Continue</string>
     <string name="cancel">Cancel</string>
     <string name="server_already_added">%1$s is already in your list.</string>
     <string name="signing_in">Signing you in…</string>

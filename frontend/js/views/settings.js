@@ -17,6 +17,7 @@ import { mountRoomSettings } from '../components/room-settings.js';
 import { mountScimSettings } from '../components/scim-settings.js';
 import { mountBrandKit } from '../components/brand-kit-editor.js';
 import { formatRow, buyPack, usd } from '../components/ai-hosted-picker.js';
+import { mountDeleteAccountCard } from '../components/delete-account.js';
 
 export async function render(container) {
   const serverUrl = `${window.location.protocol}//${window.location.host}`;
@@ -385,6 +386,13 @@ export async function render(container) {
       </div>
     </div>
 
+    <!-- Self-service account deletion (components/delete-account.js). The public /delete-account page
+         links here as #/settings?section=delete-account. -->
+    <div class="settings-section" id="deleteAccountCard">
+      <h3>${esc(t('account_delete.title'))}</h3>
+      <div id="deleteAccountBody"></div>
+    </div>
+
     <!-- Hosted AI credits (org-scoped). Hidden entirely when the server has no platform image
          provider configured, so a self-hosted install sees nothing new. -->
     <div class="settings-section" id="aiCreditsSection" style="display:none">
@@ -547,6 +555,11 @@ export async function render(container) {
   });
 
   // Export data handler
+  mountDeleteAccountCard(document.getElementById('deleteAccountBody'));
+  if (new URLSearchParams(window.location.hash.split('?')[1] || '').get('section') === 'delete-account') {
+    document.getElementById('deleteAccountCard')?.scrollIntoView({ block: 'start' });
+  }
+
   document.getElementById('exportDataBtn')?.addEventListener('click', () => {
     const includeFiles = document.getElementById('exportIncludeFiles')?.checked;
     const token = localStorage.getItem('token');

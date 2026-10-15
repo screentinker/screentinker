@@ -2,7 +2,7 @@ const heartbeat = require('../services/heartbeat');
 const { resolveSessionUser, isPlatformRole } = require('../middleware/auth');
 const { db } = require('../db/database');
 const { accessContext, accessibleWorkspaceIds } = require('../lib/tenancy');
-const { roomsForDashboard } = require('../lib/socket-rooms');
+const { roomsForDashboard, deviceRoom } = require('../lib/socket-rooms');
 const { protectSocket } = require('../lib/safe-socket');
 const playerCapabilities = require('../lib/player-capabilities');
 const { ALLOWED_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
@@ -126,6 +126,9 @@ module.exports = function setupDashboardSocket(io) {
     // Role + existence come from the LIVE users row, not the token claim: a deleted or
     // demoted user no longer keeps fleet control for the remainder of a 7-day JWT.
     socket.userRole = session.user.role;
+    // The workspace this session is in (the token's claim). Rooms are joined for it alone; see
+    // roomsForDashboard. Support sessions carry none and keep every accessible workspace.
+    socket.currentWorkspaceId = (!session.viaSupport && session.decoded && session.decoded.current_workspace_id) || null;
     next();
   });
 
@@ -141,7 +144,7 @@ module.exports = function setupDashboardSocket(io) {
     // that has registered but not yet been paired reach the one operator allowed to see it,
     // instead of being dropped for want of a room. See lib/socket-rooms UNCLAIMED_ROOM.
     const wsIds = accessibleWorkspaceIds(socket.userId, socket.userRole);
-    const rooms = roomsForDashboard(wsIds, isPlatformRole(socket.userRole));
+    const rooms = roomsForDashboard(wsIds, isPlatformRole(socket.userRole), socket.currentWorkspaceId);
     for (const room of rooms) socket.join(room);
     // Per-user room, used ONLY to find this user's sockets for disconnectUserSockets — nothing is
     // ever emitted to it.
@@ -171,6 +174,22 @@ module.exports = function setupDashboardSocket(io) {
       if (typeof ack === 'function') ack({ delivered: false, reason: 'unsupported', capability: cap });
       return true;
     }
+
+    /*
+     * A page showing a device outside the current workspace (a platform admin or org admin acting
+     * as, opening a device detail link) asks for that device's room, so its screenshots, logs and
+     * status keep arriving. The same read gate the commands use: a socket can only ever watch what
+     * the HTTP API would already let it open. Unclaimed devices resolve to UNCLAIMED_ROOM, which
+     * platform roles have joined already.
+     */
+    socket.on('dashboard:watch-device', (data, ack) => {
+      const reply = typeof ack === 'function' ? ack : () => {};
+      const deviceId = data && typeof data.device_id === 'string' ? data.device_id : null;
+      if (!deviceId || !canActOnDevice(socket, deviceId, 'read')) return reply({ ok: false });
+      const room = deviceRoom(deviceId);
+      if (room && !socket.rooms.has(room)) socket.join(room);
+      reply({ ok: true, room: !!room });
+    });
 
     socket.on('dashboard:request-screenshot', (data, ack) => {
       const { device_id } = data;

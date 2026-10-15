@@ -42,6 +42,8 @@ import * as help from './views/help.js';
 import * as teams from './views/teams.js';
 import * as admin from './views/admin.js';
 import * as privacy from './views/privacy.js';   // 3.0 "Your data, provably" (#/privacy)
+import * as deleteAccount from './views/delete-account.js'; // self-service account deletion (#/delete-account)
+import { DELETE_ACCOUNT_ROUTES, stashReturnRoute, takeReturnRoute } from './components/delete-account.js';
 import * as orgImport from './views/org-import.js';   // 3.0 move an organization to another server (#/org-import)
 import * as adminPlayerDebug from './views/admin-player-debug.js';
 import * as designer from './views/designer.js';
@@ -376,7 +378,7 @@ async function refreshCurrentUser() {
     // a redirect loop.
     const hash = window.location.hash || '#/';
     if (hasNoAccessibleWorkspace(fresh)
-        && hash !== '#/no-workspace' && !hash.startsWith('#/login') && hash !== '#/change-password') {
+        && hash !== '#/no-workspace' && !hash.startsWith('#/login') && hash !== '#/change-password' && hash !== '#/delete-account') {
       window.location.hash = '#/no-workspace';
     }
   } catch {}
@@ -489,6 +491,9 @@ function route() {
 
   // Auth check - redirect to login if not authenticated
   if (!isAuthenticated() && !isLoginRoute && !isResetRoute) {
+    // The public /delete-account page links straight to the deletion card: keep that destination
+    // across the sign-in (allowlisted routes only; components/delete-account.js).
+    if (DELETE_ACCOUNT_ROUTES.includes(hash)) stashReturnRoute(hash);
     window.location.hash = '#/login';
     return;
   }
@@ -546,7 +551,8 @@ function route() {
   // accessible_workspaces; until then the workspace-empty-safe dashboard shows.
   if (isAuthenticated()) {
     const u = getCurrentUser();
-    if (hasNoAccessibleWorkspace(u) && hash !== '#/no-workspace') {
+    // #/delete-account stays reachable: an account with no workspace must still be able to leave.
+    if (hasNoAccessibleWorkspace(u) && hash !== '#/no-workspace' && hash !== '#/delete-account') {
       window.location.hash = '#/no-workspace';
       return;
     }
@@ -560,6 +566,13 @@ function route() {
       noWorkspace.render(app);
       return;
     }
+  }
+
+  // Back to where a sign-in was asked for (the account-deletion card, after re-authenticating or
+  // arriving signed out from /delete-account). Consumed once; expires on its own.
+  if (isAuthenticated()) {
+    const back = takeReturnRoute();
+    if (back && back !== hash) { window.location.hash = back; return; }
   }
 
   // 3.0: the Manager app's "Advanced" lands here in the phone's browser: turn Advanced on for this
@@ -636,7 +649,7 @@ function route() {
     link.classList.remove('active');
     if (hash === '#/' && link.dataset.view === 'dashboard') link.classList.add('active');
     else if ((hash.startsWith('#/content') || hash.startsWith('#/migrate')) && link.dataset.view === 'content') link.classList.add('active');
-    else if ((hash.startsWith('#/settings') || hash === '#/privacy' || hash.startsWith('#/org-import')) && link.dataset.view === 'settings') link.classList.add('active');
+    else if ((hash.startsWith('#/settings') || hash === '#/privacy' || hash === '#/delete-account' || hash.startsWith('#/org-import')) && link.dataset.view === 'settings') link.classList.add('active');
     else if (hash.startsWith('#/billing') && link.dataset.view === 'billing') link.classList.add('active');
     else if ((hash.startsWith('#/layout') || hash === '#/layouts') && link.dataset.view === 'layouts') link.classList.add('active');
     else if ((hash === '#/playlists' || hash.startsWith('#/playlists/')) && link.dataset.view === 'playlists') link.classList.add('active');
@@ -834,6 +847,9 @@ function route() {
     // 3.0 Import an organization / the whole server (docs/move-server.md). Prefix: ?job=… and ?kind=….
     currentView = orgImport;
     orgImport.render(app);
+  } else if (hash === '#/delete-account') {
+    currentView = deleteAccount;
+    deleteAccount.render(app);
   } else if (hash === '#/settings' || hash.startsWith('#/settings?')) {
     // `?` prefix too: a credit-pack Checkout returns to `#/settings?credits=success` (the same trap
     // the #/billing route below documents). Not a bare startsWith, so no future #/settings-x matches.

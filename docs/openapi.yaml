@@ -23,6 +23,13 @@ info:
 
     All resources are scoped to the token's workspace; cross-workspace access is not
     available to tokens.
+
+    ## Not on the token door: deleting an account
+    A person deletes their own account with the dashboard session, never with a token:
+    `GET /api/auth/me/deletion` explains what would be deleted, and `DELETE /api/auth/me`
+    (the email typed out, plus the password and 2FA code, or a sign-in from the last
+    10 minutes for single sign-on accounts) deletes it. Like every `/api/auth` route these
+    are outside this contract, and an `st_` token gets `401`. See `docs/accounts.md`.
 servers:
   - url: /api
 

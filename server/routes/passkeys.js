@@ -253,7 +253,7 @@ module.exports = function passkeyRoutes({ issueSession, logFailedLogin, ensureVe
     db.prepare('DELETE FROM webauthn_credentials WHERE id = ? AND user_id = ?').run(row.id, req.user.id);
     bumpTokenVersion(req.user.id);
     auditFromReq(req, 'auth:passkey_removed', { passkey_id: row.id, name: row.name });
-    res.json({ ok: true, token: generateToken(req.user, req.jwtWorkspaceId || null) });
+    res.json({ ok: true, token: generateToken(req.user, req.jwtWorkspaceId || null, { authTime: req.authTime }) });
   });
 
   // ---------------------------------------------------------------------------------------------

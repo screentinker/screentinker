@@ -55,9 +55,22 @@ function emitToWorkspace(ns, room, event, payload) {
  * Every room a dashboard socket should join. Pure (no db, no auth import - this module is the
  * neutral one that breaks the dashboardSocket <-> heartbeat cycle), so it is directly testable:
  * the join is the half of the unclaimed-device fix that a deviceRoom() test cannot see.
+ *
+ * ⚠️ ONLY THE WORKSPACE THE SESSION IS IN, not every workspace it could open. A platform admin's
+ * socket joined one room per workspace on the platform (676 on prod, 2026-10-15), and every one of
+ * them sent it every live event of every screen, all for a dashboard that only ever shows the
+ * current workspace (GET /api/devices is scoped to req.workspaceId). Switching workspace mints a
+ * new token and reloads the page, so the new socket joins the new workspace. A page that shows a
+ * device from another workspace (a platform admin acting-as) asks for that one room on demand:
+ * `dashboard:watch-device` in ws/dashboardSocket.js.
+ *
+ * A session with no current workspace, or one it can no longer open, keeps the old behaviour (every
+ * accessible workspace), so nothing that worked before goes quiet.
  */
-function roomsForDashboard(workspaceIds, isPlatform) {
-  const rooms = (workspaceIds || []).map(workspaceRoom).filter(Boolean);
+function roomsForDashboard(workspaceIds, isPlatform, currentWorkspaceId = null) {
+  const ids = workspaceIds || [];
+  const scoped = currentWorkspaceId && ids.includes(currentWorkspaceId) ? [currentWorkspaceId] : ids;
+  const rooms = scoped.map(workspaceRoom).filter(Boolean);
   if (isPlatform) rooms.push(UNCLAIMED_ROOM);
   return rooms;
 }

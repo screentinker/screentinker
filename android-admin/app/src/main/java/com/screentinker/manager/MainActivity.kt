@@ -83,7 +83,7 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState != null && !intent.getBooleanExtra(EXTRA_RELOAD, false)) {
             web.restoreState(savedInstanceState)
         } else {
-            web.loadUrl("$origin/app#/")
+            web.loadUrl("$origin/app" + startRoute(intent))
         }
         handleShareIntent(intent)
         handleSsoReturn(intent)
@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
         if (intent.getBooleanExtra(EXTRA_RELOAD, false)) {
             ServerStore.get(this)?.let { origin = it }
             pageReady = false
-            web.loadUrl("$origin/app#/")
+            web.loadUrl("$origin/app" + startRoute(intent))
         }
         handleShareIntent(intent)
         handleSsoReturn(intent)
@@ -331,8 +331,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Where the dashboard opens: home, or a route ServerActivity asked for (allowlisted). */
+    private fun startRoute(intent: Intent?): String {
+        val route = intent?.getStringExtra(EXTRA_ROUTE)
+        intent?.removeExtra(EXTRA_ROUTE) // once: a rotation or a later reload goes home
+        return if (route == ROUTE_DELETE_ACCOUNT) route else "#/"
+    }
+
     companion object {
         const val EXTRA_RELOAD = "reload"
+        const val EXTRA_ROUTE = "route"
+        /** The server's "Delete my account" page (frontend/js/views/delete-account.js). */
+        const val ROUTE_DELETE_ACCOUNT = "#/delete-account"
         const val MAX_FILES = 50
         private const val TAG = "STManager"
     }

@@ -683,6 +683,19 @@ app.get('/agency', (req, res) => {
   res.sendFile(path.join(config.frontendDir, 'agency.html'));
 });
 
+// Account deletion, explained (frontend/delete-account.html): the page Google Play's listing
+// links to, readable without signing in. Extension-less like /certified-hardware because the URL
+// is registered with the store. Static HTML under the dashboard CSP and the same no-cache as every
+// other static page; /account-deleted is where the dashboard lands after a deletion.
+app.get(['/delete-account', '/delete-account/'], (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(config.frontendDir, 'delete-account.html'));
+});
+app.get('/account-deleted', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(config.frontendDir, 'account-deleted.html'));
+});
+
 // The integrations hub is a directory index. express.static below runs with index:false,
 // so a bare /integrations/ would otherwise fall through to the SPA catch-all (login page).
 // Serve it explicitly (the spoke pages are real .html files and static already handles them).
@@ -1409,6 +1422,11 @@ app.use('/api/auth/oidc', rateLimit(60000, 120));
 app.use('/api/auth/forgot-password', rateLimit(60000, 5));
 app.use('/api/auth/reset-password', rateLimit(60000, 10));
 app.use('/api/auth/sso/app-exchange', rateLimit(60000, 20)); // 3.0: the Manager app's sign-in hand-off
+// Self-service account deletion (DELETE /api/auth/me): it checks a password and a TOTP code, so it
+// is capped like the other re-authentication endpoints. Method-gated, because GET /api/auth/me is
+// what every dashboard page load asks for and must never share this bucket.
+const deleteAccountLimit = rateLimit(60000, 5);
+app.use('/api/auth/me', (req, res, next) => (req.method === 'DELETE' ? deleteAccountLimit(req, res, next) : next()));
 // Admin password-reset endpoint: even if an admin's session is compromised,
 // cap the blast radius to 20 resets/min/IP. Express matches the longest
 // path prefix first, so this fires before /api/auth catches the request.
@@ -3212,8 +3230,12 @@ app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (
   // Notify the device via WebSocket — or, scale-out C2, through the replica it is attached to.
   const pairedMsg = { device_id: device.id, name: pairedName, settings_pin: settingsPin };
   const pairedRoom = deviceNs.adapter.rooms.get(device.id);
-  if (pairedRoom && pairedRoom.size > 0) deviceNs.to(device.id).emit('device:paired', pairedMsg);
-  else if (device.attached_node_id) { try { require('./lib/mesh/command-relay').relayToAttached(db, device.id, 'device:paired', pairedMsg); } catch (e) { /* the screen learns on its next register */ } }
+  if (pairedRoom && pairedRoom.size > 0) {
+    deviceNs.to(device.id).emit('device:paired', pairedMsg);
+    // 3.0.1: the card's preview is the pairing code until somebody asks for a screenshot. Ask once
+    // the screen has drawn its content (lib/preview-refresh.js; bounded, never fatal).
+    try { require('./lib/preview-refresh').noteChange(device.id); } catch (e) { /* best effort */ }
+  } else if (device.attached_node_id) { try { require('./lib/mesh/command-relay').relayToAttached(db, device.id, 'device:paired', pairedMsg); } catch (e) { /* the screen learns on its next register */ } }
 
   // Time zone fallback: a display still on its image's default zone (Pi OS ships Europe/London)
   // gets the pairing admin's browser zone, when it can set its own (system.time: the native

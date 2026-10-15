@@ -196,7 +196,7 @@ test('both add-a-display surfaces offer the no-storage option', () => {
    * code. Adding a second mode to a form is the classic way to break the first one.
    */
   assert.match(dash, /api\.pairDevice\(code/, 'the dialog must still pair with a code');
-  assert.match(wiz, /\/api\/provision\/pair/, 'the wizard must still pair with a code');
+  assert.match(wiz, /api\.pairDevice\(code/, 'the wizard must still pair with a code');
   assert.match(wiz, /code\.length !== 6/, 'and still validate that code');
 });
 

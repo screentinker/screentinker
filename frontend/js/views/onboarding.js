@@ -1,5 +1,5 @@
 import { showToast } from '../components/toast.js';
-import { api, browserTimezone } from '../api.js';
+import { api } from '../api.js';
 import { t } from '../i18n.js';
 import { esc, isTouchFirst } from '../utils.js';
 import { publishOrSubmit } from '../components/release.js';
@@ -488,7 +488,8 @@ export function render(container, { mode = 'first' } = {}) {
           currentStep++;
           renderStep();
         } catch (err) {
-          if (status) status.textContent = err.message || t('onboarding.toast.pair_failed');
+          // At the screen limit the upgrade prompt says it (plan-nudges.js); the step stays quiet.
+          if (status) status.textContent = err.planPromptShown ? '' : (err.message || t('onboarding.toast.pair_failed'));
         }
         return;
       }
@@ -499,23 +500,28 @@ export function render(container, { mode = 'first' } = {}) {
         return;
       }
 
+      /*
+       * ⚠️ THROUGH api.pairDevice, THE SAME CALL THE ADD SCREEN DIALOG MAKES. A raw fetch here never
+       * reached api.js's requestError, which is what raises the upgrade prompt on a plan limit, so at
+       * the Free limit this step only printed "Device limit reached" where Advanced view explained the
+       * plans. A refusal from the server (err.status set) keeps its own words as before; only a request
+       * that never got an answer says "Pairing failed: …".
+       */
+      let data;
       try {
         if (status) status.textContent = t('onboarding.toast.pairing');
-        const token = localStorage.getItem('token');
-        const res = await fetch('/api/provision/pair', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ pairing_code: code, name: name || undefined, browser_timezone: browserTimezone() })
-        });
-        const data = await res.json();
-        if (!res.ok) { if (status) status.textContent = data.error || t('onboarding.toast.pair_failed'); return; }
-        pairedDeviceId = data.id;
-        showToast(t('onboarding.toast.paired'), 'success');
-        currentStep++;
-        renderStep();
+        data = await api.pairDevice(code, name || undefined);
       } catch (err) {
-        if (status) status.textContent = t('onboarding.toast.pair_failed_with_error', { error: err.message });
+        // A plan limit is answered by the upgrade prompt (plan-nudges.js); the step does not repeat it.
+        if (err.planPromptShown) { if (status) status.textContent = ''; return; }
+        if (status) status.textContent = err.status ? ((err.body && err.body.error) || t('onboarding.toast.pair_failed'))
+          : t('onboarding.toast.pair_failed_with_error', { error: err.message });
+        return;
       }
+      pairedDeviceId = data.id;
+      showToast(t('onboarding.toast.paired'), 'success');
+      currentStep++;
+      renderStep();
       return;
     }
 
@@ -636,7 +642,8 @@ export function render(container, { mode = 'first' } = {}) {
     try {
       uploaded = await api.uploadContent(files, (pct) => { if (bar) bar.style.width = pct + '%'; });
     } catch (err) {
-      return fail(err.message || t('onboarding.toast.upload_failed'));
+      // At a storage limit the upgrade prompt (plan-nudges.js) says it; the line under the drop area stays quiet.
+      return fail(err.planPromptShown ? '' : (err.message || t('onboarding.toast.upload_failed')));
     }
     if (bar) bar.style.width = '100%';
     return placeItems(Array.isArray(uploaded) ? uploaded : [uploaded]);

@@ -20,6 +20,7 @@ import { api } from '../api.js';
 import { t, tn } from '../i18n.js';
 import { esc } from '../utils.js';
 import { showToast } from '../components/toast.js';
+import { openModal } from '../components/corporate-ui.js';
 
 // Literal keys (the i18n test can only check literals): how to connect, per source.
 const HOW = {
@@ -442,22 +443,68 @@ async function loadPlaceholders() {
  * then the ordinary group joins and playlist assignment — each through its own guarded endpoint —
  * and only then the link is recorded. Nothing here claims a screen the person did not type the
  * code of.
+ *
+ * The code is asked for in the app's own dialog (the same skeleton the rest of the dashboard uses),
+ * not window.prompt: a wrong code is answered in place with the server's reason and the dialog stays
+ * open for another try, and a plan limit closes it for the upgrade prompt instead of a red toast.
  */
-async function pairPlaceholder(p, btn) {
+function pairPlaceholder(p, btn) {
   if (!p) return;
-  const code = window.prompt(t('migrate.ph_code', { name: p.name }));
-  if (!code || !code.trim()) return;
-  btn.disabled = true;
-  try {
-    const dev = await api.pairDevice(code.trim(), p.name);
-    const problems = [];
-    for (const g of p.groups) { try { await api.addDeviceToGroup(g.id, dev.id); } catch (e) { problems.push(e.message); } }
-    if (p.playlist) { try { await api.assignPlaylistToDevice(p.playlist.id, dev.id); } catch (e) { problems.push(e.message); } }
-    await api.migrateLinkPlaceholder(p.id, dev.id);
-    showToast(problems.length ? t('migrate.ph_paired_partly', { problem: problems[0] }) : t('migrate.ph_paired', { name: p.name }), problems.length ? 'warning' : 'success');
-    loadPlaceholders();
-  } catch (e) {
-    showToast(e.message, 'error');
-    btn.disabled = false;
+  const m = openModal({
+    title: t('migrate.ph_pair_title', { name: p.name }),
+    body: `<p class="modal-description" style="margin-bottom:16px">${esc(t('migrate.ph_code', { name: p.name }))}</p>
+      <div class="form-group">
+        <label for="migPairCode">${esc(t('add_display.pairing_code'))}</label>
+        <input type="text" id="migPairCode" maxlength="6" placeholder="000000" class="pairing-input" inputmode="numeric" autocomplete="off" aria-describedby="migPairErr">
+      </div>
+      <p id="migPairErr" role="alert" style="color:var(--danger);font-size:13px;margin:8px 0 0"></p>`,
+    footer: `<button type="button" class="btn btn-secondary" data-corp-close>${esc(t('common.cancel'))}</button>
+      <button type="button" class="btn btn-primary" data-mig-pair-go disabled>${esc(t('migrate.ph_pair'))}</button>`,
+  });
+  const input = m.q('#migPairCode');
+  const go = m.q('[data-mig-pair-go]');
+  const errEl = m.q('#migPairErr');
+  // Six characters, the same check the Add screen dialog makes; the server says whether it is real.
+  const valid = () => input.value.trim().length === 6;
+  let busy = false;
+  input.addEventListener('input', () => { go.disabled = busy || !valid(); errEl.textContent = ''; });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+  go.addEventListener('click', submit);
+  input.focus();
+
+  async function submit() {
+    if (busy) return;
+    if (!valid()) { errEl.textContent = t('dashboard.error_pairing_code'); return; }
+    busy = true;
+    go.disabled = true;
+    input.disabled = true;
+    btn.disabled = true;
+    errEl.textContent = t('onboarding.toast.pairing');
+    let dev;
+    try {
+      dev = await api.pairDevice(input.value.trim(), p.name);
+    } catch (e) {
+      busy = false;
+      btn.disabled = false;
+      // A plan limit is answered by the upgrade prompt (plan-nudges.js); the dialog gets out of its way.
+      if (e.planPromptShown) { m.close(); return; }
+      input.disabled = false;
+      go.disabled = !valid();
+      errEl.textContent = e.message || t('onboarding.toast.pair_failed');
+      input.focus();
+      return;
+    }
+    m.close();
+    try {
+      const problems = [];
+      for (const g of p.groups) { try { await api.addDeviceToGroup(g.id, dev.id); } catch (e) { problems.push(e.message); } }
+      if (p.playlist) { try { await api.assignPlaylistToDevice(p.playlist.id, dev.id); } catch (e) { problems.push(e.message); } }
+      await api.migrateLinkPlaceholder(p.id, dev.id);
+      showToast(problems.length ? t('migrate.ph_paired_partly', { problem: problems[0] }) : t('migrate.ph_paired', { name: p.name }), problems.length ? 'warning' : 'success');
+      loadPlaceholders();
+    } catch (e) {
+      showToast(e.message, 'error');
+      btn.disabled = false;
+    }
   }
 }

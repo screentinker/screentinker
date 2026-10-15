@@ -270,16 +270,37 @@ async function listModels({ baseUrl, apiKey, privateHosts }) {
 
 /* ============================================================ asking for JSON */
 
-/**
- * The first complete JSON value in a model's reply.
- *
- * Local models wrap JSON in prose, code fences, or a reasoning block (<think>…</think> from
- * qwen3 / deepseek-r1) however firmly the prompt says not to. This takes the first balanced object
- * or array — string-aware, so a "}" inside a value does not end it — and parses that.
+/*
+ * `[1, 2,]` and `{"a": 1,}`: a comma with only whitespace before the closing bracket, the commonest
+ * way a local model's JSON is "almost" JSON. String-aware, so a ", }" inside a
+ * value is left alone. Nothing else is repaired: a reply that needs guessing is not used.
  */
-function extractJson(content) {
-  let s = String(content == null ? '' : content);
-  s = s.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?/gi, '');
+function withoutTrailingCommas(text) {
+  let out = '';
+  let inStr = false, esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) {
+      out += c;
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') { inStr = true; out += c; continue; }
+    if (c === ',') {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j])) j++;
+      if (text[j] === '}' || text[j] === ']') continue;
+    }
+    out += c;
+  }
+  return out;
+}
+
+/** Every balanced, parseable JSON object or array in `s`, in order; an inner one is not repeated. */
+function jsonValuesIn(s) {
+  const out = [];
   for (let start = 0; start < s.length; start++) {
     const ch = s[start];
     if (ch !== '{' && ch !== '[') continue;
@@ -297,11 +318,44 @@ function extractJson(content) {
       else if (c === '}' || c === ']') {
         depth--;
         if (depth === 0) {
-          try { return JSON.parse(s.slice(start, i + 1)); } catch { break; }
+          const slice = s.slice(start, i + 1);
+          let v;
+          try { v = JSON.parse(slice); } catch {
+            try { v = JSON.parse(withoutTrailingCommas(slice)); } catch { break; }
+          }
+          out.push(v);
+          start = i;   // carry on AFTER this value, not inside it
+          break;
         }
       }
     }
   }
+  return out;
+}
+
+/**
+ * The JSON value in a model's reply.
+ *
+ * Local models wrap JSON in prose, code fences, or a reasoning block (<think>…</think> from
+ * qwen3 / deepseek-r1) however firmly the prompt says not to. This takes the first balanced object
+ * or array — string-aware, so a "}" inside a value does not end it — and parses that, allowing
+ * trailing commas. A fenced block is looked in first, and a value that carries objects wins over a
+ * stray one in the prose before it ("Here are [3] signs: {...}" is the object, not [3]).
+ */
+function extractJson(content) {
+  let s = String(content == null ? '' : content);
+  s = s.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  const structured = (v) => (v && typeof v === 'object' && !Array.isArray(v))
+    || (Array.isArray(v) && v.some((x) => x && typeof x === 'object'));
+  const fence = /```[a-z]*\s*([\s\S]*?)```/i.exec(s);
+  const pools = [];
+  if (fence) pools.push(jsonValuesIn(fence[1]));
+  pools.push(jsonValuesIn(s.replace(/```(?:json)?/gi, '')));
+  for (const vals of pools) {
+    const hit = vals.find(structured);
+    if (hit !== undefined) return hit;
+  }
+  for (const vals of pools) if (vals.length) return vals[0];
   return undefined;
 }
 

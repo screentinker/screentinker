@@ -20,6 +20,9 @@
     <string name="servers_switch">Wisselen</string>
     <string name="servers_remove">Verwijderen</string>
     <string name="servers_remove_confirm">%1$s van deze telefoon verwijderen? Je account en schermen daar blijven ongewijzigd; je kunt de server altijd opnieuw toevoegen.</string>
+    <string name="servers_delete_account">Account verwijderen…</string>
+    <string name="servers_delete_account_confirm">De stappen openen om je account op %1$s definitief te verwijderen? Je bevestigt met je wachtwoord (of door opnieuw in te loggen) voordat er iets wordt verwijderd.</string>
+    <string name="servers_delete_account_continue">Doorgaan</string>
     <string name="cancel">Annuleren</string>
     <string name="server_already_added">%1$s staat al in je lijst.</string>
     <string name="signing_in">Je wordt aangemeld…</string>

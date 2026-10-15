@@ -551,6 +551,23 @@ test('rejection: a reason is required, the requester is told, and the file is sw
   assert.equal(st.json.can_cancel, false);
 });
 
+test('a decline carrying a stale version is refused, so two reviewers cannot both decide it', async () => {
+  // The dashboard's Decline dialog sends the version it was looking at (as Approve does).
+  const f = await makeForm();
+  const r = await fullSubmit(f, { email: 'race@x.org' });
+  const row = db.prepare('SELECT * FROM content_requests WHERE ref = ?').get(r.json.ref);
+  const detail = await call('GET', `/api/content-requests/requests/${row.id}`, 'ed');
+  const version = detail.json.submission && detail.json.submission.version;
+  assert.equal(typeof version, 'number', 'the detail the dialog reads carries the submission version');
+  const stale = await call('POST', `/api/content-requests/requests/${row.id}/reject`, 'ed', { reason: 'Too late', version: version + 1 });
+  assert.equal(stale.status, 409); assert.equal(stale.json.code, 'version_conflict');
+  assert.ok(stale.json.error, 'the conflict carries a sentence for the dialog to show');
+  assert.equal(db.prepare('SELECT status FROM content_requests WHERE id = ?').get(row.id).status, 'pending', 'nothing was decided');
+  const ok = await call('POST', `/api/content-requests/requests/${row.id}/reject`, 'ed', { reason: 'Wrong size', version });
+  assert.equal(ok.status, 200, JSON.stringify(ok.json));
+  assert.equal(ok.json.status, 'rejected');
+});
+
 test('the requester can withdraw a waiting request from the status link', async () => {
   const f = await makeForm();
   const r = await fullSubmit(f, { email: 'wd@x.org' });

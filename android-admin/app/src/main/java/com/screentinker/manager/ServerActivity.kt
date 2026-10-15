@@ -106,14 +106,15 @@ class ServerActivity : ComponentActivity() {
         }
     }
 
-    /** Use this server (saving it if new) and open it. */
-    private fun switchTo(origin: String) {
+    /** Use this server (saving it if new) and open it, at [route] when one is given. */
+    private fun switchTo(origin: String, route: String? = null) {
         ServerStore.set(this, origin)
         // Carry a pending "share" from the Gallery through first-run setup.
         val forward = androidx.core.content.IntentCompat.getParcelableExtra(intent, EXTRA_FORWARD, Intent::class.java)
         val next = (forward ?: Intent()).setClass(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
             .putExtra(MainActivity.EXTRA_RELOAD, true)
+        if (route != null) next.putExtra(MainActivity.EXTRA_ROUTE, route)
         startActivity(next)
         finish()
     }
@@ -151,6 +152,19 @@ class ServerActivity : ComponentActivity() {
                 setTextColor(ContextCompat.getColor(context, if (origin == current) R.color.accent else R.color.text_secondary))
                 textSize = 13f
             })
+            // Google Play: deleting the account has to be startable from inside the app. The steps
+            // themselves are the server's (#/delete-account, in this app's web view), so the
+            // password / two-factor / single sign-on checks are exactly the dashboard's.
+            texts.addView(TextView(this).apply {
+                text = getString(R.string.servers_delete_account)
+                setTextColor(ContextCompat.getColor(context, R.color.text_secondary))
+                textSize = 13f
+                paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
+                setPadding(0, (6 * dp).toInt(), 0, 0)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { confirmDeleteAccount(origin) }
+            })
             row.addView(texts, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             row.addView(Button(this).apply {
                 text = getString(R.string.servers_remove)
@@ -174,6 +188,18 @@ class ServerActivity : ComponentActivity() {
                 ServerStore.remove(this, origin)
                 if (wasCurrent && ServerStore.get(this) != null) switchTo(ServerStore.get(this)!!)
                 else renderSaved()
+            }
+            .show()
+    }
+
+    /** Open the server's own "Delete my account" steps; nothing is deleted until they are finished. */
+    private fun confirmDeleteAccount(origin: String) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.servers_delete_account)
+            .setMessage(getString(R.string.servers_delete_account_confirm, ServerStore.label(origin)))
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.servers_delete_account_continue) { _, _ ->
+                switchTo(origin, MainActivity.ROUTE_DELETE_ACCOUNT)
             }
             .show()
     }

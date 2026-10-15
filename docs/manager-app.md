@@ -60,6 +60,22 @@ Nothing has to be registered with the identity provider for the app: the provide
 the server's normal callback URL. Tested on the Android 16 emulator with a standard OIDC provider,
 from the button in the app to signed in as the provider's user.
 
+## Deleting an account
+
+Google Play requires that an account can be deleted from inside the app. Two ways in, both opening
+the server's own **Delete my account** page (`#/delete-account`) in the app's web view:
+
+- the menu under your name in the Simple view → **Delete my account**;
+- **Your servers** → **Delete account…** under a server (asks first, then opens that server at
+  `#/delete-account`; `MainActivity.EXTRA_ROUTE` accepts only that route).
+
+The page asks for the email address typed out and the password (plus the two-factor code). A
+single sign-on account taps **Sign in again**, which runs the usual browser hand-off below and
+returns to the page; it then has 10 minutes to finish. Nothing native talks to the deletion API, so
+the checks are exactly the dashboard's. After the deletion the web view shows `/account-deleted`.
+The Play listing's deletion link is `https://screentinker.com/delete-account`. Details:
+[accounts.md](accounts.md).
+
 ## Building
 
 The build needs JDK 17 and the Android SDK with `platforms;android-36`.
@@ -94,6 +110,9 @@ MANAGER_KEY_ALIAS=upload MANAGER_KEY_PASSWORD=… \
   server they chose, and, while the person shares their screen, the screen's picture peer to peer to
   the ScreenTinker screen they confirmed (never stored, never through a third party). The code
   scanner is Google Play services' (it returns only the scanned text). No ads, no analytics SDK.
+- **Account deletion (Data safety → "Delete account" URL):** `https://screentinker.com/delete-account`.
+  In-app: Simple view menu → **Delete my account**, or **Your servers** → **Delete account…**
+  (see [Deleting an account](#deleting-an-account)).
 - **Permissions:** `INTERNET`, and for **Share my screen**: `FOREGROUND_SERVICE`,
   `FOREGROUND_SERVICE_MEDIA_PROJECTION` (Play Console asks for a declaration and a short video of
   the feature: start a share from a screen's QR, show it on the screen, stop it from the

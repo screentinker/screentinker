@@ -569,6 +569,14 @@ module.exports = {
   contentAckMaxPerWindow: parseInt(process.env.CONTENT_ACK_MAX_PER_WINDOW) || 20,
   contentAckRateWindowMs: parseInt(process.env.CONTENT_ACK_RATE_WINDOW_MS) || 10000,
 
+  // 3.0.1 preview refresh (lib/preview-refresh.js): after a screen is paired or sent new content,
+  // the server asks it for ONE screenshot once it has had time to draw it, so the screen cards stop
+  // showing the pairing code. Settle = how long the player gets to draw; gap = the floor between two
+  // of these asks per screen; per-minute = the cap across the whole node (a fleet-wide publish).
+  previewRefreshSettleMs: parseInt(process.env.PREVIEW_REFRESH_SETTLE_MS) || 8000,
+  previewRefreshMinGapMs: parseInt(process.env.PREVIEW_REFRESH_MIN_GAP_MS) || 60000,
+  previewRefreshPerMinute: parseInt(process.env.PREVIEW_REFRESH_PER_MINUTE) || 60,
+
   // Version update indicator — polls GHCR for the latest Docker image tag via
   // anonymous token flow. All optional with safe defaults.
   ghcrCheckIntervalHours: parseInt(process.env.GHCR_CHECK_INTERVAL_HOURS) || 36,

@@ -40,10 +40,19 @@ function currentTokenVersion(user) {
   } catch { return 0; }
 }
 
-function generateToken(user, currentWorkspaceId) {
+/*
+ * `authTime` (seconds) is when the person last actually SIGNED IN: a password, a passkey or a
+ * single sign-on round trip. Sign-in finishers pass `now`; re-mints of an existing session
+ * (workspace switch, TOTP change, "sign out everywhere else") carry the old value forward so a
+ * re-minted token does not look like a fresh sign-in. Only account deletion reads it today
+ * (lib/account-deletion.js: a password-less account proves it is present by having signed in
+ * within the last few minutes). Absent = unknown = not recent, the safe default.
+ */
+function generateToken(user, currentWorkspaceId, { authTime } = {}) {
   return jwt.sign(
     { id: user.id, email: user.email, role: user.role, current_workspace_id: currentWorkspaceId || null,
-      tv: currentTokenVersion(user) },
+      tv: currentTokenVersion(user),
+      ...(Number.isInteger(authTime) ? { auth_time: authTime } : {}) },
     config.jwtSecret,
     { algorithm: 'HS256', expiresIn: config.jwtExpiry }
   );
@@ -247,6 +256,11 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
   req.user = session.user;
+  // When this session's person last signed in (see generateToken). Undefined on older tokens and on
+  // recovery/support sessions, which never count as a recent sign-in.
+  req.authTime = (session.viaRecovery || session.viaSupport || !Number.isInteger(session.decoded.auth_time))
+    ? undefined : session.decoded.auth_time;
+  req.sessionKind = session.viaRecovery ? 'recovery' : (session.viaSupport ? 'support' : 'user');
   // Tenancy middleware reads this on the resolver step.
   req.jwtWorkspaceId = (session.viaRecovery || session.viaSupport) ? null : (session.decoded.current_workspace_id || null);
   next();

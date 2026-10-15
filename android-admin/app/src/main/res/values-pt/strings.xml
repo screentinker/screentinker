@@ -20,6 +20,9 @@
     <string name="servers_switch">Trocar</string>
     <string name="servers_remove">Remover</string>
     <string name="servers_remove_confirm">Remover %1$s deste celular? Sua conta e suas telas lá não são afetadas; você pode adicioná-lo de novo quando quiser.</string>
+    <string name="servers_delete_account">Excluir conta…</string>
+    <string name="servers_delete_account_confirm">Abrir as etapas para excluir permanentemente sua conta em %1$s? Você confirma com sua senha (ou entrando novamente) antes que algo seja excluído.</string>
+    <string name="servers_delete_account_continue">Continuar</string>
     <string name="cancel">Cancelar</string>
     <string name="server_already_added">%1$s já está na sua lista.</string>
     <string name="signing_in">Entrando…</string>

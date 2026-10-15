@@ -887,6 +887,10 @@ export const api = {
   totpEnable: (code) => request('/auth/totp/enable', { method: 'POST', body: JSON.stringify({ code }) }).then(keepSession),
   totpDisable: (code) => request('/auth/totp/disable', { method: 'POST', body: JSON.stringify({ code }) }).then(keepSession),
   revokeOtherSessions: () => request('/auth/sessions/revoke-others', { method: 'POST' }).then(keepSession),
+  // Self-service account deletion (routes/auth.js). GET explains what would go and what is in the
+  // way; DELETE takes { confirm: email, password?, code? }. Wrong credentials answer 403, not 401.
+  accountDeletionInfo: () => request('/auth/me/deletion'),
+  deleteMyAccount: (body) => request('/auth/me', { method: 'DELETE', body: JSON.stringify(body) }),
   totpRegenRecovery: (code) => request('/auth/totp/recovery-codes/regenerate', { method: 'POST', body: JSON.stringify({ code }) }),
 
   // 3.0 passkeys (server/routes/passkeys.js). Adding one asks for the password again (plus the TOTP

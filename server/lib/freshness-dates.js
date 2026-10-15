@@ -75,7 +75,7 @@ const NUMERIC_RE = /(?<![\w./-])(\d{1,2})[/.](\d{1,2})[/.](20\d{2})(?![\w/.-])/g
  * is over only once both hemispheres are done with it (southern summer 2025 runs into Feb 2026).
  */
 const EVENTS = [
-  { re: /\b(christmas|x-?mas)\s*'?(20\d{2})\b/gi, label: 'Christmas', end: (y) => [y, 12, 26] },
+  { re: /\b(christmas|x[-\s]?mas)\s*'?(20\d{2})\b/gi, label: 'Christmas', end: (y) => [y, 12, 26] },
   { re: /\b(new\s+year'?s?\s+eve|nye)\s*'?(20\d{2})\b/gi, label: "New Year's Eve", end: (y) => [y + 1, 1, 1] },
   { re: /\b(halloween)\s*'?(20\d{2})\b/gi, label: 'Halloween', end: (y) => [y, 11, 1] },
   { re: /\b(valentine'?s?(?:\s+day)?)\s*'?(20\d{2})\b/gi, label: "Valentine's Day", end: (y) => [y, 2, 15] },
@@ -163,8 +163,7 @@ function inferYear(m, d, anchor) {
 function findDates(text, { anchor, source = 'text' } = {}) {
   const out = [];
   if (typeof text !== 'string' || !text) return out;
-  // A file name's separators are spaces to a reader: christmas_2025_menu.png says "Christmas 2025".
-  let s = source === 'name' ? text.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[_+]+/g, ' ') : text;
+  let s = source === 'name' ? nameWords(text) : text;
   s = s.slice(0, 4000);
   // Spans already claimed by a more specific pattern, so "12th December 2025" is not also "Friday 12th".
   const taken = [];
@@ -222,6 +221,19 @@ function findDates(text, { anchor, source = 'text' } = {}) {
     }
   }
   return out;
+}
+
+/*
+ * A file name's separators are spaces to a reader: christmas_2025_menu.png and
+ * christmas-2025-menu.png both say "Christmas 2025", and the extension is not a word.
+ * ⚠️ A '-' or '.' BETWEEN TWO DIGITS stays: it is part of a number ("v2-2025-03", "Oct 3-5", "1.2"),
+ * and turning "Oct 3-5" into "Oct 3 5" would read the range's START as its end.
+ */
+function nameWords(text) {
+  return String(text)
+    .replace(/\.[a-z0-9]{2,5}$/i, '')
+    .replace(/[_+]+/g, ' ')
+    .replace(/(?<!\d)[-.]+|[-.]+(?!\d)/g, ' ');
 }
 
 function cap(w) { return String(w || '').replace(/^\w/, (c) => c.toUpperCase()); }

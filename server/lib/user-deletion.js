@@ -366,6 +366,9 @@ function deleteUserCascade(db, { targetId, actingAdminId, unlink, revokeCanva })
     );
   }
   const soloOrgIds = owned.map(o => o.id);
+  // Who inherits a NOT NULL creator column nobody else can take (2b below). Never the person being
+  // deleted: a self-service delete passes their own id as the actor, or null.
+  const fallbackId = actingAdminId && actingAdminId !== targetId ? actingAdminId : null;
 
   const have = tablesPresent(db);
   // Their own Canva connections (encrypted OAuth tokens), and any made against a solo org's app.
@@ -396,23 +399,31 @@ function deleteUserCascade(db, { targetId, actingAdminId, unlink, revokeCanva })
 
     // 2b) NOT NULL legacy creator columns -> reassign to the resource's org owner
     //     (fallback acting admin), preserving the resource under a valid owner.
+    //     Self-service deletion (routes/auth.js DELETE /me) has no admin acting: the caller passes
+    //     another platform admin as the fallback, or null when there is none, and then a row that
+    //     belongs to no organization (a pre-tenancy legacy row only its creator could ever reach)
+    //     goes with its creator - reassigning it to the person being deleted would fail the
+    //     foreign key at COMMIT.
     for (const t of REASSIGN_USER_TABLES) {
       if (!have.has(t)) continue;
-      db.prepare(`
-        UPDATE ${t} SET user_id = COALESCE(
-          (SELECT o.owner_user_id FROM workspaces w JOIN organizations o ON o.id = w.organization_id WHERE w.id = ${t}.workspace_id),
-          ?
-        ) WHERE user_id = ?
-      `).run(actingAdminId, targetId);
+      const owner = `(SELECT o.owner_user_id FROM workspaces w JOIN organizations o ON o.id = w.organization_id WHERE w.id = ${t}.workspace_id)`;
+      if (fallbackId) {
+        db.prepare(`UPDATE ${t} SET user_id = COALESCE(${owner}, ?) WHERE user_id = ?`).run(fallbackId, targetId);
+      } else {
+        db.prepare(`UPDATE ${t} SET user_id = ${owner} WHERE user_id = ? AND ${owner} IS NOT NULL`).run(targetId);
+        db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(targetId);
+      }
     }
     for (const t of REASSIGN_WORKSPACE_ONLY_TABLES) {
       if (!have.has(t)) continue;
+      // Without a fallback, a folder whose workspace has no owner is left on the person and goes
+      // with them (the column cascades), like a workspace-less one.
       db.prepare(`
         UPDATE ${t} SET user_id = COALESCE(
           (SELECT o.owner_user_id FROM workspaces w JOIN organizations o ON o.id = w.organization_id WHERE w.id = ${t}.workspace_id),
           ?
         ) WHERE user_id = ? AND workspace_id IS NOT NULL
-      `).run(actingAdminId, targetId);
+      `).run(fallbackId || targetId, targetId);
     }
 
     // 2b') Integrations that act AS the person (#520-#523). These stop working without them, so they

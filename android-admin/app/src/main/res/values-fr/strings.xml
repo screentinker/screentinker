@@ -20,6 +20,9 @@
     <string name="servers_switch">Basculer</string>
     <string name="servers_remove">Retirer</string>
     <string name="servers_remove_confirm">Retirer %1$s de ce téléphone ? Votre compte et vos écrans sur ce serveur ne sont pas affectés ; vous pouvez le rajouter à tout moment.</string>
+    <string name="servers_delete_account">Supprimer le compte…</string>
+    <string name="servers_delete_account_confirm">Ouvrir les étapes pour supprimer définitivement votre compte sur %1$s ? Vous confirmez avec votre mot de passe (ou en vous reconnectant) avant toute suppression.</string>
+    <string name="servers_delete_account_continue">Continuer</string>
     <string name="cancel">Annuler</string>
     <string name="server_already_added">%1$s est déjà dans votre liste.</string>
     <string name="signing_in">Connexion en cours…</string>

@@ -21,6 +21,13 @@ const TRUE_POSITIVES = [
   // [text, source, expected date]
   ['Christmas 2025 menu', 'text', '2025-12-26'],
   ['christmas_2025_menu.png', 'name', '2025-12-26'],
+  ['christmas-2025-menu.png', 'name', '2025-12-26'],          // dashes are word separators too
+  ['Christmas 2025 lunch menu.png', 'name', '2025-12-26'],
+  ['christmas.2025.menu.png', 'name', '2025-12-26'],          // and dots, bar the extension
+  ['x-mas-2024-hours.jpg', 'name', '2024-12-26'],
+  ['summer_2025_collection.mp4', 'name', '2026-02-28'],
+  ['menu-october-2025.png', 'name', '2025-10-31'],
+  ['black-friday-2025-deals.png', 'name', '2025-12-03'],
   ['XMAS 2024 opening hours', 'text', '2024-12-26'],
   ['Sale ends Oct 3', 'text', '2026-10-03'],
   ['Join us 3rd Oct', 'text', '2026-10-03'],
@@ -43,6 +50,12 @@ const TRUE_NEGATIVES = [
   ['Mon-Fri 9-5', 'text', 'opening hours'],
   ['IMG_20230512_123456.jpg', 'name', 'camera timestamp in a file name'],
   ['Screenshot 2025-03-04 at 10.22.33.png', 'name', 'numeric dates in file names are ignored'],
+  ['promo-v2-2025-03.png', 'name', 'a version-like number in a file name'],
+  ['banner-1920x1080.png', 'name', 'dimensions'],
+  ['slide-2025-001.png', 'name', 'a counter'],
+  ['christmas-2026-menu.png', 'name', 'still to come'],
+  ['sale-oct-3-20.png', 'name', 'a dashed range keeps its end'],
+  ['logo-2024.png', 'name', 'a bare year'],
   ['est. 2019', 'text', 'a bare year'],
   ['© 2024 Acme', 'text', 'a bare year'],
   ['You may come in', 'text', '"may" with no day or year'],

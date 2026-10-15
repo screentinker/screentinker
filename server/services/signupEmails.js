@@ -240,4 +240,29 @@ If this wasn't you, you can ignore this email — your password has not changed.
   return sendEmail({ to: user.email, subject: 'Reset your ScreenTinker password', text, html });
 }
 
-module.exports = { sendSignupEmails, sendVerificationEmail, sendPasswordResetEmail };
+/*
+ * Self-service account deletion (routes/auth.js DELETE /me): a receipt to the address that was just
+ * deleted, so a deletion the owner did not make is noticed. Sent AFTER the delete from the copy of
+ * the row the route still holds, and carries nothing from the account but the greeting. Not an
+ * unsubscribe-able list mail: it is the last message this address will get from the server.
+ */
+async function sendAccountDeletedEmail(user, req) {
+  const base = require('../lib/public-origin').publicOrigin(req);
+  const who = user.name || user.email;
+  // A self-hosted server's people are its operator's, not ours: never point them at our inbox.
+  const contact = config.selfHosted ? 'the administrator of this server' : 'support@screentinker.com';
+  const text = `Hi ${who},
+
+Your ScreenTinker account (${user.email}) and the data that belonged only to it have been deleted, as you asked.
+
+Copies of deleted data remain in backups until those backups expire. More: ${base}/delete-account
+
+If you did not delete your account, contact ${contact} straight away.`;
+  const html = `<p>Hi ${escapeHtml(who)},</p>
+<p>Your ScreenTinker account (${escapeHtml(user.email)}) and the data that belonged only to it have been deleted, as you asked.</p>
+<p>Copies of deleted data remain in backups until those backups expire. <a href="${escapeHtml(base)}/delete-account">What was deleted</a>.</p>
+<p style="color:#666">If you did not delete your account, contact ${escapeHtml(contact)} straight away.</p>`;
+  return sendEmail({ to: user.email, subject: 'Your ScreenTinker account has been deleted', text, html });
+}
+
+module.exports = { sendSignupEmails, sendVerificationEmail, sendPasswordResetEmail, sendAccountDeletedEmail };

@@ -20,6 +20,9 @@
     <string name="servers_switch">Wechseln</string>
     <string name="servers_remove">Entfernen</string>
     <string name="servers_remove_confirm">%1$s von diesem Handy entfernen? Ihr Konto und Ihre Bildschirme dort bleiben unverändert; Sie können den Server jederzeit wieder hinzufügen.</string>
+    <string name="servers_delete_account">Konto löschen…</string>
+    <string name="servers_delete_account_confirm">Die Schritte zum dauerhaften Löschen Ihres Kontos auf %1$s öffnen? Sie bestätigen mit Ihrem Passwort (oder einer erneuten Anmeldung), bevor etwas gelöscht wird.</string>
+    <string name="servers_delete_account_continue">Weiter</string>
     <string name="cancel">Abbrechen</string>
     <string name="server_already_added">%1$s ist bereits in Ihrer Liste.</string>
     <string name="signing_in">Sie werden angemeldet…</string>

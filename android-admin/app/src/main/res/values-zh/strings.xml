@@ -20,6 +20,9 @@
     <string name="servers_switch">切换</string>
     <string name="servers_remove">移除</string>
     <string name="servers_remove_confirm">要从此手机移除 %1$s 吗？你在该服务器上的账户和屏幕不受影响，随时可以重新添加。</string>
+    <string name="servers_delete_account">删除账户…</string>
+    <string name="servers_delete_account_confirm">打开在 %1$s 上永久删除账户的步骤？在删除任何内容之前，你需要用密码（或重新登录）确认。</string>
+    <string name="servers_delete_account_continue">继续</string>
     <string name="cancel">取消</string>
     <string name="server_already_added">%1$s 已在你的列表中。</string>
     <string name="signing_in">正在登录…</string>

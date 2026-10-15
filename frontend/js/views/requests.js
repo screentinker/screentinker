@@ -13,6 +13,7 @@ import { api } from '../api.js';
 import { t } from '../i18n.js';
 import { esc, hydrateAuthImages } from '../utils.js';
 import { showToast } from '../components/toast.js';
+import { openModal } from '../components/corporate-ui.js';
 
 const when = (sec) => (sec ? new Date(sec * 1000).toLocaleString() : '');
 const STATUS = ['pending', 'approved', 'published', 'rejected', 'cancelled', 'all'];
@@ -112,17 +113,12 @@ async function renderInbox(body) {
     actions.innerHTML = a;
     actions.onclick = async (e) => {
       const b = e.target.closest('button'); if (!b) return;
+      if (b.hasAttribute('data-reject')) { openDecline(r, () => show(r.id)); return; }
       b.disabled = true;
       try {
         if (b.hasAttribute('data-approve')) {
           const out = await api.post(`/content-requests/requests/${encodeURIComponent(r.id)}/approve`, { version: r.submission && r.submission.version });
           showToast(t(out.all_published ? 'creq.toast.approved' : 'creq.toast.partial'), out.all_published ? 'success' : 'error');
-        }
-        if (b.hasAttribute('data-reject')) {
-          const reason = prompt(t('creq.reject_prompt'));
-          if (!reason) { b.disabled = false; return; }
-          await api.post(`/content-requests/requests/${encodeURIComponent(r.id)}/reject`, { reason });
-          showToast(t('creq.toast.rejected'));
         }
         if (b.hasAttribute('data-retry')) {
           const out = await api.post(`/content-requests/requests/${encodeURIComponent(r.id)}/publish`, {});
@@ -136,6 +132,58 @@ async function renderInbox(body) {
   list.addEventListener('click', (e) => { const row = e.target.closest('[data-id]'); if (row) show(row.dataset.id); });
   sel.addEventListener('change', load);
   await load();
+}
+
+/*
+ * Decline asks for the reason in the app's own dialog, not window.prompt. The reason is required —
+ * the server refuses an empty one, and it is what the requester is mailed — so Decline stays
+ * disabled until something is typed, and a refusal is shown in place with the text kept for another
+ * try. Enter adds a line (the reason may be a paragraph); Ctrl/Cmd+Enter declines, Escape cancels.
+ * It sends the version the reviewer was looking at, as Approve does, so two people deciding the same
+ * request at once get a conflict instead of the second one silently winning.
+ */
+function openDecline(r, done) {
+  const m = openModal({
+    title: t('creq.reject_title'),
+    body: `<div class="form-group">
+        <label for="creqReason">${esc(t('creq.reject_prompt'))}</label>
+        <textarea id="creqReason" class="input" rows="4" maxlength="1000" style="width:100%;resize:vertical" aria-describedby="creqReasonErr"></textarea>
+      </div>
+      <p id="creqReasonErr" role="alert" style="color:var(--danger);font-size:13px;margin:8px 0 0"></p>`,
+    footer: `<button type="button" class="btn btn-secondary" data-corp-close>${esc(t('common.cancel'))}</button>
+      <button type="button" class="btn btn-danger" data-creq-decline disabled>${esc(t('creq.reject'))}</button>`,
+  });
+  const input = m.q('#creqReason');
+  const go = m.q('[data-creq-decline]');
+  const errEl = m.q('#creqReasonErr');
+  let busy = false;
+  input.addEventListener('input', () => { go.disabled = busy || !input.value.trim(); errEl.textContent = ''; });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } });
+  go.addEventListener('click', submit);
+  input.focus();
+
+  async function submit() {
+    const reason = input.value.trim();
+    if (busy || !reason) return;
+    busy = true;
+    go.disabled = true;
+    input.disabled = true;
+    try {
+      await api.post(`/content-requests/requests/${encodeURIComponent(r.id)}/reject`, { reason, version: r.submission && r.submission.version });
+    } catch (err) {
+      // A conflict (someone else decided it first, or it changed since it was opened) is the
+      // server's own sentence, shown here rather than as a toast behind the dialog.
+      busy = false;
+      input.disabled = false;
+      go.disabled = !input.value.trim();
+      errEl.textContent = err.message;
+      input.focus();
+      return;
+    }
+    m.close();
+    showToast(t('creq.toast.rejected'));
+    done();
+  }
 }
 
 // ─── forms ───────────────────────────────────────────────────────────────────────────────────

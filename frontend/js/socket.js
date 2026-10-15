@@ -1,6 +1,9 @@
 let dashboardSocket = null;
 const listeners = new Map();
 let refusalRetryMs = 2000;
+// Devices outside the current workspace a page is watching (watchDevice). Declared up here, before
+// any handler reads it, so no early event can hit it in its temporal dead zone.
+const watchedDevices = new Set();
 
 async function recheckLoginAfterRefusal() {
   let status = 0;
@@ -39,6 +42,9 @@ export function connectSocket() {
   dashboardSocket.on('connect', () => {
     console.log('Dashboard connected, socket id:', dashboardSocket.id);
     refusalRetryMs = 2000;
+    // A new socket starts in the current workspace's room only; ask again for every device page
+    // that is watching a screen elsewhere (see watchDevice).
+    for (const id of watchedDevices) dashboardSocket.emit('dashboard:watch-device', { device_id: id });
     updateConnectionStatus(true);
     emit('connected');
   });
@@ -179,6 +185,19 @@ export function requestScreenshot(deviceId, callback) {
   } else {
     dashboardSocket.emit('dashboard:request-screenshot', { device_id: deviceId });
   }
+}
+
+/*
+ * The socket only joins the CURRENT workspace's room (server/lib/socket-rooms.js roomsForDashboard).
+ * A device page can show a screen from another workspace (a platform or organization admin acting
+ * as), so it asks for that screen's room too; otherwise its screenshots, logs and status would
+ * never arrive. Remembered, so a reconnect asks again. The server applies the same read check as
+ * the HTTP API.
+ */
+export function watchDevice(deviceId) {
+  if (!deviceId) return;
+  watchedDevices.add(deviceId);
+  if (dashboardSocket && dashboardSocket.connected) dashboardSocket.emit('dashboard:watch-device', { device_id: deviceId });
 }
 
 export function startRemote(deviceId) {
