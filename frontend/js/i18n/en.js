@@ -2424,6 +2424,7 @@ export default {
   'corp.ctl.set_server_url': "move it to another server",
   'corp.ctl.shell': "run commands on it",
   'corp.ctl.install_apk': "install apps on it",
+  'corp.ctl.update': "update its software",
   'corp.ctl.launch': "launch apps on it",
   'corp.ctl.kiosk_unlock': "unlock it",
   'corp.ctl.screen_off': "turn it off",

@@ -727,10 +727,10 @@ describe('reTerminal E-Series Registration & Route Handling', () => {
     // Clear queue for dev-e1001 first
     commandQueue.popPendingCommands('dev-e1001');
 
-    // Queue upload_logs followed by update
+    // Queue upload_logs followed by reboot. (This used a custom-URL update; a caller-supplied
+    // firmware URL is never offered any more, so a reboot stands in as the sibling.)
     commandQueue.queueCommand('dev-e1001', 'upload_logs', {});
-    const RF3_SHA = 'a'.repeat(64);
-    commandQueue.queueCommand('dev-e1001', 'update', { url: 'http://example.com/fw.bin', sha256: RF3_SHA, version: '1.4.0' });
+    commandQueue.queueCommand('dev-e1001', 'reboot', {});
 
     // Poll 1: delivers upload_logs
     const res1 = await fetch(`${baseUrl}/render?device_id=dev-e1001`, {
@@ -739,12 +739,12 @@ describe('reTerminal E-Series Registration & Route Handling', () => {
     assert.equal(res1.status, 200);
     assert.equal(res1.headers.get('x-st-command'), 'upload_logs');
 
-    // Poll 2: delivers update (upload_logs was popped on Poll 1)
+    // Poll 2: delivers reboot (upload_logs was popped on Poll 1)
     const res2 = await fetch(`${baseUrl}/render?device_id=dev-e1001`, {
       headers: { 'Authorization': 'Bearer tok-e1001' },
     });
     assert.equal(res2.status, 200);
-    assert.equal(res2.headers.get('x-st-command'), `update http://example.com/fw.bin ${RF3_SHA}`);
+    assert.equal(res2.headers.get('x-st-command'), 'reboot');
 
     // Poll 3: queue is now empty
     const res3 = await fetch(`${baseUrl}/render?device_id=dev-e1001`, {
@@ -1083,13 +1083,14 @@ describe('reTerminal E-Series Registration & Route Handling', () => {
     // RF-6 left the device reporting 1.4.0. These offers are judged against an older device.
     db.prepare("UPDATE devices SET app_version = '1.3.0' WHERE id = 'dev-e1001'").run();
     try {
-      // 1. Custom URL with its own SHA-256 and version
+      // 1. A custom URL, even with its own SHA-256 and version, is never offered: only this
+      //    server's own binary is (there is none on disk yet, so nothing at all).
       commandQueue.queueCommand('dev-e1001', 'update', { url: 'http://custom.example.com/fw.bin', sha256: sha, version: '1.4.0' });
       let res = await fetch(`${baseUrl}/render?device_id=dev-e1001`, {
         headers: { 'Authorization': 'Bearer tok-e1001' },
       });
       assert.equal(res.status, 200);
-      assert.equal(res.headers.get('x-st-command'), `update http://custom.example.com/fw.bin ${sha}`);
+      assert.equal(res.headers.get('x-st-command'), null, 'a caller-supplied firmware URL must never be emitted');
 
       // 2. Custom URL with no hash is NOT offered (S2)
       commandQueue.queueCommand('dev-e1001', 'update', { url: 'http://custom.example.com/fw.bin', version: '1.4.0' });

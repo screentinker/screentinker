@@ -2065,7 +2065,7 @@ function headOfficeTriggerNotes(device) {
  * the other everyday controls stay as they are.
  */
 const CORP_GATED_CONTROLS = {
-  setServerUrlBtn: 'set_server_url', termRun: 'shell', apkInstall: 'install_apk', ptyConnect: 'shell',
+  setServerUrlBtn: 'set_server_url', termRun: 'shell', apkInstall: 'install_apk', ptyConnect: 'shell', forceUpdateBtn: 'update',
   launchAppBtn: 'launch', t2KioskOff: 'kiosk_unlock', screenOffBtn: 'screen_off', remoteScreenOffBtn: 'screen_off', shutdownBtn: 'shutdown',
   sysTimeout: 'set_screen_timeout', sendPipBtn: 'pip', blockDeviceBtn: 'block', powerSave: 'power',
 };

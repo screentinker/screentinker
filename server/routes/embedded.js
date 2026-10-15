@@ -83,32 +83,35 @@ function normalizePresetName(profileOrPreset) {
 /*
  * The `update <url> <sha256>` string for one queued update, or null when the device must not be
  * told to update. The device verifies the image against the digest in this string and refuses to
- * flash without one, so an offer is only made when every part of it is known:
+ * flash without one.
  *
- *   - the URL,
- *   - a 64-hex SHA-256 of the exact bytes that URL returns (a caller-supplied URL carries its own
- *     hash; the local file's hash is never borrowed for it),
- *   - a target version (version.json, or the payload's version), so the breaker can judge it.
+ * ⚠️ ONLY EVER THIS SERVER'S OWN BINARY. The URL is always /api/embedded/firmware/<preset>/latest.bin
+ * for the preset the panel is filed under, and the digest is the SHA-256 of that file. Anything the
+ * caller put in the queued payload (url, binary_url, sha256, version) is ignored: a command payload
+ * is operator- or API-supplied, and "flash whatever this URL serves, here is its hash" is remote
+ * code execution on the panel with an integrity check the attacker wrote. The firmware's own
+ * digest check cannot help when the digest arrived in the same message as the URL.
+ *
+ * An offer also needs a target version (version.json) so the breaker can judge it, and when
+ * version.json declares a sha256 it must match the bytes on disk — a half-copied binary is not
+ * offered.
  */
 function buildUpdateOffer(deviceId, device, req, update) {
-  const payload = update.payload || {};
-  const customUrl = payload.url || payload.binary_url || update.url || '';
-  let url;
-  let sha;
-  let targetVersion = payload.version || null;
-
-  if (customUrl) {
-    url = String(customUrl);
-    sha = payload.sha256 || update.sha256 || '';
-  } else {
-    const preset = normalizePresetName(device?.screen_profile);
-    if (!preset) return null;
-    const fw = getFirmwareInfo(preset);
-    if (!fw || !fw.sha256) return null;               // no file on disk: nothing we can offer
-    url = `/api/embedded/firmware/${preset}/latest.bin`;
-    sha = fw.sha256;
-    targetVersion = targetVersion || fw.version;
+  const payload = (update && update.payload) || {};
+  if (payload.url || payload.binary_url || (update && update.url)) {
+    console.warn(`[ota] Device '${deviceId}': ignoring a caller-supplied firmware URL; only this server's own binary is offered`);
   }
+  const preset = normalizePresetName(device?.screen_profile);
+  if (!preset) return null;
+  const fw = getFirmwareInfo(preset);
+  if (!fw || !fw.sha256) return null;                 // no file on disk: nothing we can offer
+  if (fw.declaredSha256 && fw.declaredSha256.toLowerCase() !== fw.sha256.toLowerCase()) {
+    console.warn(`[ota] Firmware for '${preset}' does not match its version.json sha256; not offered`);
+    return null;
+  }
+  const url = `/api/embedded/firmware/${preset}/latest.bin`;
+  const sha = fw.sha256;
+  const targetVersion = fw.version;
 
   if (!SHA256_HEX.test(String(sha))) return null;      // no verifiable digest: do not emit
   if (!targetVersion) return null;                      // no version.json: breaker cannot judge it
@@ -1757,12 +1760,14 @@ function getFirmwareInfo(preset) {
           }
 
           let version = null;
+          let declaredSha256 = null;
           const vJsonPath = path.join(path.dirname(binPath), 'version.json');
           const vTxtPath = path.join(path.dirname(binPath), 'version.txt');
           if (fs.existsSync(vJsonPath)) {
             try {
               const parsed = JSON.parse(fs.readFileSync(vJsonPath, 'utf8'));
               if (parsed.version) version = String(parsed.version);
+              if (typeof parsed.sha256 === 'string' && SHA256_HEX.test(parsed.sha256)) declaredSha256 = parsed.sha256;
             } catch (_) {}
           } else if (fs.existsSync(vTxtPath)) {
             try {
@@ -1776,6 +1781,7 @@ function getFirmwareInfo(preset) {
             version,
             size: stat.size,
             sha256,
+            declaredSha256,
             filePath: binPath,
             download_url: `/api/embedded/firmware/${safePreset}/latest.bin`
           };

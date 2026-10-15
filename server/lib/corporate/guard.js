@@ -421,6 +421,8 @@ const GATED_COMMANDS = Object.freeze({
   kiosk_unlock: 'unlock it', screen_off: 'turn it off', shutdown: 'shut it down',
   // Not in the spec's list, same class: it can blank the panel after N ms of "inactivity".
   set_screen_timeout: 'change its screen timeout',
+  // Same class as install_apk: new software on the screen. On an embedded panel it is a reflash.
+  update: 'update its software',
 });
 const BRIGHTNESS_FLOOR = 0.2;
 const _ctlAudit = new Map();
