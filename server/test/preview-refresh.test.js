@@ -145,6 +145,32 @@ test('the same payload pushed twice → one ask', () => {
   assert.deepEqual(asked, ['dev-a']);
 });
 
+test('the per-screen gap holds across several changes: the MAX_WAIT_MS cap never pulls an ask in under it', () => {
+  // Asked at ~T0+12 s (the first change). Two more changes inside the gap: the ask must wait for the
+  // gap to end. Before the fix the second one moved it to firstAt + MAX_WAIT_MS, inside the gap.
+  pr.noteChange('dev-a', T0);
+  assert.equal(pr.runDue(T0 + 12000), 1);
+  const askedAt = T0 + 12000;
+  pr.noteChange('dev-a', T0 + 20000);
+  pr.noteChange('dev-a', T0 + 25000);
+  assert.ok(pr._pending('dev-a').due >= askedAt + 60000, 'still due at the end of the gap, not before');
+  assert.equal(pr.runDue(T0 + 20000 + pr.MAX_WAIT_MS), 0, 'not at firstAt + MAX_WAIT_MS, which is inside the gap');
+  assert.equal(pr.runDue(askedAt + 60000), 1, 'asked when the gap ends');
+  assert.deepEqual(asked, ['dev-a', 'dev-a']);
+});
+
+test('PREVIEW_REFRESH=off: no change is followed up', () => {
+  const config = require('../config');
+  const was = config.previewRefreshEnabled;
+  config.previewRefreshEnabled = false;
+  try {
+    assert.equal(pr.noteChange('dev-a', T0), false);
+    assert.equal(pr._pending('dev-a'), null);
+    assert.equal(pr.runDue(T0 + 120000), 0);
+    assert.deepEqual(asked, []);
+  } finally { config.previewRefreshEnabled = was; }
+});
+
 test('a changed payload → a second ask, after the per-screen gap', () => {
   pr.notePush('dev-a', payloadOf([ITEM]), T0);
   pr.runDue(T0 + 12000);

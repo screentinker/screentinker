@@ -573,6 +573,8 @@ module.exports = {
   // the server asks it for ONE screenshot once it has had time to draw it, so the screen cards stop
   // showing the pairing code. Settle = how long the player gets to draw; gap = the floor between two
   // of these asks per screen; per-minute = the cap across the whole node (a fleet-wide publish).
+  // PREVIEW_REFRESH=off stops the server asking screens for a screenshot after a change (lib/preview-refresh.js).
+  previewRefreshEnabled: !['off', 'false', '0', 'no'].includes(String(process.env.PREVIEW_REFRESH || '').toLowerCase()),
   previewRefreshSettleMs: parseInt(process.env.PREVIEW_REFRESH_SETTLE_MS) || 8000,
   previewRefreshMinGapMs: parseInt(process.env.PREVIEW_REFRESH_MIN_GAP_MS) || 60000,
   previewRefreshPerMinute: parseInt(process.env.PREVIEW_REFRESH_PER_MINUTE) || 60,

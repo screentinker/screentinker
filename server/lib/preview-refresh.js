@@ -73,9 +73,14 @@ function stopTimerIfIdle() {
 /** The screen's picture is about to change (paired, new content delivered). Never throws. */
 function noteChange(deviceId, nowMs = Date.now()) {
   if (!deviceId || typeof deviceId !== 'string') return false;
+  if (!config.previewRefreshEnabled) return false;
   const p = pending.get(deviceId);
   if (p) {
-    p.due = Math.min(p.firstAt + MAX_WAIT_MS, Math.max(p.due, nowMs + settleMs()));
+    // Debounce: a later change pushes the ask back, but no further than MAX_WAIT_MS after the first
+    // change. ⚠️ And never EARLIER than it was already due: that due time carries the per-screen gap
+    // (the floor below). Taking min(cap, …) alone pulled a second change's ask in under the 60 s gap
+    // (asked at 0 s, change at 10 s due at 60 s, change at 15 s moved it to 40 s).
+    p.due = Math.max(p.due, Math.min(p.firstAt + MAX_WAIT_MS, nowMs + settleMs()));
     return true;
   }
   if (pending.size >= MAX_PENDING) return false;

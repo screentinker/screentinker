@@ -60,7 +60,12 @@ async function startServer(tag) {
   const fd = fs.openSync(log, 'w');
   const proc = spawn(process.execPath, ['server.js'], {
     cwd: SERVER_DIR,
-    env: { ...process.env, DATA_DIR: dataDir, SELF_HOSTED: 'true', PORT: String(port), NODE_ENV: 'test' },
+    // The server asks a screen for a fresh screenshot shortly after pairing or a content change
+    // (lib/preview-refresh.js), deferred to a 60 s gap per screen. Those unprompted asks land on the
+    // players these e2e tests drive, and a test counting "Screenshot requested" then counts one it
+    // never sent (display-links-e2e "and not the other one"). None of these tests is about preview
+    // refresh, so it is off for them (PREVIEW_REFRESH=off); preview-refresh-e2e starts its own server.
+    env: { PREVIEW_REFRESH: 'off', ...process.env, DATA_DIR: dataDir, SELF_HOSTED: 'true', PORT: String(port), NODE_ENV: 'test' },
     stdio: ['ignore', fd, fd],
   });
   const up = await waitFor(async () => {
