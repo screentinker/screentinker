@@ -25,7 +25,7 @@ Use whichever method you used to install. Every path runs the same migrations at
 
 | Install | Command |
 |---|---|
-| git + systemd (`scripts/upgrade.sh`) | `sudo scripts/upgrade.sh`. This checks Node, backs up the database, checks out the release, runs `npm ci`, proves the database driver loads, then restarts. |
+| git + systemd (`scripts/upgrade.sh`) | `sudo scripts/upgrade.sh`. This checks Node, backs up the database, checks out the release, runs `npm ci`, proves the database driver loads, builds the Raspberry Pi player, downloads the release's other player packages (checksum-verified; the APK it replaces is kept as `.bak-pre-<tag>`), then restarts. |
 | Instance updater | Choose 3.0 under Platform → System. The updater does not upgrade Node: if it refuses, run `scripts/upgrade.sh` once. |
 | Docker / Compose | `docker compose pull && docker compose up -d` |
 | Manual | `git fetch --tags && git checkout v3.0.0 && (cd server && npm ci --omit=dev)`, then restart. |
@@ -112,6 +112,7 @@ them. The one effect: sessions revoked under 3.0 become valid again until they e
 |---|---|---|
 | `ST_ALLOW_OLD_NODE` | unset | `1` starts below the Node floor with a warning (unsupported) |
 | `ST_SKIP_UPGRADE_SNAPSHOT` | unset | `1` skips the pre-upgrade database snapshot |
+| `UPGRADE_SKIP_PLAYERS` | unset | `1` stops `scripts/upgrade.sh` from downloading the release's player packages (the signed APK and the others), e.g. when you stage the APK by hand |
 | `SELF_HOSTED_SIGNUP_PLAN` | `enterprise` | `trial` restores the 2.x self-hosted signup trial |
 | `ST_HIDE_SPONSOR` | unset | `true` hides the self-hosted GitHub Sponsors ask (platform admins only; at once after an upgrade, 3 days after a fresh install) |
 | `PUBLIC_HOSTS` | unset | Comma-separated hosts trusted for emailed links when `APP_URL` is unset |

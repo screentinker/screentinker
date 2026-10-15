@@ -93,3 +93,86 @@ test('build-deb.sh produces screentinker-pi_<VERSION>_all.deb', { skip: !haveToo
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+/* ── upgrade.sh downloads the release's player packages ─────────────────────────────────────── */
+
+const crypto = require('node:crypto');
+const UPGRADE = read('scripts/upgrade.sh');
+const FETCH = UPGRADE.slice(UPGRADE.indexOf('fetch_players() {'), UPGRADE.indexOf('\n}\n', UPGRADE.indexOf('fetch_players() {')) + 3);
+
+test('upgrade.sh downloads the player packages after the checkout and before the restart, and can be told not to', () => {
+  const at = UPGRADE.indexOf('\n  fetch_players\n');
+  assert.ok(FETCH.length > 100 && at > UPGRADE.indexOf('git checkout -q "$TARGET"') && at < UPGRADE.indexOf('STEP="restarting the server"'));
+  assert.match(UPGRADE, /if \[ "\$\{UPGRADE_SKIP_PLAYERS:-0\}" = 1 \]; then\n\s+echo "==> Player packages: left as they are/);
+  assert.match(FETCH, /sha256sum/, 'every file is checked against the release digest');
+  assert.doesNotMatch(FETCH, /\bexit\b/, 'never ends the upgrade');
+});
+
+const haveSha = spawnSync('sh', ['-c', 'command -v sha256sum && command -v curl']).status === 0;
+
+/**
+ * Run fetch_players in a scratch checkout under the script's own shell options, with `curl`
+ * answering the GitHub API from a fake release whose assets are local files.
+ */
+function runFetch(t, { assets, before = {}, digestOverride = {} }) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'st-fetch-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const app = path.join(root, 'app'); const files = path.join(root, 'files'); const bin = path.join(root, 'bin');
+  for (const d of [app, files, bin]) fs.mkdirSync(d);
+  for (const [name, body] of Object.entries(before)) {
+    fs.mkdirSync(path.dirname(path.join(app, name)), { recursive: true });
+    fs.writeFileSync(path.join(app, name), body);
+  }
+  const release = { assets: Object.entries(assets).map(([name, body]) => {
+    fs.writeFileSync(path.join(files, name), body);
+    const digest = 'sha256:' + (digestOverride[name] || crypto.createHash('sha256').update(body).digest('hex'));
+    return { name, digest, browser_download_url: 'file://' + path.join(files, name) };
+  }) };
+  fs.writeFileSync(path.join(root, 'release.json'), JSON.stringify(release));
+  const realCurl = spawnSync('sh', ['-c', 'command -v curl'], { encoding: 'utf8' }).stdout.trim();
+  fs.writeFileSync(path.join(bin, 'curl'), `#!/bin/bash\nfor a in "$@"; do case "$a" in https://api.github.com/*) cat '${root}/release.json'; exit 0;; esac; done\nexec '${realCurl}' "$@"\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(root, 'run.sh'), `set -Eeuo pipefail\ntrap 'echo "ERR TRAP" >&2; exit 9' ERR\ncd '${app}'\nTARGET=v9.0.0\n${FETCH}\nfetch_players\necho FETCH-DONE\n`);
+  const r = spawnSync('bash', [path.join(root, 'run.sh')], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${path.dirname(process.execPath)}:${process.env.PATH}`, UPGRADE_RELEASE_REPO: 'o/r' } });
+  const has = (name) => fs.existsSync(path.join(app, name));
+  const body = (name) => fs.readFileSync(path.join(app, name), 'utf8');
+  return { r, out: r.stdout + r.stderr, has, body };
+}
+
+test('a verified package replaces the old one, which is kept as .bak-pre-<tag>; the installers go to native/dist', { skip: !haveSha && 'needs curl and sha256sum' }, (t) => {
+  const f = runFetch(t, {
+    before: { 'ScreenTinker.apk': 'old apk', 'ScreenTinker.apk.version': '8.0.0\n' },
+    assets: {
+      'ScreenTinker.apk': 'new apk', 'ScreenTinker.apk.version': '9.0.0\n', 'ScreenTinker.ipk': 'ipk',
+      'ScreenTinker-Setup-9.0.0.exe': 'exe', 'screentinker-9.0.0.tar.gz': 'not a player', 'autorun.zip': 'built by the server',
+    },
+  });
+  assert.equal(f.r.status, 0, f.out);
+  assert.match(f.out, /FETCH-DONE/);
+  assert.equal(f.body('ScreenTinker.apk'), 'new apk');
+  assert.equal(f.body('ScreenTinker.apk.version'), '9.0.0\n');
+  assert.equal(f.body('ScreenTinker.apk.bak-pre-v9.0.0'), 'old apk');
+  assert.equal(f.body('ScreenTinker.ipk'), 'ipk');
+  assert.equal(f.body('native/dist/ScreenTinker-Setup-9.0.0.exe'), 'exe');
+  assert.ok(!f.has('screentinker-9.0.0.tar.gz') && !f.has('autorun.zip'), 'only player packages');
+});
+
+test('a file that fails its checksum is not used, and the APK\'s .version never moves without the APK', { skip: !haveSha && 'needs curl and sha256sum' }, (t) => {
+  const f = runFetch(t, {
+    before: { 'ScreenTinker.apk': 'old apk', 'ScreenTinker.apk.version': '8.0.0\n' },
+    assets: { 'ScreenTinker.apk': 'tampered', 'ScreenTinker.apk.version': '9.0.0\n', 'ScreenTinker.ipk': 'ipk' },
+    digestOverride: { 'ScreenTinker.apk': '0'.repeat(64) },
+  });
+  assert.equal(f.r.status, 0, 'a bad file never fails the upgrade:\n' + f.out);
+  assert.match(f.out, /ScreenTinker\.apk does not match the release checksum/);
+  assert.equal(f.body('ScreenTinker.apk'), 'old apk');
+  assert.equal(f.body('ScreenTinker.apk.version'), '8.0.0\n', 'a sidecar ahead of its APK is a reinstall loop');
+  assert.equal(f.body('ScreenTinker.ipk'), 'ipk', 'the others still update');
+  assert.ok(!f.has('ScreenTinker.apk.new'), 'no partial file left');
+});
+
+test('a release with nothing attached yet changes nothing', { skip: !haveSha && 'needs curl and sha256sum' }, (t) => {
+  const f = runFetch(t, { before: { 'ScreenTinker.apk': 'old apk' }, assets: {} });
+  assert.equal(f.r.status, 0, f.out);
+  assert.match(f.out, /none attached to v9\.0\.0 yet/);
+  assert.equal(f.body('ScreenTinker.apk'), 'old apk');
+});

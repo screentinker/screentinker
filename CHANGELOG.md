@@ -253,6 +253,13 @@ security notes: `docs/v3-review.md`. Upgrade steps: `docs/upgrading-to-3.0.md`.
   and the release tarball now build or carry it, and the release has it attached. When a server still
   has none, the setup script says so and points at the browser player, instead of asking whether the
   server is 2.3 or later.
+- **`scripts/upgrade.sh` installs the release's player packages** (#634). Before, only a tarball
+  install had the signed Android APK, the webOS and Tizen packages and the Windows/macOS installers,
+  and every git install copied them in by hand. The upgrade now downloads the ones the release has
+  attached, checks each against the SHA-256 the release publishes, and puts them where the server
+  serves them (the checkout root and `native/dist/`). A file it replaces is kept as `.bak-pre-<tag>`.
+  The APK's `.version` only moves with the APK. A copy kept in `DATA_DIR` still wins, so a pinned APK
+  stays pinned. `UPGRADE_SKIP_PLAYERS=1` turns it off. A failed download warns and never fails the upgrade.
 - **ScreenTinker Manager: password sign-in threw in the app** (a 3.0 pre-release regression).
 - **Simple view:** workspace switching, read-only handling for view-only members, and the
   "No TV handy?" card on phones.
