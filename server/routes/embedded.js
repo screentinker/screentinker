@@ -129,47 +129,75 @@ function buildUpdateOffer(deviceId, device, req, update) {
 }
 
 /*
- * The command to deliver on this response, or null. Nothing is popped here: the caller pops it
- * with markCommandDelivered() when the response carrying the X-ST-Command header is actually written.
+ * ⚠️ EVERY X-ST-Command VALUE IS CHECKED BEFORE IT IS SENT. A value Node refuses as a header
+ * (CR/LF, other control characters, anything outside printable ASCII) throws inside res.set(), and
+ * because the command is only popped once the response is written, it stayed queued and threw again
+ * on every poll: one bad command wedged the panel until the queue TTL ran out. An unsendable or
+ * oversized command is popped and logged here, and the next one in line is considered instead.
+ */
+const MAX_COMMAND_LENGTH = 512;   // `update <path> <64 hex>` is ~130; nothing legitimate comes near it
+const SENDABLE_COMMAND = /^[\x21-\x7E][\x20-\x7E]*$/;
+function isSendableCommand(str) {
+  return typeof str === 'string' && str.length <= MAX_COMMAND_LENGTH && SENDABLE_COMMAND.test(str);
+}
+
+function commandStringFor(deviceId, device, req, cmd) {
+  if (cmd.type === 'upload_logs') return 'upload_logs';
+  if (cmd.type === 'update') return buildUpdateOffer(deviceId, device, req, cmd);
+  return typeof cmd.type === 'string' ? cmd.type : null;
+}
+
+/*
+ * The command to deliver on this response, or null. The one chosen is NOT popped here: the caller
+ * pops it with markCommandDelivered() when the response carrying the X-ST-Command header is
+ * written. Anything that cannot be sent (an update the breaker or the firmware check holds, a value
+ * that is not a valid header) IS popped here, so it never sits in the queue re-failing.
+ *
+ * Order: upload_logs, then update, then reboot, then the rest first-in first-out.
  */
 function resolvePendingCommand(deviceId, device, req) {
   if (!deviceId) return null;
-  let cmds = peekPendingCommands(deviceId);
+  const cmds = peekPendingCommands(deviceId);
   if (!cmds || cmds.length === 0) return null;
 
-  const uploadLogs = cmds.find(c => c.type === 'upload_logs');
-  if (uploadLogs) {
-    return { type: 'upload_logs', commandStr: 'upload_logs' };
-  }
+  const rank = (c) => (c.type === 'upload_logs' ? 0 : c.type === 'update' ? 1 : c.type === 'reboot' ? 2 : 3);
+  const ordered = cmds.map((c, i) => ({ c, i })).sort((a, b) => rank(a.c) - rank(b.c) || a.i - b.i).map((x) => x.c);
 
-  const update = cmds.find(c => c.type === 'update');
-  if (update) {
-    const commandStr = buildUpdateOffer(deviceId, device, req, update);
-    if (commandStr) {
-      return { type: 'update', commandStr };
+  for (const cmd of ordered) {
+    let commandStr = null;
+    try {
+      commandStr = commandStringFor(deviceId, device, req, cmd);
+    } catch (e) {
+      console.warn(`[embedded] Device '${deviceId}': could not build queued '${String(cmd.type).slice(0, 40)}': ${e.message}`);
     }
-    // Suppressed update: pop it immediately so it does not sit in the queue and re-trigger otaBreaker.decide()
-    popCommand(deviceId, 'update');
-    cmds = cmds.filter(c => c.type !== 'update');
-  }
-
-  const reboot = cmds.find(c => c.type === 'reboot');
-  if (reboot) {
-    return { type: 'reboot', commandStr: 'reboot' };
-  }
-
-  while (cmds.length > 0) {
-    const candidate = cmds[0];
-    if (candidate && candidate.type && typeof candidate.type === 'string' && candidate.type.trim().length > 0) {
-      return { type: candidate.type, commandStr: candidate.type };
+    if (commandStr !== null && isSendableCommand(commandStr)) {
+      return { type: cmd.type, commandStr };
     }
-    if (candidate && candidate.type) {
-      popCommand(deviceId, candidate.type);
+    // An update the breaker or the firmware check held is expected and already logged. Anything
+    // else here is a command no panel could be sent.
+    if (commandStr !== null || cmd.type !== 'update') {
+      console.warn(`[embedded] Device '${deviceId}': dropped an unsendable queued command (${JSON.stringify(String(cmd.type)).slice(0, 60)}, ${String(commandStr ?? cmd.type).length} chars)`);
     }
-    cmds.shift();
+    if (cmd.type !== undefined && cmd.type !== null) popCommand(deviceId, cmd.type);
   }
-
   return null;
+}
+
+/*
+ * Run a render handler that may carry a queued command. If it throws (res.set() on a bad header,
+ * anything else), the command it carried is dropped and logged rather than left to fail again on
+ * every poll.
+ */
+async function withCommandDropOnThrow(deviceId, pendingCmdObj, run) {
+  try {
+    return await run();
+  } catch (e) {
+    if (pendingCmdObj && pendingCmdObj.type !== undefined) {
+      popCommand(deviceId, pendingCmdObj.type);
+      console.warn(`[embedded] Device '${deviceId}': dropped queued '${String(pendingCmdObj.type).slice(0, 40)}' after the response carrying it failed: ${e.message}`);
+    }
+    throw e;
+  }
 }
 
 function getPendingCommand(deviceId, device, req, options = {}) {
@@ -1096,27 +1124,29 @@ router.get('/render', resolveAuth, async (req, res) => {
   const pendingCmd = pendingCmdObj ? pendingCmdObj.commandStr : null;
   const renderOpts = { pendingCmd, pendingCmdObj };
 
-  // Query mode overrides
-  if (req.query.mode === 'single') {
-    return handleRenderStandard(req, res, device, profile, renderOpts);
-  }
-  if (req.query.mode === 'layout') {
-    return handleRenderLayout(req, res, device, profile, { ...renderOpts, explicitMode: true });
-  }
-
-  // Automatic multi-zone layout detection
-  const forceIndex = req.query.item !== undefined ? req.query.item : null;
-  const layoutResolved = resolveLayoutItems(device.id, forceIndex, { advance: false });
-
-  if (layoutResolved && layoutResolved.zoneEntries.length > 1) {
-    const isImageOnly = isLayoutImageOnly(layoutResolved.zoneEntries);
-    if (!isImageOnly && !isBrowserAvailable()) {
-      return handleRenderStandard(req, res, device, profile, { ...renderOpts, isFallback: true });
+  return withCommandDropOnThrow(device.id, pendingCmdObj, () => {
+    // Query mode overrides
+    if (req.query.mode === 'single') {
+      return handleRenderStandard(req, res, device, profile, renderOpts);
     }
-    return handleRenderLayout(req, res, device, profile, { ...renderOpts, explicitMode: false, preResolved: layoutResolved });
-  }
+    if (req.query.mode === 'layout') {
+      return handleRenderLayout(req, res, device, profile, { ...renderOpts, explicitMode: true });
+    }
 
-  return handleRenderStandard(req, res, device, profile, renderOpts);
+    // Automatic multi-zone layout detection
+    const forceIndex = req.query.item !== undefined ? req.query.item : null;
+    const layoutResolved = resolveLayoutItems(device.id, forceIndex, { advance: false });
+
+    if (layoutResolved && layoutResolved.zoneEntries.length > 1) {
+      const isImageOnly = isLayoutImageOnly(layoutResolved.zoneEntries);
+      if (!isImageOnly && !isBrowserAvailable()) {
+        return handleRenderStandard(req, res, device, profile, { ...renderOpts, isFallback: true });
+      }
+      return handleRenderLayout(req, res, device, profile, { ...renderOpts, explicitMode: false, preResolved: layoutResolved });
+    }
+
+    return handleRenderStandard(req, res, device, profile, renderOpts);
+  });
 });
 
 // ─── GET /api/embedded/render-layout ────────────────────────────────────────────
@@ -1148,7 +1178,8 @@ router.get('/render-layout', resolveAuth, async (req, res) => {
   const isPreview = req.query.preview === '1';
   const pendingCmdObj = !isPreview ? resolvePendingCommand(device.id, device, req) : null;
   const pendingCmd = pendingCmdObj ? pendingCmdObj.commandStr : null;
-  return handleRenderLayout(req, res, device, profile, { pendingCmd, pendingCmdObj, explicitMode: true });
+  return withCommandDropOnThrow(device.id, pendingCmdObj,
+    () => handleRenderLayout(req, res, device, profile, { pendingCmd, pendingCmdObj, explicitMode: true }));
 });
 
 async function handleRenderStandard(req, res, device, profile, opts = {}) {
@@ -1308,6 +1339,10 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
     processed = await postprocess(renderResult.png, profile);
   } catch (e) {
     console.error('[embedded] postprocess error:', e.message);
+    // Same as every other answer here (and the layout path's 500): a frame we could not build is
+    // no reason to withhold a queued reboot or log upload — it is often exactly when one is needed.
+    if (opts.pendingCmd) res.set('X-ST-Command', opts.pendingCmd);
+    markCommandDelivered(device.id, opts);
     return res.status(500).json({ error: `Post-processing failed: ${e.message}` });
   }
 
