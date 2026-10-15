@@ -1,5 +1,8 @@
 import { t } from '../i18n.js';
 
+// The public how-to for the three cards that link to it (frontend/guides/).
+const WLT_GUIDE = '/guides/digital-signage-widgets-layouts-transitions.html';
+
 // Help guides + FAQ are documentation. Page chrome is translated; the body
 // content is intentionally left in English because partial machine
 // translation of multi-paragraph docs reads worse than a single source of
@@ -14,9 +17,10 @@ export function render(container) {
       ${[
         { icon: '&#128250;', title: 'Setting Up a Display', steps: ['Download the APK or open the Web Player', 'Enter your server URL', 'Note the 6-digit pairing code', 'Click "Add Display" in the dashboard and enter the code', 'Assign content to the display\'s playlist'] },
         { icon: '&#128228;', title: 'Uploading Content', steps: ['Go to Content Library', 'Drag and drop files or click the upload area', 'Supports MP4, WebM, JPEG, PNG, GIF, WebP', 'Videos auto-detect duration and generate thumbnails', 'Use Remote URL to stream from external sources'] },
-        { icon: '&#9881;', title: 'Using Widgets', steps: ['Go to Widgets and click "New Widget"', 'Choose a type: Clock, Weather, RSS, Text, Webpage, or Social', 'Configure the widget settings', 'Assign the widget to a device via the Playlist tab', 'Widgets render as live HTML content'] },
+        { icon: '&#9881;', title: 'Using Widgets', steps: ['Go to Widgets and click "New Widget"', 'Choose a type: Clock, Weather, News Ticker, Text/HTML, Webpage and more', 'Configure the widget settings and Save', 'Add it to a playlist (+ Add Content, Widgets tab) and set its Zone', 'Publish the playlist'], link: WLT_GUIDE },
         { icon: '&#10024;', title: 'AI Content Design', steps: ['Open Designer and click the gear on the "AI generate" panel', 'Add an OpenAI-compatible text endpoint + model (OpenAI cloud, or a local Ollama)', 'Optional: pick an image provider for AI backgrounds (OpenAI, or local Stable Diffusion / ComfyUI)', 'Type a prompt, click "Generate design", then tweak and Publish', 'Run it fully local + free — see docs/local-ai-setup.md'] },
-        { icon: '&#128203;', title: 'Multi-Zone Layouts', steps: ['Go to Layouts and create a new layout or use a template', 'Drag zones to position them on the canvas', 'Resize using the corner handle', 'Assign the layout to a device in the Playlist tab', 'Each zone can show different content'] },
+        { icon: '&#128203;', title: 'Multi-Zone Layouts', steps: ['Go to Layouts and create a new layout or use a template', 'Drag zones to position them on the canvas', 'Resize using the corner handle', 'Pick the layout in a playlist\'s Layout row (or set it on the screen)', 'Set each playlist item\'s Zone: each zone plays its own items'], link: WLT_GUIDE },
+        { icon: '&#127902;', title: 'Transitions', steps: ['Go to Widgets, click "New Widget" and choose Transition', 'Pick one or more effects and a duration', 'Add it to the playlist and set its Zone to the zone it should affect', 'It only changes the items in its own zone: use one per zone', 'Inside zones only the Raspberry Pi, Windows and Mac player draws the effect (Roku fades); other players cut'], link: WLT_GUIDE },
         { icon: '&#128197;', title: 'Content Scheduling', steps: ['Go to Schedule and select a device', 'Click "Add Schedule" to create a time slot', 'Set start/end times and recurrence rules', 'Higher priority schedules override lower ones', 'Content auto-switches based on the schedule'] },
         { icon: '&#128421;', title: 'Remote Control', steps: ['Go to a device\'s detail page', 'Click the "Remote Control" tab', 'Click "Start Remote" to begin streaming', 'Use the d-pad, volume, and power buttons', 'Click anywhere on the screen to simulate a tap'] },
         { icon: '&#128433;', title: 'Kiosk/Touchscreen', steps: ['Go to Kiosk and create a new page', 'Add buttons with labels, icons, and actions', 'Configure the idle screen timeout', 'Preview the page in the editor', 'Assign to a device as a widget'] },
@@ -27,6 +31,7 @@ export function render(container) {
           <ol style="padding-left:20px;list-style:decimal;margin-top:8px">
             ${guide.steps.map(s => `<li style="color:var(--text-secondary);font-size:13px;line-height:1.8">${s}</li>`).join('')}
           </ol>
+          ${guide.link ? `<a href="${guide.link}" target="_blank" rel="noopener" style="display:inline-block;margin-top:8px;font-size:13px">Read the full guide, with screenshots &rarr;</a>` : ''}
         </div>
       `).join('')}
     </div>

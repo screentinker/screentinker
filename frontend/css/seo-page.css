@@ -64,6 +64,13 @@ nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; background: rgba
 /* The secondary route under the trial button: self-hosting. Smaller on purpose; the trial is the ask. */
 .cta p.cta-alt { font-size: 14px; margin: 20px 0 0; }
 
+/* Screenshots in a guide. A tall form or a narrow dialog stays its own width instead of being
+   stretched to the column; `.wide` lets a screen capture use the whole column. */
+.article figure { margin: 24px 0; text-align: center; }
+.article figure img { max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.article figure.narrow img { max-width: 420px; width: 100%; }
+.article figure figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; text-align: left; }
+
 /* Related links / internal linking block */
 .related { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 32px 0; }
 .related h2 { margin: 0 0 12px; font-size: 20px; }

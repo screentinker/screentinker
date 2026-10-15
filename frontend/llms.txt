@@ -13,6 +13,10 @@ The whole project is MIT licensed and self-hosting is free. A paid hosted versio
 - [Open source digital signage software](https://screentinker.com/guides/open-source-digital-signage.html): the licence, the data-ownership argument, and where ScreenTinker fits.
 - [Certified Hardware](https://screentinker.com/certified-hardware): the device models ByteTinker has tested, what each one does, which are only community-reported, and which are not supported and why.
 
+## Using ScreenTinker
+
+- [Widgets, layouts and transitions](https://screentinker.com/guides/digital-signage-widgets-layouts-transitions.html): split a screen into zones, make clock, weather and news ticker widgets, place them in zones through a playlist, and put a Transition widget in the zone it should affect ("every item" in its zone, or "only the next item"). Shader transitions run inside layout zones only on the Raspberry Pi/Windows/Mac native player (Roku cross-fades); Android, the web player, Tizen, webOS, BrightSign and Vega draw them full screen only and cut inside zones.
+
 ## Solutions by use case
 
 Each page says how the feature works, how to set it up, and what it does not do.

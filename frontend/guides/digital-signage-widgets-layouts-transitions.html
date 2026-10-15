@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Widgets, Layouts and Transitions in ScreenTinker | ScreenTinker</title>
+  <meta name="description" content="Split a screen into zones, add a clock, weather or a news ticker, and give each zone its own transition. With real screenshots, and what each player draws.">
+  <meta name="keywords" content="digital signage widgets, digital signage layouts, multi-zone layout, signage transitions, news ticker signage, clock widget, screentinker how to">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/digital-signage-widgets-layouts-transitions.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/digital-signage-widgets-layouts-transitions.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/digital-signage-widgets-layouts-transitions.html">
+  <meta property="og:title" content="Widgets, layouts and transitions in ScreenTinker">
+  <meta property="og:description" content="How zones, widgets and transitions fit together: make a layout, put widgets in its zones through a playlist, and place a transition in the zone it should affect.">
+  <meta property="og:image" content="https://screentinker.com/assets/guides/widgets-layouts-transitions/four-zones-wiping.webp">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Widgets, layouts and transitions in ScreenTinker">
+  <meta name="twitter:description" content="How zones, widgets and transitions fit together: make a layout, put widgets in its zones through a playlist, and place a transition in the zone it should affect.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/guides/widgets-layouts-transitions/four-zones-wiping.webp">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/#features">Guides</a>
+      <span>/</span>
+      <span>Widgets, layouts and transitions</span>
+    </nav>
+
+    <h1>Widgets, layouts and transitions</h1>
+    <p class="lead">A layout splits the screen into zones. Widgets are the live parts you put in them: a clock, the weather, a news ticker. A transition is a widget too, and it works in the zone you put it in. This guide shows how the three fit together, using a real ScreenTinker 3.0 server. The café in the pictures is invented.</p>
+
+    <p>In short:</p>
+    <ol>
+      <li>Make a <strong>layout</strong> with the zones you want (<em>Layouts</em>).</li>
+      <li>Make your <strong>widgets</strong> (<em>Widgets</em>).</li>
+      <li>In a <strong>playlist</strong>, pick the layout, add your pictures and widgets, and choose a <strong>Zone</strong> for each one.</li>
+      <li>For a transition, make a <strong>Transition</strong> widget, add it to the same playlist, and put it in the zone it should affect.</li>
+      <li><strong>Publish</strong> the playlist.</li>
+    </ol>
+
+    <h2 id="layouts">What a layout and zones are</h2>
+    <p>A <strong>layout</strong> is a plan of the screen: a big area for pictures, a strip along the bottom for a ticker, a corner for the clock. Each area is a <strong>zone</strong>. Every zone plays its own items, one after another, on its own timer, so the clock can stay put while the pictures change.</p>
+    <p>A layout reaches a screen in one of two ways:</p>
+    <ul>
+      <li><strong>On the playlist</strong> (new in 3.0). Pick the layout once on the playlist, and every screen that plays it draws it.</li>
+      <li><strong>On the screen.</strong> The playlist&rsquo;s <em>Layout</em> row is left on <em>Each screen&rsquo;s own layout</em>, and each screen uses the layout set on it.</li>
+    </ul>
+    <p>One zone is the <strong>main zone</strong>. Items that you have not put in a zone play there. If you do not mark one, the largest zone is the main zone.</p>
+
+    <h2 id="make-layout">Make a layout</h2>
+    <ol>
+      <li>Open <strong>Layouts</strong>. Either choose <strong>Use Template</strong> on one of the templates (Split, L-Bar with Ticker, Three Column, Four Quadrants and portrait versions), which makes a copy for you and opens it, or choose <strong>New Layout</strong> and give it a name. A new layout starts with one full-screen zone.</li>
+      <li>Click the name at the top to rename it.</li>
+      <li>Drag a zone to move it and drag its corner handle to resize it, or select it in the <strong>Zones</strong> list and type <strong>X (%)</strong>, <strong>Y (%)</strong>, <strong>Width (%)</strong> and <strong>Height (%)</strong> under <strong>Properties</strong>. <strong>Add Zone</strong> adds another.</li>
+      <li>Give each zone a <strong>Name</strong> you will recognise later (&ldquo;Clock&rdquo;, &ldquo;Ticker&rdquo;). You choose zones by these names in the playlist.</li>
+      <li>Set <strong>Fit</strong> for the pictures in the zone: <em>Contain</em> shows the whole picture and may leave bars, <em>Cover</em> fills the zone and may crop, <em>Stretch</em> fills it and may distort.</li>
+      <li>Tick <strong>Main zone</strong> on the zone where unplaced items should go.</li>
+      <li>Optional: the <strong>Portrait</strong> and <strong>4:3</strong> tabs arrange the same zones for screens of those shapes. Without one, those screens use the landscape zones.</li>
+      <li>Choose <strong>Save</strong>.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/widgets-layouts-transitions/layout-editor.webp" width="1188" height="1240" loading="lazy" decoding="async" alt="The ScreenTinker layout editor showing a layout called Café counter with four zones named Main, Clock, Specials and Ticker. The Main zone is selected and its properties show 75 percent width, 85 percent height, Fit set to Cover and the Main zone box ticked.">
+      <figcaption>A four-zone layout made from the L-Bar template: Main for pictures, Clock and Specials down the side, Ticker along the bottom.</figcaption>
+    </figure>
+    <p><strong>Layer</strong> decides which zone draws on top where two overlap (picture in picture). <strong>Type</strong> (Content or Widget) is a label for you: it does not stop you putting a widget in a content zone, or the other way round.</p>
+
+    <h2 id="widgets">Make widgets</h2>
+    <p>Open <strong>Widgets</strong> and choose <strong>New Widget</strong>. Pick a type, fill in the form, and choose <strong>Save</strong>. <strong>Preview</strong> shows what it will look like first. The types are Clock, Weather, News Ticker, Text/HTML, Webpage, Cloud document, Social wall, Directory Board, Directory Search, Menu Board, BI Dashboard, Room Display and Transition.</p>
+    <figure>
+      <img src="/assets/guides/widgets-layouts-transitions/widget-types.webp" width="800" height="302" loading="lazy" decoding="async" alt="The first row of widget types in the New Widget panel: Clock, Weather, News Ticker and Text/HTML.">
+      <figcaption>The first of the widget types. The rest follow below them on the page.</figcaption>
+    </figure>
+    <p>A widget is not tied to one screen. You make it once, then add it to any playlist. When you edit a saved widget, the screens showing it update without a new publish (unless your workspace requires changes to be approved first).</p>
+
+    <h3>A clock</h3>
+    <p>Choose <strong>Clock</strong>. Set <strong>Format</strong> (12 Hour or 24 Hour) and the <strong>Timezone</strong>; the two buttons under it copy the dashboard&rsquo;s or the server&rsquo;s time zone. Size the time with <strong>Font Size (px)</strong> and the date with <strong>Date size (px)</strong>, and set the colours to match your design. Sizes are in screen pixels, so size them for the zone the clock will sit in: a 64&nbsp;px clock fits a quarter-width zone on a 1080p screen.</p>
+    <figure class="narrow">
+      <img src="/assets/guides/widgets-layouts-transitions/widget-clock.webp" width="560" height="1175" loading="lazy" decoding="async" alt="The New Clock form with Widget Name Counter clock, Format 12 Hour, Timezone America/Chicago, Show seconds ticked, Font Size 72, Show date ticked and Date format Full.">
+    </figure>
+
+    <h3>The weather</h3>
+    <p>Choose <strong>Weather</strong> and type a <strong>Location</strong> (a city, like &ldquo;Springfield&rdquo;). Pick <strong>Units</strong>, <strong>Layout</strong> (Stacked or Side by side) and whether to show the city name. The widget shows live conditions for that place from an online weather service, so your ScreenTinker server needs to reach the internet for it to fill in.</p>
+    <figure class="narrow">
+      <img src="/assets/guides/widgets-layouts-transitions/widget-weather.webp" width="560" height="781" loading="lazy" decoding="async" alt="The New Weather form with a Location field, Units set to Imperial, Font Size, Color, Layout set to Stacked and a Show the city name box.">
+    </figure>
+
+    <h3>A news ticker</h3>
+    <p>Choose <strong>News Ticker</strong>. Paste a news site or a feed address into <strong>Website or feed address</strong> and choose <strong>Find feeds</strong>. ScreenTinker looks for the site&rsquo;s feeds, lets you pick one, and shows its latest headlines so you can check it is the right one. Under <strong>Look</strong>, <em>Scrolling ticker</em> runs the headlines along a strip, and <em>Headlines with pictures</em> shows one story at a time. A ticker belongs in a wide, short zone.</p>
+    <figure class="narrow">
+      <img src="/assets/guides/widgets-layouts-transitions/widget-news-ticker.webp" width="560" height="1158" loading="lazy" decoding="async" alt="The New News Ticker form after Find feeds: one feed found, Larkspur Café news, with its four latest headlines listed, Look set to Scrolling ticker and Font Size 34.">
+      <figcaption>The feed here is the invented café&rsquo;s own. The server reads the feed, not the screens.</figcaption>
+    </figure>
+    <p>For a box of text such as today&rsquo;s specials, a <strong>Text/HTML</strong> widget takes your own HTML and CSS.</p>
+
+    <h2 id="zones">Put widgets in zones, through the playlist</h2>
+    <p>Widgets and pictures reach a screen through a playlist. The playlist is also where you say which zone each one plays in.</p>
+    <ol>
+      <li>Open <strong>Playlists</strong> and open (or create) the playlist.</li>
+      <li>In the <strong>Layout</strong> row, pick your layout. Every item row now has a <strong>Zone</strong> picker.</li>
+      <li>Choose <strong>+ Add Content</strong>. Add pictures and videos from the <strong>Content</strong> tab, and widgets from the <strong>Widgets</strong> tab, with <strong>Add</strong>.</li>
+      <li>New items go in the main zone, shown as <em>Main zone (Main)</em>. Change the <strong>Zone</strong> on each row that belongs elsewhere: the clock to Clock, the ticker to Ticker.</li>
+      <li>Choose <strong>Publish</strong>. Screens keep showing the old version until you do.</li>
+      <li>If the playlist is not on a screen yet, open the screen&rsquo;s page under <strong>Screens</strong> and choose it under <strong>Playlist</strong>.</li>
+    </ol>
+    <figure class="narrow">
+      <img src="/assets/guides/widgets-layouts-transitions/add-widget-to-playlist.webp" width="621" height="640" loading="lazy" decoding="async" alt="The Add Content to Playlist dialog on its Widgets tab, listing widgets such as Café news, Counter clock, Loyalty offer and several transitions, each with an Add button.">
+    </figure>
+    <figure>
+      <img src="/assets/guides/widgets-layouts-transitions/playlist-zones.webp" width="1400" height="883" loading="lazy" decoding="async" alt="A playlist called Counter screen with the Café counter layout picked. Four pictures and a Spectrum Sweep transition are in the main zone, the Counter clock in Clock, two text widgets and a Film Advance transition in Specials, and the Café news ticker in Ticker.">
+      <figcaption>Each row&rsquo;s Zone says where it plays. The small map next to the layout counts the items in each zone.</figcaption>
+    </figure>
+    <p>A zone with one item shows it all the time. A zone with several plays them in turn, each for its <strong>Duration</strong>. Zones do not wait for each other.</p>
+    <figure>
+      <img src="/assets/guides/widgets-layouts-transitions/web-player-four-zones.webp" width="1400" height="788" loading="lazy" decoding="async" alt="The playlist playing in the web player: a poster for a flat white fills the main zone, a clock reading 6:45 PM and a loyalty card offer fill the right-hand column, and a news ticker scrolls along the bottom.">
+      <figcaption>The same playlist on a screen: the web player in a browser tab, paired like any other screen.</figcaption>
+    </figure>
+    <p>Before a publish, ScreenTinker checks for things that will be hard to read on the screen. When it first published this playlist, it warned that the clock&rsquo;s date was too small to read from 3&nbsp;m away, and said how much bigger to make it.</p>
+
+    <h2 id="transitions">Transitions</h2>
+    <p>A transition is how one item gives way to the next: a dissolve, a sweep, a glitch. In ScreenTinker it is a <strong>widget</strong> that you add to the playlist like any other. It never appears on the screen as an item of its own. It changes how the other items in its zone arrive.</p>
+
+    <h3 id="make-transition">Make a transition</h3>
+    <ol>
+      <li>In <strong>Widgets</strong>, choose <strong>New Widget</strong> and then <strong>Transition</strong>.</li>
+      <li>Under <strong>Effect</strong>, tick one effect, or several. With several, the player picks one of them at random each time an item changes.</li>
+      <li>Click an effect&rsquo;s name to preview it. <strong>Play</strong> runs it, and the slider stops it at any point. Its <strong>Parameters</strong> sliders change how it looks, and the preview shows the change at once.</li>
+      <li>Set <strong>Duration (ms)</strong>: from 150 to 3000 milliseconds. The default is 800.</li>
+      <li>Set <strong>Applies to</strong> (next section) and choose <strong>Save</strong>.</li>
+    </ol>
+    <figure class="narrow">
+      <img src="/assets/guides/widgets-layouts-transitions/transition-widget.webp" width="620" height="1687" loading="lazy" decoding="async" alt="The New Transition form. Spectrum Sweep is ticked in the Effect list, the preview is stopped halfway with a bright band sweeping from one placeholder picture to the next, its four parameter sliders are shown, Duration is 1200 ms and Applies to is Every item in the playlist.">
+      <figcaption>The preview uses the same code as the players. <strong>Upload a .glsl</strong> adds your own effect to this workspace.</figcaption>
+    </figure>
+
+    <h3 id="place-transition">Put it in the zone it should affect</h3>
+    <p>Add the transition to the playlist from the <strong>Widgets</strong> tab, then set its <strong>Zone</strong> to the zone whose items should use it. A transition only affects the items in its own zone. In the playlist above, the Spectrum Sweep sits in the main zone, so the pictures there sweep in; the clock and the ticker are untouched. Its Duration field does nothing: it takes no time in the running order.</p>
+    <p>A transition&rsquo;s settings are copied into the playlist when the playlist is published. So unlike other widgets, an edit to a transition does not reach the screens on its own, and the playlist does not offer <strong>Publish</strong> for it either. After editing one, make a change to the playlist (for example, remove the transition, add it again and set its zone) and publish.</p>
+    <p>In a playlist without a layout, the whole screen is one zone, and one transition covers everything.</p>
+    <figure>
+      <img src="/assets/guides/widgets-layouts-transitions/pi-player-main-zone-wipe.webp" width="960" height="720" loading="lazy" decoding="async" alt="The main zone of the Counter screen playlist halfway through a Spectrum Sweep: a bright vertical band crosses from a cinnamon bun poster to a flat white poster, while the news ticker below keeps scrolling.">
+      <figcaption>The Spectrum Sweep in the main zone, on the Raspberry Pi and Windows player. The ticker in its own zone carries on.</figcaption>
+    </figure>
+
+    <h3 id="scope">&ldquo;Every item&rdquo; or &ldquo;Only the next item&rdquo;</h3>
+    <ul>
+      <li><strong>Every item in the playlist (recommended)</strong> makes it the default for every item in its zone, wherever you put it in the list. In a playlist with a layout, &ldquo;the playlist&rdquo; here means that one zone. If a zone has more than one of these, the last one in the list is used.</li>
+      <li><strong>Only the next item (advanced)</strong> applies it to the one item right after it in the same zone, and overrides the default there. Put it last in a zone and it applies to the first item instead, because the playlist loops back to it.</li>
+    </ul>
+    <p>So for one effect everywhere, use one &ldquo;every item&rdquo; transition per zone. For a different effect at one spot, add an &ldquo;only the next item&rdquo; transition just above that item.</p>
+
+    <h3 id="four-zones">A wipe in each of four zones</h3>
+    <p>Each zone needs its own transition. To get a wipe in all four zones of a <em>Four Quadrants</em> layout, add four transitions to the playlist and put one in each zone. They can be the same effect or four different ones. Below, each quadrant has two pictures and its own effect, and they all change at once because every picture has the same duration.</p>
+    <figure>
+      <img src="/assets/guides/widgets-layouts-transitions/four-zones-wiping.webp" width="1280" height="720" loading="lazy" decoding="async" alt="A screen split into four quadrants, each halfway through a different transition: blocky digital noise top left, horizontal scan lines top right, vertical glitch streaks bottom left and coloured squares bottom right.">
+      <figcaption>Four zones, four transitions: Trace Route, Van Eck, Pixel Sort and Etch, on the Raspberry Pi and Windows player.</figcaption>
+    </figure>
+    <figure>
+      <img src="/assets/guides/widgets-layouts-transitions/four-zones-sequence.webp" width="1400" height="260" loading="lazy" decoding="async" alt="Three moments of the same change side by side: early, halfway and nearly finished, with each quadrant finishing at its own pace.">
+      <figcaption>Early, halfway, almost done. Each zone runs its transition on its own.</figcaption>
+    </figure>
+
+    <h3 id="bulk">The Transition button on selected items</h3>
+    <p>In a playlist, tick some items and choose <strong>Transition</strong> in the bar above them. A box lists your transition widgets by number; type the number (or the name). ScreenTinker then adds that transition directly above each item you ticked, in that item&rsquo;s zone. Use it with an <em>Only the next item</em> transition to give just those items that effect. With an <em>Every item</em> transition, the result is the same as adding it once to each of those zones. If you have no transition widgets yet, it says &ldquo;No transition widgets in this workspace&rdquo;.</p>
+
+    <h3 id="fullscreen">Full screen</h3>
+    <figure>
+      <img src="/assets/guides/widgets-layouts-transitions/web-player-fullscreen-wipe.webp" width="1400" height="788" loading="lazy" decoding="async" alt="A full-screen playlist in the web player halfway through a Spectrum Sweep from a sourdough poster to a flat white poster.">
+      <figcaption>A playlist with no layout, in the web player: one transition for the whole screen.</figcaption>
+    </figure>
+
+    <h2 id="players">Which players draw what</h2>
+    <p>Players draw transitions between pictures and videos. Whether they draw them inside a layout&rsquo;s zones depends on the player. This is what the player code does today:</p>
+    <div class="compare-table-wrap">
+    <table class="compare-table">
+      <thead><tr><th>Player</th><th>Full screen (no layout)</th><th>Inside layout zones</th></tr></thead>
+      <tbody>
+        <tr><td>Raspberry Pi, Windows and Mac (native player)</td><td class="yes">Your effect</td><td class="yes">Your effect, in each zone</td></tr>
+        <tr><td>Android TV, Fire TV and Android panels</td><td class="yes">Your effect</td><td class="no">Plain cut</td></tr>
+        <tr><td>Web player (a browser, ChromeOS)</td><td class="yes">Your effect</td><td class="no">Plain cut</td></tr>
+        <tr><td>Samsung Tizen</td><td class="yes">Your effect</td><td class="no">Plain cut</td></tr>
+        <tr><td>LG webOS</td><td class="partial">As the web player, where the panel can run it</td><td class="no">Plain cut</td></tr>
+        <tr><td>BrightSign</td><td class="partial">As the web player; may cut over video</td><td class="no">Plain cut</td></tr>
+        <tr><td>Fire TV Stick 4K Select / HD (Vega)</td><td class="partial">Picture to picture only; cuts when a video is involved</td><td class="no">Plain cut</td></tr>
+        <tr><td>Roku</td><td class="partial">A cross-fade, at your duration</td><td class="partial">A cross-fade, at your duration</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <ul>
+      <li><strong>Raspberry Pi, Windows and Mac:</strong> each zone has its own transition runner. On a machine without a graphics driver the player cross-fades instead of running the effect.</li>
+      <li><strong>Web player, webOS, BrightSign and Vega:</strong> these all run the web player, which needs WebGL in the browser; without it, it cuts. On BrightSign, video plays on a separate hardware layer, so an effect over a video may not be visible and you see a cut. On the Vega sticks a video change always cuts, because drawing a video frame crashes their compositor.</li>
+      <li><strong>Roku</strong> has no way to run the effects, so it cross-fades for the duration you set.</li>
+      <li><strong>Widgets</strong> (a clock, a ticker, a web page) appear with a plain cut on the web, Android and Tizen players. Transitions are for pictures and videos.</li>
+      <li><strong>Older players</strong> that do not know about transitions ignore them and cut. Nothing else changes, and the playlist plays as normal.</li>
+    </ul>
+
+    <h2 id="troubleshooting">Troubleshooting</h2>
+    <h3>My transition does nothing</h3>
+    <ul>
+      <li><strong>The screen plays a layout, on a player that cuts in zones.</strong> See the table above: on Android, the web player, Tizen, webOS, BrightSign and Vega, items inside zones change with a cut. Full-screen playlists get the transition on those players.</li>
+      <li><strong>The transition is in a different zone from the items.</strong> Look at the Zone column. The transition and the pictures it should affect must be in the same zone. <em>Main zone (Main)</em> and <em>Main</em> are the same zone.</li>
+      <li><strong>The items are widgets.</strong> Widgets change with a cut on most players.</li>
+      <li><strong>The zone has only one item,</strong> so nothing ever changes in it.</li>
+      <li><strong>The playlist was not published</strong> after you added the transition. Look for <em>Unpublished changes</em> at the top of the playlist.</li>
+      <li><strong>You edited the transition</strong> but not the playlist. The playlist keeps the settings it was published with; see <a href="#place-transition">above</a>.</li>
+      <li><strong>The player is old, or cannot run the effect.</strong> It cuts instead. Updating the player is the fix; on BrightSign and Vega, see the notes above about video.</li>
+      <li><strong>A transition in one zone also shows in another</strong> on a server you run yourself: update the server. Older versions applied an <em>Every item</em> transition to every zone of the playlist.</li>
+    </ul>
+    <h3>My widget does not show</h3>
+    <ul>
+      <li><strong>The playlist was not published.</strong> Adding an item, or changing its zone, needs <strong>Publish</strong>.</li>
+      <li><strong>It is in the wrong zone,</strong> or shares a zone with other items and is waiting for its turn. Check its Zone, and give a widget that should always show a zone of its own.</li>
+      <li><strong>The screen is not playing this playlist.</strong> A schedule, a screen group or a head office playlist may be showing something else. The screen&rsquo;s page says what it is playing.</li>
+      <li><strong>The layout is not the one you think.</strong> With <em>Each screen&rsquo;s own layout</em>, a screen with no layout of its own plays every item full screen, one after another.</li>
+      <li><strong>It is cut off.</strong> Widget text is sized in screen pixels. Make the font smaller or the zone bigger, and check with <strong>Preview</strong>.</li>
+      <li><strong>A news ticker or weather widget is empty.</strong> Your ScreenTinker server fetches the feed or the weather, so it needs to reach that address. On a self-hosted server behind a firewall, allow it out.</li>
+      <li><strong>On a Roku,</strong> widgets are still pictures that the server draws and refreshes on a timer, so nothing in them moves. (Clocks are the exception: the Roku draws those itself.)</li>
+    </ul>
+
+    <div class="cta">
+      <h2>Try it on your own screens</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, no credit card. Every widget, layout and transition here is included.</p>
+      <a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener" class="btn btn-outline" style="padding:14px 28px;font-size:16px;margin-left:12px">View on GitHub</a>
+      <p class="cta-alt">Or <a href="/guides/self-hosted-digital-signage.html">self-host it</a> on your own server, free for any number of screens.</p>
+    </div>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/raspberry-pi-digital-signage.html">Raspberry Pi setup</a></li>
+        <li><a href="/guides/windows-digital-signage.html">Windows</a></li>
+        <li><a href="/guides/digital-signage-android-tv.html">Android TV and Fire TV</a></li>
+        <li><a href="/guides/roku-digital-signage.html">Roku</a></li>
+        <li><a href="/solutions/digital-menu-boards.html">Digital menu boards</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://screentinker.com/" },
+      { "@type": "ListItem", "position": 2, "name": "Guides", "item": "https://screentinker.com/" },
+      { "@type": "ListItem", "position": 3, "name": "Widgets, layouts and transitions", "item": "https://screentinker.com/guides/digital-signage-widgets-layouts-transitions.html" }
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    "name": "Put widgets and transitions in the zones of a ScreenTinker layout",
+    "description": "Make a layout, make widgets, place them in zones through a playlist, and place a transition widget in the zone it should affect.",
+    "image": "https://screentinker.com/assets/guides/widgets-layouts-transitions/four-zones-wiping.webp",
+    "totalTime": "PT20M",
+    "tool": [
+      { "@type": "HowToTool", "name": "A ScreenTinker account" },
+      { "@type": "HowToTool", "name": "A paired screen" }
+    ],
+    "step": [
+      { "@type": "HowToStep", "position": 1, "name": "Make a layout", "text": "In Layouts, use a template or make a new layout, name its zones, set Fit, tick the main zone and Save.", "url": "https://screentinker.com/guides/digital-signage-widgets-layouts-transitions.html#make-layout" },
+      { "@type": "HowToStep", "position": 2, "name": "Make widgets", "text": "In Widgets, choose New Widget, pick a type such as Clock, Weather or News Ticker, fill in the form and Save.", "url": "https://screentinker.com/guides/digital-signage-widgets-layouts-transitions.html#widgets" },
+      { "@type": "HowToStep", "position": 3, "name": "Put them in zones", "text": "In the playlist, pick the layout in the Layout row, add the widgets and pictures, and set each row's Zone.", "url": "https://screentinker.com/guides/digital-signage-widgets-layouts-transitions.html#zones" },
+      { "@type": "HowToStep", "position": 4, "name": "Add a transition to a zone", "text": "Make a Transition widget, add it to the playlist and set its Zone to the zone it should affect. Use one per zone.", "url": "https://screentinker.com/guides/digital-signage-widgets-layouts-transitions.html#place-transition" },
+      { "@type": "HowToStep", "position": 5, "name": "Publish", "text": "Publish the playlist. Screens keep the previous version until you do.", "url": "https://screentinker.com/guides/digital-signage-widgets-layouts-transitions.html#zones" }
+    ]
+  }
+  </script>
+</body>
+</html>
