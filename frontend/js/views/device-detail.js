@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { publishOrSubmit } from '../components/release.js';
 import { isSimpleMode } from '../components/ui-mode.js';
-import { on, off, requestScreenshot, startRemote, stopRemote, sendTouch, sendSwipe, sendKey, sendCommand, requestLivePublish, startTalk, stopTalk, ptyOpen, ptyInput, ptyResize, ptyClose } from '../socket.js';
+import { on, off, requestScreenshot, watchDevice, startRemote, stopRemote, sendTouch, sendSwipe, sendKey, sendCommand, requestLivePublish, startTalk, stopTalk, ptyOpen, ptyInput, ptyResize, ptyClose } from '../socket.js';
 import { TalkClient } from '../lib/talk-client.js';
 import { renderScreenShareCard, startScreenShare } from '../components/screen-share.js';   // 3.0 screen share
 import { showToast } from '../components/toast.js';
@@ -591,6 +591,8 @@ function wireLocationSearch() {
 }
 
 export function render(container, deviceId) {
+  // Live events for this screen even when it is not in the current workspace (acting-as).
+  watchDevice(deviceId);
   container.innerHTML = `
     <div class="device-detail">
       <a href="#/" class="back-link">
