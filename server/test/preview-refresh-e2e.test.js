@@ -4,7 +4,8 @@
  * 3.0.1 preview refresh, end to end: a web player that stays on its pairing screen while the
  * operator pairs it from the dashboard is asked for ONE screenshot shortly afterwards, with no
  * dashboard asking — so the screen cards stop showing the pairing code under "Playing". A player
- * that declares it cannot take screenshots is never asked.
+ * that declares it cannot take screenshots is never asked. A push that does not change what the
+ * screen shows (here: the local API switched on and off) costs nothing; new content does.
  *
  * Real server process, real sockets; the settle time is shortened through the environment.
  */
@@ -32,7 +33,7 @@ before(async () => {
   const logFd = fs.openSync(LOG, 'w');
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test', PREVIEW_REFRESH_SETTLE_MS: '400' },
+    env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test', PREVIEW_REFRESH_SETTLE_MS: '400', PREVIEW_REFRESH_MIN_GAP_MS: '1000' },
     stdio: ['ignore', logFd, logFd],
   });
   let up = false;
@@ -90,4 +91,50 @@ test('a player that declares no screenshot capability is never asked', async () 
   assert.ok(await waitFor(() => got.paired > 0, 3000));
   await sleep(2500);
   assert.equal(got.shotRequests.length, 0);
+});
+
+const api = (p, method, body) => fetch(BASE + p, { method, headers: { Authorization: 'Bearer ' + JWT, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+
+test('re-pushes of the same picture cost no screenshot; new content does (the real payload builder)', async () => {
+  const code = rnd();
+  const { got } = await playerOnPairingScreen(code, ['playback.image', 'playback.widget', 'remote.screenshot']);
+  const updates = [];
+  got.updates = updates;
+  socks.at(-1).on('device:playlist-update', (p) => updates.push(p));
+  assert.equal(await pairViaApi(code, 'Hall'), 200);
+  assert.ok(await waitFor(() => got.shotRequests.length === 1, 5000), 'the pairing ask');
+  const list = await (await api('/api/devices', 'GET')).json();
+  const dev = list.find((d) => d.name === 'Hall');
+  assert.ok(dev, 'paired device listed');
+
+  // The first push after pairing may differ from the provisioning payload; let it settle past the gap.
+  let r = await api(`/api/devices/${dev.id}/local-api-secret`, 'POST', {});
+  assert.equal(r.status, 200, await r.text());
+  r = await api(`/api/devices/${dev.id}/local-api`, 'POST', { enabled: true });
+  assert.equal(r.status, 200, await r.text());
+  await sleep(2500);
+  const n = got.shotRequests.length;
+  const pushesBefore = updates.length;
+  // Two more pushes that change only the local API door: nothing on the screen changes.
+  r = await api(`/api/devices/${dev.id}/local-api`, 'POST', { enabled: false });
+  assert.equal(r.status, 200);
+  r = await api(`/api/devices/${dev.id}/local-api`, 'POST', { enabled: true });
+  assert.equal(r.status, 200);
+  assert.ok(await waitFor(() => updates.length >= pushesBefore + 2, 3000), 'both pushes were delivered');
+  await sleep(2500);
+  assert.equal(got.shotRequests.length, n, 'same picture, no screenshot');
+
+  // New content on the screen: asked again.
+  const w = await (await api('/api/widgets', 'POST', { widget_type: 'text', name: 'Hello', config: { html: '<p>Hello</p>' } })).json();
+  assert.ok(w && w.id, JSON.stringify(w));
+  r = await api(`/api/assignments/device/${dev.id}`, 'POST', { widget_id: w.id });
+  const item = await r.json();
+  assert.ok(r.status === 200 || r.status === 201, JSON.stringify(item));
+  const plId = item.playlist_id || (await (await api(`/api/devices/${dev.id}`, 'GET')).json()).playlist_id;
+  assert.ok(plId, 'the edit landed in a playlist draft');
+  await sleep(300);
+  assert.equal(got.shotRequests.length, n, 'a draft edit is not on screen yet');
+  r = await api(`/api/playlists/${plId}/publish`, 'POST', {});
+  assert.equal(r.status, 200, await r.text());
+  assert.ok(await waitFor(() => got.shotRequests.length === n + 1, 5000), 'a changed payload is followed up');
 });

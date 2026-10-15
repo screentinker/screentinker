@@ -2572,7 +2572,7 @@ module.exports = function setupDeviceSocket(io) {
       const paired = replica.row ? !!replica.row.user_id : !!verdict.paired;
       if (paired) socket.emit('device:paired', { device_id, name: (replica.row && replica.row.name) || verdict.name || 'Display' });
       // Assignments and media come from the mirror; an unclaimed screen has nothing yet.
-      socket.emit('device:playlist-update', replica.row ? buildPlaylistPayload(device_id) : { assignments: [], provisioning: true });
+      socket.emit('device:playlist-update', previewRefresh.seen(device_id, replica.row ? buildPlaylistPayload(device_id) : { assignments: [], provisioning: true }));
       // The primary learns the screen is up through the same door every later event uses.
       playerTermination.forwardEvent(db, edge, device_id, 'online', {
         device_id, device_info: data.device_info || null, refresh: !!isRefresh,
@@ -2947,7 +2947,7 @@ module.exports = function setupDeviceSocket(io) {
                 // Flush any commands/playlist-updates queued while this device was offline.
                 commandQueue.flushQueue(deviceNs, existing.device_id, buildPlaylistPayload);
                 // Send playlist
-                socket.emit('device:playlist-update', buildPlaylistPayload(existing.device_id));
+                socket.emit('device:playlist-update', previewRefresh.seen(existing.device_id, buildPlaylistPayload(existing.device_id)));
                 return;
                 }
                 // The old row is UNCLAIMED (never paired). Reclaiming it would leave it carrying a
@@ -2991,7 +2991,7 @@ module.exports = function setupDeviceSocket(io) {
                   // Flush any commands/playlist-updates queued while this device was offline.
                   commandQueue.flushQueue(deviceNs, existing.device_id, buildPlaylistPayload);
                   // Send playlist
-                  socket.emit('device:playlist-update', buildPlaylistPayload(existing.device_id));
+                  socket.emit('device:playlist-update', previewRefresh.seen(existing.device_id, buildPlaylistPayload(existing.device_id)));
                   return;
                 }
               }
@@ -3221,7 +3221,7 @@ module.exports = function setupDeviceSocket(io) {
           } catch (e) { console.error('Group sync re-push failed:', e.message); }
 
           // Check subscription/trial status before sending playlist
-          socket.emit('device:playlist-update', buildPlaylistPayload(device_id));
+          socket.emit('device:playlist-update', previewRefresh.seen(device_id, buildPlaylistPayload(device_id)));
 
           emitToDeviceWorkspace(dashboardNs, device_id, 'dashboard:device-status', { device_id, status: 'online' });
           // Only log a genuine reconnect (new socket). Same-socket periodic refreshes stay

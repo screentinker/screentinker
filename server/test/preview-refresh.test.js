@@ -127,3 +127,86 @@ test('wired into the one place every playlist push meets: delivered → followed
   assert.equal(pr._pending('away'), null, 'a screen that is not connected is not followed up');
   pr._reset();
 });
+
+/* ───────────── only when what the screen was told to show CHANGED ───────────── */
+
+const ITEM = { content_id: 'c1', filepath: 'c1.jpg', filename: 'c1.jpg', duration_sec: 10, schedules: [] };
+const payloadOf = (items, extra = {}) => ({ assignments: items, layout: null, orientation: 'landscape', background_color: null,
+  default_content: null, triggers: [], power_schedule: null, endpoints: [], timezone: 'UTC', local_api: null, ...extra });
+
+test('the same payload pushed twice → one ask', () => {
+  const p = payloadOf([ITEM]);
+  assert.equal(pr.notePush('dev-a', p, T0), true, 'the first push the screen was sent is followed up');
+  assert.equal(pr.runDue(T0 + 12000), 1);
+  // A data-source refresh / local-conditions / replica re-push: a NEW object, the same content.
+  assert.equal(pr.notePush('dev-a', JSON.parse(JSON.stringify(p)), T0 + 20000), false);
+  assert.equal(pr.notePush('dev-a', payloadOf([{ ...ITEM }]), T0 + 200000), false, 'not even long after the gap');
+  assert.equal(pr.runDue(T0 + 400000), 0);
+  assert.deepEqual(asked, ['dev-a']);
+});
+
+test('a changed payload → a second ask, after the per-screen gap', () => {
+  pr.notePush('dev-a', payloadOf([ITEM]), T0);
+  pr.runDue(T0 + 12000);
+  assert.equal(pr.notePush('dev-a', payloadOf([ITEM, { content_id: 'c2', filepath: 'c2.mp4' }]), T0 + 20000), true);
+  assert.equal(pr.runDue(T0 + 40000), 0, 'not inside the gap');
+  assert.equal(pr.runDue(T0 + 12000 + 60000), 1);
+  assert.deepEqual(asked, ['dev-a', 'dev-a']);
+});
+
+test('what changes the picture counts; what does not, does not', () => {
+  const base = payloadOf([ITEM]);
+  pr.seen('dev-a', base);
+  const same = [
+    { triggers: [{ id: 't1' }] }, { power_schedule: { windows: [] } }, { endpoints: [{ id: 'e1' }] },
+    { timezone: 'Europe/London' }, { local_api: { enabled: true } }, { group_sync: { key: 'k' } },
+  ];
+  for (const extra of same) assert.equal(pr.notePush('dev-a', payloadOf([ITEM], extra), T0), false, JSON.stringify(extra));
+  // Per-item fields the player's structural fingerprint leaves out (synced in place) are not a change either.
+  assert.equal(pr.notePush('dev-a', payloadOf([{ ...ITEM, duration_sec: 99, muted: 1, title: 'x' }]), T0), false);
+  assert.equal(pr._pending('dev-a'), null);
+  const changed = [
+    payloadOf([{ ...ITEM, widget_rev: 2 }]), payloadOf([ITEM], { orientation: 'portrait' }),
+    payloadOf([ITEM], { background_color: '#202020' }), payloadOf([ITEM], { layout: { id: 'L1', zones: [] } }),
+    payloadOf([ITEM], { default_content: { content_id: 'c9' } }), payloadOf([]),
+  ];
+  let prev = base;
+  for (const p of changed) {
+    pr._reset(); pr.seen('dev-a', prev);
+    assert.equal(pr.notePush('dev-a', p, T0), true, JSON.stringify(p).slice(0, 120));
+    prev = p;
+  }
+});
+
+test('the register path\'s payload is a baseline, never an ask; an identical push after it costs nothing', () => {
+  const p = payloadOf([ITEM]);
+  assert.equal(pr.seen('dev-a', p), p, 'seen() hands the payload through for the emit');
+  assert.equal(pr._pending('dev-a'), null);
+  assert.equal(pr.notePush('dev-a', payloadOf([ITEM]), T0), false);
+  assert.equal(pr.runDue(T0 + 20000), 0);
+});
+
+test('the reconnect flush seeds the baseline without asking (a mass reconnect asks for nothing)', () => {
+  const commandQueue = require('../lib/command-queue');
+  const rooms = new Map();
+  const deviceNs = { adapter: { rooms }, to: () => ({ emit: () => {} }) };
+  const build = () => payloadOf([ITEM]);
+  commandQueue.queueOrEmitPlaylistUpdate(deviceNs, 'back', build, true);   // offline: queued
+  rooms.set('back', new Set(['s']));
+  assert.equal(commandQueue.flushQueue(deviceNs, 'back', build).playlistUpdate, true);
+  assert.equal(pr._pending('back'), null, 'the flush did not ask');
+  commandQueue.queueOrEmitPlaylistUpdate(deviceNs, 'back', build, true);   // the same content re-pushed
+  assert.equal(pr._pending('back'), null, 'and the identical push after it costs nothing');
+  pr._reset();
+});
+
+test('the item signature is the web player\'s STRUCTURAL fingerprint, field for field', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const player = fs.readFileSync(path.join(__dirname, '..', 'player', 'index.html'), 'utf8');
+  const mine = fs.readFileSync(path.join(__dirname, '..', 'lib', 'preview-refresh.js'), 'utf8');
+  const theirs = player.match(/const fingerprint = \(items\) => items\.map\(a => (`[^`]+`)\)\.join/);
+  const ours = mine.match(/function itemFingerprint\(a\) \{\n\s*return (`[^`]+`);/);
+  assert.ok(theirs && ours, 'both fingerprints found');
+  assert.equal(ours[1], theirs[1], 'if the player\'s fingerprint changes, change itemFingerprint() with it');
+});

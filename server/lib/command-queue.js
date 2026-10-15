@@ -64,10 +64,12 @@ function queueOrEmitPlaylistUpdate(deviceNs, deviceId, buildPayload, _mirrorHop)
   }
   const room = deviceNs.adapter.rooms.get(deviceId);
   if (room && room.size > 0) {
-    deviceNs.to(deviceId).emit('device:playlist-update', buildPayload(deviceId));
-    // 3.0.1: the screen is about to draw something new — refresh its preview once it has
-    // (lib/preview-refresh.js: debounced, a floor per screen, a cap per node). Lazy, never fatal.
-    try { require('./preview-refresh').noteChange(deviceId); } catch (e) { /* best effort */ }
+    const payload = buildPayload(deviceId);
+    deviceNs.to(deviceId).emit('device:playlist-update', payload);
+    // 3.0.1: when what the screen was told to show CHANGED, refresh its preview once it has drawn
+    // it (lib/preview-refresh.js: same-payload re-pushes cost nothing; debounced, a floor per
+    // screen, a cap per node). Lazy, never fatal.
+    try { require('./preview-refresh').notePush(deviceId, payload); } catch (e) { /* best effort */ }
     return { delivered: true };
   }
   pendingPlaylistUpdate.set(deviceId, { expiresAt: Date.now() + config.commandQueueTtlMs });
@@ -133,7 +135,10 @@ function flushQueue(deviceNs, deviceId, buildPayload) {
   if (pu) {
     pendingPlaylistUpdate.delete(deviceId);
     if (typeof buildPayload === 'function') {
-      deviceNs.to(deviceId).emit('device:playlist-update', buildPayload(deviceId));
+      // The reconnect flush: a baseline for the preview refresh, never an ask (a mass reconnect).
+      const payload = buildPayload(deviceId);
+      try { require('./preview-refresh').seen(deviceId, payload); } catch (e) { /* best effort */ }
+      deviceNs.to(deviceId).emit('device:playlist-update', payload);
       playlistUpdate = true;
     }
   }
