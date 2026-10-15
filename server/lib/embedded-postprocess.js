@@ -223,10 +223,10 @@ function packSpectra6(rgba, w, h, dither = 'floyd-steinberg') {
             gErr[bl] += eg * 3 / 16;
             bErr[bl] += eb * 3 / 16;
           }
-          const b = idx + w;
-          rErr[b] += er * 5 / 16;
-          gErr[b] += eg * 5 / 16;
-          bErr[b] += eb * 5 / 16;
+          const below = idx + w;
+          rErr[below] += er * 5 / 16;
+          gErr[below] += eg * 5 / 16;
+          bErr[below] += eb * 5 / 16;
           if (x + 1 < w) {
             const br = idx + w + 1;
             rErr[br] += er * 1 / 16;

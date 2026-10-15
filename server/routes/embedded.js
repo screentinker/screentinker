@@ -127,7 +127,7 @@ function buildUpdateOffer(deviceId, device, req, update) {
 
 /*
  * The command to deliver on this response, or null. Nothing is popped here: the caller pops it
- * with deliverCommand() when the response carrying the X-ST-Command header is actually written.
+ * with markCommandDelivered() when the response carrying the X-ST-Command header is actually written.
  */
 function resolvePendingCommand(deviceId, device, req) {
   if (!deviceId) return null;
@@ -248,11 +248,14 @@ function resolveDevice(req, res) {
 const HEARTBEAT_DONE = Symbol('embeddedHeartbeat');
 
 /*
+ * ⚠️ NOT lib/device-command.deliverCommand — that one SENDS a command to a screen. This one only
+ * records that a polled response carried it, so the queue can drop it.
+ *
  * Pop the queued command at the moment a response carrying its X-ST-Command header is written.
  * Every status, including 304 and 404/501 that carry the header. A 304 that carries it has been
  * delivered, so leaving it queued would re-run update / reboot / upload_logs on every unchanged poll.
  */
-function deliverCommand(deviceId, opts) {
+function markCommandDelivered(deviceId, opts) {
   if (opts && opts.pendingCmdObj) popCommand(deviceId, opts.pendingCmdObj.type);
 }
 
@@ -1176,7 +1179,7 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
     if (opts.pendingCmd) {
       offHeaders['X-ST-Command'] = opts.pendingCmd;
     }
-    deliverCommand(device.id, opts);
+    markCommandDelivered(device.id, opts);
     res.set(offHeaders).status(304).end();
     return;
   }
@@ -1188,7 +1191,7 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
     const errHeaders = { 'X-ST-Device-Name': device.name || '' };
     if (opts.pendingCmd) errHeaders['X-ST-Command'] = opts.pendingCmd;
     res.set(errHeaders);
-    deliverCommand(device.id, opts);
+    markCommandDelivered(device.id, opts);
     return res.status(404).json({ error: 'No playlist assigned or no active items for this device.', device_name: device.name || '' });
   }
 
@@ -1249,7 +1252,7 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
   }
 
   if (!isPreview && isNotModified(key, req.headers['if-none-match'])) {
-    deliverCommand(device.id, opts);
+    markCommandDelivered(device.id, opts);
     res.set(headers).status(304).end();
     return;
   }
@@ -1258,7 +1261,7 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
   if (!isPreview) {
     const cached = cacheGet(key);
     if (cached.hit) {
-      deliverCommand(device.id, opts);
+      markCommandDelivered(device.id, opts);
       res.set({ ...headers, 'Content-Type': detectContentType(profile) });
       return res.status(200).send(cached.buffer);
     }
@@ -1289,7 +1292,7 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
 
   if (!renderResult || renderResult.unsupported) {
     if (opts.pendingCmd) res.set('X-ST-Command', opts.pendingCmd);
-    deliverCommand(device.id, opts);
+    markCommandDelivered(device.id, opts);
     return res.status(501).json({
       error: 'Content type not yet supported by Phase 1 renderer.',
       detail: renderResult?.reason || 'No renderable items in playlist',
@@ -1318,7 +1321,7 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
     'X-ST-Screen-Height': String(outHeight),
     'Content-Type': processed.contentType,
   });
-  deliverCommand(device.id, opts);
+  markCommandDelivered(device.id, opts);
   res.status(200).send(processed.buffer);
 }
 
@@ -1347,7 +1350,7 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
   if (!resolved || resolved.zoneEntries.length === 0) {
     if (isExplicit) {
       if (cmdOpts.pendingCmd) res.setHeader('X-ST-Command', cmdOpts.pendingCmd);
-      deliverCommand(device.id, cmdOpts);
+      markCommandDelivered(device.id, cmdOpts);
       return res.status(404).json({ error: 'Device has no multi-zone layout assigned or no active items.' });
     }
     return handleRenderStandard(req, res, device, profile, { ...cmdOpts, isFallback: true, signal });
@@ -1357,7 +1360,7 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
   if (!isImageOnly && !isBrowserAvailable()) {
     if (isExplicit) {
       if (cmdOpts.pendingCmd) res.setHeader('X-ST-Command', cmdOpts.pendingCmd);
-      deliverCommand(device.id, cmdOpts);
+      markCommandDelivered(device.id, cmdOpts);
       return res.status(501).json({
         error: 'Multi-zone layout rendering failed or not supported.',
         detail: 'Browser unavailable for multi-zone rendering with widgets or web pages',
@@ -1391,7 +1394,7 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
     if (cmdOpts.pendingCmd) {
       offHeaders['X-ST-Command'] = cmdOpts.pendingCmd;
     }
-    deliverCommand(device.id, cmdOpts);
+    markCommandDelivered(device.id, cmdOpts);
     res.set(offHeaders).status(304).end();
     return;
   }
@@ -1447,7 +1450,7 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
   }
 
   if (!isPreview && isNotModified(key, req.headers['if-none-match'])) {
-    deliverCommand(device.id, cmdOpts);
+    markCommandDelivered(device.id, cmdOpts);
     res.set(headers).status(304).end();
     return;
   }
@@ -1456,7 +1459,7 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
   if (!isPreview) {
     const cached = cacheGet(key);
     if (cached.hit) {
-      deliverCommand(device.id, cmdOpts);
+      markCommandDelivered(device.id, cmdOpts);
       res.set({ ...headers, 'Content-Type': detectContentType(profile) });
       return res.status(200).send(cached.buffer);
     }
@@ -1470,7 +1473,7 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
     console.error(`[embedded] multi-zone layout render error: ${e.message}`);
     if (isExplicit) {
       if (cmdOpts.pendingCmd) res.setHeader('X-ST-Command', cmdOpts.pendingCmd);
-      deliverCommand(device.id, cmdOpts);
+      markCommandDelivered(device.id, cmdOpts);
       return res.status(500).json({
         error: 'Multi-zone layout rendering failed.',
         detail: 'An unexpected error occurred while rendering the layout.',
@@ -1482,7 +1485,7 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
   if (!renderResult || renderResult.unsupported) {
     if (isExplicit) {
       if (cmdOpts.pendingCmd) res.setHeader('X-ST-Command', cmdOpts.pendingCmd);
-      deliverCommand(device.id, cmdOpts);
+      markCommandDelivered(device.id, cmdOpts);
       return res.status(501).json({
         error: 'Multi-zone layout rendering failed or not supported.',
         detail: renderResult?.reason || 'Browser unavailable for multi-zone rendering',
@@ -1499,7 +1502,7 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
   } catch (e) {
     console.error('[embedded] postprocess error:', e.message);
     if (cmdOpts.pendingCmd) res.setHeader('X-ST-Command', cmdOpts.pendingCmd);
-    deliverCommand(device.id, cmdOpts);
+    markCommandDelivered(device.id, cmdOpts);
     return res.status(500).json({ error: `Post-processing failed: ${e.message}` });
   }
 
@@ -1515,7 +1518,7 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
     'X-ST-Screen-Height': String(outHeight),
     'Content-Type': processed.contentType,
   });
-  deliverCommand(device.id, cmdOpts);
+  markCommandDelivered(device.id, cmdOpts);
   res.status(200).send(processed.buffer);
 }
 
