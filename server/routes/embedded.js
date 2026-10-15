@@ -43,7 +43,7 @@ const { deviceTokenAuth }   = require('../middleware/deviceTokenAuth');
 const { bearerAuth }        = require('../middleware/apiToken');
 const { resolveTenancy }    = require('../lib/tenancy');
 const { resolveDevicePlaylist, resolvedLayoutId, resolveDeviceContext } = require('../lib/resolve-device-playlist');
-const { parseProfile, listPresets } = require('../lib/embedded-profiles');
+const { parseProfile, listPresets, frameDimensions, frameOrientation } = require('../lib/embedded-profiles');
 const { cacheKey, toETag, isNotModified, get: cacheGet, set: cacheSet } = require('../lib/embedded-cache');
 const { render, renderLayout, isLayoutImageOnly, isBrowserAvailable, looksLikeImage } = require('../lib/embedded-render');
 const { postprocess }       = require('../lib/embedded-postprocess');
@@ -385,31 +385,19 @@ function touchDeviceHeartbeat(device, req) {
     otaBreaker.noteReportedVersion(device.id, appVersion);
   }
 
-  // Extract optional orientation and rotation reported by device
-  const orientHeader = req.headers ? (req.headers['x-st-device-orientation'] || req.headers['x-st-orientation']) : undefined;
-  const rotHeader = req.headers ? (req.headers['x-st-device-rotation'] !== undefined ? req.headers['x-st-device-rotation'] : req.headers['x-st-rotation']) : undefined;
-  const queryOrient = req.query?.orientation;
-  const queryRot = req.query?.rotation !== undefined ? req.query?.rotation : req.query?.rotate;
-
-  let reportedOrient = null;
-  const rawOrient = (queryOrient || orientHeader || '').trim().toLowerCase();
-  const rawRot = queryRot !== undefined ? parseInt(queryRot, 10) : (rotHeader !== undefined ? parseInt(rotHeader, 10) : undefined);
-
-  if (VALID_ORIENTATIONS.has(rawOrient)) {
-    reportedOrient = rawOrient;
-  } else if (rawRot !== undefined) {
-    if (rawRot === 90) reportedOrient = 'portrait';
-    else if (rawRot === 180) reportedOrient = 'landscape-flipped';
-    else if (rawRot === 270) reportedOrient = 'portrait-flipped';
-    else if (rawRot === 0) reportedOrient = 'landscape';
-  }
-
-  // ⚠️ A dashboard preview is an operator looking, not the panel reporting where it is mounted. It
-  // must not overwrite devices.orientation (it would flip the stored mount for the real panel).
+  /*
+   * The orientation the PANEL stated on this request, remembered so a later poll (or a dashboard
+   * preview) that states none renders the same way. ⚠️ Only from the device itself: never from a
+   * dashboard preview (an operator looking, not the panel saying where it is mounted) and never
+   * from an API token, which is a reader, not the panel. Stored in reported_orientation, NULL until
+   * a panel says something — devices.orientation is 'landscape' on every row by schema default and
+   * means nothing here.
+   */
+  const stated = statedOrientationRotation(req);
   const isPreviewReq = req.query?.preview === '1';
-  const persistOrient = (reportedOrient && !isPreviewReq) ? reportedOrient : null;
+  const persistOrient = (req.device && !isPreviewReq && stated.orientation) ? stated.orientation : null;
   if (persistOrient) {
-    device.orientation = persistOrient;
+    device.reported_orientation = persistOrient;
   }
 
   try {
@@ -420,7 +408,7 @@ function touchDeviceHeartbeat(device, req) {
           ip_address = CASE WHEN ? != '' THEN ? ELSE ip_address END,
           app_version = COALESCE(?, app_version),
           power_source = COALESCE(?, power_source),
-          orientation = COALESCE(?, orientation),
+          reported_orientation = COALESCE(?, reported_orientation),
           updated_at = strftime('%s','now')
       WHERE id = ?
     `).run(clientIp, clientIp, appVersion, powerSource, persistOrient, device.id);
@@ -997,33 +985,43 @@ router.get('/pair/status', (req, res) => {
 });
 
 const VALID_ORIENTATIONS = new Set(['landscape', 'portrait', 'landscape-flipped', 'portrait-flipped']);
+const ORIENTATION_FOR_ROTATION = { 0: 'landscape', 90: 'portrait', 180: 'landscape-flipped', 270: 'portrait-flipped' };
 
-function resolveOrientationRotation(req, device) {
-  const queryOrient = req.query?.orientation ? String(req.query.orientation).trim().toLowerCase() : undefined;
-  const queryRotRaw = req.query?.rotation !== undefined ? req.query.rotation : req.query?.rotate;
-  const queryRot = queryRotRaw !== undefined ? parseInt(queryRotRaw, 10) : undefined;
-
-  const headerOrientRaw = req.headers ? (req.headers['x-st-device-orientation'] || req.headers['x-st-orientation']) : undefined;
-  const headerOrient = headerOrientRaw ? String(headerOrientRaw).trim().toLowerCase() : undefined;
-  const headerRotRaw = req.headers ? (req.headers['x-st-device-rotation'] !== undefined ? req.headers['x-st-device-rotation'] : req.headers['x-st-rotation']) : undefined;
-  const headerRot = headerRotRaw !== undefined ? parseInt(headerRotRaw, 10) : undefined;
-
+/*
+ * The orientation/rotation this REQUEST states (?orientation= / ?rotation= / ?rotate= /
+ * X-ST-Device-Orientation / X-ST-Device-Rotation, and the X-ST-Orientation / X-ST-Rotation
+ * aliases), validated. A rotation alone implies its orientation. Both undefined when none is stated.
+ */
+function statedOrientationRotation(req) {
+  const q = req.query || {};
+  const h = req.headers || {};
+  const norm = (v) => (v === undefined || v === null ? undefined : String(v).trim().toLowerCase());
+  const queryOrient = norm(q.orientation);
+  const headerOrient = norm(h['x-st-device-orientation'] || h['x-st-orientation']);
+  const queryRotRaw = q.rotation !== undefined ? q.rotation : q.rotate;
+  const headerRotRaw = h['x-st-device-rotation'] !== undefined ? h['x-st-device-rotation'] : h['x-st-rotation'];
+  const toRot = (v) => {
+    if (v === undefined) return undefined;
+    const n = parseInt(v, 10);
+    return ORIENTATION_FOR_ROTATION[n] !== undefined ? n : undefined;
+  };
   let orientation = (VALID_ORIENTATIONS.has(queryOrient) ? queryOrient : undefined)
-    || (VALID_ORIENTATIONS.has(headerOrient) ? headerOrient : undefined)
-    || device?.orientation;
-
-  let rotation = (queryRot !== undefined && Number.isFinite(queryRot))
-    ? queryRot
-    : (headerRot !== undefined && Number.isFinite(headerRot) ? headerRot : undefined);
-
-  if (!orientation && rotation !== undefined) {
-    if (rotation === 90) orientation = 'portrait';
-    else if (rotation === 180) orientation = 'landscape-flipped';
-    else if (rotation === 270) orientation = 'portrait-flipped';
-    else if (rotation === 0) orientation = 'landscape';
-  }
-
+    || (VALID_ORIENTATIONS.has(headerOrient) ? headerOrient : undefined);
+  const rotation = toRot(queryRotRaw) !== undefined ? toRot(queryRotRaw) : toRot(headerRotRaw);
+  if (!orientation && rotation !== undefined) orientation = ORIENTATION_FOR_ROTATION[rotation];
   return { orientation, rotation };
+}
+
+/*
+ * What to render this panel as: what the request states, else what the device itself last
+ * reported (devices.reported_orientation), else nothing — and nothing means the stored profile
+ * exactly as it is, byte-identical to before orientation support. ⚠️ Never devices.orientation.
+ */
+function resolveOrientationRotation(req, device) {
+  const stated = statedOrientationRotation(req);
+  if (stated.orientation || stated.rotation !== undefined) return stated;
+  const reported = device && VALID_ORIENTATIONS.has(device.reported_orientation) ? device.reported_orientation : undefined;
+  return { orientation: reported, rotation: undefined };
 }
 
 /*
@@ -1270,10 +1268,7 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
     'X-ST-Item-Index': String(itemIndex),
     'X-ST-Total-Items': String(total),
     'X-ST-Power-State': power.state,
-    'X-ST-Screen-Width': String(profile.width),
-    'X-ST-Screen-Height': String(profile.height),
-    'X-ST-Rotation': String(profile.rotation || 0),
-    'X-ST-Orientation': profile.orientation || device.orientation || 'landscape',
+    ...frameHeaders(profile),
   };
   if (profile.supportsPartialRefresh !== undefined) {
     headers['X-ST-Supports-Partial'] = profile.supportsPartialRefresh ? '1' : '0';
@@ -1351,12 +1346,11 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
     try { cacheSet(key, processed.buffer); } catch { /* best-effort */ }
   }
 
-  const outWidth = processed.width || profile.width;
-  const outHeight = processed.height || profile.height;
   res.set({
     ...headers,
-    'X-ST-Screen-Width': String(outWidth),
-    'X-ST-Screen-Height': String(outHeight),
+    ...(processed.width && processed.height
+      ? { 'X-ST-Screen-Width': String(processed.width), 'X-ST-Screen-Height': String(processed.height) }
+      : {}),
     'Content-Type': processed.contentType,
   });
   markCommandDelivered(device.id, opts);
@@ -1475,10 +1469,7 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
     'X-ST-Item-Index': '0',
     'X-ST-Total-Zones': String(zoneEntries.length),
     'X-ST-Power-State': power.state,
-    'X-ST-Screen-Width': String(profile.width),
-    'X-ST-Screen-Height': String(profile.height),
-    'X-ST-Rotation': String(profile.rotation || 0),
-    'X-ST-Orientation': profile.orientation || device.orientation || 'landscape',
+    ...frameHeaders(profile),
   };
   if (profile.supportsPartialRefresh !== undefined) {
     headers['X-ST-Supports-Partial'] = profile.supportsPartialRefresh ? '1' : '0';
@@ -1548,12 +1539,11 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
     try { cacheSet(key, processed.buffer); } catch { /* best-effort */ }
   }
 
-  const outWidth = processed.width || profile.width;
-  const outHeight = processed.height || profile.height;
   res.set({
     ...headers,
-    'X-ST-Screen-Width': String(outWidth),
-    'X-ST-Screen-Height': String(outHeight),
+    ...(processed.width && processed.height
+      ? { 'X-ST-Screen-Width': String(processed.width), 'X-ST-Screen-Height': String(processed.height) }
+      : {}),
     'Content-Type': processed.contentType,
   });
   markCommandDelivered(device.id, cmdOpts);
@@ -1874,6 +1864,23 @@ router.get('/firmware/:preset/latest.bin', firmwareLimiter, (req, res) => {
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
+
+/*
+ * The frame description every render answer carries, 304 and cache hit included:
+ *   X-ST-Screen-Width / -Height  the frame's dimensions as sent (after any server-side rotation)
+ *   X-ST-Rotation                 the mount rotation the frame was composed for, degrees
+ *   X-ST-Orientation              the stated orientation, else the composed box's shape
+ * See docs/embedded-renderer.md (Orientation and rotation) for what firmware does with them.
+ */
+function frameHeaders(profile) {
+  const dims = frameDimensions(profile);
+  return {
+    'X-ST-Screen-Width': String(dims.width),
+    'X-ST-Screen-Height': String(dims.height),
+    'X-ST-Rotation': String(profile.rotation || 0),
+    'X-ST-Orientation': frameOrientation(profile),
+  };
+}
 
 function detectContentType(profile) {
   switch (profile.outputFormat) {

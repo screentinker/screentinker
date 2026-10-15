@@ -374,11 +374,17 @@ async function postprocess(pngBuffer, profile) {
   // Cover resize: crop to fill target box without letterboxing
   img.cover({ w: width, h: height });
 
-  // A 180-degree flip is applied post-resize for flipped orientations (landscape-flipped 180°
-  // and portrait-flipped 270°) so that preview/host simulators render inverted orientations upright,
-  // while the hardware MCU applies a fixed portrait transpose.
-  const postRotation = (rotation === 180 || rotation === 270 || profile.orientation === 'landscape-flipped' || profile.orientation === 'portrait-flipped') ? 180 : 0;
-  if (postRotation) img.rotate(postRotation);
+  if (profile.mcuTranspose) {
+    // reTerminal firmware (lib/embedded-profiles.js, "WHO TRANSPOSES"): the frame goes out as
+    // composed and the MCU applies a fixed portrait transpose; only the 180-degree part of a
+    // flipped mount (landscape-flipped 180, portrait-flipped 270) is applied here.
+    const postRotation = (rotation === 180 || rotation === 270 || profile.orientation === 'landscape-flipped' || profile.orientation === 'portrait-flipped') ? 180 : 0;
+    if (postRotation) img.rotate(postRotation);
+  } else if (rotation) {
+    // Every other profile, exactly as before: rotation applied AFTER resize so the composed box is
+    // always width x height, and the bytes leave in the panel's native order.
+    img.rotate(rotation);
+  }
 
   const rgba = img.bitmap.data;
   const w    = img.bitmap.width;
@@ -416,9 +422,7 @@ async function postprocess(pngBuffer, profile) {
   }
 
   // ── 1-bit ────────────────────────────────────────────────────────────────────
-  if (w % 2 !== 0) {
-    throw new UnpackableWidthError(`width ${w} is odd: 1-bit packing would straddle rows`);
-  }
+  // Any width, as always: fielded 1-bit panels use odd ones (e.g. 249 wide).
   // Build a Float32 grayscale buffer (0.0 = black, 1.0 = white) using BT.601 luminance.
   const pixels = w * h2;
   const gray   = new Float32Array(pixels);

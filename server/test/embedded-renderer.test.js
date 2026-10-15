@@ -32,7 +32,7 @@ db.exec(`
     timezone TEXT, reported_timezone TEXT, background_color TEXT DEFAULT '#000000',
     default_content_id TEXT, last_heartbeat INTEGER, ip_address TEXT,
     app_version TEXT, updated_at INTEGER, heartbeat_expected_by INTEGER,
-    power_source TEXT, orientation TEXT DEFAULT 'landscape'
+    power_source TEXT, orientation TEXT DEFAULT 'landscape', reported_orientation TEXT
   );
   CREATE TABLE device_telemetry (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

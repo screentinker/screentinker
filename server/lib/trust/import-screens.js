@@ -39,7 +39,7 @@ const PLAYER_OWNED = new Set([
   'screen_off_timeout_ms', 'reported_timezone', 'reported_utc', 'reported_at', 'offline_reason', 'offline_reason_at',
   'offline_detail', 'heartbeat_expected_by', 'created_at', 'render_width', 'render_height', 'ota_status', 'ota_target_version',
   'ota_attempts', 'ota_updated_at', 'ota_channel_served', 'attached_node_id', 'power_source', 'trigger_status',
-  'trigger_status_at', 'claim_secret', 'view_token_hash', 'view_token_enc', 'screen_profile',
+  'trigger_status_at', 'claim_secret', 'view_token_hash', 'view_token_enc', 'screen_profile', 'reported_orientation',
 ]);
 
 function jobWorkspaces(db, job) {

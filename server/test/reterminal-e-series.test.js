@@ -167,20 +167,23 @@ describe('Spectra 6 & Gray16 Postprocessing Pipeline', () => {
     assert.equal(decoded.bitmap.height, 480);
   });
 
-  test('odd widths rejected for 1-bit packing to prevent row straddling', async () => {
+  test('odd widths rejected for the nibble formats (spectra6, gray16) to prevent row straddling', async () => {
     const img = new Jimp({ width: 297, height: 10, color: 0x000000FF });
     const srcBuf = await img.getBuffer('image/png');
 
-    // parseProfile rejects odd width for 1-bit, spectra6, gray16
-    assert.equal(parseProfile({ width: 297, height: 10, colorDepth: '1bit' }), null);
+    // parseProfile rejects odd width for spectra6 and gray16 (two pixels per byte)...
+    assert.equal(parseProfile({ width: 297, height: 10, colorDepth: 'spectra6' }), null);
+    assert.equal(parseProfile({ width: 297, height: 10, colorDepth: 'gray16' }), null);
+    // ...but not for 1-bit, which always accepted odd widths (fielded panels use them).
+    assert.ok(parseProfile({ width: 297, height: 10, colorDepth: '1bit' }));
 
-    // postprocess throws UnpackableWidthError for odd width
+    // postprocess throws UnpackableWidthError for an odd-width nibble frame
     await assert.rejects(
       () => postprocess(srcBuf, {
         width: 297,
         height: 10,
-        colorDepth: '1bit',
-        outputFormat: 'x-epd-packed',
+        colorDepth: 'spectra6',
+        outputFormat: 'x-epd-spectra6',
         dither: 'none',
       }),
       (err) => err instanceof UnpackableWidthError || err.code === 'UNPACKABLE_WIDTH'
@@ -243,6 +246,7 @@ describe('Spectra 6 & Gray16 Postprocessing Pipeline', () => {
       height: 800,
       rotation: 90,
       orientation: 'portrait',
+      mcuTranspose: true,   // the reTerminal firmware transposes; other profiles rotate server-side
       colorDepth: '1bit',
       dither: 'none',
       outputFormat: 'x-epd-packed',
@@ -263,6 +267,7 @@ describe('Spectra 6 & Gray16 Postprocessing Pipeline', () => {
       height: 800,
       rotation: 270,
       orientation: 'portrait-flipped',
+      mcuTranspose: true,
       colorDepth: '1bit',
       dither: 'none',
       outputFormat: 'x-epd-packed',
@@ -308,7 +313,7 @@ describe('reTerminal E-Series Registration & Route Handling', () => {
         timezone TEXT, reported_timezone TEXT, background_color TEXT DEFAULT '#000000',
         default_content_id TEXT, last_heartbeat INTEGER, ip_address TEXT,
         app_version TEXT, updated_at INTEGER, heartbeat_expected_by INTEGER,
-        power_source TEXT, orientation TEXT DEFAULT 'landscape'
+        power_source TEXT, orientation TEXT DEFAULT 'landscape', reported_orientation TEXT
       );
       CREATE TABLE device_telemetry (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -686,10 +691,9 @@ describe('reTerminal E-Series Registration & Route Handling', () => {
   });
 
   test('RF-1: Orientation persistence via headers across subsequent polls', async () => {
-    // 1. Ensure initial orientation in DB is landscape
-    db.prepare("UPDATE devices SET orientation = 'landscape' WHERE id = 'dev-e1001'").run();
-    const devBefore = db.prepare('SELECT orientation FROM devices WHERE id = ?').get('dev-e1001');
-    assert.equal(devBefore.orientation, 'landscape');
+    // 1. Nothing reported yet. (devices.orientation is 'landscape' by schema default on every row
+    //    and is NOT what the panel said; the panel's own report lives in reported_orientation.)
+    db.prepare("UPDATE devices SET reported_orientation = NULL WHERE id = 'dev-e1001'").run();
 
     // 2. Poll with X-ST-Device-Orientation: portrait
     const res1 = await fetch(`${baseUrl}/render?device_id=dev-e1001`, {
@@ -705,8 +709,8 @@ describe('reTerminal E-Series Registration & Route Handling', () => {
     assert.equal(res1.headers.get('x-st-screen-height'), '800');
 
     // Verify DB updated
-    const devAfter1 = db.prepare('SELECT orientation FROM devices WHERE id = ?').get('dev-e1001');
-    assert.equal(devAfter1.orientation, 'portrait');
+    const devAfter1 = db.prepare('SELECT reported_orientation FROM devices WHERE id = ?').get('dev-e1001');
+    assert.equal(devAfter1.reported_orientation, 'portrait');
 
     // 3. Subsequent poll without orientation header retains portrait
     const res2 = await fetch(`${baseUrl}/render?device_id=dev-e1001`, {
@@ -718,8 +722,8 @@ describe('reTerminal E-Series Registration & Route Handling', () => {
     assert.equal(res2.headers.get('x-st-screen-width'), '480');
     assert.equal(res2.headers.get('x-st-screen-height'), '800');
 
-    // Reset back to landscape
-    db.prepare("UPDATE devices SET orientation = 'landscape' WHERE id = 'dev-e1001'").run();
+    // Reset: nothing reported
+    db.prepare("UPDATE devices SET reported_orientation = NULL WHERE id = 'dev-e1001'").run();
   });
 
   test('RF-3: Sibling command delivery in FIFO order without starvation', async () => {

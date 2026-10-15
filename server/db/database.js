@@ -4790,6 +4790,13 @@ migrationStep('device power source', () => {
   try { db.prepare('ALTER TABLE device_telemetry ADD COLUMN power_source TEXT').run(); } catch (_) { /* present */ }
 });
 
+migrationStep('device reported orientation', () => {
+  // Embedded panels (routes/embedded.js): the orientation the PANEL last stated in a render request.
+  // NULL = never stated, which renders the stored profile exactly as it always did. Not
+  // devices.orientation, which every row has as 'landscape' by default and so says nothing.
+  try { db.prepare('ALTER TABLE devices ADD COLUMN reported_orientation TEXT').run(); } catch (_) { /* present */ }
+});
+
 migrationStep('device telemetry humidity', () => {
   // Sensirion SHT40 relative humidity percentage (0-100%).
   try { db.prepare('ALTER TABLE device_telemetry ADD COLUMN humidity REAL').run(); } catch (_) { /* present */ }
