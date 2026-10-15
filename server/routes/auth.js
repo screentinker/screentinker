@@ -10,7 +10,7 @@ const totp = require('../lib/totp');
 const totpLockout = require('../lib/totp-lockout');
 const loginLockout = require('../lib/login-lockout');
 const QRCode = require('qrcode');
-const { sendSignupEmails, sendVerificationEmail, sendPasswordResetEmail } = require('../services/signupEmails');
+const { sendSignupEmails, sendVerificationEmail, sendPasswordResetEmail, sendAccountDeletedEmail } = require('../services/signupEmails');
 const passwordReset = require('../lib/passwordReset');
 const emailVerify = require('../lib/emailVerify');
 const emailSvc = require('../services/email');
@@ -64,6 +64,8 @@ function ensureDefaultOrgForUser(user, { allowCreate = true } = {}) {
   tx();
   return wsId;
 }
+
+const nowSec = () => Math.floor(Date.now() / 1000);
 
 function logFailedLogin(email, ip, reason) {
   try {
@@ -215,7 +217,7 @@ router.post('/register', (req, res) => {
   // early return above (hosted + verification required) issues NO session and is deliberately not
   // stamped: those accounts really have never had one.
   stampLastLogin(user.id);
-  const token = generateToken(user, workspaceId);
+  const token = generateToken(user, workspaceId, { authTime: nowSec() });
   res.status(201).json({ token, user, current_workspace_id: workspaceId });
 });
 
@@ -492,7 +494,7 @@ router.post('/login', (req, res) => {
 function issueSession(req, res, user, extra = {}) {
   logSuccessfulLogin(user.id, user.email, getClientIp(req));
   const workspaceId = ensureDefaultOrgForUser(user, { allowCreate: config.autoCreateOrgOnSignup });
-  const token = generateToken(user, workspaceId);
+  const token = generateToken(user, workspaceId, { authTime: nowSec() });
   // #100: callers pass a SELECT * row. Strip password_hash AND the TOTP internals
   // (the encrypted secret + the replay counter) so no secret/internal rides in the
   // response body - "secrets never in responses", same as the API token work.
@@ -760,7 +762,7 @@ router.post('/totp/enable', requireAuth, (req, res) => {
     .run(step, req.user.id);
   // 3.0: sessions that never passed the second factor end now; this one carries on with a new token.
   bumpTokenVersion(req.user.id);
-  res.json({ enabled: true, recovery_codes: resetRecoveryCodes(req.user.id), token: generateToken(req.user, req.jwtWorkspaceId || null) }); // shown ONCE
+  res.json({ enabled: true, recovery_codes: resetRecoveryCodes(req.user.id), token: generateToken(req.user, req.jwtWorkspaceId || null, { authTime: req.authTime }) }); // shown ONCE
 });
 
 // Disable: re-auth with a current code (or a recovery code) so a hijacked session
@@ -776,7 +778,7 @@ router.post('/totp/disable', requireAuth, (req, res) => {
     db.prepare('DELETE FROM totp_recovery_codes WHERE user_id = ?').run(req.user.id);
   })();
   bumpTokenVersion(req.user.id); // 3.0: see /totp/enable
-  res.json({ enabled: false, token: generateToken(req.user, req.jwtWorkspaceId || null) });
+  res.json({ enabled: false, token: generateToken(req.user, req.jwtWorkspaceId || null, { authTime: req.authTime }) });
 });
 
 // Regenerate recovery codes: re-auth (current code) + ATOMIC replace (tightening #3).
@@ -975,7 +977,7 @@ router.post('/switch-workspace', requireAuth, (req, res) => {
 
   if (!canAct) return res.status(403).json({ error: 'Access denied to that workspace' });
 
-  const token = generateToken(req.user, ws.id);
+  const token = generateToken(req.user, ws.id, { authTime: req.authTime });
   res.json({ token, current_workspace_id: ws.id });
 });
 
@@ -1018,7 +1020,7 @@ router.put('/me', requireAuth, (req, res) => {
     // 3.0: a new password ends every OTHER session; this one gets a fresh token (the client stores
     // `token` when present) so changing your password does not sign you out of the tab you did it in.
     bumpTokenVersion(req.user.id);
-    freshToken = generateToken(req.user, req.jwtWorkspaceId || null);
+    freshToken = generateToken(req.user, req.jwtWorkspaceId || null, { authTime: req.authTime });
   }
   // ui_mode / onboarded_at are read back through GET /me (accountSummary), not here, so this keeps
   // the 2.x column list and works on any users table that has them.
@@ -1031,8 +1033,156 @@ router.post('/sessions/revoke-others', requireAuth, (req, res) => {
   if (String(req.user.id).includes(':')) return res.status(400).json({ error: 'Not available for this session' });
   bumpTokenVersion(req.user.id);
   logActivity(req.user.id, 'auth:sessions_revoked', null, null, getClientIp(req));
-  res.json({ ok: true, token: generateToken(req.user, req.jwtWorkspaceId || null) });
+  res.json({ ok: true, token: generateToken(req.user, req.jwtWorkspaceId || null, { authTime: req.authTime }) });
 });
+
+// ==================== Self-service account deletion ====================
+// Google Play's account-deletion requirement, and the privacy policy's promise. The data is removed
+// by the same cascade an admin's delete uses (lib/user-deletion.js); lib/account-deletion.js holds
+// the re-authentication rule, the refusals and the Stripe cancellation. docs/accounts.md explains
+// the whole flow.
+const accountDeletion = require('../lib/account-deletion');
+
+// A break-glass recovery session or a support engineer's session is not the account holder: those
+// identities are synthetic and have no account of their own to delete, and neither may delete the
+// account of the person they are helping.
+const notAccountHolder = (req) => req.sessionKind !== 'user' || String(req.user.id).includes(':')
+  || ['recovery', 'support'].includes(req.user.auth_provider);
+const NOT_ELIGIBLE = {
+  error: 'This session cannot delete an account. Sign in as the account holder to delete it.',
+  code: 'session_not_eligible',
+};
+const LAST_ADMIN = {
+  error: 'You are the only platform admin on this server. Make another account a platform admin first (Platform → Users), otherwise nobody could manage this server after you leave.',
+  code: 'last_platform_admin',
+};
+// Scale-out (docs/scale-out.md): an account COPIED onto this replica lives on the primary, so the
+// question and the deletion go there, as the person's own request (the same rule as POST /login).
+// Deleting the local copy alone would leave the real account, and its subscription, untouched.
+const onPrimary = (user) => !!(config.primaryUrl && !user.password_hash && isCopiedUser(user.id));
+
+function sharedOrgRefusal(orgs) {
+  const shared = orgs.filter((o) => o.shared);
+  return {
+    error: `You own ${shared.length === 1 ? 'an organization' : `${shared.length} organizations`} with other members (${shared.map((o) => o.name).join(', ')}). Transfer ownership to another member or remove the other members first (Members, or the organization's settings), then delete your account.`,
+    code: 'org_has_other_members',
+    organizations: shared.map((o) => ({ id: o.id, name: o.name, members: o.members })),
+  };
+}
+
+// What deleting would remove and what stands in the way, for the dialog to explain BEFORE it asks
+// for a password. Read-only.
+router.get('/me/deletion', requireAuth, (req, res) => {
+  if (notAccountHolder(req)) return res.status(403).json(NOT_ELIGIBLE);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (onPrimary(user)) return require('../lib/replica-proxy').proxyToPrimary(req, res, config);
+  res.json(accountDeletion.deletionInfo(db, user, { authTime: req.authTime, sessionKind: req.sessionKind }));
+});
+
+/*
+ * Delete MY account. Body: { confirm: <the account's email>, password?, code? }.
+ *
+ * Checked in this order, and nothing is changed until every check has passed:
+ *   1. the session belongs to the account holder (not recovery / support);
+ *   2. `confirm` is the account's email address, typed;
+ *   3. re-authentication: the password (+ TOTP or recovery code when 2FA is on); an account with no
+ *      password must have signed in within the last 10 minutes (lib/account-deletion.js);
+ *   4. not the server's last platform admin; no organization they own has other members;
+ *   5. Stripe subscriptions cancelled (hosted) - a failure stops here with nothing deleted;
+ *   6. sessions revoked, then the cascade; API tokens go with the user row (ON DELETE CASCADE).
+ *
+ * Wrong credentials answer 403, not 401: the dashboard treats any 401 as "signed out" and would
+ * drop the session the person is about to retry with. Rate-limited in server.js.
+ */
+router.delete('/me', requireAuth, asyncRoute(async (req, res) => {
+  if (notAccountHolder(req)) return res.status(403).json(NOT_ELIGIBLE);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (onPrimary(user)) return require('../lib/replica-proxy').proxyToPrimary(req, res, config);
+  const body = req.body || {};
+
+  const typed = typeof body.confirm === 'string' ? body.confirm.trim().toLowerCase() : '';
+  if (!typed || typed !== String(user.email).toLowerCase()) {
+    return res.status(400).json({ error: 'Type your email address exactly to confirm.', code: 'confirm_mismatch' });
+  }
+
+  const method = accountDeletion.reauthMethod(user);
+  if (method === 'password') {
+    if (loginLockout.isLocked(user.id)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+    const password = typeof body.password === 'string' ? body.password : '';
+    if (!password || !bcrypt.compareSync(password, user.password_hash)) {
+      loginLockout.recordFailure(user.id);
+      return res.status(403).json({ error: 'Current password is incorrect', code: 'reauth_failed' });
+    }
+    if (user.totp_enabled) {
+      if (totpLockout.isLocked(user.id)) return res.status(429).json({ error: 'Too many invalid codes. Try again later.' });
+      const code = typeof body.code === 'string' ? body.code.trim() : '';
+      const step = code ? totp.verifyCode(code, totp.decryptSecret(user.totp_secret_enc), user.totp_last_step) : null;
+      if (step) db.prepare('UPDATE users SET totp_last_step = ? WHERE id = ?').run(step, user.id);
+      else if (!(code && consumeRecoveryCode(user.id, code))) {
+        totpLockout.recordFailure(user.id);
+        return res.status(403).json({ error: 'Enter the code from your authenticator app (or a recovery code).', code: 'reauth_code_required' });
+      }
+      totpLockout.reset(user.id);
+    }
+    loginLockout.reset(user.id);
+  } else if (!accountDeletion.recentSignIn(req.authTime)) {
+    return res.status(403).json({
+      error: 'For your security, sign in again, then delete your account within 10 minutes.',
+      code: 'reauth_recent_sign_in_required',
+      window_seconds: accountDeletion.REAUTH_WINDOW_S,
+      sso_start: accountDeletion.deletionInfo(db, user).reauth.sso_start,
+    });
+  }
+
+  if (accountDeletion.isLastPlatformAdmin(db, user)) return res.status(409).json(LAST_ADMIN);
+  const orgs = accountDeletion.ownedOrganizations(db, user.id);
+  if (orgs.some((o) => o.shared)) return res.status(409).json(sharedOrgRefusal(orgs));
+
+  let cancelled = [];
+  try {
+    cancelled = await accountDeletion.cancelSubscriptions(db, user, orgs.map((o) => o.id), require('../lib/stripe-client').get());
+  } catch (e) {
+    console.error(`[account-deletion] Stripe cancellation failed for ${user.id}; nothing deleted:`, e && e.message);
+    return res.status(502).json({
+      error: 'Your subscription could not be cancelled, so nothing was deleted. Try again in a few minutes, or contact support.',
+      code: 'billing_cancel_failed',
+    });
+  }
+
+  // Every session ends with the row anyway (resolveSessionUser: user_not_found); bumping first also
+  // covers a reader that races the delete.
+  bumpTokenVersion(user.id);
+  let files;
+  try {
+    files = deleteUserCascade(db, { targetId: user.id, actingAdminId: accountDeletion.fallbackOwner(db, user.id) });
+  } catch (e) {
+    // The orgs were re-checked a moment ago, but a member may have joined in between.
+    if (e instanceof OrgHasOtherMembersError) return res.status(409).json(sharedOrgRefusal(accountDeletion.ownedOrganizations(db, user.id)));
+    throw e;
+  }
+
+  // The audit row names the account by its id only: the email, name and everything else are what
+  // was just deleted, and keeping them here would undo the deletion. user_id is NULL because the
+  // row it would point at is gone (and the column is a foreign key).
+  logActivity(null, 'account_self_deleted',
+    `user ${user.id}; organizations deleted: ${orgs.length}; subscriptions cancelled: ${cancelled.length}`,
+    null, getClientIp(req));
+  // The generic request audit (services/activity.js activityLogger) would write this request with
+  // the deleted user's id after the response, which the foreign key refuses: it is recorded above.
+  req.user = null;
+
+  if (emailSvc.isConfigured()) {
+    Promise.resolve().then(() => sendAccountDeletedEmail(user, req)).catch(() => { /* best effort */ });
+  }
+  res.json({
+    deleted: true,
+    organizations_deleted: orgs.length,
+    subscriptions_cancelled: cancelled.length,
+    files_removed: (files && files.files_removed) || 0,
+  });
+}));
 
 // List users - platform admins see all, admins see team members only
 router.get('/users', requireAuth, requireAdmin, (req, res) => {
@@ -2038,7 +2188,7 @@ async function completeFederatedLogin(req, res, { provider, claims, link = null,
 
     logSuccessfulLogin(user.id, user.email, getClientIp(req));
     const workspaceId = ensureDefaultOrgForUser(user, { allowCreate: config.autoCreateOrgOnSignup });
-    const token = generateToken(user, workspaceId);
+    const token = generateToken(user, workspaceId, { authTime: nowSec() });
     if (isNew) sendSignupEmails(user, req);
 
     /*
