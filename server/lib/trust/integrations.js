@@ -294,6 +294,7 @@ const INTEGRATIONS = [
       for (const k of kinds) {
         if (k.kind === 'slack') hosts.push('hooks.slack.com');
         if (k.kind === 'pagerduty') hosts.push('events.pagerduty.com');
+        if (k.kind === 'telegram') hosts.push('api.telegram.org');
       }
       if (ctx.orgId) hosts.push(...safe(() => ctx.db.prepare(`SELECT config FROM alert_channels WHERE enabled = 1 AND kind IN ('teams','webhook') AND ${sc.sql}`).all(...sc.args)
         .map((r) => { try { return hostOf(JSON.parse(r.config || '{}').url); } catch (_) { return null; } }), []));

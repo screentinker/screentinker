@@ -39,8 +39,8 @@ clear, so one good frame between two bad ones is treated as a flap, not a fix.
 While a problem is suspected, the server asks the screen for extra screenshots so it can confirm or
 clear it quickly. You do not have to wait for the regular cadence.
 
-Confirmed problems go to the workspace's **alert channels** (Slack, Teams, PagerDuty, webhook,
-email) that include the new events:
+Confirmed problems go to the workspace's **alert channels** (Slack, Teams, PagerDuty, Telegram,
+webhook, email) that include the new events:
 
 - **"a screen is online but showing a problem"** (`screen_problem`), sent once per incident.
 - **"that screen is showing its content again"** (`screen_ok`), sent once, and only to channels

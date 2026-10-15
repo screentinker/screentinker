@@ -334,6 +334,9 @@ function pinnedLookup(vettedAddresses) {
  * @param {'stream'|'text'|'buffer'} [options.responseType='stream'] Response format
  * @param {string|Buffer} [options.body] Optional request body (capped at 64KiB)
  * @param {boolean} [options.accept2xx=false] Treat any 2xx as success (webhooks: Discord 204)
+ * @param {boolean} [options.acceptAnyStatus=false] Resolve with the response whatever its status
+ *   (redirects are still followed or refused as above), for an API that explains a 4xx in its body
+ *   (Telegram: "chat not found", retry_after). The caller judges statusCode itself.
  * @returns {Promise<{res?: import('http').IncomingMessage, text?: string, buffer?: Buffer, notModified?: boolean, statusCode: number, headers: object, finalUrl?: string}>}
  *   finalUrl is the address that answered after any redirects, for resolving relative links in it.
  */
@@ -357,6 +360,7 @@ function guardedRequest(urlString, options = {}) {
   const validators = options.validators || null;
   const responseType = options.responseType || 'stream';
   const accept2xx = !!options.accept2xx;
+  const acceptAnyStatus = !!options.acceptAnyStatus;
 
   let bodyBuf = null;
   if (options.body != null) {
@@ -427,7 +431,7 @@ function guardedRequest(urlString, options = {}) {
           return follow(next, redirectsLeft - 1, nextHdrs).then(resolve, reject);
         }
 
-        const ok = accept2xx ? (sc >= 200 && sc < 300) : (sc === 200);
+        const ok = acceptAnyStatus || (accept2xx ? (sc >= 200 && sc < 300) : (sc === 200));
         if (!ok) {
           res.resume();
           clearDeadlineTimer();

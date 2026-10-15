@@ -606,6 +606,8 @@ async function deliverAlerts(db, now, localRowsSql) {
   for (const c of channels) {
     const events = ch.parseEvents(c.events);
     const settings = settingsFor(c.workspace_id, db);
+    // A channel that answered 429 gets nothing more this pass (lib/alert-channels tick, the same rule).
+    let limited = false;
     if (events.includes('screen_problem') && settings.enabled) {
       // Confirmed, still open, a check this workspace alerts on, the device still in this workspace.
       const rows = db.prepare(`SELECT i.*, d.name AS device_name FROM screen_verification_incidents i
@@ -613,6 +615,7 @@ async function deliverAlerts(db, now, localRowsSql) {
         WHERE i.workspace_id = ? AND d.workspace_id = i.workspace_id AND i.confirmed_at IS NOT NULL AND i.resolved_at IS NULL
           AND d.status = 'online' AND ${localRowsSql('d')}`).all(c.workspace_id);
       for (const inc of rows) {
+        if (limited) break;
         if (!settings.alert_checks.includes(inc.kind)) continue;
         if (!ch.inScope(db, c.id, inc.device_id)) continue;
         const del = db.prepare('SELECT * FROM screen_verification_deliveries WHERE channel_id = ? AND incident_id = ?').get(c.id, inc.id);
@@ -627,9 +630,10 @@ async function deliverAlerts(db, now, localRowsSql) {
           .run(c.id, inc.id, r.ok ? now : null);
         ch.recordResult(db, c, r, now);
         if (r.ok) sent++;
+        if (r.rateLimited) limited = true;
       }
     }
-    if (events.includes('screen_ok')) {
+    if (events.includes('screen_ok') && !limited) {
       // Resolved after a problem alert went out on THIS channel: tell it, once.
       const rows = db.prepare(`SELECT i.*, d.name AS device_name FROM screen_verification_deliveries x
           JOIN screen_verification_incidents i ON i.id = x.incident_id
@@ -637,6 +641,7 @@ async function deliverAlerts(db, now, localRowsSql) {
         WHERE x.channel_id = ? AND x.problem_sent_at IS NOT NULL AND x.ok_sent_at IS NULL AND x.ok_attempts < ?
           AND i.resolved_at IS NOT NULL AND ${localRowsSql('d')}`).all(c.id, MAX_ATTEMPTS);
       for (const inc of rows) {
+        if (limited) break;
         const r = await ch.deliver(ch.buildMessage(c, {
           event: 'screen_ok', device: { id: inc.device_id, name: inc.device_name }, check: inc.kind, reason: inc.resolved_reason,
           minutes: Math.max(0, Math.floor((inc.resolved_at - inc.opened_at) / 60)), workspace: { name: nameOf(c.workspace_id) }, dashboardUrl: url,
@@ -646,6 +651,7 @@ async function deliverAlerts(db, now, localRowsSql) {
           .run(r.ok ? now : null, c.id, inc.id);
         ch.recordResult(db, c, r, now);
         if (r.ok) sent++;
+        if (r.rateLimited) limited = true;
       }
     }
   }

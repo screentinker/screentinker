@@ -220,3 +220,218 @@ test('a webhook pointing at a private address is refused by the SSRF guard, and 
     ch._setSender(async (msg) => { sent.push(msg); return { ok: true }; });
   }
 });
+
+/* ── Telegram ───────────────────────────────────────────────────────────────────────── */
+
+// ⚠️ Telegram puts the bot token in the URL PATH, so every test below also checks it never leaks.
+const TG_TOKEN = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawZ';
+const TG_SECRET_PART = 'AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawZ';
+const TG_URL = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
+const tgChannel = (extra = {}) => ({ id: 'c-tg', kind: 'telegram', workspace_id: WS, config: JSON.stringify({ bot_token: TG_TOKEN, chat_id: '-1001234567890', ...extra }) });
+
+/** Run fn with console.* captured; returns everything printed. */
+async function captureOutput(fn) {
+  const out = [];
+  const saved = { log: console.log, error: console.error, warn: console.warn, info: console.info, debug: console.debug };
+  const grab = (...a) => { out.push(a.map((x) => (x instanceof Error ? `${x.message}\n${x.stack}` : typeof x === 'string' ? x : JSON.stringify(x))).join(' ')); };
+  console.log = console.error = console.warn = console.info = console.debug = grab;
+  try { await fn(); } finally {
+    Object.assign(console, saved);
+  }
+  return out.join('\n');
+}
+
+/** Deliver through a stubbed transport (never the network); `answer(url, opts)` plays Telegram. */
+async function viaTransport(answer, fn) {
+  const calls = [];
+  ch._setSender(null);
+  ch._setTransport(async (url, opts) => { calls.push({ url, opts }); return answer(url, opts); });
+  try { await fn(calls); } finally {
+    ch._setTransport(null);
+    ch._setSender(async (msg) => { if (failNext > 0) { failNext--; return { ok: false, error: 'The service answered HTTP 500.' }; } sent.push(msg); return { ok: true }; });
+  }
+}
+
+test('telegram input: token and chat id shapes, the token never echoed, kept on edit', () => {
+  assert.ok(ch.KINDS.includes('telegram'));
+  assert.match(ch.normaliseInput({ kind: 'telegram', name: 'x', chat_id: '42' }).error, /bot token/);
+  for (const bad of ['nope', '12345:short', 'abc:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawZ', `${TG_TOKEN} x`, '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALD$awZ']) {
+    const r = ch.normaliseInput({ kind: 'telegram', name: 'x', bot_token: bad, chat_id: '42' });
+    assert.match(r.error, /bot token looks like/, bad);
+    assert.ok(!r.error.includes(bad), 'a rejected token is not repeated back');
+  }
+  assert.match(ch.normaliseInput({ kind: 'telegram', name: 'x', bot_token: TG_TOKEN }).error, /chat ID/);
+  for (const bad of ['abc', '12a', '@', '@x', '--100', '1 2', '@bad-name', 'https://t.me/x']) {
+    assert.match(ch.normaliseInput({ kind: 'telegram', name: 'x', bot_token: TG_TOKEN, chat_id: bad }).error, /chat ID is a number/, bad);
+  }
+  for (const good of ['42', '-4242', '-1001234567890', '@my_channel']) {
+    const r = ch.normaliseInput({ kind: 'telegram', name: 'x', bot_token: ` ${TG_TOKEN} `, chat_id: good });
+    assert.equal(r.error, undefined, good);
+    assert.deepEqual(JSON.parse(r.fields.config), { bot_token: TG_TOKEN, chat_id: good });
+  }
+  const existing = { kind: 'telegram', config: JSON.stringify({ bot_token: TG_TOKEN, chat_id: '-4242' }) };
+  const kept = ch.normaliseInput({ name: 'Renamed', bot_token: '', chat_id: '' }, existing);
+  assert.equal(kept.error, undefined);
+  assert.deepEqual(JSON.parse(kept.fields.config), { bot_token: TG_TOKEN, chat_id: '-4242' }, 'empty fields keep the stored token and chat');
+  const moved = ch.normaliseInput({ chat_id: '@ops_room' }, existing);
+  assert.deepEqual(JSON.parse(moved.fields.config), { bot_token: TG_TOKEN, chat_id: '@ops_room' }, 'a new chat keeps the token');
+});
+
+test('telegram present(): a hint and the chat id, never the token', () => {
+  const p = ch.present(db, { ...tgChannel(), name: 'TG', enabled: 1, events: '[]', offline_minutes: 5 });
+  assert.equal(p.bot_token_hint, '…sawZ');
+  assert.equal(p.chat_id, '-1001234567890');
+  const text = JSON.stringify(p);
+  assert.ok(!text.includes(TG_SECRET_PART) && !text.includes('123456789:'), 'no part of the token beyond the hint');
+});
+
+test('telegram message: sendMessage with HTML, dynamic parts escaped, link and workspace', () => {
+  const device = { id: 'd1', name: 'Lobby <b>&</b> "Bar"' };
+  const base = { device, minutes: 7, workspace: { name: 'Store <1> & co' }, dashboardUrl: 'https://st.example', dedupKey: 'k1', nowIso: '2026-10-08T12:00:00.000Z' };
+  const m = ch.buildMessage(tgChannel(), { ...base, event: 'device_offline' });
+  assert.equal(m.url, TG_URL);
+  assert.equal(m.service, 'telegram');
+  assert.equal(m.body.chat_id, '-1001234567890');
+  assert.equal(m.body.parse_mode, 'HTML');
+  assert.equal(m.body.disable_web_page_preview, true);
+  const t = m.body.text;
+  assert.match(t, /<b>Offline: Lobby &lt;b&gt;&amp;&lt;\/b&gt; &quot;Bar&quot;<\/b>/, 'the title is bold and its HTML escaped');
+  assert.match(t, /has been offline for 7 minutes/);
+  assert.match(t, /<i>Store &lt;1&gt; &amp; co<\/i>/);
+  assert.match(t, /<a href="https:\/\/st\.example\/app#\/device\/d1">Open in ScreenTinker<\/a>/);
+  assert.ok(!/<(?!\/?(b|i|a)[ >])/.test(t), 'no tag but the ones we wrote');
+
+  const problem = ch.buildMessage(tgChannel(), { ...base, device: { id: 'd1', name: 'Lobby' }, event: 'screen_problem', check: 'frozen' });
+  assert.match(problem.body.text, /^\u{1F7E1} <b>Frozen screen: Lobby<\/b>\nThe screen &quot;Lobby&quot; appears frozen/u, 'the check is named, as a warning');
+  const back = ch.buildMessage(tgChannel(), { ...base, event: 'device_online' });
+  assert.match(back.body.text, /Back online/);
+  const test = ch.buildMessage(tgChannel(), { event: 'test', device: null, workspace: { name: 'Store 1' }, dashboardUrl: null, nowIso: base.nowIso });
+  assert.match(test.body.text, /<b>ScreenTinker test alert<\/b>/);
+  assert.ok(!test.body.text.includes('<a '), 'no device, no link');
+});
+
+test('telegram send: the right URL and body through the guarded transport, never the network', async () => {
+  await viaTransport(() => ({ statusCode: 200, text: JSON.stringify({ ok: true, result: { message_id: 1 } }) }), async (calls) => {
+    const r = await ch.sendTest(db, { ...tgChannel(), name: 'TG' });
+    assert.deepEqual(r, { ok: true });
+    assert.equal(calls.length, 1, 'one request, and no PagerDuty-style follow-up');
+    assert.equal(calls[0].url, TG_URL);
+    const o = calls[0].opts;
+    assert.equal(o.method, 'POST');
+    assert.equal(o.maxRedirects, 0);
+    assert.equal(o.acceptAnyStatus, true, 'a 4xx body is read, so Telegram can say why');
+    assert.equal(o.headers['Content-Type'], 'application/json');
+    const body = JSON.parse(o.body);
+    assert.equal(body.chat_id, '-1001234567890');
+    assert.equal(body.parse_mode, 'HTML');
+    assert.match(body.text, /test alert/i);
+  });
+});
+
+test('telegram failures: 429 retry_after and ok:false descriptions are reported, without the token', async () => {
+  const answers = [
+    [{ statusCode: 429, text: JSON.stringify({ ok: false, error_code: 429, description: 'Too Many Requests: retry after 17', parameters: { retry_after: 17 } }) },
+      (r) => { assert.equal(r.rateLimited, true); assert.match(r.error, /429.*wait 17 s/); }],
+    [{ statusCode: 400, text: JSON.stringify({ ok: false, error_code: 400, description: 'Bad Request: chat not found' }) },
+      (r) => { assert.equal(r.error, 'Telegram refused the message: Bad Request: chat not found'); assert.equal(r.rateLimited, undefined); }],
+    [{ statusCode: 401, text: JSON.stringify({ ok: false, error_code: 401, description: `Unauthorized: bot${TG_TOKEN} is not valid` }) },
+      (r) => { assert.match(r.error, /^Telegram refused the message: Unauthorized: bot… is not valid$/); }],
+    [{ statusCode: 400, text: JSON.stringify({ ok: false, error_code: 400, description: 'Bad Request: group chat was upgraded to a supergroup chat', parameters: { migrate_to_chat_id: -1009876543210 } }) },
+      (r) => { assert.match(r.error, /supergroup\. Change the chat ID to -1009876543210\./); }],
+    [{ statusCode: 200, text: JSON.stringify({ ok: false }) }, (r) => { assert.equal(r.error, 'Telegram did not accept the message.'); }],
+    [{ statusCode: 502, text: '<html>Bad gateway</html>' }, (r) => { assert.equal(r.error, 'The service answered HTTP 502.'); }],
+  ];
+  for (const [res, check] of answers) {
+    await viaTransport(() => res, async () => {
+      const r = await ch.deliver(ch.buildMessage(tgChannel(), { event: 'test', device: null, workspace: { name: 'W' }, nowIso: '2026-10-08T12:00:00.000Z' }));
+      assert.equal(r.ok, false);
+      check(r);
+      assert.ok(!JSON.stringify(r).includes(TG_SECRET_PART));
+    });
+  }
+});
+
+test('the token never appears in logs, errors, last_error, API responses or the activity log', async () => {
+  // A transport that fails the way Node does, with the whole URL in the message and the stack.
+  const boom = (url) => { const e = new Error(`connect ECONNREFUSED while requesting ${url}`); e.url = url; throw e; };
+  let createdId;
+  const printed = await captureOutput(async () => {
+    await viaTransport(boom, async () => {
+      const r = await ch.deliver(ch.buildMessage(tgChannel(), { event: 'test', device: null, workspace: { name: 'W' }, nowIso: '2026-10-08T12:00:00.000Z' }));
+      assert.deepEqual(r, { ok: false, error: 'The service could not be reached.' });
+      // Through the routes: create, list, a failing test send (502), an edit.
+      let res = await api('POST', '/api/alert-channels', { kind: 'telegram', name: 'TG', bot_token: TG_TOKEN, chat_id: '-4242' });
+      assert.equal(res.status, 201, res.text);
+      createdId = res.body.id;
+      assert.equal(res.body.bot_token_hint, '…sawZ'); assert.equal(res.body.chat_id, '-4242');
+      for (const t of [res.text, (await api('GET', '/api/alert-channels', null, EDITOR)).text]) assert.ok(!t.includes(TG_SECRET_PART));
+      res = await api('POST', `/api/alert-channels/${createdId}/test`);
+      assert.equal(res.status, 502);
+      assert.equal(res.body.error, 'The service could not be reached.');
+      assert.ok(!res.text.includes(TG_SECRET_PART));
+      res = await api('PUT', `/api/alert-channels/${createdId}`, { name: 'TG ops', bot_token: '' });
+      assert.equal(res.status, 200);
+      assert.equal(JSON.parse(db.prepare('SELECT config FROM alert_channels WHERE id = ?').get(createdId).config).bot_token, TG_TOKEN, 'kept on edit');
+      res = await api('PUT', `/api/alert-channels/${createdId}`, { bot_token: 'not-a-token-' + TG_SECRET_PART });
+      assert.equal(res.status, 400);
+      assert.ok(!res.text.includes(TG_SECRET_PART), 'a rejected token is not echoed');
+    });
+    // A Telegram answer that quotes the token back.
+    await viaTransport(() => ({ statusCode: 401, text: JSON.stringify({ ok: false, error_code: 401, description: `Unauthorized (${TG_URL})` }) }), async () => {
+      const res = await api('POST', `/api/alert-channels/${createdId}/test`);
+      assert.equal(res.status, 502);
+      assert.ok(!res.text.includes(TG_SECRET_PART), res.text);
+    });
+  });
+  assert.ok(!printed.includes(TG_SECRET_PART), 'nothing printed contains the token');
+  const row = db.prepare('SELECT last_error FROM alert_channels WHERE id = ?').get(createdId);
+  assert.ok(row.last_error && !row.last_error.includes(TG_SECRET_PART), row.last_error);
+  const logs = db.prepare("SELECT details FROM activity_log WHERE action LIKE 'alert_channel.%'").all().map((r) => r.details || '').join('\n');
+  assert.ok(logs.length > 0 && !logs.includes(TG_SECRET_PART), 'the activity log never holds it');
+  assert.equal(ch.redactTelegram(`x ${TG_URL} y ${TG_TOKEN}`), 'x https://api.telegram.org/bot…/sendMessage y …');
+  assert.equal((await api('DELETE', `/api/alert-channels/${createdId}`)).status, 200);
+});
+
+test('a channel that answers 429 gets nothing more this pass; the rest go out on the next tick', async () => {
+  for (const id of ['d-r1', 'd-r2', 'd-r3']) mkDevice(id, 'offline', NOW - 600);
+  mkChannel('c-rl', 'telegram', { bot_token: TG_TOKEN, chat_id: '-4242' }, { scopes: [{ scope_kind: 'device', scope_id: 'd-r1' }, { scope_kind: 'device', scope_id: 'd-r2' }, { scope_kind: 'device', scope_id: 'd-r3' }] });
+  const calls = [];
+  // Only this channel's messages count (other channels in the workspace see these screens too).
+  ch._setSender(async (msg) => {
+    if (msg.service !== 'telegram') return { ok: true };
+    calls.push(msg);
+    return calls.length === 1 ? { ok: false, rateLimited: true, error: 'Telegram is limiting this bot (HTTP 429).' } : { ok: true };
+  });
+  try {
+    await tick();
+    assert.equal(calls.length, 1, 'one request hit the limit; the others were not spent against it');
+    const att = db.prepare("SELECT device_id, attempts FROM alert_deliveries WHERE channel_id = 'c-rl'").all();
+    assert.equal(att.length, 1, 'only the rate-limited one counts an attempt');
+    await tick(NOW + 60);
+    assert.equal(calls.length, 4, 'all three go out on the next tick');
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM alert_deliveries WHERE channel_id = 'c-rl' AND offline_sent_at IS NOT NULL").get().n, 3);
+  } finally {
+    ch._setSender(async (msg) => { sent.push(msg); return { ok: true }; });
+    db.prepare("DELETE FROM alert_channels WHERE id = 'c-rl'").run();
+    for (const id of ['d-r1', 'd-r2', 'd-r3']) db.prepare('DELETE FROM devices WHERE id = ?').run(id);
+  }
+});
+
+test('guardedRequest acceptAnyStatus hands back a 4xx body instead of throwing it away', async () => {
+  const http = require('node:http');
+  const guard = require('../lib/ssrf-guard');
+  const srv = http.createServer((req, res) => { res.statusCode = 429; res.setHeader('content-type', 'application/json'); res.end('{"ok":false,"error_code":429,"parameters":{"retry_after":3}}'); });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const saved = process.env.OUTBOUND_ALLOW_HOSTS;
+  process.env.OUTBOUND_ALLOW_HOSTS = '127.0.0.1';
+  try {
+    const url = `http://127.0.0.1:${srv.address().port}/bot1:x/sendMessage`;
+    await assert.rejects(guard.guardedRequest(url, { method: 'POST', body: '{}', responseType: 'text', accept2xx: true, timeoutMs: 3000 }), (e) => e.statusCode === 429);
+    const r = await guard.guardedRequest(url, { method: 'POST', body: '{}', responseType: 'text', accept2xx: true, acceptAnyStatus: true, timeoutMs: 3000 });
+    assert.equal(r.statusCode, 429);
+    assert.equal(JSON.parse(r.text).parameters.retry_after, 3);
+  } finally {
+    if (saved === undefined) delete process.env.OUTBOUND_ALLOW_HOSTS; else process.env.OUTBOUND_ALLOW_HOSTS = saved;
+    srv.close();
+  }
+});

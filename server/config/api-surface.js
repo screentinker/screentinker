@@ -124,7 +124,8 @@ const JWT_ONLY_ROUTERS = [
   { path: '/api/storage-profiles', mod: './routes/storage-profiles', tenancy: true },
   /*
    * Alert channels (lib/alert-channels.js). JWT only, for the same reason: a channel holds a Slack /
-   * Teams webhook URL or a PagerDuty routing key — credentials into someone else's systems.
+   * Teams webhook URL, a PagerDuty routing key or a Telegram bot token — credentials into someone
+   * else's systems.
    */
   { path: '/api/alert-channels', mod: './routes/alert-channels', tenancy: true },
   /*

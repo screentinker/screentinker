@@ -433,3 +433,28 @@ test('a screen moved to another workspace takes none of its verification history
     db.prepare('UPDATE devices SET workspace_id = ? WHERE id = ?').run(WA, 'd-blank');
   }
 });
+
+test('a channel that answers 429 gets no more screen problems this pass; they go out on the next tick', async () => {
+  db.prepare('INSERT INTO alert_channels (id, workspace_id, kind, name, config, events) VALUES (?, ?, ?, ?, ?, ?)')
+    .run('c-sv-tg', WB, 'telegram', 'tg', JSON.stringify({ bot_token: '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawZ', chat_id: '-4242' }), '["screen_problem","screen_ok"]');
+  ch.setScopes(db, 'c-sv-tg', [{ scope_kind: 'workspace', scope_id: WB }]);
+  const devs = ['d-rl-1', 'd-rl-2', 'd-rl-3'].map((id) => mkDevice(id, WB));
+  for (const d of devs) for (const t of [0, 330, 660]) await sv.analyse(d, BLACK, sv.settingsFor(WB), at(t));
+  const calls = [];
+  ch._setSender(async (msg) => {
+    if (msg.service !== 'telegram') return { ok: true };
+    calls.push(msg);
+    return calls.length === 1 ? { ok: false, rateLimited: true, error: 'Telegram is limiting this bot (HTTP 429).' } : { ok: true };
+  });
+  try {
+    await sv.tick({ db, now: T0 + 700, localRowsSql: () => '1=1' });
+    assert.equal(calls.length, 1, 'the rest were not spent against the limit');
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM screen_verification_deliveries WHERE channel_id = 'c-sv-tg'").get().n, 1);
+    await sv.tick({ db, now: T0 + 760, localRowsSql: () => '1=1' });
+    assert.equal(calls.length, 4);
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM screen_verification_deliveries WHERE channel_id = 'c-sv-tg' AND problem_sent_at IS NOT NULL").get().n, 3);
+  } finally {
+    ch._setSender(async (msg) => { sent.push(msg); return { ok: true }; });
+    db.prepare("DELETE FROM alert_channels WHERE id = 'c-sv-tg'").run();
+  }
+});

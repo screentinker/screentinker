@@ -116,6 +116,17 @@ test('an organization\'s integrations count only its own rows', () => {
   assert.ok(theirs.residency.reasons.includes('alert_channels'));
 });
 
+test('Telegram alerts list api.telegram.org, and the ledger files its requests under alert channels', () => {
+  db.prepare("INSERT INTO alert_channels (id,workspace_id,kind,name,config,enabled) VALUES ('ac-tr-tg','ws-tr2','telegram','tg','{}',1)").run();
+  try {
+    const a = int(report.build({ db, orgId: 'org-tr2' }), 'alert_channels');
+    assert.equal(a.enabled, true);
+    assert.ok(a.hosts.includes('api.telegram.org'), JSON.stringify(a.hosts));
+    assert.equal(a.detail.kinds.telegram, 1);
+    assert.equal(require('../lib/trust/features').featureForHost('api.telegram.org'), 'alert_channels');
+  } finally { db.prepare("DELETE FROM alert_channels WHERE id = 'ac-tr-tg'").run(); }
+});
+
 test('encryption at rest lists the encrypted columns from the schema itself', () => {
   const r = report.build({ db });
   assert.ok(r.encryption.encrypted_columns.includes('storage_profiles.credentials_enc'));

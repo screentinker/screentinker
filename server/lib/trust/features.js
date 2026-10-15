@@ -112,7 +112,7 @@ const HOSTS = [
   [/(^|\.)open-meteo\.com$/, 'weather'],
   [/^api\.canva\.com$/, 'canva'],
   [/^api\.powerbi\.com$/, 'bi'],
-  [/^events\.pagerduty\.com$|^hooks\.slack\.com$/, 'alert_channels'],
+  [/^events\.pagerduty\.com$|^hooks\.slack\.com$|^api\.telegram\.org$/, 'alert_channels'],
   [/^api\.x\.ai$/, 'ai_hosted'],
   [/^api\.openai\.com$/, 'ai'],
   [/^(graph\.instagram|graph\.facebook)\.com$|^api\.x\.com$|^public\.api\.bsky\.app$/, 'social'],

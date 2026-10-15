@@ -4,13 +4,19 @@
  * Alert channels: where a workspace hears that a screen went offline, and that it came back.
  *
  * Kinds: email (a list of addresses), slack and teams (incoming webhooks), pagerduty (Events API
- * v2: an incident opens when the screen goes dark and RESOLVES itself when it comes back), and a
- * generic webhook (JSON, HMAC-signed when a secret is set).
+ * v2: an incident opens when the screen goes dark and RESOLVES itself when it comes back), telegram
+ * (a bot posting into a chat, group or channel through the Bot API), and a generic webhook (JSON,
+ * HMAC-signed when a secret is set).
  *
  * ⚠️ WEBHOOK URLS AND ROUTING KEYS ARE CREDENTIALS. A Slack or Teams webhook URL lets anyone who
- * holds it post into that channel; a PagerDuty routing key opens incidents. They are stored, used
- * here, and NEVER sent back to a browser or an API token whole (present() masks them), and never
- * logged. Every URL is fetched through the SSRF guard (public addresses only, no redirects).
+ * holds it post into that channel; a PagerDuty routing key opens incidents; a Telegram bot token is
+ * the whole bot. They are stored, used here, and NEVER sent back to a browser or an API token whole
+ * (present() masks them), and never logged. Every URL is fetched through the SSRF guard (public
+ * addresses only, no redirects).
+ *
+ * ⚠️ TELEGRAM PUTS THE TOKEN IN THE URL PATH (https://api.telegram.org/bot<token>/sendMessage), so
+ * that URL is a credential exactly like a Slack webhook: no error, last_error or log line built here
+ * contains it, and anything Telegram itself says back passes through redactTelegram() first.
  *
  * ONE ALERT PER OUTAGE PER CHANNEL, and a recovery only after an offline alert went out on that
  * channel: alert_deliveries is keyed by (channel, device, outage), the outage being the device's
@@ -21,7 +27,7 @@ const crypto = require('crypto');
 
 function dbOf() { return require('../db/database').db; }
 
-const KINDS = ['email', 'slack', 'teams', 'pagerduty', 'webhook'];
+const KINDS = ['email', 'slack', 'teams', 'pagerduty', 'telegram', 'webhook'];
 /*
  * screen_problem / screen_ok come from screen verification (lib/screen-verify): a screen that is
  * online but showing a blank or frozen picture, the wrong thing, or has its panel switched off —
@@ -31,10 +37,17 @@ const KINDS = ['email', 'slack', 'teams', 'pagerduty', 'webhook'];
 const EVENTS = ['device_offline', 'device_online', 'screen_problem', 'screen_ok'];
 const SCOPE_KINDS = new Set(['workspace', 'group', 'device']);
 const PAGERDUTY_URL = 'https://events.pagerduty.com/v2/enqueue';
+const TELEGRAM_API = 'https://api.telegram.org';
+// A bot token from @BotFather: the bot's numeric id, a colon, then the secret part.
+const TELEGRAM_TOKEN_RE = /^\d+:[A-Za-z0-9_-]{30,}$/;
+// A chat id: a number (a user is positive, a group negative, a channel or supergroup -100…), or a
+// public channel's @username.
+const TELEGRAM_CHAT_RE = /^(-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{3,31})$/;
 const MAX_EMAILS = 20;
 const MAX_ATTEMPTS = 3;
 
 let sendOverride = null;   // in-process tests only (_setSender)
+let transportOverride = null;   // in-process tests only (_setTransport): stands in for guardedRequest
 
 /* ============================== input ============================== */
 
@@ -94,6 +107,22 @@ function normaliseInput(body, existing = null) {
       cfg.routing_key = k;
     } else if (!existing || !prev.routing_key) {
       return { error: 'Enter the PagerDuty integration key.' };
+    }
+  } else if (kind === 'telegram') {
+    // ⚠️ The token is never echoed back, not even in the "that is not a token" error.
+    if (b.bot_token !== undefined && b.bot_token !== '') {
+      const k = String(b.bot_token).trim();
+      if (!TELEGRAM_TOKEN_RE.test(k) || k.length > 200) return { error: 'A Telegram bot token looks like 123456789:AA… (the bot\'s number, a colon, then letters and digits). @BotFather gives it to you.' };
+      cfg.bot_token = k;
+    } else if (!existing || !prev.bot_token) {
+      return { error: 'Enter the Telegram bot token.' };
+    }
+    if (b.chat_id !== undefined && b.chat_id !== '') {
+      const c = String(b.chat_id).trim();
+      if (!TELEGRAM_CHAT_RE.test(c)) return { error: 'A Telegram chat ID is a number (a group\'s starts with -, a channel\'s with -100) or a public channel\'s @username.' };
+      cfg.chat_id = c;
+    } else if (!existing || !prev.chat_id) {
+      return { error: 'Enter the Telegram chat ID.' };
     }
   }
   out.config = JSON.stringify(cfg);
@@ -157,6 +186,11 @@ function present(db, row) {
   if (row.kind === 'email') shown.emails = cfg.emails || [];
   if (cfg.url) shown.url_hint = maskUrl(cfg.url);
   if (cfg.routing_key) shown.routing_key_hint = `…${cfg.routing_key.slice(-4)}`;
+  if (row.kind === 'telegram') {
+    // The chat id alone lets nobody post (that takes the token), so the form can show it to edit.
+    if (cfg.bot_token) shown.bot_token_hint = `…${cfg.bot_token.slice(-4)}`;
+    shown.chat_id = cfg.chat_id || null;
+  }
   if (row.kind === 'webhook') shown.has_secret = !!cfg.secret;
   return {
     id: row.id, name: row.name, kind: row.kind, enabled: !!row.enabled,
@@ -242,6 +276,15 @@ function buildMessage(channel, ctx) {
             payload: { summary: d.title, source: (ctx.device && ctx.device.name) || 'ScreenTinker', severity: ctx.event === 'test' ? 'info' : (d.severity === 'warning' ? 'warning' : 'error'),
               component: 'screen', group: ws || undefined, timestamp: ctx.nowIso, custom_details: { message: d.text, device_id: ctx.device && ctx.device.id } },
             ...(link ? { links: [{ href: link, text: 'Open in ScreenTinker' }] } : {}) } };
+    case 'telegram': {
+      // Bot API sendMessage with HTML formatting: only &, < and > need escaping (plus " inside the
+      // link's href). The URL carries the token, so this message is a credential like a Slack one.
+      const icon = d.severity === 'error' ? '\u{1F534}' : d.severity === 'warning' ? '\u{1F7E1}' : '\u{1F7E2}';
+      const text = `${icon} <b>${htmlEsc(d.title)}</b>\n${htmlEsc(d.text)}${ws ? `\n<i>${htmlEsc(ws)}</i>` : ''}${link ? `\n<a href="${htmlEsc(link)}">Open in ScreenTinker</a>` : ''}`;
+      return { kind: 'http', service: 'telegram', url: `${TELEGRAM_API}/bot${cfg.bot_token}/sendMessage`, body: {
+        chat_id: cfg.chat_id, text, parse_mode: 'HTML', disable_web_page_preview: true,
+      } };
+    }
     case 'webhook': {
       const body = { event: ctx.event, ...(ctx.check ? { check: ctx.check } : {}), title: d.title, message: d.text, workspace: ws || null,
         device: ctx.device ? { id: ctx.device.id, name: ctx.device.name } : null, minutes: ctx.minutes ?? null, url: link, sent_at: ctx.nowIso };
@@ -259,6 +302,34 @@ function buildMessage(channel, ctx) {
 }
 
 function slackEsc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function htmlEsc(s) { return slackEsc(s).replace(/"/g, '&quot;'); }
+
+/** Anything that could be a bot token, or the URL path that carries one, cut out of a string. */
+function redactTelegram(s) {
+  return String(s == null ? '' : s).replace(/bot\d+:[A-Za-z0-9_-]+/g, 'bot…').replace(/\d+:[A-Za-z0-9_-]{20,}/g, '…');
+}
+
+/**
+ * Telegram answers JSON whatever the status: { ok: true, result } or { ok: false, error_code,
+ * description, parameters? }. A 429 carries parameters.retry_after (seconds); it is a failure like
+ * any other, and the next minute's tick tries again (rateLimited tells the tick to stop sending to
+ * this channel for the rest of this pass, rather than spend every pending alert's attempts on it).
+ */
+function telegramResult(res) {
+  let j = null;
+  try { j = JSON.parse(res.text || ''); } catch { /* not JSON: judged by the status alone */ }
+  const sc = res.statusCode;
+  if (sc >= 200 && sc < 300 && j && j.ok === true) return { ok: true };
+  const p = (j && j.parameters) || {};
+  if (sc === 429 || (j && j.error_code === 429)) {
+    const s = Number(p.retry_after);
+    return { ok: false, rateLimited: true, error: `Telegram is limiting this bot (HTTP 429)${s > 0 ? `; it asked to wait ${Math.round(s)} s` : ''}.` };
+  }
+  if (p.migrate_to_chat_id) return { ok: false, error: `Telegram: this group became a supergroup. Change the chat ID to ${String(p.migrate_to_chat_id).replace(/[^\d-]/g, '').slice(0, 24)}.` };
+  const desc = j && typeof j.description === 'string' ? redactTelegram(j.description).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 200) : '';
+  if (desc) return { ok: false, error: `Telegram refused the message: ${desc}` };
+  return { ok: false, error: sc >= 200 && sc < 300 ? 'Telegram did not accept the message.' : `The service answered HTTP ${sc}.` };
+}
 
 /** Deliver one message. Resolves { ok, error }. Never throws, never logs a credential. */
 async function deliver(msg) {
@@ -273,17 +344,22 @@ async function deliver(msg) {
       }
       return { ok: true };
     }
-    const { guardedRequest } = require('./ssrf-guard');
+    const request = transportOverride || require('./ssrf-guard').guardedRequest;
     const raw = msg.raw || JSON.stringify(msg.body);
-    const res = await guardedRequest(msg.url, {
+    const telegram = msg.service === 'telegram';
+    const res = await request(msg.url, {
       method: 'POST', body: raw, timeoutMs: 10000, maxBytes: 64 * 1024, responseType: 'text', maxRedirects: 0, accept2xx: true,
+      // Telegram explains a refusal in the body of a 4xx ("chat not found", retry_after), so read it.
+      ...(telegram ? { acceptAnyStatus: true } : {}),
       headers: { 'Content-Type': 'application/json', 'User-Agent': 'ScreenTinker-Alerts/1', ...(msg.headers || {}) },
     });
+    if (telegram) return telegramResult(res);
     if (res.statusCode >= 200 && res.statusCode < 300) return { ok: true };
-    return { ok: false, error: `The service answered HTTP ${res.statusCode}.` };
+    return { ok: false, error: `The service answered HTTP ${res.statusCode}.`, ...(res.statusCode === 429 ? { rateLimited: true } : {}) };
   } catch (e) {
+    // ⚠️ e.message is never passed on: for Slack, Teams and Telegram the URL is the credential.
     const sc = e && (e.statusCode || Number((String(e.message).match(/\b([45]\d\d)\b/) || [])[1]));
-    if (sc) return { ok: false, error: `The service answered HTTP ${sc}.` };
+    if (sc) return { ok: false, error: `The service answered HTTP ${sc}.`, ...(sc === 429 ? { rateLimited: true } : {}) };
     if (e && /timed out|timeout/i.test(e.message || '')) return { ok: false, error: 'The service did not answer in time.' };
     return { ok: false, error: 'The service could not be reached.' };   // never the URL: it is a credential
   }
@@ -319,6 +395,9 @@ async function tick({ db = dbOf(), now = Math.floor(Date.now() / 1000), localRow
   for (const ch of channels) {
     const events = parseEvents(ch.events);
     const thresh = (ch.offline_minutes || 5) * 60;
+    // A channel that answered 429 gets nothing more this pass: what is still pending keeps its
+    // attempts and goes out on a later tick, instead of each one failing against the same limit.
+    let limited = false;
     if (events.includes('device_offline')) {
       // Measured from when the screen was due: an embedded display asleep until its next scheduled
       // call (heartbeat_expected_by) is not late before then. The outage KEY stays last_heartbeat.
@@ -328,6 +407,7 @@ async function tick({ db = dbOf(), now = Math.floor(Date.now() / 1000), localRow
           AND (? - MAX(d.last_heartbeat, COALESCE(d.heartbeat_expected_by, 0))) > ?
           AND (? - MAX(d.last_heartbeat, COALESCE(d.heartbeat_expected_by, 0))) < 86400`).all(ch.workspace_id, now, thresh, now);
       for (const d of rows) {
+        if (limited) break;
         if (!inScope(db, ch.id, d.id)) continue;
         const del = db.prepare('SELECT * FROM alert_deliveries WHERE channel_id = ? AND device_id = ? AND outage = ?').get(ch.id, d.id, d.last_heartbeat);
         if (del && (del.offline_sent_at || del.attempts >= MAX_ATTEMPTS)) continue;
@@ -339,15 +419,17 @@ async function tick({ db = dbOf(), now = Math.floor(Date.now() / 1000), localRow
           .run(ch.id, d.id, d.last_heartbeat, r.ok ? now : null);
         recordResult(db, ch, r, now);
         if (r.ok) sent++;
+        if (r.rateLimited) limited = true;
       }
     }
-    if (events.includes('device_online')) {
+    if (events.includes('device_online') && !limited) {
       // Back = the device is online and has heartbeated since the outage that was alerted.
       const rows = db.prepare(`SELECT a.outage, a.offline_sent_at, d.id, d.name, d.last_heartbeat FROM alert_deliveries a
         JOIN devices d ON d.id = a.device_id
         WHERE a.channel_id = ? AND a.offline_sent_at IS NOT NULL AND a.online_sent_at IS NULL AND a.online_attempts < ?
           AND d.status = 'online' AND d.last_heartbeat > a.outage AND ${localRowsSql('d')}`).all(ch.id, MAX_ATTEMPTS);
       for (const d of rows) {
+        if (limited) break;
         const minutes = Math.max(0, Math.floor((d.last_heartbeat - d.outage) / 60));
         const r = await deliver(buildMessage(ch, { event: 'device_online', device: d, minutes, workspace: { name: nameOf(ch.workspace_id) }, dashboardUrl: url,
           dedupKey: `screentinker-${d.id}-${d.outage}`, nowIso: new Date(now * 1000).toISOString() }));
@@ -355,6 +437,7 @@ async function tick({ db = dbOf(), now = Math.floor(Date.now() / 1000), localRow
           .run(r.ok ? now : null, ch.id, d.id, d.outage);
         recordResult(db, ch, r, now);
         if (r.ok) sent++;
+        if (r.rateLimited) limited = true;
       }
     }
   }
@@ -378,10 +461,11 @@ async function sendTest(db, channel) {
 }
 
 function _setSender(fn) { sendOverride = fn || null; }
+function _setTransport(fn) { transportOverride = fn || null; }
 
 module.exports = {
   KINDS, EVENTS, normaliseInput, validateScopes, setScopes, scopesOf, inScope, present, buildMessage, deliver, tick, sendTest,
-  checkWebhookUrl, _setSender,
+  checkWebhookUrl, redactTelegram, _setSender, _setTransport,
   // Shared with lib/screen-verify, which delivers its own incidents through these channels.
   parseEvents, dashboardUrl, recordResult,
 };
