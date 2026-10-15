@@ -56,8 +56,10 @@ The audit log keeps one `account_self_deleted` row with `user_id` NULL and the a
 id, the number of organizations deleted and of subscriptions cancelled. It keeps no email or name.
 If email is configured, a receipt goes to the deleted address.
 
-**Backups** are not rewritten. On screentinker.com database backups are kept 14 days; file
-backups follow their own schedule. A self-hosted server keeps what its operator configured
+**Backups** are not rewritten. On screentinker.com database backups are kept 14 days, and uploaded
+files can remain in the monthly content archives for up to 12 months (`backup.sh`: 7 daily and 12
+monthly content snapshots). Archives are for disaster recovery only and are never used to restore a
+deleted account. A self-hosted server keeps what its operator configured
 (`scripts/backup.sh` keeps database snapshots 30 days by default).
 
 ## Re-authentication
