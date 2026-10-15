@@ -29,6 +29,7 @@ import android.webkit.WebViewDatabase
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.remotedisplay.player.util.DebugLog
+import com.remotedisplay.player.util.WebViewRetryPolicy
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.roundToInt
@@ -76,6 +77,13 @@ class KioskSession(
     private val visitedHosts = LinkedHashSet<String>()
     private val errors = ErrorThrottle()
 
+    // Visimpress: retry a home page that failed to load, like WebViewSupport does for ordinary web
+    // items. Without it a transient fault (panel up before DHCP, router hiccup) skipped the item and a
+    // one-item playlist stayed blank until the next round. See dnevnik-dela §50.
+    private var retryAttempt = 0
+    private var pendingRetry: Runnable? = null
+    private var failedThisLoad = false
+
     /** True while a visitor is using the page. Read by the capture path (blank frames). */
     val sessionActive: Boolean get() = idle?.inSession == true
 
@@ -101,6 +109,7 @@ class KioskSession(
         idle = KioskIdle(cfg.idleTimeoutSec * 1000L, cfg.warnSec * 1000L)
         touchedThisMount = false
         failing = false
+        retryAttempt = 0                           // Visimpress: fresh item, fresh backoff
 
         val ua = try { WebSettings.getDefaultUserAgent(activity) } catch (_: Throwable) { null }
         if (WebViewVersion.tooOld(ua, cfg.minWebView)) {
@@ -115,6 +124,7 @@ class KioskSession(
     /** Leave the item. Wipes when a visitor used it, so the next one never sees their session. */
     fun hide(wipe: Boolean = touchedThisMount, reason: String = "interrupted") {
         handler.removeCallbacks(tickRunnable)
+        cancelRetry()                              // Visimpress: never reload a page we are leaving
         finishSession(reason)
         val keep = keepSpecFor(config)
         val wv = webView
@@ -346,6 +356,34 @@ class KioskSession(
         }
     }
 
+    // Visimpress: retry the home page with WebViewRetryPolicy's backoff (2, 4, 8, 15, 30 s, no cap —
+    // the playlist timer still moves on as usual). Only while nobody is using the page; a visitor's
+    // failed navigation still ends their session through fail(). The view is hidden until a load
+    // finishes clean, so Chrome's error page never reaches the screen.
+    private fun scheduleRetry(why: String) {
+        val wv = webView ?: return
+        val url = config?.url ?: return
+        val mountKey = itemKey
+        retryAttempt += 1
+        val delay = WebViewRetryPolicy.delayMsFor(retryAttempt)
+        DebugLog.w(TAG, "interactive page unavailable ($why) — retry #$retryAttempt in ${delay}ms")
+        if (retryAttempt == 1) report("load_retry", url, why)
+        wv.visibility = View.INVISIBLE
+        cancelRetry()
+        val r = Runnable {
+            pendingRetry = null
+            if (itemKey != mountKey || webView !== wv) return@Runnable
+            try { wv.loadUrl(url) } catch (t: Throwable) { DebugLog.e(TAG, "retry load threw: ${t.message}") }
+        }
+        pendingRetry = r
+        handler.postDelayed(r, delay)
+    }
+
+    private fun cancelRetry() {
+        pendingRetry?.let { handler.removeCallbacks(it) }
+        pendingRetry = null
+    }
+
     private fun setSecure(on: Boolean) {
         // FLAG_SECURE blacks this window in MediaProjection, the live video and accessibility
         // screenshots, so an operator watching the panel cannot see what a visitor types. The
@@ -371,7 +409,10 @@ class KioskSession(
             return true
         }
 
-        override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) { updateHome(url) }
+        override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+            failedThisLoad = false                 // Visimpress: judge each load on its own
+            updateHome(url)
+        }
 
         override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
             // Fires for real loads AND single-page-app history changes (pushState), so it counts pages.
@@ -380,17 +421,35 @@ class KioskSession(
 
         override fun onPageFinished(view: WebView?, url: String?) {
             DebugLog.i(TAG, "page loaded: $url")
+            // Visimpress: onPageFinished also fires for Chrome's error page; only a clean load counts.
+            if (!failedThisLoad) {
+                if (retryAttempt > 0) DebugLog.i(TAG, "interactive page recovered after $retryAttempt retry(s)")
+                retryAttempt = 0
+                view?.visibility = View.VISIBLE
+            }
             // Text selection off; and a light media probe: a video playing in the page is activity,
             // so the idle timer does not cut it off mid-clip.
             view?.evaluateJavascript(INJECT, null)
         }
 
         override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-            if (request?.isForMainFrame == true) fail("load_error", request.url?.toString(), "load error ${error?.errorCode} ${error?.description}")
+            if (request?.isForMainFrame != true) return
+            val why = "load error ${error?.errorCode} ${error?.description}"
+            // Visimpress: transient network faults retry instead of skipping (see scheduleRetry).
+            if (failedThisLoad) return             // errors arrive in bursts: one decision per load
+            failedThisLoad = true
+            if (!sessionActive && WebViewRetryPolicy.shouldRetryError(error?.errorCode ?: 0)) scheduleRetry(why)
+            else fail("load_error", request.url?.toString(), why)
         }
 
         override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
-            if (request?.isForMainFrame == true && (errorResponse?.statusCode ?: 0) >= 400) fail("http_error", request.url?.toString(), "HTTP ${errorResponse?.statusCode}")
+            val status = errorResponse?.statusCode ?: 0
+            if (request?.isForMainFrame != true || status < 400) return
+            // Visimpress: 5xx / 408 / 429 retry; any other 4xx is a wrong URL and still skips.
+            if (failedThisLoad) return
+            failedThisLoad = true
+            if (!sessionActive && WebViewRetryPolicy.shouldRetryHttp(status)) scheduleRetry("HTTP $status")
+            else fail("http_error", request.url?.toString(), "HTTP $status")
         }
 
         override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
