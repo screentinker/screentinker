@@ -257,10 +257,55 @@ function fail(reason, hint) {
   process.exit(1);
 }
 
+/*
+ * ⚠️ AN UPGRADE OWNS node_modules WHILE IT RUNS. scripts/upgrade.sh writes server/.upgrade-in-progress
+ * ("<pid> <epoch> <tag>") before it touches Node or dependencies, and removes it just before its own
+ * restart. A server started in between (apt's needrestart after the Node install, a crash restart)
+ * found the tree half-installed and ran npm itself, alongside the upgrade's `npm ci`: on prod
+ * (2026-10-15) the two left stripe and apache-arrow files out, and billing broke.
+ *
+ * So while a LIVE marker exists, wait for it instead of repairing anything. Waiting, not exiting:
+ * exit-and-restart every few seconds can hit systemd's start limit, after which the unit refuses
+ * the upgrade's own restart. A marker whose pid is gone, or that is older than MARKER_MAX_AGE_S, is
+ * stale (a killed upgrade) and ignored, so a server is never held forever.
+ */
+const UPGRADE_MARKER = path.join(SERVER_DIR, '.upgrade-in-progress');
+const MARKER_MAX_AGE_S = 2 * 60 * 60;
+const MARKER_WAIT_MS = 15 * 60 * 1000;
+
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }   // EPERM: alive, another user's
+}
+
+/** The live upgrade marker as { pid, since, tag }, or null when there is none or it is stale. */
+function upgradeInProgress(file = UPGRADE_MARKER, now = Date.now()) {
+  let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch (_) { return null; }
+  const [pidS, sinceS, tag] = raw.trim().split(/\s+/);
+  const pid = Number(pidS); const since = Number(sinceS);
+  if (!Number.isInteger(pid) || pid <= 0 || !Number.isFinite(since)) return null;
+  if (now / 1000 - since > MARKER_MAX_AGE_S) return null;
+  if (!pidAlive(pid)) return null;
+  return { pid, since, tag: tag || '' };
+}
+
+function waitForUpgrade(file = UPGRADE_MARKER, maxMs = MARKER_WAIT_MS) {
+  let m = upgradeInProgress(file);
+  if (!m) return;
+  console.warn(`[preflight] an upgrade${m.tag ? ' to ' + m.tag : ''} is installing (pid ${m.pid}); waiting for it before touching dependencies.`);
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  const until = Date.now() + maxMs;
+  while (m && Date.now() < until) { Atomics.wait(sleeper, 0, 0, 2000); m = upgradeInProgress(file); }
+  console.warn(m ? '[preflight] still marked as upgrading after 15 min; checking dependencies anyway.'
+                 : '[preflight] the upgrade has finished; checking dependencies.');
+}
+
 function preflight() {
   // Same spellings as every other boolean the server accepts, so an operator who writes `true`
   // does not silently get a boot that reaches for the registry anyway.
   if (['1', 'true', 'yes'].includes(String(process.env.ST_SKIP_DEP_PREFLIGHT || '').toLowerCase())) return;
+
+  waitForUpgrade();
 
   // The Node floor is lib/node-guard.js's job (server.js runs it first); it has already refused or,
   // under ST_ALLOW_OLD_NODE=1, said its piece.
@@ -391,4 +436,4 @@ function preflight() {
   }
 }
 
-module.exports = { preflight, missingDeps, nativeModuleBroken, requiredDeps, nodeBelowFloor, staleDeps, productionTree, npmEnv, reconcileArgs };
+module.exports = { preflight, upgradeInProgress, waitForUpgrade, missingDeps, nativeModuleBroken, requiredDeps, nodeBelowFloor, staleDeps, productionTree, npmEnv, reconcileArgs };

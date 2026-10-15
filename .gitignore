@@ -115,3 +115,6 @@ ios/DerivedData/
 
 # 3.0: last booted version, next to the database (server/lib/upgrade-snapshot.js)
 .last-boot-version
+
+# scripts/upgrade.sh: present only while an upgrade installs (server/lib/preflight-deps.js waits for it)
+server/.upgrade-in-progress

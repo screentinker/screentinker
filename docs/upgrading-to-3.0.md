@@ -25,10 +25,25 @@ Use whichever method you used to install. Every path runs the same migrations at
 
 | Install | Command |
 |---|---|
-| git + systemd (`scripts/upgrade.sh`) | `sudo scripts/upgrade.sh`. This checks Node, backs up the database, checks out the release, runs `npm ci`, proves the database driver loads, builds the Raspberry Pi player, downloads the release's other player packages (checksum-verified; the APK it replaces is kept as `.bak-pre-<tag>`), then restarts. |
+| git + systemd (`scripts/upgrade.sh`) | 3.0's `scripts/upgrade.sh` (from 2.6.x, see below). This checks Node, backs up the database, checks out the release, runs `npm ci`, proves the database driver loads, builds the Raspberry Pi player, downloads the release's other player packages (checksum-verified; the APK it replaces is kept as `.bak-pre-<tag>`), then restarts. |
 | Instance updater | Choose 3.0 under Platform → System. The updater does not upgrade Node: if it refuses, run `scripts/upgrade.sh` once. |
 | Docker / Compose | `docker compose pull && docker compose up -d` |
 | Manual | `git fetch --tags && git checkout v3.0.0 && (cd server && npm ci --omit=dev)`, then restart. |
+
+### From 2.6.x on a git install: run 3.0's upgrade script
+
+The copy of `scripts/upgrade.sh` that runs is the one in your checkout, which is 2.6's. It does not check Node, so on Node 20 it would install 3.0 and restart into a server that refuses to start (exit 78). Run 3.0's script against your checkout instead:
+
+```bash
+cd /opt/screentinker              # your checkout
+git fetch --tags origin
+git show v3.0.0:scripts/upgrade.sh > /tmp/st-upgrade-3.0.sh
+sudo env NEEDRESTART_SUSPEND=1 NEEDRESTART_MODE=l APP_DIR="$PWD" bash /tmp/st-upgrade-3.0.sh v3.0.0
+```
+
+From 3.0 on, `sudo scripts/upgrade.sh` in the checkout is the new script, so later upgrades need nothing special.
+
+⚠️ **Keep the two `NEEDRESTART_*` settings in that command** on Debian/Ubuntu. When the script installs Node 22, apt's needrestart otherwise restarts the server in the middle of the upgrade. The half-installed server then runs npm alongside the upgrade's own `npm ci`, and files go missing from `server/node_modules` (it shows as `Cannot find module` for `stripe`). If that already happened to you, run `npm ci --omit=dev` in `server/` and restart. 3.0.0's script passes the settings through to apt; from 3.0.1 the script sets them itself.
 
 ### What happens on the first 3.0 start
 

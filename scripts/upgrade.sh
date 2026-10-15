@@ -194,7 +194,13 @@ fi
 SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
 # ⚠️ apt NEVER READS THE TERMINAL. Left attached it swallowed the keystroke meant for the next
 # prompt (which then waited for ever), and dpkg can stop on a config-file question mid-upgrade.
-apt_get() { $SUDO env DEBIAN_FRONTEND=noninteractive apt-get "$@" < /dev/null; }
+# ⚠️ NEEDRESTART MUST NOT RESTART THE SERVER MID-UPGRADE. On Debian/Ubuntu, apt's needrestart hook
+# restarts every service whose binary apt just replaced. Installing Node 22 restarted ScreenTinker
+# while this script was still checking out and installing: the half-installed server's dependency
+# preflight then ran its own npm alongside our `npm ci`, and the two left files out of node_modules
+# (prod, 2026-10-15: stripe and apache-arrow, so billing broke). List-only mode, and suspended for
+# this apt run. The restart at the end of this script is the one that is meant to happen.
+apt_get() { $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 apt-get "$@" < /dev/null; }
 confirm() { # question
   [ "${ST_AUTO_INSTALL_PREREQS:-0}" = "1" ] && { echo "    $1 yes (ST_AUTO_INSTALL_PREREQS=1)"; return 0; }
   [ -t 0 ] && [ -r /dev/tty ] || return 1
@@ -250,6 +256,14 @@ node_ok() { [ -z "$NODE_FLOOR" ] || [ "$(printf '%s\n%s\n' "$NODE_FLOOR" "$(node
 #
 # Upgrading Node first is safe for the release being left: 2.6.x runs on Node 22 too, so a rollback
 # after this point still has a server that starts.
+# While this script changes Node or node_modules, anything that starts the server anyway (needrestart
+# on an apt we did not run, a crash restart, an operator) must not run npm too. The marker tells
+# the server's dependency preflight that an upgrade owns node_modules (server/lib/preflight-deps.js);
+# it holds the start instead, and this script's own restart comes after the install is finished.
+UPGRADE_MARKER="$APP_DIR/server/.upgrade-in-progress"
+printf '%s %s %s\n' "$$" "$(date +%s)" "$TARGET" > "$UPGRADE_MARKER" 2>/dev/null || UPGRADE_MARKER=""
+trap '[ -n "${UPGRADE_MARKER:-}" ] && rm -f "$UPGRADE_MARKER"' EXIT
+
 STEP="checking the Node version $TARGET needs"
 TARGET_PKG="$(git show "$TARGET:server/package.json" 2>/dev/null || true)"
 NODE_FLOOR="$(printf '%s' "$TARGET_PKG" | sed -n 's/.*"node": *">= *v\{0,1\}\([0-9][0-9.]*\)".*/\1/p' | head -1)"
@@ -451,6 +465,9 @@ pm2_id_for_checkout() {
       if (p) process.stdout.write(String(p.pm_id));
     });' || true
 }
+
+# node_modules is final: the restart below, and any other start from here on, may run the preflight.
+[ -n "${UPGRADE_MARKER:-}" ] && rm -f "$UPGRADE_MARKER"
 
 STEP="restarting the server"
 RESTARTED="" LOGS_HINT="the server's log"
