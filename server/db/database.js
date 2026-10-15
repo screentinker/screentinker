@@ -4797,6 +4797,13 @@ migrationStep('device reported orientation', () => {
   try { db.prepare('ALTER TABLE devices ADD COLUMN reported_orientation TEXT').run(); } catch (_) { /* present */ }
 });
 
+migrationStep('device reported board', () => {
+  // Embedded panels: the board the HARDWARE says it is (lib/embedded-firmware.js boardFrom), from
+  // its pairing registration or an X-ST-Preset header. NULL = never said. Firmware updates are only
+  // offered for the board it reports; screen_profile is an editable setting, not the hardware.
+  try { db.prepare('ALTER TABLE devices ADD COLUMN reported_board TEXT').run(); } catch (_) { /* present */ }
+});
+
 migrationStep('device telemetry humidity', () => {
   // Sensirion SHT40 relative humidity percentage (0-100%).
   try { db.prepare('ALTER TABLE device_telemetry ADD COLUMN humidity REAL').run(); } catch (_) { /* present */ }

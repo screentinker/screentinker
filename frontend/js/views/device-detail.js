@@ -1043,7 +1043,7 @@ async function loadDevice(deviceId, activeTab = null) {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
-            ${isEmbeddedDevice(device) ? 'Update Firmware' : t('device.ctl.force_update')}
+            ${isEmbeddedDevice(device) ? t('device.ctl.update_firmware') : t('device.ctl.force_update')}
           </button>
           ${!isEmbeddedDevice(device) ? `
           <button class="btn btn-secondary btn-sm" id="clearUpdateCacheBtn" title="${t('device.ctl.clear_update_cache_tip')}">
@@ -3260,8 +3260,35 @@ function setupActions(device) {
 
   // Force Update
   document.getElementById('forceUpdateBtn')?.addEventListener('click', () => {
+    if (isEmbeddedDevice(device)) { sendFirmwareUpdate(); return; }
     sendWithFeedback('update', 'Update', 'device.toast.update_triggered');
   });
+
+  /*
+   * An embedded panel has no socket: `update` is QUEUED and offered on its next poll, so "update
+   * check triggered" (or "device offline") would both be false. Say what will happen, and say when
+   * the panel has not reported its board, because then the firmware is chosen from its screen
+   * profile alone. A panel with no firmware here is refused with the reason (lib/embedded-firmware.js).
+   */
+  function sendFirmwareUpdate() {
+    sendCommand(device.id, 'update', {}, (ack) => {
+      const fw = ack && ack.firmware;
+      if (ack?.queued && fw) {
+        if (fw.board_verified) showToast(t('device.toast.fw_queued', { version: fw.version }), 'success');
+        else showToast(t('device.toast.fw_queued_unverified', { version: fw.version, preset: fw.preset }), 'warning');
+      } else if (ack?.reason === 'rejected') {
+        showToast(ack.code === 'EMBEDDED_BOARD_MISMATCH' ? t('device.toast.fw_board_mismatch') : t('device.toast.fw_no_firmware'), 'error');
+      } else if (ack?.reason === 'corporate') {
+        showToast(ack.error || t('device.toast.command_undeliverable', { cmd: t('device.ctl.update_firmware') }), 'error');
+      } else if (ack?.reason === 'unsupported') {
+        showToast(t('device.toast.command_unsupported', { cmd: t('device.ctl.update_firmware'), cap: ack.capability || '' }), 'error');
+      } else if (ack?.reason === 'no_ack') {
+        showToast(t('device.toast.command_no_ack', { cmd: t('device.ctl.update_firmware') }), 'error');
+      } else {
+        showToast(t('device.toast.command_undeliverable', { cmd: t('device.ctl.update_firmware') }), 'error');
+      }
+    });
+  }
 
   // Drops every staged APK on the panel so the next check downloads afresh. The escape hatch for a
   // player holding a bad download — a cached file that cannot install but is reused every attempt.

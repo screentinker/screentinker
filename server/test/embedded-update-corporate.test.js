@@ -8,7 +8,17 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { freshDb, seed, injectDb } = require('./helpers/corporate-fixture');
+
+// Firmware for the panel's preset, so the org admin's update is deliverable (lib/embedded-firmware.js).
+const fwRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'st-fw-corp-'));
+fs.mkdirSync(path.join(fwRoot, 'seeed_reterminal_e1001'));
+fs.writeFileSync(path.join(fwRoot, 'seeed_reterminal_e1001', 'firmware.bin'), Buffer.alloc(64, 1));
+fs.writeFileSync(path.join(fwRoot, 'seeed_reterminal_e1001', 'version.json'), JSON.stringify({ version: '9.9.9' }));
+process.env.ST_FIRMWARE_DIR = fwRoot;
 
 const db = freshDb();
 injectDb(db);
@@ -31,7 +41,7 @@ const A = {
 // No socket room: an embedded panel only ever polls.
 const ns = { adapter: { rooms: new Map() }, to: () => ({ emit() {} }) };
 
-test.after(() => queue._resetForTests());
+test.after(() => { queue._resetForTests(); fs.rmSync(fwRoot, { recursive: true, force: true }); });
 
 test('update is gated like install_apk', () => {
   assert.ok(guard.GATED_COMMANDS.update, 'update must be in GATED_COMMANDS');
@@ -41,7 +51,7 @@ test('update is gated like install_apk', () => {
 test('a store editor cannot queue a firmware update for a head-office-controlled embedded panel', () => {
   const d = s.device(store);
   s.mandate(org, 'device', d, { playlist_id: P });
-  const panel = { id: d, workspace_id: store, client_type: 'embedded', power_source: 'usb' };
+  const panel = { id: d, workspace_id: store, client_type: 'embedded', power_source: 'usb', screen_profile: 'seeed-reterminal-e1001' };
   try {
     const r = deliverCommand(ns, panel, 'update', {}, { actor: A.store() });
     assert.equal(r.status, 'refused');

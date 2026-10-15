@@ -996,8 +996,12 @@ router.post('/:id/command', requireCommandScope, (req, res) => {
     // Named rather than generic: "this panel cannot do that" is actionable, "failed" is not.
     return res.status(400).json({ error: 'That screen cannot do that', capability: r.capability });
   }
+  if (r.status === 'rejected') {
+    // Could never be delivered to this screen (e.g. no firmware for this embedded panel's board).
+    return res.status(409).json({ error: r.error, code: r.code });
+  }
   // `id` is present for http_request: it is how the caller matches the result that follows.
-  res.json({ success: true, status: r.status, device_id: device.id, ...(r.id ? { id: r.id } : {}) });
+  res.json({ success: true, status: r.status, device_id: device.id, ...(r.id ? { id: r.id } : {}), ...(r.firmware ? { firmware: r.firmware } : {}) });
 });
 
 /*

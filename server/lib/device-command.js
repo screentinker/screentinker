@@ -193,7 +193,9 @@ function isMeshCommand(type) {
  * long enough to be rendering controls the panel no longer declares. A command delivered and
  * silently ignored is the failure the capability mechanism exists to end.
  *
- * @returns {{status:'sent'|'relayed'|'queued'|'offline'|'unsupported'|'refused', capability?:string, via?:string, code?:string}}
+ * @returns {{status:'sent'|'relayed'|'queued'|'offline'|'unsupported'|'refused'|'rejected', capability?:string, via?:string, code?:string, error?:string, firmware?:object}}
+ *   'rejected' = the command can never be delivered to this screen (an embedded `update` with no
+ *   firmware for it, or for a different board than it reports); `error` says why.
  */
 function deliverCommand(deviceNs, device, type, payload, opts = {}) {
   const verdict = playerCapabilities.commandAllowed(device, type);
@@ -212,6 +214,19 @@ function deliverCommand(deviceNs, device, type, payload, opts = {}) {
   const corp = require('./corporate/guard').assertDeviceControl(corpActor, device, type, payload);
   if (!corp.ok) return { status: 'refused', code: corp.code, error: corp.error, corporate: corp.corporate };
   payload = corp.payload;
+
+  /*
+   * An embedded panel's `update` is a firmware offer on its next poll, and a poll can only offer
+   * this server's own binary for the panel's preset and reported board (lib/embedded-firmware.js).
+   * Refuse here, with the reason, what no poll could deliver: a non-Seeed panel used to be told
+   * "queued" and then have the command silently dropped.
+   */
+  let firmware = null;
+  if (type === 'update' && device.client_type === 'embedded') {
+    const fw = require('./embedded-firmware').checkOffer(device);
+    if (!fw.ok) return { status: 'rejected', code: fw.code, error: fw.error };
+    firmware = fw.firmware;
+  }
 
   // #312/#313: a web player (browser tab) has origin-scoped storage, so it cannot follow a server
   // move without carrying its identity in the URL. On an operator's set_server_url — and ONLY then,
@@ -289,6 +304,7 @@ function deliverCommand(deviceNs, device, type, payload, opts = {}) {
   } catch (e) { /* queue module absent — the command is simply lost, and says so */ }
   const out = { status: queued ? 'queued' : 'offline' };
   if (requestId) out.id = requestId;
+  if (firmware) out.firmware = firmware;
   return out;
 }
 

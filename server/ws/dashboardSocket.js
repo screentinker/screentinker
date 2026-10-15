@@ -462,6 +462,10 @@ module.exports = function setupDashboardSocket(io) {
         if (typeof ack === 'function') ack({ delivered: false, reason: 'corporate', code: r.code, error: r.error });
         return;
       }
+      if (r.status === 'rejected') {
+        if (typeof ack === 'function') ack({ delivered: false, reason: 'rejected', code: r.code, error: r.error });
+        return;
+      }
       if (r.status === 'unsupported') {
         console.warn(`Command ${type} refused for device ${device_id}: needs ${r.capability}`);
         if (typeof ack === 'function') ack({ delivered: false, reason: 'unsupported', capability: r.capability });
@@ -474,7 +478,7 @@ module.exports = function setupDashboardSocket(io) {
       }
       console.log(`Command for offline device ${device_id}: ${type} (queued=${r.status === 'queued'})`);
       if (typeof ack === 'function') {
-        ack({ delivered: false, queued: r.status === 'queued', reason: 'offline' });
+        ack({ delivered: false, queued: r.status === 'queued', reason: 'offline', ...(r.firmware ? { firmware: r.firmware } : {}) });
       }
     });
 

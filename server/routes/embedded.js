@@ -35,15 +35,13 @@ const express = require('express');
 const router  = express.Router();
 const crypto  = require('crypto');
 const fs      = require('fs');
-const path    = require('path');
-const config  = require('../config');
 
 const { db, pruneTelemetry }  = require('../db/database');
 const { deviceTokenAuth }   = require('../middleware/deviceTokenAuth');
 const { bearerAuth }        = require('../middleware/apiToken');
 const { resolveTenancy }    = require('../lib/tenancy');
 const { resolveDevicePlaylist, resolvedLayoutId, resolveDeviceContext } = require('../lib/resolve-device-playlist');
-const { parseProfile, listPresets, frameDimensions, frameOrientation } = require('../lib/embedded-profiles');
+const { parseProfile, listPresets, getPreset, frameDimensions, frameOrientation } = require('../lib/embedded-profiles');
 const { cacheKey, toETag, isNotModified, get: cacheGet, set: cacheSet } = require('../lib/embedded-cache');
 const { render, renderLayout, isLayoutImageOnly, isBrowserAvailable, looksLikeImage } = require('../lib/embedded-render');
 const { postprocess }       = require('../lib/embedded-postprocess');
@@ -58,27 +56,7 @@ const { powerScheduleForDevice } = require('../lib/device-power-schedule');
 const { popPendingCommands, peekPendingCommands, popCommand } = require('../lib/command-queue');
 const otaBreaker            = require('../lib/ota-breaker');
 
-const SHA256_HEX = /^[0-9a-f]{64}$/i;
-
-/*
- * The preset a device's firmware is filed under, or '' when it cannot be told.
- *
- * ⚠️ NO DEFAULT. An unknown or empty profile is not Sticky. Defaulting here pointed a non-Sticky
- * panel at Sticky firmware. Callers treat '' as "no update for this device".
- */
-function normalizePresetName(profileOrPreset) {
-  if (!profileOrPreset) return '';
-  let str = profileOrPreset;
-  if (typeof str === 'object') {
-    str = str.preset || '';
-  } else if (typeof str === 'string' && str.trim().startsWith('{')) {
-    try {
-      const parsed = JSON.parse(str);
-      str = parsed.preset || '';
-    } catch (_) {}
-  }
-  return String(str || '').replace(/-/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
-}
+const { SHA256_HEX, normalizePresetName, getFirmwareInfo, boardFrom, boardFromRequest, checkOffer } = require('../lib/embedded-firmware');
 
 /*
  * The `update <url> <sha256>` string for one queued update, or null when the device must not be
@@ -103,6 +81,14 @@ function buildUpdateOffer(deviceId, device, req, update) {
   }
   const preset = normalizePresetName(device?.screen_profile);
   if (!preset) return null;
+  // Board check (lib/embedded-firmware.js): a panel that states what it is, now or at pairing, is
+  // offered only its own board's firmware. One that states nothing (v1.3.0) is offered the firmware
+  // for its screen profile, which is what the operator was told when they queued it.
+  const board = boardFromRequest(req) || boardFrom(device?.reported_board);
+  if (board && board.toLowerCase() !== preset.toLowerCase()) {
+    console.warn(`[ota] Device '${deviceId}' reports board '${board}' but is filed as '${preset}'; update not offered`);
+    return null;
+  }
   const fw = getFirmwareInfo(preset);
   if (!fw || !fw.sha256) return null;                 // no file on disk: nothing we can offer
   if (fw.declaredSha256 && fw.declaredSha256.toLowerCase() !== fw.sha256.toLowerCase()) {
@@ -403,6 +389,11 @@ function touchDeviceHeartbeat(device, req) {
   if (persistOrient) {
     device.reported_orientation = persistOrient;
   }
+  // The board, when the firmware states it (X-ST-Preset): device-token path only, like the above.
+  const persistBoard = req.device ? (boardFromRequest(req) || null) : null;
+  if (persistBoard) {
+    device.reported_board = persistBoard;
+  }
 
   try {
     db.prepare(`
@@ -413,9 +404,10 @@ function touchDeviceHeartbeat(device, req) {
           app_version = COALESCE(?, app_version),
           power_source = COALESCE(?, power_source),
           reported_orientation = COALESCE(?, reported_orientation),
+          reported_board = COALESCE(?, reported_board),
           updated_at = strftime('%s','now')
       WHERE id = ?
-    `).run(clientIp, clientIp, appVersion, powerSource, persistOrient, device.id);
+    `).run(clientIp, clientIp, appVersion, powerSource, persistOrient, persistBoard, device.id);
 
     // If telemetry headers were provided, record a row in device_telemetry.
     // ⚠️ local_ip stays NULL: it means the screen's LAN address (the dashboard prints it as "Local
@@ -898,6 +890,9 @@ router.post('/pair/register', (req, res) => {
   const width = parseInt(screen_width) || parsed?.width || 800;
   const height = parseInt(screen_height) || parsed?.height || 480;
   const profile = typeof screen_profile === 'object' ? JSON.stringify(screen_profile) : (screen_profile || 'seeed-reterminal-sticky');
+  // What the hardware said it is (screentinker_mcu registers with its compile-time preset). Only a
+  // named preset the device itself sent; the Sticky default above is ours, not the device's.
+  const reportedBoard = (typeof screen_profile === 'string' && getPreset(screen_profile)) ? (boardFrom(screen_profile) || null) : null;
 
   let code;
   let inserted = false;
@@ -905,9 +900,9 @@ router.post('/pair/register', (req, res) => {
     code = sixDigitCode(); // CSPRNG (lib/numeric-code): server generates code, caller cannot choose
     try {
       db.prepare(`
-        INSERT INTO devices (id, pairing_code, device_token, claim_secret, status, client_type, screen_profile, screen_width, screen_height, render_width, render_height, last_heartbeat)
-        VALUES (?, ?, ?, ?, 'provisioning', 'embedded', ?, ?, ?, ?, ?, strftime('%s','now'))
-      `).run(id, code, newToken, claimSecret, profile, width, height, width, height);
+        INSERT INTO devices (id, pairing_code, device_token, claim_secret, status, client_type, screen_profile, screen_width, screen_height, render_width, render_height, reported_board, last_heartbeat)
+        VALUES (?, ?, ?, ?, 'provisioning', 'embedded', ?, ?, ?, ?, ?, ?, strftime('%s','now'))
+      `).run(id, code, newToken, claimSecret, profile, width, height, width, height, reportedBoard);
       inserted = true;
       break;
     } catch (e) {
@@ -1750,89 +1745,6 @@ router.get('/logs', deviceLogsLimiter, resolveAuth, (req, res) => {
 });
 
 // ─── Firmware Distribution & OTA Management ───────────────────────────────────
-
-const _firmwareHashCache = new Map(); // filePath -> { mtimeMs, size, sha256 }
-
-function getFirmwareInfo(preset) {
-  const safePreset = normalizePresetName(preset);
-  if (!safePreset) return null;
-
-  const candidateDirs = [];
-  if (process.env.ST_FIRMWARE_DIR) {
-    candidateDirs.push(path.join(process.env.ST_FIRMWARE_DIR, safePreset));
-  } else {
-    if (config.embeddedFirmwareDir) {
-      candidateDirs.push(path.join(config.embeddedFirmwareDir, safePreset));
-    }
-    candidateDirs.push(path.join(__dirname, '../data/firmware', safePreset));
-    candidateDirs.push(path.join(__dirname, '../firmware', safePreset));
-  }
-
-  for (const base of candidateDirs) {
-    const binPaths = [
-      path.join(base, 'firmware.bin'),
-      path.join(base, 'latest.bin'),
-      path.join(base, `${safePreset}.bin`),
-      path.join(base, `${safePreset}-firmware.bin`),
-    ];
-
-    for (const binPath of binPaths) {
-      if (fs.existsSync(binPath)) {
-        try {
-          const stat = fs.statSync(binPath);
-          let sha256 = null;
-          const cached = _firmwareHashCache.get(binPath);
-          if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-            sha256 = cached.sha256;
-          } else {
-            const fd = fs.openSync(binPath, 'r');
-            try {
-              const hash = crypto.createHash('sha256');
-              const chunk = Buffer.alloc(65536);
-              let bytesRead = 0;
-              while ((bytesRead = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0) {
-                hash.update(chunk.subarray(0, bytesRead));
-              }
-              sha256 = hash.digest('hex');
-            } finally {
-              fs.closeSync(fd);
-            }
-            _firmwareHashCache.set(binPath, { mtimeMs: stat.mtimeMs, size: stat.size, sha256 });
-          }
-
-          let version = null;
-          let declaredSha256 = null;
-          const vJsonPath = path.join(path.dirname(binPath), 'version.json');
-          const vTxtPath = path.join(path.dirname(binPath), 'version.txt');
-          if (fs.existsSync(vJsonPath)) {
-            try {
-              const parsed = JSON.parse(fs.readFileSync(vJsonPath, 'utf8'));
-              if (parsed.version) version = String(parsed.version);
-              if (typeof parsed.sha256 === 'string' && SHA256_HEX.test(parsed.sha256)) declaredSha256 = parsed.sha256;
-            } catch (_) {}
-          } else if (fs.existsSync(vTxtPath)) {
-            try {
-              const vStr = fs.readFileSync(vTxtPath, 'utf8').trim();
-              if (vStr) version = vStr;
-            } catch (_) {}
-          }
-
-          return {
-            preset: safePreset,
-            version,
-            size: stat.size,
-            sha256,
-            declaredSha256,
-            filePath: binPath,
-            download_url: `/api/embedded/firmware/${safePreset}/latest.bin`
-          };
-        } catch (_) {}
-      }
-    }
-  }
-
-  return null;
-}
 
 // GET /api/embedded/firmware/:preset/version
 router.get('/firmware/:preset/version', firmwareLimiter, (req, res) => {
