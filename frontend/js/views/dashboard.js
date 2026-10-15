@@ -221,6 +221,14 @@ function mirrorBadge(device) {
   return ` <span class="device-mirror-badge" title="${esc(t('dashboard.mirror_badge_tip'))}" style="margin-left:6px;font-size:11px;color:var(--text-secondary);background:var(--bg-primary);padding:1px 6px;border-radius:8px;vertical-align:middle">${esc(label)}</span>`;
 }
 
+/*
+ * The ambient-sensor badge is an embedded-panel feature (#7, SHT40). Other players may report a
+ * temperature too (an SoC reading on the device page), and their cards stay as they were.
+ */
+function isEmbeddedCard(device) {
+  return device.client_type === 'embedded' || String(device.platform || '').toLowerCase().includes('embedded');
+}
+
 function renderDeviceCard(device) {
   const token = localStorage.getItem('token');
   // ⚠️ NOT named screenshotUrl: that is the imported helper, and a const of the same name shadows
@@ -328,8 +336,8 @@ function renderDeviceCard(device) {
             </svg>
             ${formatBytes(device.storage_free_mb)} free
           </div>` : ''}
-          ${(device.temperature_c != null || device.humidity != null) ? `
-          <div class="meta-item" data-card-field="sensors" title="${device.temperature_c != null ? device.temperature_c + '°C' : ''}${device.temperature_c != null && device.humidity != null ? ' · ' : ''}${device.humidity != null ? device.humidity + '% RH' : ''}">
+          ${(isEmbeddedCard(device) && (device.temperature_c != null || device.humidity != null)) ? `
+          <div class="meta-item" data-card-field="sensors" title="${device.temperature_c != null ? device.temperature_c + '°C' : ''}${device.temperature_c != null && device.humidity != null ? ' · ' : ''}${device.humidity != null ? esc(t('device.info.humidity_value', { n: device.humidity })) : ''}">
             <span style="font-size:11px;margin-right:2px">🌡️</span>
             ${device.temperature_c != null ? `${device.temperature_c}°C` : ''}${device.temperature_c != null && device.humidity != null ? ' · ' : ''}${device.humidity != null ? `${device.humidity}%` : ''}
           </div>` : ''}

@@ -1,5 +1,10 @@
 'use strict';
 
+// Everything this file writes (content images, the e-ink cache) goes to a throwaway DATA_DIR, never
+// into the repo. Set before anything requires config, which reads DATA_DIR once.
+const TEST_DATA_DIR = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'st-reterminal-'));
+process.env.DATA_DIR = TEST_DATA_DIR;
+
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const { parseProfile, getPreset, listPresets, PRESETS } = require('../lib/embedded-profiles.js');
@@ -295,7 +300,7 @@ describe('reTerminal E-Series Registration & Route Handling', () => {
 
   test('setup test server and database', async () => {
     process.env.JWT_SECRET = 'test-secret-embedded-e-series';
-    process.env.EMBEDDED_CACHE_DIR = path.join(__dirname, '..', 'data', 'test-embedded-cache-e-series');
+    process.env.EMBEDDED_CACHE_DIR = path.join(TEST_DATA_DIR, 'embedded-cache');
     testFwDir = fs.mkdtempSync(path.join(os.tmpdir(), 'st-fw-test-'));
     process.env.ST_FIRMWARE_DIR = testFwDir;
 
@@ -1176,6 +1181,7 @@ describe('reTerminal E-Series Registration & Route Handling', () => {
     const { contentDir } = require('../config');
     try { fs.unlinkSync(path.join(contentDir, 'test-e1001.png')); } catch (_) {}
     try { fs.rmSync(testFwDir, { recursive: true, force: true }); } catch (_) {}
+    try { fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true }); } catch (_) {}
     delete process.env.ST_FIRMWARE_DIR;
     if (server) await new Promise((resolve) => server.close(resolve));
   });
