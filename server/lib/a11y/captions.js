@@ -14,7 +14,8 @@
  * admin typed in Settings, and only when somebody presses Generate. Nothing is configured by default
  * and there is no instance-wide fallback, so a workspace that never set this up never sends anything
  * anywhere. Outbound requests go through lib/ai-fetch (on a hosted instance the address is vetted at
- * connect time, so a name that resolves to the host's private network is refused).
+ * connect time, so a name that resolves to the host's private network is refused), under exactly
+ * the Private AI rules: the organization's allowed private hosts and its "only private AI" policy.
  *
  * ⚠️ WHAT COMES BACK IS NOT TRUSTED. It is parsed into cues and rebuilt as WebVTT from the cue times
  * and the cue TEXT with every tag stripped, capped in size and count. A hostile endpoint can make the
@@ -53,8 +54,15 @@ function getStt(db, workspaceId) {
   };
 }
 
-function endpointAllowed(url) {
-  return require('../../routes/ai').endpointAllowed(url);
+/*
+ * The same rule every other AI feature follows (routes/ai.js endpointAllowed), WITH the workspace:
+ * on a hosted instance a private address is refused unless a platform administrator allowed that
+ * exact host for this workspace's organization (3.0 Private AI, ai_private_hosts). Without the
+ * workspace the allow list was never consulted, so a local Whisper server the admin had allowed
+ * for Private AI was still refused here.
+ */
+function endpointAllowed(url, workspaceId) {
+  return require('../../routes/ai').endpointAllowed(url, workspaceId);
 }
 
 /** Admin-only (the route checks). Absent fields keep their value; clear_key removes the key. */
@@ -63,7 +71,7 @@ function saveStt(db, workspaceId, body) {
   const cur = db.prepare('SELECT stt_base_url, stt_model, stt_api_key_enc FROM ai_settings WHERE workspace_id = ?').get(workspaceId) || {};
   let base = b.base_url !== undefined ? String(b.base_url || '').trim().replace(/\/+$/, '') : (cur.stt_base_url || '');
   if (base.length > 500) return { ok: false, error: 'Base URL is too long' };
-  if (base && !endpointAllowed(base)) return { ok: false, error: 'Endpoint URL not allowed (private/internal addresses are blocked on this instance).' };
+  if (base && !endpointAllowed(base, workspaceId)) return { ok: false, error: 'Endpoint URL not allowed (private/internal addresses are blocked on this instance).' };
   // No control characters: the model name is written into a multipart body as a field value.
   const model = b.model !== undefined ? String(b.model || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 120) : (cur.stt_model || '');
   let keyEnc = cur.stt_api_key_enc || null;
@@ -271,6 +279,12 @@ function start(db, { content, workspaceId, lang, actorReq }) {
       const row = db.prepare('SELECT stt_base_url, stt_model, stt_api_key_enc FROM ai_settings WHERE workspace_id = ?').get(workspaceId) || {};
       const base = String(row.stt_base_url || '').replace(/\/+$/, '');
       if (!base) throw new Error('Speech-to-text is not set up any more.');
+      // Vetted again now, as the chat features do: the allow list or the org policy may have changed
+      // since the endpoint was saved.
+      const privateAi = require('../private-ai');
+      if (!endpointAllowed(base, workspaceId)) throw new Error('The speech-to-text endpoint is not allowed on this instance.');
+      const pol = await privateAi.policyCheck(workspaceId, [base]);
+      if (pol) throw new Error(pol.error);
       const key = row.stt_api_key_enc ? decrypt(row.stt_api_key_enc) : null;
       const url = /\/audio\/transcriptions$/.test(base) ? base : `${base}/audio/transcriptions`;
       const mp = multipart({ model: row.stt_model || 'whisper-1', response_format: 'vtt', language: lang && /^[a-z]{2,3}$/i.test(lang) ? lang.toLowerCase() : '' },
@@ -282,7 +296,8 @@ function start(db, { content, workspaceId, lang, actorReq }) {
       let r;
       try {
         const doFetch = transport || require('../ai-fetch').aiFetch;
-        r = await doFetch(url, { method: 'POST', headers, body: mp.body, signal: ac.signal, maxBytes: 8 * 1024 * 1024 });
+        r = await doFetch(url, { method: 'POST', headers, body: mp.body, signal: ac.signal, maxBytes: 8 * 1024 * 1024,
+          privateHosts: privateAi.privateHostsFor(workspaceId) });
       } finally { clearTimeout(timer); }
       const text = await r.text();
       if (!r.ok) throw new Error(`The speech-to-text endpoint answered ${r.status}: ${text.replace(/\s+/g, ' ').slice(0, 160)}`);
