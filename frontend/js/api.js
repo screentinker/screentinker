@@ -443,7 +443,7 @@ export const api = {
   getServerStatus: () => request('/status'),
   reorderDevices: (order) => request('/devices/reorder', { method: 'POST', body: JSON.stringify({ order }) }),
   getDevice: (id) => request(`/devices/${id}`),
-  getDeviceDiagnosticLogs: (id) => request(`/devices/${id}/diagnostic-logs`),
+  getDeviceDiagnosticLogs: (id, limit = 20) => request(`/devices/${id}/diagnostic-logs?limit=${encodeURIComponent(limit)}`),
   // "What will this screen show at…?" (docs/preview-at-time.md). `extra` carries an optional
   // what-if weather ({ weather: 'rain', temp_c: 12 }).
   simulateDevice: (id, at, extra = {}) => request(`/devices/${id}/simulate?${new URLSearchParams({ at, ...extra })}`),

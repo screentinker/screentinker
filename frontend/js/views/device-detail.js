@@ -332,7 +332,7 @@ function renderEmbeddedLogsData(data) {
  */
 async function refreshEmbeddedLogs(deviceId) {
   try {
-    const r = await api.getDeviceDiagnosticLogs(deviceId);
+    const r = await api.getDeviceDiagnosticLogs(deviceId, 1);
     const latest = r && Array.isArray(r.logs) ? r.logs[0] : null;
     if (latest) renderEmbeddedLogsData(latest);
     return Boolean(latest);

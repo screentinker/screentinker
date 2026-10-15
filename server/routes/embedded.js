@@ -1555,10 +1555,10 @@ async function handleRenderLayout(req, res, device, profile, opts = {}) {
  * JSON array of logs, or plain text log lines.
  * Emits dashboard:embedded-logs to dashboard subscribers in the device's workspace room.
  */
-// The MCU ring holds 100 entries. The body is stored whole and re-emitted whole on the dashboard
-// socket, so it gets its own small parser (server.js leaves this path to it) instead of the 12 MB
-// global one.
+// The MCU ring holds 100 entries (MAX_LOG_ENTRIES per upload). The body is stored whole, so it gets
+// its own small parsers (server.js leaves this path to them) instead of the 12 MB global one.
 const LOG_BODY_LIMIT = '256kb';
+const LOG_RING_UPLOADS = 20;   // uploads kept per device; older ones are pruned on insert
 const MAX_LOG_ENTRIES = 100;
 const logJsonParser = express.json({ limit: LOG_BODY_LIMIT });
 // text/plain: one log line per line. server.js skips its global parser for this path, so without
@@ -1681,7 +1681,7 @@ function handleDeviceLogs(req, res) {
         SELECT id FROM device_diagnostic_logs
         WHERE device_id = ?
         ORDER BY uploaded_at DESC, id DESC
-        LIMIT 20
+        LIMIT ${LOG_RING_UPLOADS}
       )
     `).run(devId, devId);
 
@@ -1728,6 +1728,12 @@ function handleDeviceLogs(req, res) {
   res.status(200).json({ status: 'ok', log_id: logId, id: logId, count: logCount });
 }
 
+/* ?limit= for the log reads: 1..20 (the per-device ring kept by handleDeviceLogs), default 20. */
+function logListLimit(req) {
+  const n = parseInt(req.query && req.query.limit, 10);
+  return Number.isInteger(n) && n > 0 ? Math.min(n, LOG_RING_UPLOADS) : LOG_RING_UPLOADS;
+}
+
 // ─── GET /api/embedded/logs ───────────────────────────────────────────────────
 router.get('/logs', deviceLogsLimiter, resolveAuth, (req, res) => {
   const device = resolveDevice(req, res);
@@ -1737,8 +1743,8 @@ router.get('/logs', deviceLogsLimiter, resolveAuth, (req, res) => {
     SELECT * FROM device_diagnostic_logs
     WHERE device_id = ?
     ORDER BY uploaded_at DESC, id DESC
-    LIMIT 20
-  `).all(device.id);
+    LIMIT ?
+  `).all(device.id, logListLimit(req));
 
   res.json({ logs });
 });
@@ -1837,5 +1843,6 @@ module.exports.resolvePendingCommand = resolvePendingCommand;
 module.exports.normalizePresetName = normalizePresetName;
 module.exports.getFirmwareInfo = getFirmwareInfo;
 module.exports.otaBreaker = otaBreaker;
+module.exports.logListLimit = logListLimit;
 
 

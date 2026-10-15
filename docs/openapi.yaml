@@ -387,6 +387,39 @@ components:
         uptime_seconds:
           type: [integer, "null"]
           description: Seconds since the device booted.
+        temperature_c:
+          type: [number, "null"]
+          description: Latest reported temperature in degrees Celsius (an embedded panel's ambient sensor, or a player's own), where reported.
+        humidity:
+          type: [number, "null"]
+          description: Latest reported relative humidity, percent (embedded panels with an ambient sensor).
+        diagnostic_logs_latest:
+          description: |
+            Embedded devices, single-device read only: the newest diagnostic log upload's metadata,
+            or null. The body is at GET /devices/{id}/diagnostic-logs.
+          oneOf:
+            - type: 'null'
+            - type: object
+              properties:
+                id: { type: integer }
+                created_at: { type: integer, description: Unix seconds. }
+                size: { type: integer, description: Stored bytes. }
+                count: { type: integer, description: Log entries in the upload. }
+
+    DiagnosticLogUpload:
+      type: object
+      description: One stored diagnostic log upload from an embedded device.
+      properties:
+        id: { type: integer }
+        device_id: { type: string }
+        log_json:
+          type: string
+          description: The upload as stored JSON text, e.g. {"logs":[{"level":"INFO","tag":"Boot","msg":"..."}],"version":"1.3.0"}. Parse it to read the entries.
+        log_count: { type: integer }
+        battery: { type: [integer, "null"] }
+        wifi_rssi: { type: [integer, "null"] }
+        version: { type: [string, "null"] }
+        uploaded_at: { type: integer, description: Unix seconds. }
 
     Playlist:
       type: object
@@ -1810,6 +1843,37 @@ paths:
       responses:
         '200': { description: '{ success, sent, offline, total, results }.' }
 
+  /devices/{id}/diagnostic-logs:
+    get:
+      tags: [devices]
+      summary: Diagnostic log uploads from an embedded device
+      description: |
+        The diagnostic log uploads an embedded panel sent (it uploads when queued `upload_logs`, or
+        after repeated sync failures), newest first. The server keeps the newest 20 per device.
+        Rate-limited to 300 requests per minute per address. Requires scope: read.
+      x-required-scope: read
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: limit
+          in: query
+          required: false
+          description: How many uploads, 1-20 (default 20; larger values are capped).
+          schema: { type: integer, minimum: 1, maximum: 20 }
+      responses:
+        '200':
+          description: The uploads.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logs:
+                    type: array
+                    items: { $ref: '#/components/schemas/DiagnosticLogUpload' }
+        '403': { description: The device is not in this workspace. }
+        '404': { description: No such device. }
+        '429': { description: Rate limit exceeded. }
+
   /devices/{id}/command:
     post:
       tags: [devices]
@@ -1862,12 +1926,21 @@ paths:
                 payload: { type: object }
       responses:
         '200':
-          description: '{ success, status, device_id }.'
+          description: |
+            `{ success, status, device_id }`. For an embedded panel's `update`, also
+            `firmware: { preset, version, board_verified }`; `board_verified: false` means the panel
+            has not reported its board, so it gets the firmware for its screen profile.
         '400':
           description: |
             Unknown command type, or the panel does not support it — in which case the body carries
             `capability` naming the missing one.
+        '403': { description: 'A screen head office controls: this command is for the organization''s admins (code CORPORATE_DEVICE_CONTROL).' }
         '404': { description: No such device in this workspace. }
+        '409':
+          description: |
+            The command can never be delivered to this screen: an embedded `update` when this server
+            has no firmware for the panel (`EMBEDDED_NO_FIRMWARE`) or the panel reports a different
+            board than its screen profile (`EMBEDDED_BOARD_MISMATCH`). Body `{ error, code }`.
         '503': { description: The realtime layer is not available. }
 
   # --------------------------------------------------------------- slide decks

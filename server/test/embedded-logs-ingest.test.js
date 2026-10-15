@@ -77,3 +77,26 @@ test('an oversized text/plain upload is refused with 413', async () => {
   assert.equal(res.status, 413);
   assert.deepEqual(rows(p.id), []);
 });
+
+test('GET /logs: the device or a read token, newest first, ?limit= 1..20, raw stored rows', async () => {
+  const base = await h.ready();
+  const p = await h.mkPanel('seeed-reterminal-e1001');
+  for (let i = 0; i < 3; i++) {
+    const r = await fetch(`${base}/logs?device_id=${p.id}`, {
+      method: 'POST', headers: { Authorization: `Bearer ${p.token}`, 'Content-Type': 'text/plain' }, body: `upload ${i}`,
+    });
+    assert.equal(r.status, 200);
+  }
+  const read = h.mkToken('read');
+  for (const auth of [p.token, read]) {
+    const res = await fetch(`${base}/logs?device_id=${p.id}&limit=2`, { headers: { Authorization: `Bearer ${auth}` } });
+    assert.equal(res.status, 200);
+    const { logs } = await res.json();
+    assert.equal(logs.length, 2);
+    assert.equal(typeof logs[0].log_json, 'string', 'log_json is the stored JSON text, not parsed');
+    assert.equal(JSON.parse(logs[0].log_json).logs[0].msg, 'upload 2', 'newest first');
+    assert.deepEqual(Object.keys(logs[0]).sort(), ['battery', 'device_id', 'id', 'log_count', 'log_json', 'uploaded_at', 'version', 'wifi_rssi']);
+  }
+  const all = await (await fetch(`${base}/logs?device_id=${p.id}&limit=999`, { headers: { Authorization: `Bearer ${read}` } })).json();
+  assert.equal(all.logs.length, 3, 'limit is capped, not an error');
+});

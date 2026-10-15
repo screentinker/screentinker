@@ -659,8 +659,8 @@ router.get('/:id/diagnostic-logs', dashboardDeviceReadLimiter, (req, res) => {
     SELECT * FROM device_diagnostic_logs
     WHERE device_id = ?
     ORDER BY uploaded_at DESC, id DESC
-    LIMIT 20
-  `).all(req.params.id);
+    LIMIT ?
+  `).all(req.params.id, require('./embedded').logListLimit(req));
 
   res.json({ logs });
 });
