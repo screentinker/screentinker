@@ -224,8 +224,10 @@ test('a webhook pointing at a private address is refused by the SSRF guard, and 
 /* ── Telegram ───────────────────────────────────────────────────────────────────────── */
 
 // ⚠️ Telegram puts the bot token in the URL PATH, so every test below also checks it never leaks.
-const TG_TOKEN = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawZ';
-const TG_SECRET_PART = 'AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawZ';
+// A made-up token in the right shape, assembled at run time so the source holds nothing a secret
+// scanner reads as a real Telegram token (the docs' example token used here before was flagged).
+const TG_SECRET_PART = ['FAKE', 'test', 'token', 'not', 'a', 'real', 'bot', 'x0'].join('_');
+const TG_TOKEN = `123456789:${TG_SECRET_PART}`;
 const TG_URL = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
 const tgChannel = (extra = {}) => ({ id: 'c-tg', kind: 'telegram', workspace_id: WS, config: JSON.stringify({ bot_token: TG_TOKEN, chat_id: '-1001234567890', ...extra }) });
 
@@ -255,7 +257,7 @@ async function viaTransport(answer, fn) {
 test('telegram input: token and chat id shapes, the token never echoed, kept on edit', () => {
   assert.ok(ch.KINDS.includes('telegram'));
   assert.match(ch.normaliseInput({ kind: 'telegram', name: 'x', chat_id: '42' }).error, /bot token/);
-  for (const bad of ['nope', '12345:short', 'abc:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawZ', `${TG_TOKEN} x`, '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALD$awZ']) {
+  for (const bad of ['nope', '12345:short', `abc:${TG_SECRET_PART}`, `${TG_TOKEN} x`, `123456789:${TG_SECRET_PART.slice(0, -1)}$`]) {
     const r = ch.normaliseInput({ kind: 'telegram', name: 'x', bot_token: bad, chat_id: '42' });
     assert.match(r.error, /bot token looks like/, bad);
     assert.ok(!r.error.includes(bad), 'a rejected token is not repeated back');
@@ -279,7 +281,7 @@ test('telegram input: token and chat id shapes, the token never echoed, kept on 
 
 test('telegram present(): a hint and the chat id, never the token', () => {
   const p = ch.present(db, { ...tgChannel(), name: 'TG', enabled: 1, events: '[]', offline_minutes: 5 });
-  assert.equal(p.bot_token_hint, '…sawZ');
+  assert.equal(p.bot_token_hint, `…${TG_SECRET_PART.slice(-4)}`);
   assert.equal(p.chat_id, '-1001234567890');
   const text = JSON.stringify(p);
   assert.ok(!text.includes(TG_SECRET_PART) && !text.includes('123456789:'), 'no part of the token beyond the hint');
@@ -363,7 +365,7 @@ test('the token never appears in logs, errors, last_error, API responses or the 
       let res = await api('POST', '/api/alert-channels', { kind: 'telegram', name: 'TG', bot_token: TG_TOKEN, chat_id: '-4242' });
       assert.equal(res.status, 201, res.text);
       createdId = res.body.id;
-      assert.equal(res.body.bot_token_hint, '…sawZ'); assert.equal(res.body.chat_id, '-4242');
+      assert.equal(res.body.bot_token_hint, `…${TG_SECRET_PART.slice(-4)}`); assert.equal(res.body.chat_id, '-4242');
       for (const t of [res.text, (await api('GET', '/api/alert-channels', null, EDITOR)).text]) assert.ok(!t.includes(TG_SECRET_PART));
       res = await api('POST', `/api/alert-channels/${createdId}/test`);
       assert.equal(res.status, 502);
