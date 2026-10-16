@@ -21,6 +21,8 @@ Item {
     signal failed(string msg)
     // #624: a play-to-end YouTube page reported the video's length (ended() reports its end).
     signal ytLength(real sec)
+    // #649: a bundle page asked to be skipped: "<token> <reason>" (the engine checks the token).
+    signal bundleSkip(string detail)
     signal position(real posMs, real durMs)
 
     function fillFor(fit, forVideo) {
@@ -223,6 +225,9 @@ Item {
             // #624: a play-to-end YouTube page (engine.youtube_html) reports through the console:
             // "ST_YT duration <sec>" and "ST_YT ended". Nothing else logs with that prefix.
             onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
+                // #649: a bundle page (engine.item_dict, logic/bundle_skip.inject) asking to be skipped.
+                if (slot.item && slot.item.kind === "html" && typeof message === "string"
+                        && message.indexOf("ST_BUNDLE_SKIP ") === 0) { slot.bundleSkip(message.substring(15)); return }
                 if (!slot.item || slot.item.kind !== "youtube" || typeof message !== "string") return
                 if (message === "ST_YT ended") slot.ended()
                 else if (message.indexOf("ST_YT duration ") === 0) {

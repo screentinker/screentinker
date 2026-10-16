@@ -431,6 +431,17 @@ class App:
                                               ended_at=now, completed=bool(completed)))
                 self.play_queue.save()
 
+    def play_skipped(self, item, elapsed_ms):
+        """#649: a bundle asked to be skipped, so its play was not a play. Live: play_end skipped=true (the
+        server deletes the row; an older one records it incomplete). Offline: the start is dropped."""
+        cid = item.content_id or item.widget_id or ""
+        if not self.link.connected:
+            self._offline_open = None
+            return
+        self.emit("device:play-event", {"device_id": self.config.device_id, "event": "play_end",
+                                        "content_id": cid or None, "content_name": item.filename,
+                                        "completed": False, "skipped": True, "elapsed_ms": int(max(0, elapsed_ms))})
+
     async def flush_offline_plays(self):
         if self._flush_in_flight or self.play_queue.size() == 0:
             return

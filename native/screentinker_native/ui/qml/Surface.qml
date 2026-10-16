@@ -94,6 +94,7 @@ Item {
         onReady: { stage.slotEvent(surface.surfaceId, item ? item.token : "", "ready", ""); if (surface.isCurrent(item)) surface.reveal(slotA) }
         onEnded: stage.slotEvent(surface.surfaceId, item ? item.token : "", "ended", "")
         onYtLength: function(sec) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "yt_length", String(sec)) }
+        onBundleSkip: function(detail) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "bundle_skip", detail) }
         onFailed: function(msg) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "failed", msg) }
         onPosition: function(p, d) { if (front) stage.slotPosition(surface.surfaceId, item ? item.token : "", p, d) }
     }
@@ -106,6 +107,7 @@ Item {
         onReady: { stage.slotEvent(surface.surfaceId, item ? item.token : "", "ready", ""); if (surface.isCurrent(item)) surface.reveal(slotB) }
         onEnded: stage.slotEvent(surface.surfaceId, item ? item.token : "", "ended", "")
         onYtLength: function(sec) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "yt_length", String(sec)) }
+        onBundleSkip: function(detail) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "bundle_skip", detail) }
         onFailed: function(msg) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "failed", msg) }
         onPosition: function(p, d) { if (front) stage.slotPosition(surface.surfaceId, item ? item.token : "", p, d) }
     }

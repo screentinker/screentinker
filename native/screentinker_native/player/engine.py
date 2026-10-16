@@ -22,6 +22,7 @@ import urllib.parse
 
 from PySide6.QtCore import QTimer
 
+from ..logic import bundle_skip as BS
 from ..logic import kiosk as kiosk_logic
 from ..logic import playlist_logic as PL
 from ..logic import schedule_eval
@@ -144,6 +145,9 @@ class ZoneRunner:
         self.timer.timeout.connect(self.advance)
         self.multi = len(items) > 1 or any(
             (i.raw.get("schedules") or i.raw.get("play_from") or i.raw.get("play_until")) for i in items)
+        self.skip_guard = BS.Guard()       # #649: this zone's own pass
+        self._skip_advancing = False
+        self._skip_ignored_at = None
 
     def stop(self):
         self.timer.stop()
@@ -158,6 +162,9 @@ class ZoneRunner:
 
     def show(self, frm=0):
         self.timer.stop()
+        if not self._skip_advancing and self.index >= 0:
+            self.skip_guard.ended(time.monotonic() * 1000 - self.started_ms)
+        self._skip_advancing = False
         idx = self._next_active(frm) if self.items else -1
         if idx < 0:
             self.e.stage.clearSurface.emit(self.sid)
@@ -210,6 +217,26 @@ class ZoneRunner:
                 self.timer.start(LIVE_RECHECK_MS)
                 return
         self.show((self.index + 1) if self.index >= 0 else 0)
+
+    def on_bundle_skip(self, token, raw_reason):
+        """#649: this zone's bundle asked to be skipped: the zone moves on, the others keep their timers."""
+        if token != self.token or self.index < 0:
+            return
+        it = self.items[self.index]
+        if not it.is_bundle:
+            return
+        can = any(i != self.index and self.e.allows(x) for i, x in enumerate(self.items))
+        verdict = self.skip_guard.decide("%d|%s" % (self.index, it.key), can, False)
+        if verdict != "skip":
+            if self._skip_ignored_at != self.started_ms:
+                self._skip_ignored_at = self.started_ms
+                self.e.app.log_remote("info", "bundle", 'skip ignored for "%s": %s' % (it.filename, BS.ignored_text(verdict)), mirror=True)
+            return
+        reason = BS.sanitize_reason(raw_reason)
+        self.e.app.log_remote("info", "bundle", 'skipped "%s" in zone "%s"%s' % (
+            it.filename, self.zone.get("name") or self.zone.get("id"), (" \u2014 " + reason) if reason else ""), mirror=True)
+        self._skip_advancing = True
+        self.show(self.index + 1)
 
     def on_event(self, token, event, detail=""):
         if token != self.token:
@@ -270,6 +297,10 @@ class PlaybackEngine:
         # #624: play to end is ignored while a shared clock drives the screen (a wall or a sync group).
         self.controller.sync_driven = lambda: bool(self.wall or self.group_id)
         self.controller.content_usable = self._usable
+        # #649: a bundle's skip, to the device log and proof of play.
+        self.controller.on_bundle_log = lambda msg: app.log_remote("info", "bundle", msg, mirror=True)
+        self.controller.on_play_skipped = lambda it, ms: app.play_skipped(it, ms)
+        self.skip_tokens = {}              # render token -> the bundle page's skip token (#649)
         self.timezone = None
         self.mode = "single"
         self.zones = []
@@ -580,7 +611,9 @@ class PlaybackEngine:
                 self.app.fetch_bundle(it.content_id, it.content_rev)
                 d.update(kind="web", source="%s/api/content/%s/bundle?rev=%d" % (server, it.content_id, it.content_rev))
             else:
-                d.update(kind="html", html=html, baseUrl=server + "/")
+                # #649: the page may ask to be skipped, with this mount's token (logic/bundle_skip.py).
+                skip_token = BS.new_token()
+                d.update(kind="html", html=BS.inject(html, skip_token), baseUrl=server + "/", skipToken=skip_token)
             return d
         if it.mime_type == "video/youtube" and it.remote_url:
             html = youtube_html(it.remote_url, muted, play_to_end=play_to_end)
@@ -618,6 +651,11 @@ class PlaybackEngine:
             return None
         tok = self._new_token(surface, it)
         d["token"] = tok
+        skip_token = d.pop("skipToken", None)
+        if skip_token:
+            self.skip_tokens[tok] = skip_token
+            while len(self.skip_tokens) > 64:
+                self.skip_tokens.pop(next(iter(self.skip_tokens)))
         if transition is None:
             transition = surface == "main"
         tr = self.shaders.resolve(it.transition) if transition else None
@@ -674,6 +712,19 @@ class PlaybackEngine:
             self.stage.clearSurface.emit(sid)
 
     def on_slot_event(self, surface, token, event, detail):
+        if event == "bundle_skip":
+            # #649: honoured only with the skip token of THIS render, from a layout zone or the main
+            # surface; never on wall zones (the shared clock) or the trigger overlay.
+            ok, reason = BS.parse_console(BS.CONSOLE_PREFIX + (detail or ""), self.skip_tokens.get(token))
+            if not ok or (surface.startswith("zone:") and self.mode == "wallzones"):
+                return
+            if surface.startswith("zone:"):
+                r = self.zone_runners.get(surface[5:])
+                if r:
+                    r.on_bundle_skip(token, reason)
+            elif surface == "main" and token == self.main_token:
+                self.controller.on_bundle_skip(reason)
+            return
         if surface.startswith("zone:") and self.mode == "wallzones":
             self._wz_event(surface, token, event, detail)
             return

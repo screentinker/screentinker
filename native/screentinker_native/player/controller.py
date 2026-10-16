@@ -13,6 +13,7 @@ import time
 
 from PySide6.QtCore import QTimer
 
+from ..logic import bundle_skip as BS
 from ..logic import play_order, playlist_logic as PL, schedule_eval
 from .items import Item, slot_ms
 
@@ -85,6 +86,13 @@ class PlaylistController:
         self.held_key = None
         self.parked_update = None
         self._releasing = False
+        # #649: a bundle asked to be skipped (logic/bundle_skip.py). on_bundle_log carries the line to
+        # the dashboard; on_play_skipped(item, elapsed_ms) retracts the play_start already sent.
+        self.on_bundle_log = lambda msg: None
+        self.on_play_skipped = lambda item, elapsed_ms: None
+        self.skip_guard = BS.Guard()
+        self._skip_advancing = False
+        self._skip_ignored_at = None
 
     # ------------------------------------------------------------------ state
     @property
@@ -363,6 +371,9 @@ class PlaylistController:
     def next(self):
         if self.held:
             return
+        # #649: any end but a bundle's own skip, after a real run, closes the skip guard's pass.
+        if not self._skip_advancing:
+            self.skip_guard.ended(_now_ms() - self.item_started_at)
         if self.pending_items is not None:
             p, self.pending_items = self.pending_items, None
             self._pending_deadline.stop()
@@ -400,6 +411,34 @@ class PlaylistController:
             self._play_current()
         else:
             self._on_content_not_ready()
+
+    def on_bundle_skip(self, raw_reason):
+        """#649: the bundle on screen asked to be skipped. Ignored on a shared clock (a follower, a wall,
+        a synced group), with nothing else playable, or for a repeat in the same pass; otherwise its play
+        is retracted and the playlist moves on as if its duration had ended."""
+        item = self.current_item
+        if item is None or not item.is_bundle:
+            return
+        reason = BS.sanitize_reason(raw_reason)
+        can = not self.held and any(i != self.current_index and (self._playable_now(i) or self._playable_stale(i))
+                                    for i in range(len(self.items)))
+        verdict = self.skip_guard.decide("%d|%s" % (self.current_index, item.key), can,
+                                         self.wall_follower or bool(self.sync_driven()))
+        if verdict != "skip":
+            if self._skip_ignored_at != self.item_started_at:
+                self._skip_ignored_at = self.item_started_at
+                self.on_bundle_log('skip ignored for "%s": %s' % (item.filename, BS.ignored_text(verdict)))
+            return
+        self.on_bundle_log('skipped "%s"%s' % (item.filename, (" \u2014 " + reason) if reason else ""))
+        if not self.wall_follower and self.logged_item is item:
+            if item.log_play:
+                self.on_play_skipped(item, max(0, _now_ms() - self.item_started_at))
+            self.logged_item = None          # so no completed play_end follows for it
+        self._skip_advancing = True
+        try:
+            self.next()
+        finally:
+            self._skip_advancing = False
 
     def on_video_complete(self):
         if self.wall_follower:
