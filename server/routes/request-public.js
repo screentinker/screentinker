@@ -195,7 +195,8 @@ router.post('/form/:code/submit', async (req, res) => {
   const t = ticketFrom(req, res, form);
   if (!t) return;
   try {
-    const origin = `${req.protocol}://${req.get('host')}`;
+    // Emailed links (the reviewers' and the requester's status link): never the raw Host header.
+    const origin = require('../lib/public-origin').publicOrigin(req);
     res.status(201).json(await cr.submitRequest(form, t, req.body || {}, { ip: ipOf(req), origin }));
   } catch (e) { send(res, e); }
 });

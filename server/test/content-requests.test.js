@@ -407,6 +407,38 @@ test('email-domain forms: exact domain, codes are bounded, and bypass attempts f
   assert.equal(db.prepare('SELECT verified_via FROM content_requests WHERE ref = ?').get(sub.json.ref).verified_via, 'email');
 });
 
+test('request emails never build their links from a forged Host header', async () => {
+  // No APP_URL (deleted at the top), not SELF_HOSTED: the Host header must not steer a mailed link.
+  mailOn();
+  const f = await makeForm('ed', { access_mode: 'email', allowed_domains: 'campus.edu' });
+  db.prepare('DELETE FROM request_email_challenges').run();
+  assert.equal((await pub('POST', `/form/${f.code}/verify`, { name: 'Hal', email: 'hal@campus.edu' })).status, 200);
+  const code = /(\d{6})/.exec(mails[mails.length - 1].text)[1];
+  const ok = await pub('POST', `/form/${f.code}/verify/confirm`, { email: 'hal@campus.edu', code });
+  assert.equal(ok.status, 201, JSON.stringify(ok.json));
+  const ticket = ok.json.ticket;
+  const up = await upload(f.code, ticket, await png(1920, 1080));
+  assert.ok(!up.refused);
+  mails.length = 0;
+  const body = JSON.stringify(goodBody(f, { upload_id: up.id, title: 'Host test' }));
+  // fetch will not send a Host of our choosing; a raw request will.
+  const status = await new Promise((resolve, reject) => {
+    const rq = require('http').request({
+      host: '127.0.0.1', port: server.address().port, method: 'POST', path: `/api/public/requests/form/${f.code}/submit`,
+      headers: { Host: 'evil.example', 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'X-Request-Ticket': ticket },
+    }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+    rq.on('error', reject);
+    rq.end(body);
+  });
+  assert.equal(status, 201);
+  const receipt = mails.find((m) => m.to === 'hal@campus.edu' && /received/.test(m.subject));
+  const review = mails.find((m) => m.to === 'ed@req.local' && /New content request/.test(m.subject));
+  assert.ok(receipt && review, 'both the receipt and the reviewer notice were sent');
+  assert.match(receipt.text, /\/r\/status#/);
+  assert.match(review.text, /\/app#\/requests/);
+  for (const m of mails) assert.ok(!/evil\.example/.test(`${m.text}${m.html || ''}`), `forged host in "${m.subject}"`);
+});
+
 // ─── SSO forms ───────────────────────────────────────────────────────────────────────────────
 
 test('SSO forms: only the form\'s own organization\'s provider, a confined and verified address', async () => {

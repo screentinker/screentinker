@@ -799,7 +799,7 @@ async function submitRequest(form, ticket, body, { ip, origin } = {}) {
     db.prepare('UPDATE content_requests SET submission_id = ? WHERE id = ?').run(sub.id, id);
     audit('request:submitted', { workspaceId: form.workspace_id, ip, details: { request_id: id, ref, form_id: form.id, content_id: content.id, submission_id: sub.id, verified_via: ticket.verified_via } });
 
-    const statusUrl = `${originOf(origin)}/r/status#${statusToken}`;
+    const statusUrl = `${linkOrigin(origin)}/r/status#${statusToken}`;
     notifyReviewers(form, { ref, title: v.title, label, origin });
     // An address nobody verified gets no "we received it" mail: otherwise this form could be used to
     // send mail to anyone. Decisions are mailed (a human pressed a button), received-receipts are not.
@@ -814,9 +814,13 @@ async function submitRequest(form, ticket, body, { ip, origin } = {}) {
   }
 }
 
-function originOf(origin) {
-  const configured = String(process.env.APP_URL || '').trim().replace(/\/+$/, '');
-  return configured || String(origin || '').replace(/\/+$/, '');
+/*
+ * The origin of a link in a request email. The route hands over lib/public-origin's answer for the
+ * request (never the raw Host header: anyone can send a forged one); without it this falls back to
+ * the same module's request-free answer, never to a relative link.
+ */
+function linkOrigin(origin) {
+  return String(origin || require('./public-origin').publicOrigin(null)).replace(/\/+$/, '');
 }
 
 function mail(to, subject, text) {
@@ -832,7 +836,7 @@ function notifyReviewers(form, { ref, title, label, origin }) {
     let to;
     if (policy.approvalRequired(db, form.workspace_id)) to = approvals.reviewers(db, form.workspace_id).filter((r) => r.eligible).map((r) => r.email);
     else to = db.prepare("SELECT u.email FROM workspace_members m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ? AND m.role IN ('workspace_admin','workspace_editor')").all(form.workspace_id).map((r) => r.email);
-    const link = `${originOf(origin)}/app#/requests`;
+    const link = `${linkOrigin(origin)}/app#/requests`;
     for (const addr of [...new Set(to.filter(Boolean))].slice(0, 20)) {
       mail(addr, `New content request ${ref}: ${title}`, `${label} sent a request through "${form.title}".\n\nReview it: ${link}\n`);
     }
@@ -1096,5 +1100,5 @@ module.exports = {
   createUpload, getUpload, appendChunk, cancelUpload, checkRules, probeMedia,
   submitRequest, getRequest, requestForSubmission, listRequests, requestDetail,
   approveRequest, publishRequest, rejectRequest, cancelRequest,
-  byStatusToken, publicStatus, originOf,
+  byStatusToken, publicStatus,
 };
