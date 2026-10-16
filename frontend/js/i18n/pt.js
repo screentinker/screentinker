@@ -4325,4 +4325,7 @@ export default {
   'device.toast.added_publish_to_update': "Adicionado à playlist. O ecrã mostra-o quando publicar.",
   'device.toast.reload_sent': "Recarregamento enviado. O ecrã reinicia o leitor dentro de momentos.",
   'templates.added_to_playlist_draft': "Adicionado a {name}. Os ecrãs mostram quando publicar a playlist.",
+  'content.label_tls_self_signed': "A câmara usa um certificado autoassinado",
+  'content.tls_self_signed_hint': "Para câmaras rtsps:// cujo certificado não vem de uma autoridade de confiança (o do UniFi Protect é autoassinado). O ecrã continua a cifrar o stream, mas ignora a verificação do certificado só para esta câmara. Deixe desligado se a câmara tiver um certificado válido.",
+  'content.stream_password_hidden_hint': "A palavra-passe da câmara aparece como asteriscos e só é enviada aos ecrãs que reproduzem este stream. Deixe os asteriscos para a manter, ou escreva uma nova.",
 };

@@ -223,7 +223,7 @@ function attachSlideAudio(it) {
 // the playlist query below and snapshotItemForRef (a slot's fallback item), so a fallback is
 // denormalized exactly like any other item and the two cannot drift.
 const SNAPSHOT_MEDIA_COLS = `COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.file_size,
-           c.duration_sec as content_duration, c.remote_url, c.unstable_connection,
+           c.duration_sec as content_duration, c.remote_url, c.unstable_connection, c.tls_self_signed,
            c.captions_enabled, c.captions_lang, c.subtitle_url, c.subtitle_lang,
            c.tags AS content_tags, c.meta AS content_meta,
            w.name as widget_name, w.widget_type, w.config as widget_config, w.updated_at as widget_rev`;

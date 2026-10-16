@@ -320,6 +320,31 @@ class PlaybackFault:
         return Recovery.REPLAY_CURRENT
 
 
+class FaultBackoff:
+    """How long to wait before retrying an item that failed when nothing else can play (a one-camera
+    playlist whose camera is down): 2, 4, 8, 15, then every 30 s, as Android's FaultBackoff and its
+    WebViewRetryPolicy. Without it next() landed on the same item at once and reconnected in a tight
+    loop. A fault more than `healthy_ms` after the last wait is a new outage and starts again at 2 s.
+    """
+
+    WAITS_MS = (2_000, 4_000, 8_000, 15_000, 30_000)
+
+    def __init__(self, healthy_ms: int = 60_000):
+        self.healthy_ms = healthy_ms
+        self._attempt = 0
+        self._last_at_ms: Optional[int] = None
+        self._last_wait_ms = 0
+
+    def next(self, now_ms: int) -> int:
+        at = self._last_at_ms
+        if at is None or now_ms - at > self._last_wait_ms + self.healthy_ms:
+            self._attempt = 0
+        self._attempt += 1
+        self._last_at_ms = now_ms
+        self._last_wait_ms = self.WAITS_MS[min(self._attempt, len(self.WAITS_MS)) - 1]
+        return self._last_wait_ms
+
+
 class Claim(str, Enum):
     COLD = "cold"  # nothing usable parked for this file: cold prepare on the active player
     WARM = "warm"  # a prepared player is parked with this file: promote it as-is

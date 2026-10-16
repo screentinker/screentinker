@@ -4283,4 +4283,7 @@ export default {
   'device.toast.added_publish_to_update': "Aggiunto alla playlist. Lo schermo lo mostra quando pubblichi.",
   'device.toast.reload_sent': "Ricarica inviata. Lo schermo riavvierà il player tra un momento.",
   'templates.added_to_playlist_draft': "Aggiunto a {name}. Gli schermi lo mostrano quando pubblichi la playlist.",
+  'content.label_tls_self_signed': "La telecamera usa un certificato autofirmato",
+  'content.tls_self_signed_hint': "Per le telecamere rtsps:// il cui certificato non proviene da un'autorità attendibile (quello di UniFi Protect è autofirmato). Lo schermo cifra comunque lo stream, ma salta il controllo del certificato solo per questa telecamera. Lascialo disattivato se la telecamera ha un certificato valido.",
+  'content.stream_password_hidden_hint': "La password della telecamera è mostrata come asterischi e viene inviata solo agli schermi che riproducono questo stream. Lascia gli asterischi per mantenerla o digitane una nuova.",
 };

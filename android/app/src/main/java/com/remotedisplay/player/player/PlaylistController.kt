@@ -51,6 +51,8 @@ data class PlaylistItem(
     // 3.0 TV-safe video: the operator marked this file "already rotated for portrait screens", so a
     // portrait screen plays it as-is (MainActivity turns the video view back). Sent only when set.
     val videoPrerotated: Boolean = false,
+    // An rtsps:// camera whose certificate is self-signed: skip the certificate check (RtspSources).
+    val tlsSelfSigned: Boolean = false,
     /* Slide voiceover + deck music bed. Metadata on the ITEM, not inside the slide document — a
      * player that only renders the widget iframe makes no sound, which is why this exists. */
     val slideAudio: SlideAudio? = null,
@@ -441,6 +443,7 @@ class PlaylistController(
                     sortOrder = obj.optInt("sort_order", 0),
                     enabled = obj.optInt("enabled", 1) == 1,
                     remoteUrl = if (obj.isNull("remote_url")) null else obj.optString("remote_url", "").ifEmpty { null },
+                    tlsSelfSigned = obj.optInt("tls_self_signed", 0) == 1,
                     muted = obj.optInt("muted", 0) == 1,
                     widgetId = if (obj.isNull("widget_id")) null else obj.optString("widget_id", "").ifEmpty { null },
                     widgetRev = obj.optLong("widget_rev", 0L),
@@ -499,7 +502,10 @@ class PlaylistController(
                 b.days.sorted().joinToString(",") + "@" + b.start + "-" + b.end + ":" + (b.startDate ?: "") + "~" + (b.endDate ?: "")
             } + "|" + (it.playFrom ?: "") + "~" + (it.playUntil ?: "") + "|" + (if (it.enabled) "1" else "0") + "|" + (it.fitMode ?: "") + "|" + (it.transition?.sig() ?: "") +
             "|" + (it.playWhen?.let { c -> c.type + c.path + c.op + (c.value ?: "") } ?: "") +
-            "|" + it.tags.joinToString(",") + "|" + (it.meta?.toString() ?: "")
+            "|" + it.tags.joinToString(",") + "|" + (it.meta?.toString() ?: "") +
+            // Whether an rtsps camera's certificate is checked changes how the stream connects, so a
+            // flip must restart it; appended only when set, so no existing signature changes.
+            (if (it.tlsSelfSigned) "|tls-self-signed" else "")
         // Compared BEFORE items is replaced: an alert raised or cleared skips the deferral below.
         val interruptChanged = Interrupt.changed(Interrupt.keys(items), Interrupt.keys(newItems))
         val oldContentIds = items.map(::sig)
@@ -531,6 +537,8 @@ class PlaylistController(
         // changes without changing which item this is — see the re-render below.
         val currentlyPlayingId = currentItem?.itemKey
         val currentlyPlayingRev = currentItem?.widgetRev ?: 0L
+        // How the playing item connects, if it is a live stream (see the in-place check below).
+        val currentlyPlayingConnection = currentItem?.let { liveConnectionOf(it) }
 
         // #157: the item on screen was REMOVED (its only change is removal — e.g. it just expired).
         // In solo playback, don't interrupt it: keep it up, stash the new list, and rotate out on the
@@ -602,6 +610,17 @@ class PlaylistController(
                     if (items[newIndex].widgetRev != currentlyPlayingRev) {
                         Log.i("PlaylistController",
                             "Same item at $newIndex but widgetRev ${currentlyPlayingRev} -> ${items[newIndex].widgetRev} — re-rendering in place")
+                        playCurrentItem()
+                        return
+                    }
+                    /*
+                     * The same for a live stream whose URL or certificate setting was edited: the
+                     * item keeps its key, and a live item never reaches a natural end, so without
+                     * this a one-camera screen kept the old stream (or the old certificate rule)
+                     * until a reboot.
+                     */
+                    if (currentlyPlayingConnection != null && liveConnectionOf(items[newIndex]) != currentlyPlayingConnection) {
+                        Log.i("PlaylistController", "Same live item at $newIndex but its stream changed — reconnecting in place")
                         playCurrentItem()
                         return
                     }
@@ -697,6 +716,7 @@ class PlaylistController(
         isRunning = false
         cancelAdvance()
         cancelRetry()
+        cancelFaultRetry()
         cancelPendingSwapDeadline()   // else a stopped controller can still fire next()
         cancelCover(); offlineCoverShowing = false; failingSince = 0L
         hasContentOnScreen = false
@@ -759,6 +779,15 @@ class PlaylistController(
      * players a wedge left behind), which is the part of "restart the app" that actually fixed it.
      */
     private val fault = PlaybackFault()
+    /** For a live item: what decides how it connects. Null for anything else. */
+    private fun liveConnectionOf(it: PlaylistItem): String? =
+        if (isLiveStream(it)) (it.remoteUrl ?: "") + "|" + it.mimeType + "|" + (if (it.tlsSelfSigned) "self-signed" else "verify") else null
+    private val faultBackoff = FaultBackoff()
+    private var faultRetry: Runnable? = null
+    private fun cancelFaultRetry() { faultRetry?.let { handler.removeCallbacks(it) }; faultRetry = null }
+    private fun onlyPlayableIsCurrent(): Boolean =
+        currentIndex >= 0 && items.indices.count { playableNow(it) || playableStale(it) } == 1 &&
+            (playableNow(currentIndex) || playableStale(currentIndex))
 
     /*
      * Set when the NEXT advance is caused by a fault rather than an item reaching its end, so the
@@ -769,7 +798,20 @@ class PlaylistController(
 
     fun onVideoFault() {
         when (fault.recovery(wallFollower, currentIndex, System.currentTimeMillis())) {
-            PlaybackFault.Recovery.ADVANCE -> { advancingAfterFault = true; next() }
+            PlaybackFault.Recovery.ADVANCE -> {
+                advancingAfterFault = true
+                // Skipping a broken item only helps when there is another to skip to. When the
+                // failing item is the only one that can play (a one-camera playlist whose camera is
+                // down, or refuses the certificate), next() lands on it again at once: that was ~60
+                // reconnects a second against the camera. Back off instead (2, 4, 8, 15, then every
+                // 30 s), as web pages do (WebViewRetryPolicy).
+                if (onlyPlayableIsCurrent()) {
+                    val wait = faultBackoff.next(System.currentTimeMillis())
+                    Log.w("PlaylistController", "the only playable item failed — retrying ${currentItem?.filename} in ${wait}ms")
+                    cancelFaultRetry()
+                    faultRetry = Runnable { faultRetry = null; if (isRunning) next() }.also { handler.postDelayed(it, wait) }
+                } else next()
+            }
             PlaybackFault.Recovery.REPLAY_CURRENT -> {
                 val item = currentItem ?: return
                 Log.w("PlaylistController", "video fault in follower/group mode — replaying ${item.filename} (index $currentIndex)")
@@ -827,6 +869,7 @@ class PlaylistController(
     private fun playCurrentItem() {
         cancelAdvance()
         cancelRetry()
+        cancelFaultRetry()
         offlineCoverShowing = false
         val item = currentItem ?: return
         if (!OfflineGate.needsNetwork(item)) { failingSince = 0L; cancelCover() }

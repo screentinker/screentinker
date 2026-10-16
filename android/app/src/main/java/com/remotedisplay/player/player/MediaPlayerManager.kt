@@ -683,8 +683,9 @@ class MediaPlayerManager(
         }
     }
 
-    fun playVideoFromUrl(url: String, muted: Boolean = false) {
-        Log.i("MediaPlayerManager", "Streaming video from URL: $url (muted=$muted)")
+    fun playVideoFromUrl(url: String, muted: Boolean = false, tlsSelfSigned: Boolean = false) {
+        // Redacted: a camera URL can carry its password (rtsp://user:pass@cam).
+        Log.i("MediaPlayerManager", "Streaming video from URL: ${RtspUrl.redact(url)} (muted=$muted)")
         mountGeneration++
         stopYoutubeIfPlaying()
         stopLiveInputIfPlaying()
@@ -698,16 +699,10 @@ class MediaPlayerManager(
         exoPlayer?.apply {
             volume = if (muted || wallMute || triggerMute) 0f else 1f
             val item = MediaItem.fromUri(Uri.parse(url))
-            if (url.startsWith("rtsp://", ignoreCase = true)) {
-                // RTSP camera/stream: force TCP (interleaved) so it works through NAT/firewalls and on
-                // cameras that refuse UDP. ExoPlayer plays it via the media3-exoplayer-hls sibling
-                // media3-exoplayer-rtsp module; a dead camera lands in a player error -> onVideoComplete
-                // skips it, same as HLS.
-                setMediaSource(
-                    androidx.media3.exoplayer.rtsp.RtspMediaSource.Factory()
-                        .setForceUseRtpTcp(true)
-                        .createMediaSource(item)
-                )
+            if (url.startsWith("rtsp://", ignoreCase = true) || url.startsWith("rtsps://", ignoreCase = true)) {
+                // RTSP/RTSPS camera: TCP-interleaved, TLS for rtsps (RtspSources). A dead camera lands
+                // in a player error -> onVideoComplete skips it, same as HLS.
+                setMediaSource(RtspSources.create(url, tlsSelfSigned))
             } else {
                 setMediaItem(item)   // ExoPlayer infers HLS/DASH/progressive from the URL/content
             }

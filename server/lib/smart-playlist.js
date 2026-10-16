@@ -248,6 +248,7 @@ function snapshotItems(db, playlist) {
       content_duration: c.duration_sec,
       remote_url: c.remote_url,
       unstable_connection: c.unstable_connection,
+      tls_self_signed: c.tls_self_signed,
       captions_enabled: c.captions_enabled,
       captions_lang: c.captions_lang,
       subtitle_url: c.subtitle_url,

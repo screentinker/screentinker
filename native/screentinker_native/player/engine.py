@@ -17,6 +17,7 @@ import logging
 import os
 import pathlib
 import re
+import threading
 import time
 import urllib.parse
 
@@ -25,6 +26,7 @@ from PySide6.QtCore import QTimer
 from ..logic import bundle_skip as BS
 from ..logic import kiosk as kiosk_logic
 from ..logic import playlist_logic as PL
+from ..logic import rtsp_tls
 from ..logic import schedule_eval
 from ..logic import wall_zones as wz
 from . import transitions
@@ -309,6 +311,8 @@ class PlaybackEngine:
         self.main_item = None
         self.token_seq = 0
         self.tokens = {}                   # token -> (surface, Item)
+        self.surface_token = {}            # surface -> the token last rendered there (rtsps check)
+        self.tls_ok = {}                   # rtsps URL -> when its certificate last passed
         self.acked = set()
         self.orientation = None
         self.wall = None                   # {'id','leader','group':bool}
@@ -667,8 +671,42 @@ class PlaybackEngine:
         tr = self.shaders.resolve(it.transition) if transition else None
         if tr:
             d["transition"] = tr
+        self.surface_token[surface] = tok
+        if it.is_live and rtsp_tls.needs_check(it.remote_url, it.tls_self_signed) and not self._tls_fresh(it.remote_url):
+            self._check_camera_then_show(surface, tok, d, it.remote_url)
+            return tok
         self.stage.showItem.emit(surface, d)
         return tok
+
+    # A camera whose certificate passed is not re-checked for this long (an item re-shown every
+    # dwell, a zone advancing back to it). A failure is never cached: the retry checks again.
+    TLS_OK_FOR_S = 600
+
+    def _tls_fresh(self, url):
+        at = self.tls_ok.get(url)
+        return at is not None and time.monotonic() - at < self.TLS_OK_FOR_S
+
+    def _check_camera_then_show(self, surface, tok, d, url):
+        """rtsps without tls_self_signed: check the camera's certificate (logic/rtsp_tls) on a worker
+        thread, and give Qt the URL only if it passes. FFmpeg would otherwise accept any certificate
+        and send the camera's credentials to whoever answered."""
+        self.stage.clearSurface.emit(surface)
+
+        def work():
+            ok, why = rtsp_tls.verify(url)
+            self.app.on_ui(lambda: done(ok, why))
+
+        def done(ok, why):
+            if self.surface_token.get(surface) != tok:
+                return                                    # something else is on that surface now
+            if ok:
+                self.tls_ok[url] = time.monotonic()
+                self.stage.showItem.emit(surface, d)
+            else:
+                log.warning("camera %s refused: %s", rtsp_tls.redact(url), why)
+                self.on_slot_event(surface, tok, "failed", why)
+
+        threading.Thread(target=work, name="rtsps-check", daemon=True).start()
 
     def _on_item_changed(self, it):
         self.app.hide_status()
@@ -755,7 +793,7 @@ class PlaybackEngine:
         elif event == "yt_length":
             self.controller.on_youtube_length(detail)
         elif event == "failed":
-            self.app.log_remote("warn", "Player", "playback failed: %s (%s)" % (it.filename if it else "?", detail))
+            self.app.log_remote("warn", "Player", "playback failed: %s (%s)" % (it.filename if it else "?", rtsp_tls.redact(detail)))
             if it and it.mime_type.startswith("video/"):
                 self.controller.close_play_log(False)
                 self.controller.on_video_fault()
@@ -1048,9 +1086,13 @@ class PlaybackEngine:
             d.update(extra)
         tok = self._new_token(zs.sid, it)
         d["token"] = tok
+        zs.token = tok
+        self.surface_token[zs.sid] = tok
+        if it.is_live and rtsp_tls.needs_check(it.remote_url, it.tls_self_signed) and not self._tls_fresh(it.remote_url):
+            self._check_camera_then_show(zs.sid, tok, d, it.remote_url)   # same rule as render()
+            return tok
         # Surface.show loads into the back slot and reveals once it has a frame: a buffered swap.
         self.stage.showItem.emit(zs.sid, d)
-        zs.token = tok
         return tok
 
     def _wz_mount(self, zs, it, t, prev, key):

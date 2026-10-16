@@ -675,7 +675,7 @@ export default {
     'content.youtube_add_btn': 'YouTube-video toevoegen',
     // IPTV / live HLS-stream
     'content.hls': 'Livestream',
-    'content.hls_desc': 'HLS (.m3u8), of een rtsp://-camera op Android-spelers. Het scherm opent de URL zelf, dus het mag een LAN-adres zijn. ScreenTinker haalt de video nooit zelf op.',
+    'content.hls_desc': 'HLS (.m3u8), of een rtsp://- of rtsps://-camera op Android- en Raspberry Pi-, Windows- of Mac-spelers. Het scherm opent de URL zelf, dus het mag een LAN-adres zijn. ScreenTinker haalt de video nooit zelf op.',
     'content.hls_url_placeholder': 'https://...m3u8  of  rtsp://user:pass@10.0.0.5/stream',
     'content.hls_name_placeholder': 'Kanaalnaam (optioneel)',
     'content.hls_add_btn': 'Livestream toevoegen',
@@ -5999,4 +5999,7 @@ export default {
   'device.toast.added_publish_to_update': "Aan de playlist toegevoegd. Het scherm toont het zodra je publiceert.",
   'device.toast.reload_sent': "Herladen verzonden. Het scherm start zijn player zo opnieuw.",
   'templates.added_to_playlist_draft': "Toegevoegd aan {name}. Schermen tonen het zodra je de playlist publiceert.",
+  'content.label_tls_self_signed': "Camera gebruikt een zelfondertekend certificaat",
+  'content.tls_self_signed_hint': "Voor rtsps://-camera's waarvan het certificaat niet van een vertrouwde instantie komt (dat van UniFi Protect is zelfondertekend). Het scherm versleutelt de stream nog steeds, maar slaat de certificaatcontrole alleen voor deze camera over. Laat het uit als de camera een echt certificaat heeft.",
+  'content.stream_password_hidden_hint': "Het camerawachtwoord wordt als sterretjes getoond en alleen naar de schermen gestuurd die deze stream afspelen. Laat de sterretjes staan om het te bewaren, of typ een nieuw wachtwoord.",
 };

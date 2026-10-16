@@ -4409,4 +4409,7 @@ export default {
   'device.toast.added_publish_to_update': "Zur Playlist hinzugefügt. Der Bildschirm zeigt es, sobald Sie veröffentlichen.",
   'device.toast.reload_sent': "Neu laden gesendet. Der Bildschirm startet seinen Player gleich neu.",
   'templates.added_to_playlist_draft': "Zu {name} hinzugefügt. Bildschirme zeigen es, sobald Sie die Playlist veröffentlichen.",
+  'content.label_tls_self_signed': "Kamera verwendet ein selbstsigniertes Zertifikat",
+  'content.tls_self_signed_hint': "Für rtsps://-Kameras, deren Zertifikat nicht von einer vertrauenswürdigen Stelle stammt (UniFi Protect signiert selbst). Der Bildschirm verschlüsselt den Stream weiterhin, überspringt aber die Zertifikatsprüfung nur für diese Kamera. Ausgeschaltet lassen, wenn die Kamera ein richtiges Zertifikat hat.",
+  'content.stream_password_hidden_hint': "Das Kamera-Passwort wird als Sternchen angezeigt und nur an die Bildschirme gesendet, die diesen Stream abspielen. Sternchen stehen lassen, um es zu behalten, oder ein neues eingeben.",
 };

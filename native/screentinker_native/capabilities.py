@@ -14,7 +14,7 @@ from .platform import ops
 
 CAPABILITIES_ALWAYS = [
     "playback.video", "playback.image", "playback.widget", "playback.youtube", "playback.hls",
-    "playback.rtsp", "playback.zones", "playback.transitions", "playback.pip", "playback.bundle",
+    "playback.rtsp", "playback.rtsps", "playback.zones", "playback.transitions", "playback.pip", "playback.bundle",
     "playback.slide_audio", "playback.web_interactive",
     # Hold items (blank / freeze for their duration) and a video wall's own layout, zones on the
     # shared clock (player/engine.py "wall zones", logic/wall_zones.py).

@@ -5036,4 +5036,7 @@ export default {
   'device.toast.added_publish_to_update': "Ajouté à la playlist. L'écran l'affichera dès que vous publierez.",
   'device.toast.reload_sent': "Rechargement envoyé. L'écran redémarre son lecteur dans un instant.",
   'templates.added_to_playlist_draft': "Ajouté à {name}. Les écrans l'afficheront dès que vous publierez la playlist.",
+  'content.label_tls_self_signed': "La caméra utilise un certificat auto-signé",
+  'content.tls_self_signed_hint': "Pour les caméras rtsps:// dont le certificat ne vient pas d'une autorité de confiance (celui d'UniFi Protect est auto-signé). L'écran chiffre toujours le flux mais ignore la vérification du certificat pour cette caméra uniquement. Laissez décoché si la caméra a un vrai certificat.",
+  'content.stream_password_hidden_hint': "Le mot de passe de la caméra s'affiche en étoiles et n'est envoyé qu'aux écrans qui lisent ce flux. Laissez les étoiles pour le conserver, ou saisissez-en un nouveau.",
 };

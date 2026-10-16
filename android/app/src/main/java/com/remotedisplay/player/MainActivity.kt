@@ -1653,10 +1653,10 @@ class MainActivity : AppCompatActivity() {
 
         // Remote URL content - stream directly, no download
         if (item.isRemote) {
-            Log.i("MainActivity", "Playing remote content: ${item.remoteUrl}")
+            Log.i("MainActivity", "Playing remote content: ${com.remotedisplay.player.player.RtspUrl.redact(item.remoteUrl)}")
             if (item.mimeType.startsWith("video/")) {
                 applyVideoTurn(item)
-                mediaPlayer.playVideoFromUrl(item.remoteUrl!!, item.muted) // remote video: plain (no wipe)
+                mediaPlayer.playVideoFromUrl(item.remoteUrl!!, item.muted, item.tlsSelfSigned) // remote video: plain (no wipe)
             } else if (item.mimeType.startsWith("image/")) {
                 mediaPlayer.showImageFromUrl(item.remoteUrl!!, item.transition)
             }

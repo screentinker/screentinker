@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { resolveWithin } = require('../lib/safe-path');
+const { isRtspsUrl } = require('../lib/remote-url');
 const { db, pruneTelemetry, pruneScreenshots } = require('../db/database');
 const { effectiveDeviceTz } = require('../lib/device-timezone');
 const config = require('../config');
@@ -758,6 +759,9 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
    */
   const deviceSupportsHls = capsLib.supports(device, 'playback.hls');
   const deviceSupportsRtsp = capsLib.supports(device, 'playback.rtsp');
+  // rtsps:// (RTSP over TLS) is still video/rtsp, but a player that only declares playback.rtsp
+  // (3.0.1 and earlier) would open it as plain RTSP and fail, so it needs playback.rtsps too.
+  const deviceSupportsRtsps = deviceSupportsRtsp && capsLib.supports(device, 'playback.rtsps');
   // HDMI IN (video/hdmi-in): only a player that found an input on THIS device declares it.
   const deviceSupportsHdmiIn = capsLib.supports(device, 'playback.hdmi_in');
   // A hold (lib/hold-item.js) is not live, but it rides the same strip for the same reason: a player
@@ -765,12 +769,12 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
   const deviceSupportsHold = capsLib.supports(device, 'playback.hold');
   // `sink` (preview trace only) collects what was left out; the base playlist passes it, triggers don't.
   const dropLiveIfUnsupported = (items, sink = null) => {
-    if (!Array.isArray(items) || (deviceSupportsHls && deviceSupportsRtsp && deviceSupportsHdmiIn && deviceSupportsHold)) return items;
+    if (!Array.isArray(items) || (deviceSupportsHls && deviceSupportsRtsps && deviceSupportsHdmiIn && deviceSupportsHold)) return items;
     return items.filter((a) => {
       if (!a) return true;
       let keep = true;
       if (a.mime_type === 'video/hls') keep = deviceSupportsHls;
-      else if (a.mime_type === 'video/rtsp') keep = deviceSupportsRtsp;
+      else if (a.mime_type === 'video/rtsp') keep = isRtspsUrl(a.remote_url) ? deviceSupportsRtsps : deviceSupportsRtsp;
       else if (a.mime_type === 'video/hdmi-in') keep = deviceSupportsHdmiIn;
       else if (a.mime_type === 'application/x-st-hold') keep = deviceSupportsHold;
       if (!keep && sink) sink.push(a);

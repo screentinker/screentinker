@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.0.2
+
+### Added
+
+- **RTSPS camera streams** (`rtsps://`, RTSP over TLS, e.g. UniFi Protect's default share link) on the
+  Android and native Raspberry Pi / Windows / Mac players. The camera's certificate is checked (trusted
+  authorities plus the host name) before the player sends it the login. A camera with a self-signed
+  certificate can be marked **Camera uses a self-signed certificate**: still encrypted, but not
+  verified, for that camera only. The native player checks the certificate itself, because FFmpeg
+  doesn't. New capability `playback.rtsps`, so a 3.0.1 player, which would open an rtsps URL as plain
+  RTSP, is never sent one. Additive column `content.tls_self_signed`.
+
+### Fixed
+
+- **A camera that was down or refused the connection reconnected about 60 times a second** when it was
+  the only item that could play (Android and the native player). It now retries after 2, 4, 8 and
+  15 s, then every 30 s.
+- **Editing a live stream's URL didn't reach a screen that was showing it**: the stream never ends, so
+  the new URL waited for a reboot. The screen now reconnects at once (Android and the native player).
+- A stream added without a name was named from the end of its URL, which for `rtsp://user:pass@host`
+  was the user name and password. It is now named from the path or the host.
+
+### Security
+
+- **Camera passwords are no longer shown back.** A camera URL's password reaches only the screens that
+  play it; every other JSON response (content library, playlist editor, device pages, API tokens, MCP,
+  the Manager app, `/view` links) shows `rtsp://user:********@…`. An edit that keeps the stars keeps
+  the saved password, but only for the same scheme, host and port, so an editor can't point the stream
+  at their own host to collect it. Data exports keep the full URL, as backups.
+- The Android and native players no longer write a camera's password to their logs.
+
 ## 3.0.1
 
 Security fixes, the fixes from the first days of 3.0 in the field, account deletion, Telegram alerts,

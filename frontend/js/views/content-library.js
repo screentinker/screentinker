@@ -1291,6 +1291,16 @@ function showEditModal(contentItem, onSave, { focus = null } = {}) {
           <input type="datetime-local" id="editExpiresAt" class="input" style="background:var(--bg-input)" value="${toLocalDatetimeInput(contentItem.expires_at)}">
           <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.expires_hint')}</p>
         </div>
+        ${contentItem.mime_type === 'video/rtsp' ? `
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="editTlsSelfSigned" ${contentItem.tls_self_signed ? 'checked' : ''} style="width:auto;margin:0">
+            <span>${t('content.label_tls_self_signed')}</span>
+          </label>
+          <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.tls_self_signed_hint')}</p>
+          <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.stream_password_hidden_hint')}</p>
+        </div>
+        ` : ''}
         ${isYoutube ? `
         <div class="form-group">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
@@ -1451,6 +1461,12 @@ function showEditModal(contentItem, onSave, { focus = null } = {}) {
       const newExpiry = expiryRaw ? Math.floor(new Date(expiryRaw).getTime() / 1000) : null;
       const curExpiry = contentItem.expires_at != null ? Number(contentItem.expires_at) : null;
       if (newExpiry !== curExpiry) updateData.expires_at = newExpiry;
+      // rtsps camera with a self-signed certificate: the player skips the certificate check.
+      const selfSignedEl = overlay.querySelector('#editTlsSelfSigned');
+      if (selfSignedEl) {
+        const v = selfSignedEl.checked ? 1 : 0;
+        if (v !== (contentItem.tls_self_signed ? 1 : 0)) updateData.tls_self_signed = v;
+      }
       // #217: YouTube-only "unstable connection" quality cap.
       const unstableEl = overlay.querySelector('#editUnstableConnection');
       if (unstableEl) {

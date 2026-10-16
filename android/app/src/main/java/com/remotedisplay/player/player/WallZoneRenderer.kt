@@ -468,8 +468,7 @@ class WallZoneRenderer(
         m.alignable = !live && !frozenAtEnd
         val mountedAt = syncedNow()
         if (mime == "video/rtsp") {
-            p.setMediaSource(androidx.media3.exoplayer.rtsp.RtspMediaSource.Factory().setForceUseRtpTcp(true)
-                .createMediaSource(MediaItem.fromUri(src)))
+            p.setMediaSource(RtspSources.create(src, a.optInt("tls_self_signed", 0) == 1))   // TLS for rtsps
         } else p.setMediaItem(MediaItem.fromUri(src))
         p.volume = if (audible) 1f else 0f
         p.repeatMode = Player.REPEAT_MODE_OFF

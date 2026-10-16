@@ -3947,4 +3947,7 @@ export default {
   'device.toast.added_publish_to_update': "已添加到播放列表。发布后屏幕才会显示。",
   'device.toast.reload_sent': "已发送重新加载。屏幕稍后会重启播放器。",
   'templates.added_to_playlist_draft': "已添加到 {name}。发布播放列表后屏幕才会显示。",
+  'content.label_tls_self_signed': "摄像头使用自签名证书",
+  'content.tls_self_signed_hint': "适用于证书并非来自受信任机构的 rtsps:// 摄像头（UniFi Protect 的证书是自签名的）。屏幕仍会加密视频流，但仅对此摄像头跳过证书检查。如果摄像头有正式证书，请保持关闭。",
+  'content.stream_password_hidden_hint': "摄像头密码以星号显示，只会发送给播放此视频流的屏幕。保留星号即沿用已保存的密码，或输入新密码。",
 };

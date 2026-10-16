@@ -410,13 +410,8 @@ class ZoneManager(
                 }
                 val exoPlayer = ExoPlayer.Builder(context).build().apply {
                     if (mimeType == "video/rtsp") {
-                        // RTSP camera in a zone: force TCP so it works through NAT/firewalls and on
-                        // cameras that refuse UDP (media3-exoplayer-rtsp).
-                        setMediaSource(
-                            androidx.media3.exoplayer.rtsp.RtspMediaSource.Factory()
-                                .setForceUseRtpTcp(true)
-                                .createMediaSource(MediaItem.fromUri(src))
-                        )
+                        // RTSP/RTSPS camera in a zone: TCP-interleaved, TLS for rtsps (RtspSources).
+                        setMediaSource(RtspSources.create(src, a.optInt("tls_self_signed", 0) == 1))
                     } else {
                         setMediaItem(MediaItem.fromUri(src))   // ExoPlayer infers HLS from the .m3u8 (media3-exoplayer-hls)
                     }

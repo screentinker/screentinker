@@ -14,16 +14,17 @@ Devices page works exactly as before.
 > **Not the same as live PLAYBACK (IPTV).** go2rtc here is the *dashboard watching a screen* —
 > the opposite direction from a screen *playing* a live channel. To play a live TV/IPTV channel
 > *on* a screen, add a **live stream** in the content library: a `video/hls` item whose URL is an
-> `.m3u8` the player opens on its own LAN, or a `video/rtsp` item pointed at an `rtsp://` camera.
+> `.m3u8` the player opens on its own LAN, or a `video/rtsp` item pointed at an `rtsp://` or `rtsps://` camera.
 > ScreenTinker never ingests or restreams either — the screen opens the URL itself.
 >
 > - **HLS (`video/hls`)** plays on every player (web/BrightSign/webOS, Tizen, Android, single-zone
 >   e-ink skips it). Cross-platform, and one on-site bridge fans out to many screens.
-> - **RTSP (`video/rtsp`)** plays only on the **native Android** player (ExoPlayer, forced over TCP);
->   it is gated on the `playback.rtsp` capability so no other player is sent it. Lowest latency and
->   no sidecar, but a camera caps its own RTSP sessions, so it does not fan out.
+> - **RTSP (`video/rtsp`, `rtsp://` or `rtsps://`)** plays on the **native Android** player (ExoPlayer,
+>   forced over TCP) and the native **Pi / Windows / Mac** player; it is gated on `playback.rtsp`
+>   (and `playback.rtsps` for TLS) so no other player is sent it. Lowest latency and no sidecar, but a
+>   camera caps its own RTSP sessions, so it does not fan out.
 >
-> For many screens off one camera, or for non-Android players, run an on-site **RTSP-to-HLS bridge**
+> For many screens off one camera, or for browser and TV players, run an on-site **RTSP-to-HLS bridge**
 > (for example a go2rtc instance of your own) and point a `video/hls` item at its HLS output.
 > ScreenTinker does not run that sidecar for you and never fetches the stream.
 >

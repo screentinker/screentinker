@@ -5036,4 +5036,7 @@ export default {
   'device.toast.added_publish_to_update': "プレイリストに追加しました。公開すると画面に表示されます。",
   'device.toast.reload_sent': "再読み込みを送信しました。まもなく画面のプレーヤーが再起動します。",
   'templates.added_to_playlist_draft': "{name} に追加しました。プレイリストを公開すると画面に表示されます。",
+  'content.label_tls_self_signed': "カメラが自己署名証明書を使用",
+  'content.tls_self_signed_hint': "信頼できる認証局の証明書を持たない rtsps:// カメラ用です（UniFi Protect は自己署名）。画面はストリームを引き続き暗号化しますが、このカメラに限り証明書の検証を省略します。カメラに正式な証明書がある場合はオフのままにしてください。",
+  'content.stream_password_hidden_hint': "カメラのパスワードは伏せ字で表示され、このストリームを再生する画面にだけ送られます。伏せ字のままにすると保存済みのパスワードを使い、新しく入力すると置き換えます。",
 };

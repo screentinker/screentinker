@@ -732,9 +732,9 @@ export const api = {
 
   // IPTV: add a live HLS stream (the player opens the .m3u8 on its LAN; the server never fetches it).
   addHoldContent: (mode, name, folderId) => request('/content/hold', { method: 'POST', body: JSON.stringify({ mode, name, ...(folderId ? { folder_id: folderId } : {}) }) }),
-  addHlsContent: (url, name, folderId) => request('/content/hls', {
+  addHlsContent: (url, name, folderId, opts = {}) => request('/content/hls', {
     method: 'POST',
-    body: JSON.stringify({ url, name, ...(folderId ? { folder_id: folderId } : {}) })
+    body: JSON.stringify({ url, name, ...(folderId ? { folder_id: folderId } : {}), ...(opts.tls_self_signed ? { tls_self_signed: true } : {}) })
   }),
 
   // Assignments

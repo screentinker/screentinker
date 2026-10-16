@@ -1393,7 +1393,7 @@ export default {
   'library.add.err_choose_type': 'The link does not say what it is. Choose a media type.',
   'library.add.err_http_url': 'Enter a link that starts with http:// or https://.',
   'library.add.err_name': 'Enter a name.',
-  'library.add.err_stream': 'Enter an HLS link (.m3u8) or an rtsp:// address.',
+  'library.add.err_stream': 'Enter an HLS link (.m3u8) or an rtsp:// or rtsps:// address.',
   'library.add.err_youtube': 'That is not a YouTube video link.',
   'library.add.failed': 'That did not work.',
   'library.add.hdmi_default_name': 'HDMI input',
@@ -1721,7 +1721,7 @@ export default {
   'content.cloud_folders_btn': 'SharePoint & OneDrive folders…',
   // IPTV / live HLS stream
   'content.hls': 'Live stream',
-  'content.hls_desc': 'HLS (.m3u8), or an rtsp:// camera on Android players. The screen opens the URL itself, so it can be a LAN address. ScreenTinker never pulls the video.',
+  'content.hls_desc': 'HLS (.m3u8), or an rtsp:// or rtsps:// camera on Android and Raspberry Pi, Windows or Mac players. The screen opens the URL itself, so it can be a LAN address. ScreenTinker never pulls the video.',
   'content.hls_url_placeholder': 'https://...m3u8  or  rtsp://user:pass@10.0.0.5/stream',
   'content.hls_name_placeholder': 'Channel name (optional)',
   'content.hls_add_btn': 'Add live stream',
@@ -8280,4 +8280,7 @@ export default {
   // playlist bulk Transition picker dialog
   'playlist.bulk.transition_title': "Add a transition",
   'playlist.bulk.transition_pick': "Choose the transition to play into each selected item.",
+  'content.label_tls_self_signed': "Camera uses a self-signed certificate",
+  'content.tls_self_signed_hint': "For rtsps:// cameras whose certificate isn't from a trusted authority (UniFi Protect's is self-signed). The screen still encrypts the stream but skips the certificate check for this camera only. Leave it off when the camera has a proper certificate.",
+  'content.stream_password_hidden_hint': "The camera password is shown as stars and is sent only to the screens that play this stream. Leave the stars to keep it, or type a new one.",
 };

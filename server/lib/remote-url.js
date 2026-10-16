@@ -98,21 +98,72 @@ function validatePlayerOpenedUrl(url) {
   return null;
 }
 
+// rtsp:// or rtsps:// (RTSP over TLS, e.g. UniFi Protect's default share link). Both are video/rtsp;
+// the scheme is what tells a player to open a TLS socket, and isRtspsUrl() what keeps an rtsps item
+// off a player that only declares playback.rtsp (deviceSocket).
 function looksLikeRtspUrl(url) {
-  return typeof url === 'string' && /^rtsp:\/\//i.test(url.trim());
+  return typeof url === 'string' && /^rtsps?:\/\//i.test(url.trim());
+}
+function isRtspsUrl(url) {
+  return typeof url === 'string' && /^rtsps:\/\//i.test(url.trim());
 }
 
-// Gate for an RTSP URL only the player opens (Android/ExoPlayer). rtsp:// only. Unlike HLS,
-// credentials in the URL are ALLOWED here: rtsp://user:pass@cam is the near-universal way IP
-// cameras are addressed, and the server never fetches it — the screen opens it on its own LAN.
+// Gate for an RTSP URL only the player opens. rtsp:// or rtsps://. Unlike HLS, credentials in the
+// URL are ALLOWED here: rtsp://user:pass@cam is the near-universal way IP cameras are addressed, and
+// the server never fetches it — the screen opens it on its own LAN. They are never shown back to
+// anyone but the screen itself (maskStreamCredentials, middleware/mask-stream-credentials.js).
 function validateRtspUrl(url) {
   let parsed;
   try { parsed = new URL(url); }
   catch { return { status: 400, error: 'Invalid URL format' }; }
-  if (parsed.protocol !== 'rtsp:') {
-    return { status: 400, error: 'A camera stream URL must use rtsp://' };
+  if (parsed.protocol !== 'rtsp:' && parsed.protocol !== 'rtsps:') {
+    return { status: 400, error: 'A camera stream URL must use rtsp:// or rtsps://' };
+  }
+  if (parsed.password === CREDENTIAL_MASK || decodeURIComponent(parsed.password || '') === CREDENTIAL_MASK) {
+    return { status: 400, error: 'Type the camera password: the stars only stand in for a saved one.' };
   }
   return null;
+}
+
+/*
+ * ⚠️ CAMERA PASSWORDS ARE WRITE-ONLY. An rtsp(s) URL may carry the camera's username and password,
+ * and the content library is readable by every workspace member, API token, MCP client, the Manager
+ * app and (through the item's payload) anyone holding a /view link. Only the screen that opens the
+ * stream needs the password, so every other response replaces it with CREDENTIAL_MASK; the username
+ * stays visible so people can tell which camera account an item uses.
+ *
+ * An edit that sends the masked URL back keeps the stored password (restoreMaskedPassword), but
+ * only for the same camera: changing the scheme, host or port with the mask in place is refused,
+ * or an editor could point the stream at a host of their own and receive the real password from
+ * the screen.
+ */
+const CREDENTIAL_MASK = '********';
+// userinfo of an rtsp/rtsps URL anywhere in a string (JSON text included, even when the JSON was
+// itself escaped into a string, as MCP tool results are): scheme://user:password@
+const RTSP_USERINFO_RE = /(rtsps?:\/\/[^\s"'\\/@:]*):([^\s"'\\/@]*)@/gi;
+
+function maskStreamCredentials(text) {
+  if (typeof text !== 'string' || !/rtsps?:\/\//i.test(text)) return text;
+  return text.replace(RTSP_USERINFO_RE, (m, head, pass) => (pass ? `${head}:${CREDENTIAL_MASK}@` : m));
+}
+
+/**
+ * An edit's new URL, with a masked password swapped back for the stored one. Returns { url } or
+ * { error: { status, error } }. A URL without the mask is returned as typed.
+ */
+function restoreMaskedPassword(newUrl, storedUrl) {
+  if (typeof newUrl !== 'string' || !newUrl.includes(CREDENTIAL_MASK)) return { url: newUrl };
+  let next, prev;
+  try { next = new URL(newUrl.trim()); } catch { return { url: newUrl }; }
+  if (decodeURIComponent(next.password || '') !== CREDENTIAL_MASK) return { url: newUrl };
+  try { prev = storedUrl ? new URL(storedUrl) : null; } catch { prev = null; }
+  const same = prev && prev.password && prev.protocol === next.protocol && prev.hostname === next.hostname
+    && (prev.port || '') === (next.port || '');
+  if (!same) {
+    return { error: { status: 400, error: 'Type the camera password again: a saved password stays only while the camera address is unchanged.' } };
+  }
+  next.password = prev.password;
+  return { url: next.toString() };
 }
 
 // hdmi:// or hdmi://<port 1-99>. Nothing else: no host, no path, no query.
@@ -142,13 +193,14 @@ function classifyLiveUrl(url) {
   const e = validatePlayerOpenedUrl(url);
   if (e) return { error: e };
   if (!looksLikeHlsUrl(url)) {
-    return { error: { status: 400, error: 'That does not look like a live stream. Use an .m3u8 (HLS) URL, or an rtsp:// camera URL.' } };
+    return { error: { status: 400, error: 'That does not look like a live stream. Use an .m3u8 (HLS) URL, or an rtsp:// or rtsps:// camera URL.' } };
   }
   return { mime: LIVE_MIME };
 }
 
 module.exports = {
   LIVE_MIME, RTSP_MIME, HDMI_IN_MIME, LIVE_MIMES, isLiveItem, isInfiniteDwell,
-  looksLikeHlsUrl, looksLikeRtspUrl, looksLikeHdmiInUrl,
+  looksLikeHlsUrl, looksLikeRtspUrl, isRtspsUrl, looksLikeHdmiInUrl,
+  CREDENTIAL_MASK, maskStreamCredentials, restoreMaskedPassword,
   validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, validateHdmiInUrl, classifyLiveUrl,
 };
