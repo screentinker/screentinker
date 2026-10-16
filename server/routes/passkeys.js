@@ -345,6 +345,12 @@ module.exports = function passkeyRoutes({ issueSession, logFailedLogin, ensureVe
         logFailedLogin(user.email, ip, 'Passkey login refused: organization requires SSO');
         return res.status(403).json(ssoRequiredBody);
       }
+      // Deactivated by the organization's identity provider (SCIM): the same refusal, and the same
+      // answer, as a password login (see POST /login) — said only after the signature is proven.
+      if (user.disabled_at) {
+        logFailedLogin(user.email, ip, 'Account deactivated by its organization');
+        return res.status(403).json({ error: 'This account has been deactivated by your organization.', code: 'account_disabled' });
+      }
       // Same email-verification gate as a password login (see POST /login).
       if (!user.email_verified && emailSvc.isConfigured()) {
         ensureVerificationEmail(user, req);

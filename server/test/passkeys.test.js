@@ -343,6 +343,35 @@ test('an organization that requires single sign-on: passkey sign-in and registra
   sqlite.prepare('UPDATE organizations SET sso_only = 0 WHERE id = ?').run(orgId);
 });
 
+test('an account its organization deactivated (SCIM) is refused a passkey sign-in, exactly as a password one', async () => {
+  const u = await newUser();
+  const { authn, cred } = await register(u);
+  sqlite.prepare("UPDATE users SET disabled_at = strftime('%s','now') WHERE id = ?").run(u.id);
+
+  const o = await loginOptions();
+  const res = await fetch(BASE + '/api/auth/passkeys/login/verify', { ...post(null, { challenge_id: o.challenge_id, response: authn.get(o.options) }), headers: { ...auth(null).headers, 'X-Forwarded-For': randomIp() } });
+  const body = await res.json();
+  assert.equal(res.status, 403, JSON.stringify(body));
+  assert.equal(body.code, 'account_disabled');
+  assert.equal(body.token, undefined, 'no session is issued');
+  assert.equal(body.user, undefined);
+  assert.equal(res.headers.get('set-cookie'), null, 'no session cookie either');
+  // The password login gives the identical answer.
+  const pw = await jfetch('/api/auth/login', post(null, { email: u.email, password: PW }));
+  assert.equal(pw.status, 403);
+  assert.deepEqual(body, pw.body);
+  const n = sqlite.prepare("SELECT COUNT(*) AS n FROM activity_log WHERE user_id = ? AND action = 'auth:passkey_login'").get(u.id).n;
+  assert.equal(n, 0, 'a refused sign-in is not audited as a login');
+
+  // Reactivated, the same passkey signs in again.
+  sqlite.prepare('UPDATE users SET disabled_at = NULL WHERE id = ?').run(u.id);
+  const o2 = await loginOptions();
+  const ok = await jfetch('/api/auth/passkeys/login/verify', post(null, { challenge_id: o2.challenge_id, response: authn.get(o2.options, cred) }));
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.equal(ok.body.user.id, u.id);
+  assert.ok(ok.body.token);
+});
+
 test('passkey sign-in is rate limited per IP', async () => {
   const ip = '10.99.99.99';
   let last; let n = 0;
