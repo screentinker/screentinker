@@ -1219,10 +1219,7 @@ async function handleSelection(act) {
       const widgets = await api.getWidgets();
       const trans = (Array.isArray(widgets) ? widgets : []).filter((w) => w.widget_type === 'transition');
       if (!trans.length) { showToast(t('playlist.bulk.no_transition'), 'error'); return; }
-      const pick = prompt(trans.map((w, i) => `${i + 1}. ${w.name}`).join('\n'));
-      if (pick == null) return;
-      const idx = parseInt(pick, 10) - 1;
-      const w = trans[idx] || trans.find((x) => x.name === pick);
+      const w = await pickTransitionWidget(trans);
       if (!w) return;
       return runSelection({ action: 'transition', ids, widget_id: w.id });
     } catch (err) { showToast(err.message, 'error'); }
@@ -1233,6 +1230,40 @@ async function handleSelection(act) {
     const parsed = typeof cur === 'string' ? (() => { try { return JSON.parse(cur); } catch { return null; } })() : cur;
     return editConditionModal(ids, parsed);
   }
+}
+
+/*
+ * The bulk Transition picker: the workspace's transition widgets as a list of choices, in the app's
+ * own dialog (corporate-ui openModal) rather than the browser's prompt(), which asked the user to
+ * type a number from a list and could not be translated. Radio buttons, so the arrow keys move the
+ * choice and Enter applies it; Escape (or Cancel) resolves null and nothing is changed.
+ */
+function pickTransitionWidget(trans) {
+  return new Promise((resolve) => {
+    let picked = null;
+    const m = cui.openModal({
+      title: t('playlist.bulk.transition_title'),
+      body: `<p class="corp-help" style="margin-top:0">${esc(t('playlist.bulk.transition_pick'))}</p>
+        <div id="bulkTransList" role="radiogroup" aria-label="${esc(t('playlist.bulk.transition_title'))}" style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto">
+          ${trans.map((w, i) => `<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer">
+            <input type="radio" name="bulkTrans" value="${esc(w.id)}" ${i === 0 ? 'checked' : ''}>
+            <span>${esc(w.name)}</span></label>`).join('')}
+        </div>`,
+      footer: `<button type="button" class="btn btn-secondary" data-corp-close>${esc(t('common.cancel'))}</button>
+               <button type="button" class="btn btn-primary" id="bulkTransGo">${esc(t('playlist.bulk.apply'))}</button>`,
+      onClose: () => resolve(picked),
+    });
+    const apply = () => {
+      const sel = m.q('input[name="bulkTrans"]:checked');
+      picked = sel ? trans.find((x) => x.id === sel.value) || null : null;
+      m.close();
+    };
+    m.q('#bulkTransGo').addEventListener('click', apply);
+    m.q('#bulkTransList').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
+    m.q('#bulkTransList').addEventListener('dblclick', (e) => { if (e.target.closest('label')) apply(); });
+    const first = m.q('input[name="bulkTrans"]:checked');
+    if (first) first.focus();
+  });
 }
 
 /*

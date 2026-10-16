@@ -3932,4 +3932,9 @@ export default {
   'account_delete.deleting': "正在删除…",
   'account_delete.err_confirm': "请完全按显示内容输入您的电子邮件地址。",
   'account_delete.err_password': "请输入您的密码。",
+  // playlist bulk Transition picker dialog
+  'playlist.bulk.transition_title': "添加转场",
+  'playlist.bulk.transition_pick': "选择转入每个所选项目时使用的转场。",
+  'playlist.bulk.apply': "应用",
+  'playlist.bulk.no_transition': "此工作区中没有转场小组件",
 };

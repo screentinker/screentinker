@@ -4394,4 +4394,9 @@ export default {
   'widget.trans.scope_next': "Nur das nächste Element (erweitert)",
   'widget.trans.scope_all': "Jedes Element in seiner Zone (empfohlen)",
   'widget.trans.scope_hint': "Ein Übergang gilt für jedes Element in seiner eigenen Zone: für die ganze Playlist im Vollbild oder für eine Zone eines Layouts. Die Zone wählen Sie in der Zeile der Playlist. Mit „Nur das nächste Element“ setzen Sie an einer Stelle einen anderen Effekt.",
+  // playlist bulk Transition picker dialog
+  'playlist.bulk.transition_title': "Übergang hinzufügen",
+  'playlist.bulk.transition_pick': "Wählen Sie den Übergang, der zu jedem ausgewählten Element führt.",
+  'playlist.bulk.apply': "Anwenden",
+  'playlist.bulk.no_transition': "Keine Übergangs-Widgets in diesem Arbeitsbereich",
 };

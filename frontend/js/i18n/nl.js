@@ -5986,4 +5986,7 @@ export default {
   'account_delete.deleting': "Bezig met verwijderen…",
   'account_delete.err_confirm': "Typ je e-mailadres precies zoals getoond.",
   'account_delete.err_password': "Vul je wachtwoord in.",
+  // playlist bulk Transition picker dialog
+  'playlist.bulk.transition_title': "Overgang toevoegen",
+  'playlist.bulk.transition_pick': "Kies de overgang naar elk geselecteerd item.",
 };

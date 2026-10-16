@@ -4310,4 +4310,9 @@ export default {
   'widget.trans.scope_next': "Somente o próximo item (avançado)",
   'widget.trans.scope_all': "Todos os itens da sua zona (recomendado)",
   'widget.trans.scope_hint': "Uma transição cobre todos os itens da própria zona: a playlist inteira em tela cheia, ou uma zona de um layout. A zona é escolhida na linha da playlist. Use “Somente o próximo item” para um efeito diferente em um ponto específico.",
+  // playlist bulk Transition picker dialog
+  'playlist.bulk.transition_title': "Adicionar uma transição",
+  'playlist.bulk.transition_pick': "Escolha a transição que leva a cada item selecionado.",
+  'playlist.bulk.apply': "Aplicar",
+  'playlist.bulk.no_transition': "Nenhum widget de transição neste espaço de trabalho",
 };

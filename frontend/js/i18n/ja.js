@@ -5021,4 +5021,9 @@ export default {
   'account_delete.deleting': "削除中…",
   'account_delete.err_confirm': "表示されているとおりにメールアドレスを入力してください。",
   'account_delete.err_password': "パスワードを入力してください。",
+  // playlist bulk Transition picker dialog
+  'playlist.bulk.transition_title': "トランジションを追加",
+  'playlist.bulk.transition_pick': "選択した各アイテムに切り替わるときのトランジションを選んでください。",
+  'playlist.bulk.apply': "適用",
+  'playlist.bulk.no_transition': "このワークスペースにトランジションウィジェットがありません",
 };

@@ -5021,4 +5021,9 @@ export default {
   'account_delete.deleting': "Suppression…",
   'account_delete.err_confirm': "Saisissez votre adresse e-mail exactement comme indiqué.",
   'account_delete.err_password': "Saisissez votre mot de passe.",
+  // playlist bulk Transition picker dialog
+  'playlist.bulk.transition_title': "Ajouter une transition",
+  'playlist.bulk.transition_pick': "Choisissez la transition qui mène à chaque élément sélectionné.",
+  'playlist.bulk.apply': "Appliquer",
+  'playlist.bulk.no_transition': "Aucun widget de transition dans cet espace de travail",
 };

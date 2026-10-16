@@ -8268,4 +8268,7 @@ export default {
   'account_delete.deleting': "Deleting…",
   'account_delete.err_confirm': "Type your email address exactly as shown.",
   'account_delete.err_password': "Enter your password.",
+  // playlist bulk Transition picker dialog
+  'playlist.bulk.transition_title': "Add a transition",
+  'playlist.bulk.transition_pick': "Choose the transition to play into each selected item.",
 };
