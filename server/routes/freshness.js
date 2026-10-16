@@ -23,6 +23,8 @@
 
 const express = require('express');
 const router = express.Router();
+// Abuse backstop (lib/backstop-limiter.js): already counted app-wide; here so this router is never unguarded.
+router.use(require('../lib/backstop-limiter'));
 const { db } = require('../db/database');
 const freshness = require('../lib/freshness');
 const { canRead, canWrite, canAdmin } = require('../lib/permissions');
