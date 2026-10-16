@@ -30,7 +30,7 @@ const { spawnSync } = require('child_process');
 
 const ROKU = path.resolve(__dirname, '..');
 const REPO = path.resolve(ROKU, '..');
-const LIBS = ['tz.brs', 'schedule.brs', 'powerwindow.brs', 'playorder.brs'];
+const LIBS = ['tz.brs', 'schedule.brs', 'powerwindow.brs', 'playorder.brs', 'util.brs'];
 
 const PlayOrder = require(path.join(REPO, 'tizen/js/play-order.js'));
 const PowerWindow = require(path.join(REPO, 'server/lib/power-window.js'));
@@ -379,6 +379,18 @@ function playOrderCases() {
 // brs-node
 // --------------------------------------------------------------------------------------------
 
+// #657: a layout zone is see-through whatever its saved colour; the full-screen zone keeps the device's.
+function zoneFillCases() {
+  const c = (id, layoutZone, background, want) => ({ kind: 'zonefill', file: 'zone-fill (#657)', id, layoutZone, background, want });
+  return [
+    c('layout zone, default black', true, '#000000', '0x00000000'),
+    c('layout zone, chosen colour', true, '#ff0000', '0x00000000'),
+    c('layout zone, no colour', true, '', '0x00000000'),
+    c('full screen, device colour', false, '#123456', '0x123456FF'),
+    c('full screen, no colour', false, '', '0x000000FF'),
+  ];
+}
+
 function findBrsCli() {
   const cands = [
     process.env.BRS_CLI,
@@ -426,6 +438,7 @@ function main() {
     ...localPartsCases('table', LP_ZONES),
     ...powerZoneCases(),
     ...playOrderCases(),
+    ...zoneFillCases(),
   ];
   runs.push({ label: `tz_table mode (brs-node TZ=${MAIN_RUN_TZ})`, cases: tableCases, tz: MAIN_RUN_TZ });
 

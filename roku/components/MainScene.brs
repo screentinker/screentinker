@@ -455,7 +455,7 @@ sub buildStage(p as object)
         node.config = {
             serverUrl: m.cfg.server, deviceId: m.cfg.deviceId, deviceToken: m.cfg.deviceToken,
             tzTable: m.tzTable, tzTables: p.tz_tables, playbackOrder: ST_Str(p, "playback_order", "sequential"),
-            fit: z.fit, background: z.bg, width: z.w, height: z.h,
+            fit: z.fit, background: z.bg, layoutZone: z.id <> "", width: z.w, height: z.h,
             canVideo: (i = best), defaultContent: p.default_content, zoneId: z.id
         }
         node.observeField("playEvent", "onPlayEvent")

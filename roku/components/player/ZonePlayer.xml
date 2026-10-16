@@ -5,7 +5,8 @@
 
   in:   items        array of playlist items for this zone (payload.assignments, already split by zone)
         config       { serverUrl, deviceId, deviceToken, tzTable, playbackOrder, fit, background,
-                       width, height, canVideo, defaultContent }
+                       layoutZone, width, height, canVideo, defaultContent }
+                     layoutZone: a zone of a layout paints no fill (#657, ST_ZoneFill)
         command      "start" | "stop" | "next" | "pause" | "resume"   (alwaysNotify)
         muteChange   { content_id, muted }                              (alwaysNotify)
   out:  playEvent    { event: play_start|play_end, item }                (alwaysNotify)

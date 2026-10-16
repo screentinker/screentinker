@@ -110,8 +110,7 @@ sub applyGeometry()
     m.h = h
     m.bg.width = w
     m.bg.height = h
-    bgc = ST_Str(cfg, "background")
-    m.bg.color = ST_ColorOr(bgc, "0x000000FF")
+    m.bg.color = ST_ZoneFill(ST_IsTrue(cfg.layoutZone), ST_Str(cfg, "background"))
     for each p in m.posters
         p.width = w
         p.height = h

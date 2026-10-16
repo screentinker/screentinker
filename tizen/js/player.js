@@ -1806,8 +1806,7 @@ ZoneRenderer.prototype.render = function (layout, assignments) {
       x: zrNum(z.x_percent, 0), y: zrNum(z.y_percent, 0),
       w: zrNum(z.width_percent, 100), h: zrNum(z.height_percent, 100),
       z: zrNum(z.z_index, 0),
-      fit: z.fit_mode || 'cover',
-      bg: z.background_color || '#000000'
+      fit: z.fit_mode || 'cover'
     };
   });
 
@@ -1834,7 +1833,9 @@ ZoneRenderer.prototype.render = function (layout, assignments) {
     div.style.width = zone.w + '%'; div.style.height = zone.h + '%';
     div.style.overflow = 'hidden';
     div.style.zIndex = String(zone.z);
-    div.style.background = zone.bg;
+    // ⚠️ NO FILL (#657). Every zone is saved with background_color "#000000" unless someone changes
+    // it, and the web player and Android paint none in a layout zone: a full-screen zone holding a
+    // transparent PNG is a frame over the zones beneath, not a black sheet. Wall zones keep theirs.
     self.stage.appendChild(div);
     zone.el = div;
 

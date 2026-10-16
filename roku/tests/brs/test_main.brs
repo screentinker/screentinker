@@ -45,6 +45,7 @@ function TST_RunCase(c as object) as string
     if k = "schedule" then return TST_Schedule(c)
     if k = "power" then return TST_Power(c)
     if k = "playorder" then return TST_PlayOrder(c)
+    if k = "zonefill" then return TST_ZoneFill(c)
     return "unknown case kind " + TST_S(k)
 end function
 
@@ -141,5 +142,12 @@ function TST_PlayOrder(c as object) as string
             if w <> c.weights[i] then return "weightOf(" + StrI(i).Trim() + ")=" + StrI(w).Trim() + " want " + TST_S(c.weights[i])
         end for
     end if
+    return ""
+end function
+
+' #657: ST_ZoneFill (util.brs) — the fill behind a zone.
+function TST_ZoneFill(c as object) as string
+    got = ST_ZoneFill(c.layoutZone, c.background)
+    if got <> c.want then return "got " + got + " want " + c.want
     return ""
 end function

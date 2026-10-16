@@ -216,6 +216,16 @@ function ST_ColorOr(c as string, dflt as string) as string
     return dflt
 end function
 
+' #657: the fill painted behind a zone. A LAYOUT zone paints none: every zone is saved with
+' background_color "#000000" unless someone changes it, and the web player and Android paint no fill
+' there, so a full-screen zone holding a transparent PNG is a frame over the zones beneath, not a black
+' sheet. The one full-screen zone of a plain playlist keeps the device's background colour. (A web
+' frame is still drawn over the zone's colour: rasters are opaque JPEGs.)
+function ST_ZoneFill(layoutZone as boolean, background as string) as string
+    if layoutZone then return "0x00000000"
+    return ST_ColorOr(background, "0x000000FF")
+end function
+
 ' One console line, "[st] tag: message". On a Roku this is the developer console (port 8085); the
 ' simulator test harness reads the same lines to follow the player.
 sub ST_Log(tag as string, msg as string)

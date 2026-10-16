@@ -9,11 +9,12 @@
   so it could be created afterwards. It is now removed once the stream has closed, before the
   import rejects. The import's temporary files are also removed before its reply is sent, rather
   than just after.
-- **Native player (Raspberry Pi, Windows, macOS): layout zones are see-through again** (#657).
-  Each zone painted its saved background colour, which is black unless changed, so a full-screen
-  zone holding a transparent PNG (a seasonal frame, say) covered every zone beneath it in black, and
-  a logo's transparent corners showed black. Layout zones now paint no fill, as on the web player and
-  Android. Video-wall zones keep their colour. Thanks to @KiwasoVR for the report.
+- **Raspberry Pi, Windows, macOS, Samsung Tizen and Roku players: layout zones are see-through**
+  (#657). Each zone painted its saved background colour, which is black unless changed, so a
+  full-screen zone holding a transparent PNG (a seasonal frame, say) covered every zone beneath it in
+  black, and a logo's transparent corners showed black. Layout zones now paint no fill, as on the web
+  player and Android. Video-wall zones keep their colour. On Roku, a web page or widget in a zone is
+  still drawn over that zone's colour. Thanks to @KiwasoVR for the report.
 
 ### Security
 
