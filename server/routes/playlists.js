@@ -257,6 +257,9 @@ function decorateSnapshotItem(it) {
   if (!it.repeat_every_sec) delete it.repeat_every_sec;
   // #624: sent only when set and only on YouTube, so every other snapshot stays byte-identical.
   if (it.play_to_end && playToEnd.appliesTo(it.mime_type)) it.play_to_end = 1; else delete it.play_to_end;
+  // rtsps camera with a self-signed certificate: sent only when set and only on a camera item, so
+  // every other snapshot stays byte-identical.
+  if (Number(it.tls_self_signed) === 1 && it.mime_type === 'video/rtsp') it.tls_self_signed = 1; else delete it.tls_self_signed;
   delete it._iid;
   attachSlideAudio(it);
   return it;

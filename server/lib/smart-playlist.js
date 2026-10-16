@@ -248,7 +248,7 @@ function snapshotItems(db, playlist) {
       content_duration: c.duration_sec,
       remote_url: c.remote_url,
       unstable_connection: c.unstable_connection,
-      tls_self_signed: c.tls_self_signed,
+      ...(Number(c.tls_self_signed) === 1 && c.mime_type === 'video/rtsp' ? { tls_self_signed: 1 } : {}),
       captions_enabled: c.captions_enabled,
       captions_lang: c.captions_lang,
       subtitle_url: c.subtitle_url,
