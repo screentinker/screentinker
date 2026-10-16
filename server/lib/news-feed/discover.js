@@ -14,9 +14,18 @@
  * ⚠️ HEADLINES, LINKS AND PICTURES ONLY. Nothing here reads an article's body, and the summary of a
  * built item is at most the short description the publisher wrote for search results. A screen
  * shows what a link preview would; it never republishes the story.
+ *
+ * ⚠️ LINEAR TIME, like parse.js: pages, sitemaps and robots.txt are a stranger's text of up to 8 MB,
+ * read on the main thread. Every scan below is the linear form of the regex quoted beside it
+ * (lib/news-feed/scan.js; test/news-feed-linear.test.js checks they agree). No `[\s\S]*?`, no
+ * unbounded `[^>]*` and no regex built from a robots.txt rule over this text.
  */
 
 const { decodeEntities, plain, absUrl, isoDate, attrIn } = require('./parse');
+const {
+  isWs, skipWs, finder, gtFinder, replacePairs, replaceBlocks, closerByName, eachBlock, firstBlock, eachTag,
+} = require('./scan');
+const { trimTrailing } = require('../trim-trailing');
 
 const MAX_ITEMS = 50;
 
@@ -32,20 +41,18 @@ function findFeedLinks(html, baseUrl) {
   const out = [];
   const seen = new Set();
   const head = String(html || '').slice(0, 1024 * 1024);
-  const re = /<link\b([^>]{0,4000})>/gi;
-  let m;
-  while ((m = re.exec(head)) && out.length < 60) {
-    const attrs = m[1];
+  eachTag(head, /<link\b/gi, 4000, (attrs) => {   // /<link\b([^>]{0,4000})>/gi
+    if (out.length >= 60) return false;
     const rel = attrIn(attrs, 'rel').toLowerCase().split(/\s+/);
     const type = attrIn(attrs, 'type').toLowerCase();
-    if (!rel.includes('alternate') || !FEED_TYPES.test(type)) continue;
+    if (!rel.includes('alternate') || !FEED_TYPES.test(type)) return;
     // text/xml / application/xml alone are too vague unless the address says feed.
     const url = absUrl(attrIn(attrs, 'href'), baseUrl);
-    if (!url || seen.has(url)) continue;
-    if (/^(text|application)\/xml$/.test(type) && !/(rss|feed|atom)/i.test(url)) continue;
+    if (!url || seen.has(url)) return;
+    if (/^(text|application)\/xml$/.test(type) && !/(rss|feed|atom)/i.test(url)) return;
     seen.add(url);
     out.push({ url, title: plain(attrIn(attrs, 'title'), 160), type: kindOfType(type) });
-  }
+  });
   return out;
 }
 function kindOfType(type) {
@@ -60,12 +67,28 @@ const COMMON_PATHS = ['/feed', '/rss', '/rss.xml', '/feed.xml', '/atom.xml', '/i
 /* ───────────── page metadata ───────────── */
 
 function metaContent(html, key) {
-  const re = /<meta\b([^>]{0,4000})>/gi;
-  let m;
-  while ((m = re.exec(html))) {
-    const a = m[1];
+  let v = '';
+  eachTag(html, /<meta\b/gi, 4000, (a) => {   // /<meta\b([^>]{0,4000})>/gi
     const k = (attrIn(a, 'property') || attrIn(a, 'name')).toLowerCase();
-    if (k === key) return attrIn(a, 'content');
+    if (k !== key) return true;
+    v = attrIn(a, 'content');
+    return false;
+  });
+  return v;
+}
+
+/** /<title[^>]*>([\s\S]{0,2000}?)<\/title>/i.exec(h)[1], or ''. */
+function titleText(h) {
+  const open = /<title/gi;
+  const gt = gtFinder(h);
+  const close = finder(h, /<\/title>/gi);
+  let m;
+  while ((m = open.exec(h))) {
+    const g = gt(open.lastIndex);
+    if (g < 0) return '';
+    const c = close(g + 1);
+    if (!c) return '';
+    if (c.index - (g + 1) <= 2000) return h.slice(g + 1, c.index);
   }
   return '';
 }
@@ -74,7 +97,7 @@ function metaContent(html, key) {
 function pageMeta(html, baseUrl) {
   const h = String(html || '').slice(0, 512 * 1024);
   return {
-    title: plain(metaContent(h, 'og:title') || metaContent(h, 'twitter:title') || (/<title[^>]*>([\s\S]{0,2000}?)<\/title>/i.exec(h) || [])[1] || '', 300),
+    title: plain(metaContent(h, 'og:title') || metaContent(h, 'twitter:title') || titleText(h), 300),
     siteName: plain(metaContent(h, 'og:site_name') || metaContent(h, 'application-name'), 160),
     image: absUrl(metaContent(h, 'og:image') || metaContent(h, 'og:image:url') || metaContent(h, 'twitter:image'), baseUrl),
     description: plain(metaContent(h, 'og:description') || metaContent(h, 'description'), 300),
@@ -111,10 +134,40 @@ function ldItem(node, base) {
 }
 
 /** Articles from every <script type="application/ld+json"> block, in document order. */
+/**
+ * Every /<script\b[^>]*type\s*=\s*["']?application\/ld\+json["']?[^>]*>([\s\S]*?)<\/script\s*>/gi
+ * body, in order. The opening tag counts when the stretch between "<script" and its ">" holds a
+ * `type=application/ld+json`: worked out once per ">" (every <script sharing it shares the answer).
+ */
+function eachLdScript(html, fn) {
+  const open = /<script\b/gi;
+  const gt = gtFinder(html);
+  const close = finder(html, /<\/script\s*>/gi);
+  let tagEnd = -1;
+  let lastType = -1;   // where the last type=application/ld+json before tagEnd starts
+  let m;
+  while ((m = open.exec(html))) {
+    const g = gt(open.lastIndex);
+    if (g < 0) return;
+    if (g !== tagEnd) {
+      tagEnd = g;
+      lastType = -1;
+      const from = html.lastIndexOf('>', g - 1) + 1;
+      const seg = html.slice(from, g);
+      const re = /type\s*=\s*["']?application\/ld\+json/gi;
+      let t;
+      while ((t = re.exec(seg))) lastType = from + t.index;
+    }
+    if (lastType < open.lastIndex) continue;
+    const c = close(g + 1);
+    if (!c) return;
+    open.lastIndex = c.end;
+    if (fn(html.slice(g + 1, c.index)) === false) return;
+  }
+}
+
 function extractJsonLd(html, baseUrl) {
   const items = [];
-  const re = /<script\b[^>]*type\s*=\s*["']?application\/ld\+json["']?[^>]*>([\s\S]*?)<\/script\s*>/gi;
-  let m;
   let budget = 2000;   // nodes visited, across all blocks: a hostile page cannot make this walk forever
   const visit = (node, depth) => {
     if (!node || typeof node !== 'object' || depth > 8 || --budget < 0 || items.length >= MAX_ITEMS) return;
@@ -137,15 +190,17 @@ function extractJsonLd(html, baseUrl) {
     if (node.mainEntity && typeof node.mainEntity === 'object') visit(node.mainEntity, depth + 1);
     if (node.hasPart && typeof node.hasPart === 'object') visit(node.hasPart, depth + 1);
   };
-  while ((m = re.exec(String(html || ''))) && items.length < MAX_ITEMS) {
-    const raw = m[1].trim().replace(/^<!--|-->$/g, '');
-    if (raw.length > 512 * 1024) continue;
+  eachLdScript(String(html || ''), (body) => {
+    if (items.length >= MAX_ITEMS) return false;
+    const raw = body.trim().replace(/^<!--|-->$/g, '');
+    if (raw.length > 512 * 1024) return true;
     let data;
     try { data = JSON.parse(raw); } catch (_) {
-      try { data = JSON.parse(decodeEntities(raw)); } catch (__) { continue; }
+      try { data = JSON.parse(decodeEntities(raw)); } catch (__) { return true; }
     }
     visit(data, 0);
-  }
+    return true;
+  });
   return dedupe(items);
 }
 
@@ -159,28 +214,28 @@ function parseSitemap(xml, baseUrl) {
   const src = String(xml || '').slice(0, 8 * 1024 * 1024);
   const index = [];
   if (/<sitemapindex[\s>]/i.test(src)) {
-    const re = /<sitemap\b[^>]*>([\s\S]*?)<\/sitemap\s*>/gi;
-    let m;
-    while ((m = re.exec(src)) && index.length < 200) {
-      const loc = absUrl(decodeEntities(((/<loc[^>]*>([\s\S]*?)<\/loc\s*>/i.exec(m[1]) || [])[1] || '').replace(/<!\[CDATA\[|\]\]>/g, '').trim()), baseUrl);
+    eachBlock(src, /<sitemap\b/gi, /<\/sitemap\s*>/gi, ({ inner }) => {   // /<sitemap\b[^>]*>([\s\S]*?)<\/sitemap\s*>/gi
+      if (index.length >= 200) return false;
+      const l = firstBlock(inner, /<loc/gi, /<\/loc\s*>/gi);                 // /<loc[^>]*>([\s\S]*?)<\/loc\s*>/i
+      const loc = absUrl(decodeEntities((l ? l.inner : '').replace(/<!\[CDATA\[|\]\]>/g, '').trim()), baseUrl);
       if (loc) index.push(loc);
-    }
+      return true;
+    });
   }
   const news = [];
-  const re = /<url\b[^>]*>([\s\S]*?)<\/url\s*>/gi;
-  let m;
-  while ((m = re.exec(src)) && news.length < MAX_ITEMS) {
-    const b = m[1];
-    if (!/<news:news[\s>]/i.test(b)) continue;
-    const pick = (tag) => {
-      const r = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}\\s*>`, 'i').exec(b);
-      return r ? decodeEntities(r[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')).trim() : '';
+  eachBlock(src, /<url\b/gi, /<\/url\s*>/gi, ({ inner: b }) => {           // /<url\b[^>]*>([\s\S]*?)<\/url\s*>/gi
+    if (news.length >= MAX_ITEMS) return false;
+    if (!/<news:news[\s>]/i.test(b)) return true;
+    const pick = (tag) => {                                                   // /<tag[^>]*>([\s\S]*?)<\/tag\s*>/i
+      const r = firstBlock(b, new RegExp(`<${tag}`, 'gi'), new RegExp(`</${tag}\\s*>`, 'gi'));
+      return r ? decodeEntities(replacePairs(r.inner, '<![CDATA[', ']]>', (x) => x)).trim() : '';
     };
     const link = absUrl(pick('loc'), baseUrl);
     const title = plain(pick('news:title'), 300);
-    if (!link || !title) continue;
+    if (!link || !title) return true;
     news.push({ title, link, summary: '', published: isoDate(pick('news:publication_date')), image: absUrl(pick('image:loc'), baseUrl) });
-  }
+    return true;
+  });
   // Newest first: a news sitemap is not required to be in any order.
   news.sort((a, b) => String(b.published || '').localeCompare(String(a.published || '')));
   return { news: dedupe(news), index };
@@ -198,8 +253,8 @@ function parseRobots(text, agentTokens = ['screentinker-feedreader', 'screentink
   let cur = null;
   let lastWasAgent = false;
   for (const rawLine of String(text || '').slice(0, 512 * 1024).split(/\r?\n/)) {
-    const line = rawLine.replace(/#.*$/, '').trim();
-    const mm = /^([A-Za-z-]+)\s*:\s*(.*)$/.exec(line);
+    const line = dropRobotsComment(rawLine).trim();
+    const mm = robotsField(line);
     if (!mm) continue;
     const key = mm[1].toLowerCase();
     const val = mm[2].trim();
@@ -217,7 +272,6 @@ function parseRobots(text, agentTokens = ['screentinker-feedreader', 'screentink
   const mine = groups.filter((g) => g.agents.some((a) => agentTokens.includes(a)));
   const chosen = mine.length ? mine : groups.filter((g) => g.agents.includes('*'));
   const rules = chosen.flatMap((g) => g.rules).filter((r) => r.path !== '' || !r.allow);
-  const toRe = (p) => new RegExp('^' + p.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*').replace(/\\\$$/, '$'));
   return {
     sitemaps,
     allows(pathAndQuery) {
@@ -225,14 +279,69 @@ function parseRobots(text, agentTokens = ['screentinker-feedreader', 'screentink
       let best = null;
       for (const r of rules) {
         if (r.path === '') continue;          // "Disallow:" (empty) allows everything
-        let re;
-        try { re = toRe(r.path); } catch (_) { continue; }
-        if (!re.test(p)) continue;
+        if (!robotsRuleMatches(r.path, p)) continue;
         if (!best || r.path.length > best.path.length || (r.path.length === best.path.length && r.allow)) best = r;
       }
       return !best || best.allow;
     },
   };
+}
+
+/** rawLine.replace(/#.*$/, ''): from the first "#" with no line terminator after it (`.` stops at one). */
+const LINE_TERMINATORS = ['\n', '\r', '\u2028', '\u2029'];
+function dropRobotsComment(line) {
+  let t = -1;
+  for (const ch of LINE_TERMINATORS) t = Math.max(t, line.lastIndexOf(ch));
+  const h = line.indexOf('#', t + 1);
+  return h < 0 ? line : line.slice(0, h);
+}
+
+/**
+ * /^([A-Za-z-]+)\s*:\s*(.*)$/.exec(line) as [, key, value], or null. The regex backtracks over the
+ * spaces after ":" once per space when a line terminator follows the value, which is quadratic; but
+ * only the greedy reading can ever match, so this takes it and checks the terminator once.
+ */
+function robotsField(line) {
+  let i = 0;
+  while (i < line.length && /[A-Za-z-]/.test(line[i])) i++;
+  if (i === 0) return null;
+  let j = skipWs(line, i);
+  if (line[j] !== ':') return null;
+  j = skipWs(line, j + 1);
+  const value = line.slice(j);
+  if (/[\n\r\u2028\u2029]/.test(value)) return null;
+  return [line, line.slice(0, i), value];
+}
+
+/**
+ * Does a robots.txt rule match the path? It was new RegExp('^' + rule with `*` → `.*` and a final
+ * `$` → end anchor).test(path), and a rule is the site's text: "/*a*a*a*a*a*a*b" against a path of
+ * a's backtracks exponentially. Matching the literal pieces in order, each at its first place after
+ * the last, is the same answer: a later place for a piece only leaves less room for the rest.
+ * (`.` does not match a line terminator; a path from a URL never holds one, but such a path takes
+ * the regex, unchanged.)
+ */
+function robotsRuleMatches(rule, p) {
+  if (/[\n\r\u2028\u2029]/.test(p)) {
+    let re;
+    try {
+      re = new RegExp('^' + rule.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*').replace(/\\\$$/, '$'));
+    } catch (_) { return false; }
+    return re.test(p);
+  }
+  const anchored = rule.endsWith('$');
+  const parts = (anchored ? rule.slice(0, -1) : rule).split('*');
+  if (!p.startsWith(parts[0])) return false;
+  let pos = parts[0].length;
+  if (parts.length === 1) return !anchored || pos === p.length;
+  for (let k = 1; k < parts.length; k++) {
+    const part = parts[k];
+    if (anchored && k === parts.length - 1) return p.length - part.length >= pos && p.endsWith(part);
+    const at = p.indexOf(part, pos);
+    if (at < 0) return false;
+    pos = at + part.length;
+  }
+  return true;
 }
 
 /* ───────────── 3. headline links ───────────── */
@@ -252,9 +361,9 @@ function storyLike(link, title, baseUrl) {
   if (!link || !sameSite(link, baseUrl)) return false;
   let u;
   try { u = new URL(link); } catch (_) { return false; }
-  const path = u.pathname.replace(/\/+$/, '');
+  const path = trimTrailing(u.pathname, '/');
   if (!path || path.split('/').filter(Boolean).length < 1) return false;
-  if (link.replace(/[#?].*$/, '').replace(/\/+$/, '') === String(baseUrl).replace(/[#?].*$/, '').replace(/\/+$/, '')) return false;
+  if (trimTrailing(link.replace(/[#?].*$/, ''), '/') === trimTrailing(String(baseUrl).replace(/[#?].*$/, ''), '/')) return false;
   if (/\/(?:tag|tags|category|categories|author|authors|search|login|signin|subscribe|account|about|contact|privacy|terms|help)(?:\/|$)/i.test(path) && path.split('/').filter(Boolean).length < 3) return false;
   if (/\.(?:jpe?g|png|gif|webp|pdf|mp4|mp3|zip)$/i.test(path)) return false;
   const words = title.split(/\s+/).filter(Boolean).length;
@@ -262,9 +371,9 @@ function storyLike(link, title, baseUrl) {
 }
 
 function imgIn(block, baseUrl) {
-  const m = /<img\b([^>]{0,4000})>/i.exec(block);
-  if (!m) return '';
-  const a = m[1];
+  let a = null;
+  eachTag(block, /<img\b/gi, 4000, (attrs) => { a = attrs; return false; });   // /<img\b([^>]{0,4000})>/i
+  if (a === null) return '';
   const srcset = attrIn(a, 'data-srcset') || attrIn(a, 'srcset');
   const fromSet = srcset ? srcset.split(',').map((s) => s.trim().split(/\s+/)[0]).filter(Boolean).pop() : '';
   const src = attrIn(a, 'data-src') || attrIn(a, 'data-lazy-src') || attrIn(a, 'src');
@@ -273,10 +382,138 @@ function imgIn(block, baseUrl) {
 }
 
 /** <article> blocks first; if that finds too little, links inside (or wrapping) <h1>–<h4>. */
+/*
+ * The headline patterns below, each as a scan. Two shapes recur:
+ *
+ *   OPEN [^>]*> \s*(?:<[^>]+>\s*)* NEXT   — after a tag, a run of tags separated by whitespace, then
+ *                                         NEXT at one of the run's tags. tagRun() walks that run once.
+ *   [\s\S]*? CLOSE                        — up to the first CLOSE: finder(), remembered.
+ *
+ * When an opener fails, every opener inside its tag run fails too (its run is the tail of the same
+ * run, so it has a subset of the same chances), so the next one tried is past the run.
+ */
+
+/**
+ * The run `\s*(?:<X[^>]*>\s*)*` from `pos`, X being one character that `ok(s, at)` vets (at is the
+ * "<"): { tags: [[start, index of its ">"]…], end }.
+ */
+function tagRun(s, pos, gt, ok) {
+  const tags = [];
+  pos = skipWs(s, pos);
+  while (s.charCodeAt(pos) === 60 && pos + 1 < s.length && ok(s, pos)) {
+    const q = gt(pos + 2);
+    if (q < 0) break;
+    tags.push([pos, q]);
+    pos = skipWs(s, q + 1);
+  }
+  return { tags, end: pos };
+}
+// X for <[^>]+>, for <(?!\/a)[^>]+> and for <[^a][^>]*>.
+const anyTag = (s, i) => s[i + 1] !== '>';
+const notCloseA = (s, i) => s[i + 1] !== '>' && !(s[i + 1] === '/' && (s[i + 2] === 'a' || s[i + 2] === 'A'));
+const notA = (s, i) => s[i + 1] !== 'a' && s[i + 1] !== 'A';
+
+const HEADING_AT = /<h[1-4]\b/iy;
+const isAt = (re, s, i) => { re.lastIndex = i; return re.test(s); };
+
+/**
+ * /<a\b([^>]*)>\s*(?:<TAG>\s*)*<h[1-4]\b[^>]*>([\s\S]*?)<\/h[1-4]\s*>/gi, TAG being [^>]+ (or, with
+ * notCloseA, (?!\/a)[^>]+): matches in order as fn({ index, attrs, html, end }); false from fn stops.
+ * The star is greedy, so the heading is the LAST heading tag of the run that has a </hN> after it.
+ */
+function eachLinkedHeading(s, skipCloseA, fn) {
+  const open = /<a\b/gi;
+  const gt = gtFinder(s);
+  const close = finder(s, /<\/h[1-4]\s*>/gi);
+  const ok = skipCloseA ? notCloseA : anyTag;
+  let m;
+  while ((m = open.exec(s))) {
+    const g = gt(m.index + 2);
+    if (g < 0) return;
+    const run = tagRun(s, g + 1, gt, ok);
+    const heads = run.tags.filter(([at]) => isAt(HEADING_AT, s, at));
+    let hit = null;
+    if (heads.length) {
+      const last = heads[heads.length - 1];
+      const c = close(last[1] + 1);
+      if (c) hit = { head: last, c };
+      else if (heads.length > 1) {
+        // No </hN> after the last heading, but an earlier heading may have one inside the run: the
+        // latest heading that ends before the run's last </hN> wins, closed by the first after it.
+        const closes = [];
+        const re = /<\/h[1-4]\s*>/gi;
+        const inRun = s.slice(0, last[1] + 1);
+        re.lastIndex = heads[0][1] + 1;
+        let x;
+        while ((x = re.exec(inRun))) closes.push({ index: x.index, end: x.index + x[0].length });
+        if (closes.length) {
+          let k = heads.length - 2;
+          while (k >= 0 && heads[k][1] + 1 > closes[closes.length - 1].index) k--;
+          if (k >= 0) hit = { head: heads[k], c: closes.find((cl) => cl.index >= heads[k][1] + 1) };
+        }
+      }
+    }
+    if (!hit) { open.lastIndex = run.end; continue; }
+    open.lastIndex = hit.c.end;
+    if (fn({ index: m.index, attrs: s.slice(m.index + 2, g), html: s.slice(hit.head[1] + 1, hit.c.index), end: hit.c.end }) === false) return;
+  }
+}
+
+/**
+ * /<h[1-4]\b[^>]*>\s*(?:<[^a][^>]*>\s*)*<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi as fn({ index, attrs, html, end }).
+ * No tag of the run starts "<a", so the link can only be what follows the whole run.
+ */
+function eachHeadingLink(s, fn) {
+  const open = /<h[1-4]\b/gi;
+  const linkAt = /<a\b/iy;
+  const gt = gtFinder(s);
+  const close = finder(s, /<\/a\s*>/gi);
+  let m;
+  while ((m = open.exec(s))) {
+    const g = gt(m.index + 3);
+    if (g < 0) return;
+    const run = tagRun(s, g + 1, gt, notA);
+    if (!isAt(linkAt, s, run.end)) { open.lastIndex = run.end; continue; }
+    const g2 = gt(run.end + 2);
+    if (g2 < 0) return;
+    const c = close(g2 + 1);
+    if (!c) return;
+    open.lastIndex = c.end;
+    if (fn({ index: m.index, attrs: s.slice(run.end + 2, g2), html: s.slice(g2 + 1, c.index), end: c.end }) === false) return;
+  }
+}
+
+/**
+ * /<h[1-4]\b[^>]*>[\s\S]*?<a\b([^>]*)>([\s\S]*?)<\/a\s*>[\s\S]*?<\/h[1-4]\s*>/i.exec(b) as
+ * { attrs, html } or null. Every step takes the first thing after the last, and if one is missing it
+ * is missing for every later starting point too, so the first heading decides.
+ */
+function headingWithLink(b) {
+  const h = /<h[1-4]\b/gi.exec(b);
+  if (!h) return null;
+  const g1 = b.indexOf('>', h.index + 3);
+  if (g1 < 0) return null;
+  const a = /<a\b/gi;
+  a.lastIndex = g1 + 1;
+  const am = a.exec(b);
+  if (!am) return null;
+  const g2 = b.indexOf('>', am.index + 2);
+  if (g2 < 0) return null;
+  const ca = /<\/a\s*>/gi;
+  ca.lastIndex = g2 + 1;
+  const c = ca.exec(b);
+  if (!c) return null;
+  const ch = /<\/h[1-4]\s*>/gi;
+  ch.lastIndex = c.index + c[0].length;
+  if (!ch.exec(b)) return null;
+  return { attrs: b.slice(am.index + 2, g2), html: b.slice(g2 + 1, c.index) };
+}
+
 function extractHeadlineLinks(html, baseUrl) {
-  const src = String(html || '').slice(0, 3 * 1024 * 1024)
-    .replace(/<(script|style|noscript|template|svg)\b[\s\S]*?<\/\1\s*>/gi, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ');
+  // Was .replace(/<(script|style|noscript|template|svg)\b[\s\S]*?<\/\1\s*>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ').
+  let src = String(html || '').slice(0, 3 * 1024 * 1024);
+  src = replaceBlocks(src, /<(script|style|noscript|template|svg)\b/gi, closerByName(src), ' ');
+  src = replacePairs(src, '<!--', '-->', () => ' ');
   const items = [];
   const push = (href, titleHtml, block) => {
     const link = absUrl(decodeEntities(href), baseUrl);
@@ -284,26 +521,32 @@ function extractHeadlineLinks(html, baseUrl) {
     if (storyLike(link, title, baseUrl)) items.push({ title, link, summary: '', published: null, image: imgIn(block || '', baseUrl) });
   };
 
-  const art = /<article\b[^>]*>([\s\S]*?)<\/article\s*>/gi;
-  let m;
-  while ((m = art.exec(src)) && items.length < MAX_ITEMS) {
-    const b = m[1];
+  eachBlock(src, /<article\b/gi, /<\/article\s*>/gi, ({ inner: b }) => {   // /<article\b[^>]*>([\s\S]*?)<\/article\s*>/gi
+    if (items.length >= MAX_ITEMS) return false;
     // The headline: a link inside a heading, else a heading inside a link, else the longest link text.
-    const h = /<h[1-4]\b[^>]*>[\s\S]*?<a\b([^>]*)>([\s\S]*?)<\/a\s*>[\s\S]*?<\/h[1-4]\s*>/i.exec(b)
-      || /<a\b([^>]*)>\s*(?:<[^>]+>\s*)*<h[1-4]\b[^>]*>([\s\S]*?)<\/h[1-4]\s*>/i.exec(b);
-    if (h) { push(attrIn(h[1], 'href'), h[2], b); continue; }
+    let h = headingWithLink(b);
+    if (!h) eachLinkedHeading(b, false, (x) => { h = x; return false; });
+    if (h) { push(attrIn(h.attrs, 'href'), h.html, b); return true; }
     let best = null;
-    const la = /<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi;
-    let l;
-    while ((l = la.exec(b))) { const tx = plain(l[2]); if (!best || tx.length > best.tx.length) best = { href: attrIn(l[1], 'href'), html: l[2], tx }; }
+    eachBlock(b, /<a\b/gi, /<\/a\s*>/gi, (l) => {                           // /<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi
+      const tx = plain(l.inner);
+      if (!best || tx.length > best.tx.length) best = { href: attrIn(l.attrs, 'href'), html: l.inner, tx };
+    });
     if (best) push(best.href, best.html, b);
-  }
+    return true;
+  });
 
   if (dedupe(items).length < 3) {
-    const hl = /<h[1-4]\b[^>]*>\s*(?:<[^a][^>]*>\s*)*<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi;
-    while ((m = hl.exec(src)) && items.length < MAX_ITEMS * 2) push(attrIn(m[1], 'href'), m[2], src.slice(Math.max(0, m.index - 1500), m.index + m[0].length + 200));
-    const wrap = /<a\b([^>]*)>\s*(?:<(?!\/a)[^>]+>\s*)*<h[1-4]\b[^>]*>([\s\S]*?)<\/h[1-4]\s*>/gi;
-    while ((m = wrap.exec(src)) && items.length < MAX_ITEMS * 2) push(attrIn(m[1], 'href'), m[2], m[0]);
+    eachHeadingLink(src, (x) => {
+      if (items.length >= MAX_ITEMS * 2) return false;
+      push(attrIn(x.attrs, 'href'), x.html, src.slice(Math.max(0, x.index - 1500), x.end + 200));
+      return true;
+    });
+    eachLinkedHeading(src, true, (x) => {
+      if (items.length >= MAX_ITEMS * 2) return false;
+      push(attrIn(x.attrs, 'href'), x.html, src.slice(x.index, x.end));
+      return true;
+    });
   }
   return dedupe(items).slice(0, MAX_ITEMS);
 }
@@ -312,10 +555,10 @@ function dedupe(items) {
   const seen = new Set();
   const out = [];
   for (const it of items) {
-    const k = String(it.link).replace(/#.*$/, '').replace(/\/+$/, '');
+    const k = trimTrailing(String(it.link).replace(/#.*$/, ''), '/');
     if (seen.has(k)) {
       // Keep the first; let a later duplicate fill in what the first lacked (an image, a date).
-      const first = out.find((x) => String(x.link).replace(/#.*$/, '').replace(/\/+$/, '') === k);
+      const first = out.find((x) => trimTrailing(String(x.link).replace(/#.*$/, ''), '/') === k);
       if (first && !first.image && it.image) first.image = it.image;
       if (first && !first.published && it.published) first.published = it.published;
       continue;
@@ -329,4 +572,5 @@ function dedupe(items) {
 module.exports = {
   findFeedLinks, pageMeta, extractJsonLd, parseSitemap, parseRobots, extractHeadlineLinks, sameSite, storyLike,
   COMMON_PATHS, MAX_ITEMS,
+  _test: { dropRobotsComment, robotsField, robotsRuleMatches, titleText, eachLdScript, headingWithLink, eachLinkedHeading, eachHeadingLink },
 };
