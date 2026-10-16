@@ -4263,4 +4263,9 @@ export default {
   'account_delete.deleting': "Eliminazione…",
   'account_delete.err_confirm': "Digita il tuo indirizzo email esattamente come mostrato.",
   'account_delete.err_password': "Inserisci la tua password.",
+  // transition widget: Applies to (a transition covers its own zone)
+  'widget.trans.scope': "Si applica a",
+  'widget.trans.scope_next': "Solo l'elemento successivo (avanzato)",
+  'widget.trans.scope_all': "Ogni elemento della sua zona (consigliato)",
+  'widget.trans.scope_hint': "Una transizione copre ogni elemento della propria zona: l'intera playlist a schermo intero, oppure una zona di un layout. La zona si sceglie sulla riga della playlist. Usa «Solo l'elemento successivo» per un effetto diverso in un punto preciso.",
 };

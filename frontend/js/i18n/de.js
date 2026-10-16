@@ -4389,4 +4389,9 @@ export default {
   'account_delete.deleting': "Wird gelöscht…",
   'account_delete.err_confirm': "Geben Sie Ihre E-Mail-Adresse genau wie angezeigt ein.",
   'account_delete.err_password': "Geben Sie Ihr Passwort ein.",
+  // transition widget: Applies to (a transition covers its own zone)
+  'widget.trans.scope': "Gilt für",
+  'widget.trans.scope_next': "Nur das nächste Element (erweitert)",
+  'widget.trans.scope_all': "Jedes Element in seiner Zone (empfohlen)",
+  'widget.trans.scope_hint': "Ein Übergang gilt für jedes Element in seiner eigenen Zone: für die ganze Playlist im Vollbild oder für eine Zone eines Layouts. Die Zone wählen Sie in der Zeile der Playlist. Mit „Nur das nächste Element“ setzen Sie an einer Stelle einen anderen Effekt.",
 };

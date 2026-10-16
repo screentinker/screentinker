@@ -3117,4 +3117,9 @@ export default {
   'account_delete.deleting': "हटाया जा रहा है…",
   'account_delete.err_confirm': "अपना ईमेल पता ठीक वैसे ही टाइप करें जैसा दिखाया गया है।",
   'account_delete.err_password': "अपना पासवर्ड दर्ज करें।",
+  // transition widget: Applies to (a transition covers its own zone)
+  'widget.trans.scope': "इस पर लागू",
+  'widget.trans.scope_next': "केवल अगला आइटम (उन्नत)",
+  'widget.trans.scope_all': "अपने ज़ोन का हर आइटम (अनुशंसित)",
+  'widget.trans.scope_hint': "एक ट्रांज़िशन अपने ज़ोन के हर आइटम पर लागू होता है: फ़ुल स्क्रीन पर पूरी प्लेलिस्ट, या किसी लेआउट का एक ज़ोन। ज़ोन प्लेलिस्ट की पंक्ति पर चुना जाता है। किसी एक जगह अलग इफ़ेक्ट के लिए “केवल अगला आइटम” चुनें।",
 };

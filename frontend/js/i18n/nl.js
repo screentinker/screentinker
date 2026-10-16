@@ -1516,9 +1516,9 @@ export default {
     'widget.trans.duration': 'Duur (ms)',
     'widget.trans.scope': 'Van toepassing op',
     'widget.trans.scope_next': 'Alleen het volgende item (geavanceerd)',
-    'widget.trans.scope_all': 'Elk item in de afspeellijst (aanbevolen)',
+    'widget.trans.scope_all': "Elk item in zijn zone (aanbevolen)",
     'widget.trans.scope_hint':
-        'Eén overgang geldt voor de volledige afspeellijst — plaats deze widget ergens in de lijst en elke afbeelding krijgt een overgang. Gebruik “alleen het volgende item” als je op één specifieke plaats een ander effect wilt.',
+        "Een overgang geldt voor elk item in zijn eigen zone: de hele afspeellijst op volledig scherm, of één zone van een lay-out. De zone kies je in de rij van de afspeellijst. Gebruik “Alleen het volgende item” voor een ander effect op één plek.",
     'widget.trans.play': 'Afspelen',
     'widget.trans.pause': 'Pauzeren',
     'widget.trans.unavailable': 'Voorbeeld van overgang niet beschikbaar',

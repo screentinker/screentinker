@@ -4305,4 +4305,9 @@ export default {
   'account_delete.deleting': "Excluindo…",
   'account_delete.err_confirm': "Digite seu e-mail exatamente como mostrado.",
   'account_delete.err_password': "Digite sua senha.",
+  // transition widget: Applies to (a transition covers its own zone)
+  'widget.trans.scope': "Aplica-se a",
+  'widget.trans.scope_next': "Somente o próximo item (avançado)",
+  'widget.trans.scope_all': "Todos os itens da sua zona (recomendado)",
+  'widget.trans.scope_hint': "Uma transição cobre todos os itens da própria zona: a playlist inteira em tela cheia, ou uma zona de um layout. A zona é escolhida na linha da playlist. Use “Somente o próximo item” para um efeito diferente em um ponto específico.",
 };

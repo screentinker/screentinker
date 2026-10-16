@@ -4339,4 +4339,9 @@ export default {
   'account_delete.deleting': "Eliminando…",
   'account_delete.err_confirm': "Escriba su correo electrónico exactamente como se muestra.",
   'account_delete.err_password': "Introduzca su contraseña.",
+  // transition widget: Applies to (a transition covers its own zone)
+  'widget.trans.scope': "Se aplica a",
+  'widget.trans.scope_next': "Solo el siguiente elemento (avanzado)",
+  'widget.trans.scope_all': "Cada elemento de su zona (recomendado)",
+  'widget.trans.scope_hint': "Una transición cubre cada elemento de su propia zona: toda la lista de reproducción a pantalla completa, o una zona de un diseño. La zona se elige en la fila de la lista. Use «Solo el siguiente elemento» para un efecto distinto en un punto concreto.",
 };
