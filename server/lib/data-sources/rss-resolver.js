@@ -4,7 +4,7 @@
  * RSS 2.0 / Atom / RDF feed → headline variables. News tickers, a company blog, a status page
  * (Statuspage, GitHub status, AWS health all publish feeds), job boards, an events calendar.
  *
- * ⚠️ NOT AN XML PARSER, ON PURPOSE. Feeds are read with bounded regular expressions: no DTD
+ * ⚠️ NOT AN XML PARSER, ON PURPOSE. Feeds are read with linear scans and small bounded regular expressions: no DTD
  * processing, no external entities, no entity expansion beyond the five XML ones and numeric
  * references — so XXE and "billion laughs" have nothing to act on. A feed that needs a real XML
  * parser to read is rare enough that a clear "could not find any items" is the right answer.
@@ -17,6 +17,7 @@
  */
 
 const { fetchText, checkHttpUrl, UserFacingError } = require('./http');
+const { isWs, finder, gtFinder, replaceBlocks, esc } = require('../news-feed/scan');
 
 const MAX_ITEMS = 50;
 
@@ -44,22 +45,69 @@ function safeChar(cp) {
   return String.fromCodePoint(cp);
 }
 
+/*
+ * ⚠️ LINEAR SCANS, NOT LAZY REGEXES. A feed is up to 2 MB of text a stranger controls, and the
+ * patterns these replace — /<item(?:\s[^>]{0,2000})?>([\s\S]*?)<\/item>/gi, the same per tag in
+ * textOf, and /<[^>]*>/g and /<(script|style)[\s\S]*?<\/\1>/gi in plain() — are quadratic on a run
+ * of openers with no closer: each opener walks to the end of the text before failing, so a 1 MB
+ * feed of "<item>" pinned the event loop for ~20 s and a 100 KB description of "<" for seconds per
+ * item. Same idea as lib/news-feed/scan.js: a lazy span ends at the FIRST closer after its opener,
+ * so each closer is searched for once (finder), and an opener with no closer means no later one has
+ * one either. test/rss-resolver-linear.test.js checks every function against the old regexes.
+ */
+
+/**
+ * Every match of /<TAG(?:\s[^>]{0,2000})?>([\s\S]{0,maxInner}?)<\/TAG>/gi, in order: fn(inner) for
+ * each; fn returning false stops.
+ */
+function eachElement(s, tag, maxInner, fn) {
+  const open = new RegExp(`<${esc(tag)}`, 'gi');
+  const close = finder(s, new RegExp(`</${esc(tag)}>`, 'gi'));
+  const gt = gtFinder(s);
+  let m;
+  while ((m = open.exec(s))) {
+    const after = open.lastIndex;
+    let g;
+    if (s.charCodeAt(after) === 62) g = after;                       // "<tag>"
+    else if (after < s.length && isWs(s.charCodeAt(after))) {        // "<tag attrs…>"
+      g = gt(after + 1);
+      if (g < 0) return;                                             // no ">" for any later opener
+      if (g - (after + 1) > 2000) continue;
+    } else continue;                                                 // "<tagname…": another tag
+    const c = close(g + 1);
+    if (!c) return;                                                  // no closer for any later opener
+    if (c.index - (g + 1) > maxInner) continue;                      // the first closer is past the bound
+    open.lastIndex = c.end;
+    if (fn(s.slice(g + 1, c.index)) === false) return;
+  }
+}
+
 /* The text of an element: CDATA unwrapped, entities decoded. Only the first match. */
 function textOf(block, tag) {
-  const re = new RegExp(`<${tag}(?:\\s[^>]{0,2000})?>([\\s\\S]{0,100000}?)</${tag}>`, 'i');
-  const m = re.exec(block);
-  if (!m) return '';
-  return unwrap(m[1]);
+  let inner = null;
+  eachElement(String(block), tag, 100000, (x) => { inner = x; return false; });
+  return inner === null ? '' : unwrap(inner);
 }
 function unwrap(s) {
   const cdata = /^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/.exec(s);
   return cdata ? cdata[1] : decodeEntities(s);
 }
+/** For each /<TAG\s([^>]{0,2000}?)\/?>/gi in `block`, the first `attr` value on a tag `filter` accepts. */
 function attrOf(block, tag, attr, filter) {
-  const re = new RegExp(`<${tag}\\s([^>]{0,2000}?)/?>`, 'gi');
+  const s = String(block);
+  const open = new RegExp(`<${esc(tag)}`, 'gi');
+  const gt = gtFinder(s);
   let m;
-  while ((m = re.exec(block))) {
-    const attrs = m[1];
+  while ((m = open.exec(s))) {
+    const after = open.lastIndex;
+    if (!(after < s.length && isWs(s.charCodeAt(after)))) continue;
+    const g = gt(after + 1);
+    if (g < 0) break;
+    // The lazy group stops short of a "/" right before the ">".
+    const end = s.charCodeAt(g - 1) === 47 && g - 1 >= after + 1 ? g - 1 : g;
+    if (end - (after + 1) > 2000) continue;
+    open.lastIndex = g + 1;
+    const attrs = s.slice(after + 1, end);
     if (filter && !filter(attrs)) continue;
     const a = new RegExp(`(?:^|\\s)${attr}\\s*=\\s*("([^"]*)"|'([^']*)')`, 'i').exec(attrs);
     if (a) return decodeEntities(a[2] !== undefined ? a[2] : a[3]);
@@ -67,9 +115,35 @@ function attrOf(block, tag, attr, filter) {
   return '';
 }
 
+/** `s.replace(/<[^>]*>/g, ' ')`: a "<" runs to the first ">" after it; a "<" with none ends the scan. */
+function tagsToSpaces(str) {
+  let out = '';
+  let i = 0;
+  for (;;) {
+    const lt = str.indexOf('<', i);
+    if (lt < 0) break;
+    const gt = str.indexOf('>', lt + 1);
+    if (gt < 0) break;
+    out += str.slice(i, lt) + ' ';
+    i = gt + 1;
+  }
+  return i === 0 ? str : out + str.slice(i);
+}
+
+/** closeFor() for replaceBlocks: `</name>` for the name the opener captured (the old `<\/\1>`). */
+function exactCloser(s) {
+  const closers = new Map();
+  return (m) => {
+    const name = m[1].toLowerCase();
+    if (!closers.has(name)) closers.set(name, finder(s, new RegExp(`</${name}>`, 'gi')));
+    return closers.get(name);
+  };
+}
+
 /** HTML → plain text: tags dropped, whitespace collapsed, clipped at a word boundary. */
 function plain(html, max) {
-  let s = decodeEntities(String(html).replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<br\s*\/?>|<\/p>/gi, ' ').replace(/<[^>]*>/g, ' '))
+  const src = String(html);
+  let s = decodeEntities(tagsToSpaces(replaceBlocks(src, /<(script|style)/gi, exactCloser(src), ' ').replace(/<br\s*\/?>|<\/p>/gi, ' ')))
     .replace(/\s+/g, ' ').trim();
   if (max && s.length > max) s = s.slice(0, max).replace(/\s+\S*$/, '') + '…';
   return s;
@@ -89,10 +163,7 @@ function parseFeed(xml) {
     link: isAtom ? httpUrl(attrOf(channel, 'link', 'href', (a) => !/rel\s*=\s*["'](?:self|hub)/i.test(a))) : httpUrl(textOf(channel, 'link')),
     items: [],
   };
-  const blockRe = isAtom ? /<entry(?:\s[^>]{0,2000})?>([\s\S]*?)<\/entry>/gi : /<item(?:\s[^>]{0,2000})?>([\s\S]*?)<\/item>/gi;
-  let m;
-  while ((m = blockRe.exec(src)) && feed.items.length < MAX_ITEMS) {
-    const b = m[1];
+  eachElement(src, isAtom ? 'entry' : 'item', Infinity, (b) => {
     const summaryHtml = isAtom ? (textOf(b, 'summary') || textOf(b, 'content')) : (textOf(b, 'description') || textOf(b, 'content:encoded'));
     const image = httpUrl(attrOf(b, 'media:content', 'url', (a) => !/medium\s*=\s*["'](?:video|audio)/i.test(a)))
       || httpUrl(attrOf(b, 'media:thumbnail', 'url'))
@@ -106,7 +177,8 @@ function parseFeed(xml) {
       summaryHtml,
       image,
     });
-  }
+    return feed.items.length < MAX_ITEMS;
+  });
   return feed;
 }
 
