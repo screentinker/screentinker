@@ -431,6 +431,11 @@ module.exports = function passkeyRoutes({ issueSession, logFailedLogin, ensureVe
         return fail('Passkey second factor: verification failed');
       }
       totpLockout.reset(user.id);
+      // Deactivated after the password step: the same refusal as /login/verify, after the signature.
+      if (user.disabled_at) {
+        logFailedLogin(user.email, ip, 'Account deactivated by its organization');
+        return res.status(403).json({ error: 'This account has been deactivated by your organization.', code: 'account_disabled' });
+      }
       audit('auth:passkey_login', { userId: user.id, ip, details: { passkey_id: cred.id, name: cred.name, second_factor: true } });
       issueSession(req, res, user, { via_passkey: true });
     } catch (e) {

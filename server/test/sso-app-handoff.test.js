@@ -112,3 +112,34 @@ test('in app mode the login ends at the app link with a code, never the token', 
   assert.match(src, /if \(forApp\) \{[\s\S]{0,200}backToManagerApp\(res, \{ code: issueAppCode\(/,
     'the app hand-off sends a code; the session token stays on the server until the swap');
 });
+
+test('an account deactivated between the provider callback and the swap gets no token (app-exchange and claim)', async () => {
+  const deactivate = (u) => db.prepare("UPDATE users SET disabled_at = strftime('%s','now') WHERE id = ?").run(u.id);
+
+  const { verifier, challenge } = pair();
+  const { code, u } = issue(challenge);
+  deactivate(u);
+  const res = await swap(code, verifier);
+  const body = await res.json();
+  assert.equal(res.status, 403);
+  assert.equal(body.code, 'account_disabled');
+  assert.equal(body.token, undefined, 'no session leaves the server');
+  assert.equal((await swap(code, verifier)).status, 401, 'the code is still spent');
+
+  const v = user();
+  const claim = jwt.sign({ typ: 'sso-claim', tok: generateToken(v, null), wsp: null }, config.jwtSecret, { algorithm: 'HS256', expiresIn: 60 });
+  deactivate(v);
+  const c = await fetch(`${base}/sso/claim`, { method: 'POST', headers: { Cookie: `st_sso_claim=${claim}` } });
+  const cb = await c.json();
+  assert.equal(c.status, 403);
+  assert.equal(cb.code, 'account_disabled');
+  assert.equal(cb.token, undefined);
+  assert.match(c.headers.get('set-cookie') || '', /st_sso_claim=;/, 'the claim cookie is cleared');
+
+  // Active, the same claim shape completes: the refusal is the deactivation, nothing else.
+  const w = user();
+  const ok = jwt.sign({ typ: 'sso-claim', tok: generateToken(w, null), wsp: null }, config.jwtSecret, { algorithm: 'HS256', expiresIn: 60 });
+  const r = await fetch(`${base}/sso/claim`, { method: 'POST', headers: { Cookie: `st_sso_claim=${ok}` } });
+  assert.equal(r.status, 200);
+  assert.ok((await r.json()).token);
+});

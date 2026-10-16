@@ -372,6 +372,28 @@ test('an account its organization deactivated (SCIM) is refused a passkey sign-i
   assert.ok(ok.body.token);
 });
 
+test('deactivated between the password and the passkey second factor: no session (same answer as /login)', async () => {
+  const u = await newUser();
+  const reg = await register(u);
+  const s = await jfetch('/api/auth/totp/setup', post(u.token, {}));
+  await jfetch('/api/auth/totp/enable', post(u.token, { code: totpCode(s.body.secret) }));
+  const login = await jfetch('/api/auth/login', post(null, { email: u.email, password: PW }));
+  assert.equal(login.body.mfa_required, true);
+  sqlite.prepare("UPDATE users SET disabled_at = strftime('%s','now') WHERE id = ?").run(u.id);
+
+  const mo = await jfetch('/api/auth/passkeys/mfa/options', post(null, { mfa_token: login.body.mfa_token }));
+  assert.equal(mo.status, 200);
+  const mv = await jfetch('/api/auth/passkeys/mfa/verify', post(null, {
+    mfa_token: login.body.mfa_token, challenge_id: mo.body.challenge_id, response: reg.authn.get(mo.body.options),
+  }));
+  assert.equal(mv.status, 403, JSON.stringify(mv.body));
+  assert.equal(mv.body.code, 'account_disabled');
+  assert.equal(mv.body.token, undefined, 'no session is issued');
+  const n = sqlite.prepare("SELECT COUNT(*) AS n FROM activity_log WHERE user_id = ? AND action = 'auth:passkey_login'").get(u.id).n;
+  assert.equal(n, 0, 'a refused sign-in is not audited as a login');
+  sqlite.prepare('UPDATE users SET disabled_at = NULL WHERE id = ?').run(u.id);
+});
+
 test('passkey sign-in is rate limited per IP', async () => {
   const ip = '10.99.99.99';
   let last; let n = 0;

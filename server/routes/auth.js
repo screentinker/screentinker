@@ -819,6 +819,12 @@ router.post('/totp/verify', (req, res) => {
     return res.status(401).json({ error: 'Invalid code' });
   }
   totpLockout.reset(decoded.id);
+  // Deactivated (SCIM) after the password step but before the code: the same refusal POST /login
+  // gives, said only once the second factor is proven.
+  if (user.disabled_at) {
+    logFailedLogin(user.email, getClientIp(req), 'Account deactivated by its organization');
+    return res.status(403).json({ error: 'This account has been deactivated by your organization.', code: 'account_disabled' });
+  }
   issueSession(req, res, user, {
     via_recovery: viaRecovery,
     recovery_codes_remaining: recoveryCodesRemaining(user.id),
@@ -1586,6 +1592,8 @@ router.post('/sso/app-exchange', (req, res) => {
   try { session = jwt.verify(row.token, config.jwtSecret, { algorithms: ['HS256'] }); } catch { return expired(); }
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(session.id);
   if (!user) return expired();
+  // Deactivated between the provider's callback and this exchange: the code is spent, no token.
+  if (user.disabled_at) return res.status(403).json({ error: 'This account has been deactivated by your organization.', code: 'account_disabled' });
   res.json({ token: row.token, user: publicUser(user), current_workspace_id: row.workspace_id || null });
 });
 
@@ -2277,6 +2285,8 @@ router.post('/sso/claim', (req, res) => {
   }
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(session.id);
   if (!user) return res.status(401).json({ error: 'That sign-in has expired' });
+  // Deactivated between the provider's callback and this claim: the cookie is cleared, no token.
+  if (user.disabled_at) return res.status(403).json({ error: 'This account has been deactivated by your organization.', code: 'account_disabled' });
 
   const safeUser = publicUser(user);
   res.json({ token: claims.tok, user: safeUser, current_workspace_id: claims.wsp || null });

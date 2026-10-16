@@ -123,3 +123,25 @@ test('verify lockout: repeated bad codes -> 429 (per-user, atop the route rate-l
   }
   assert.equal(last.status, 429, 'locked out after repeated bad codes');
 });
+
+test('deactivated (SCIM) between the password and the code: /totp/verify issues no session', async () => {
+  const Database = require('better-sqlite3');
+  const sqlite = new Database(path.join(DATA_DIR, 'db', 'remote_display.db'));
+  // Its own client address: the file has already spent this minute's per-IP registrations.
+  const ip = { 'X-Forwarded-For': `10.${crypto.randomInt(256)}.${crypto.randomInt(256)}.${crypto.randomInt(1, 255)}` };
+  try {
+    const email = 'u' + crypto.randomBytes(5).toString('hex') + '@x.local';
+    const reg = await jfetch('/api/auth/register', post(null, { email, password: PW }, ip));
+    const s = await jfetch('/api/auth/totp/setup', post(reg.body.token, {}, ip));
+    const e = await jfetch('/api/auth/totp/enable', post(reg.body.token, { code: authenticator.generate(s.body.secret) }, ip));
+    const recovery = e.body.recovery_codes;
+    const login = await jfetch('/api/auth/login', post(null, { email, password: PW }, ip));
+    assert.equal(login.body.mfa_required, true);
+    sqlite.prepare("UPDATE users SET disabled_at = strftime('%s','now') WHERE email = ?").run(email);
+    const v = await jfetch('/api/auth/totp/verify', post(null, { mfa_token: login.body.mfa_token, code: recovery[0] }, ip));
+    assert.equal(v.status, 403, JSON.stringify(v.body));
+    assert.equal(v.body.code, 'account_disabled');
+    assert.equal(v.body.token, undefined, 'no session is issued');
+    sqlite.prepare('UPDATE users SET disabled_at = NULL WHERE email = ?').run(email);
+  } finally { sqlite.close(); }
+});
