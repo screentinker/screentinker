@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+// Abuse backstop (lib/backstop-limiter.js): already counted app-wide; here so this router is never unguarded.
+router.use(require('../lib/backstop-limiter'));
 
 // #90: the bare POST /api/provision was a vestigial SECOND pairing endpoint. It paired a
 // device by pairing code but - unlike POST /api/provision/pair (server.js) - did NOT

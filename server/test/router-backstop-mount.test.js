@@ -1,8 +1,9 @@
 'use strict';
 
 /*
- * The energy and freshness routers start with router.use(backstop), like every other router mounted
- * through the config/api-surface.js loop (CodeQL js/missing-rate-limiting #814-#819). server.js
+ * The energy, freshness, activity, ota-rollouts, plugin-submissions, provisioning and teams routers
+ * start with router.use(backstop), like every other router mounted through the
+ * config/api-surface.js loop (CodeQL js/missing-rate-limiting #814-#819). server.js
  * already counts every request app-wide; the in-router mount is what static analysis can see, and it
  * keeps the router bounded if it is ever mounted somewhere the app-wide limiter does not reach. It
  * must be the SAME instance, whose skip() refuses an already-counted request, so nothing is counted
@@ -22,7 +23,7 @@ after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
 
 const backstop = require('../lib/backstop-limiter');
 
-for (const mod of ['energy', 'freshness']) {
+for (const mod of ['energy', 'freshness', 'activity', 'ota-rollouts', 'plugin-submissions', 'provisioning', 'teams']) {
   test(`routes/${mod} mounts the shared backstop ahead of every route`, () => {
     const router = require(`../routes/${mod}`);
     const first = router.stack.findIndex((l) => l.route);
