@@ -895,6 +895,8 @@
        * timestamp in a report is worse than a missing row.
        */
       if (!payload) return;
+      // #649: a bundle that asked to be skipped was not a play — the start is dropped, never queued.
+      if (payload.event === 'play_end' && payload.skipped === true) { offlinePlayOpen = null; return; }
       if (payload.event === 'play_start') {
         offlinePlayOpen = {
           content_id: payload.content_id || null,
@@ -914,6 +916,14 @@
           completed: !!payload.completed
         }));
         persistOfflinePlays();
+      }
+    } catch (e) {}
+  };
+  // #649: a bundle's skip (js/player.js) reaches the dashboard's device log under the 'bundle' tag.
+  window.__stBundleLog = function (level, msg) {
+    try {
+      if (socket && socket.connected && deviceId && authenticated) {
+        socket.emit('device:log', { device_id: deviceId, tag: 'bundle', level: level, message: msg });
       }
     } catch (e) {}
   };

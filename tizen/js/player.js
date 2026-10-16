@@ -89,6 +89,58 @@ var TIZEN_I18N = {
 var BUNDLE_MIME = 'application/vnd.screentinker.bundle+zip';
 
 /*
+ * #649: a bundle can ask to be skipped — parent.postMessage({ type: 'screentinker:skip', reason }, '*').
+ * The rules are window.BundleSkip (js/bundle-skip.js, copied from server/lib/bundle-skip.js and held
+ * to shared/bundle-skip-vectors.json); this is WHO may ask. Every bundle frame is registered when it
+ * is mounted and revoked when its item stops being current, and a message counts only when its
+ * source is a registered, live frame's window — not another frame, not one the bundle embeds, not a
+ * bundle already replaced. Same behaviour as the web player (server/player/index.html).
+ * window.__stBundleLog (set by app.js) carries the log line to the dashboard.
+ */
+var stBundleFrames = [];
+function stRegisterBundleFrame(f, onSkip) {
+  var reg = { f: f, onSkip: onSkip, live: true, ignoredLogged: false };
+  stBundleFrames.push(reg);
+  if (stBundleFrames.length > 32) stBundleFrames.shift();   // bounded: a revoke normally keeps this at 1-2
+  return reg;
+}
+function stRevokeBundleFrame(reg) {
+  if (!reg) return;
+  reg.live = false;
+  var i = stBundleFrames.indexOf(reg);
+  if (i >= 0) stBundleFrames.splice(i, 1);
+}
+function stBundleLog(level, msg) {
+  try { console.log('[bundle] ' + msg); } catch (e) {}
+  try { if (typeof window.__stBundleLog === 'function') window.__stBundleLog(level, msg); } catch (e) {}
+}
+function stBundleLabel(item) { return (item && (item.filename || item.title || item.content_id)) || 'bundle'; }
+function stBundleIgnored(reg, item, why) {
+  if (reg.ignoredLogged) return;
+  reg.ignoredLogged = true;
+  var text = why === 'sync' ? 'this screen is on a shared clock (wall or synced group)'
+    : why === 'alone' ? 'there is nothing else to play'
+      : why === 'repeat' ? 'it already skipped this pass, so it plays its duration' : why;
+  stBundleLog('info', 'skip ignored for "' + stBundleLabel(item) + '": ' + text);
+}
+function stNewSkipGuard() {
+  return (typeof BundleSkip !== 'undefined' && BundleSkip.Guard) ? new BundleSkip.Guard() : null;
+}
+(function () {
+  if (typeof window === 'undefined' || !window.addEventListener) return;
+  window.addEventListener('message', function (ev) {
+    if (typeof BundleSkip === 'undefined' || !ev || !ev.source || !BundleSkip.isSkipMessage(ev.data)) return;
+    for (var i = 0; i < stBundleFrames.length; i++) {
+      var r = stBundleFrames[i];
+      if (r.live && r.f.contentWindow === ev.source) {
+        try { r.onSkip(r, BundleSkip.sanitizeReason(ev.data.reason)); } catch (e) { stBundleLog('warn', 'skip failed: ' + (e && e.message)); }
+        return;
+      }
+    }
+  });
+})();
+
+/*
  * A HOLD item (server/lib/hold-item.js): show nothing new for the item's duration.
  *   hold://blank   the screen / zone goes to its background
  *   hold://freeze  the outgoing picture stays up, paused
@@ -220,6 +272,11 @@ function PlaylistPlayer(stageEl, getBase, getDeviceId) {
   this.held = false;           // a visitor is using the page: nothing moves the playlist on
   this._parked = null;         // the latest playlist update that arrived while held (a thunk)
   this._playSeq = 0;           // bumped by every playCurrent, so release() can tell if a parked update moved playback
+  // #649: the bundle on screen that may ask to be skipped, the once-per-pass guard, and whether the
+  // advance under way is a skip (not the item's end).
+  this._bundleReg = null;
+  this._skipGuard = stNewSkipGuard();
+  this._skipAdvancing = false;
 }
 
 /*
@@ -614,6 +671,8 @@ PlaylistPlayer.prototype.contentUrl = function (item) {
 
 PlaylistPlayer.prototype.advance = function () {
   if (this.held) return;   // #473: a visitor is using the page; release() advances
+  // #649: any end but a bundle's own skip, after a real run, closes the skip guard's pass.
+  if (!this._skipAdvancing && this._skipGuard) this._skipGuard.ended(Date.now() - this.itemStartedAt);
   // #157: apply a deferred rotation-out — the removed-but-live item just finished, so swap in the
   // stashed list and continue at the preserved successor instead of interrupting/restarting.
   if (this._deferredRotation) {
@@ -850,6 +909,8 @@ PlaylistPlayer.prototype.absUrl = function (u) {
 
 PlaylistPlayer.prototype.playCurrent = function () {
   if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+  // #649: whatever bundle was on screen may no longer ask to be skipped.
+  if (this._bundleReg) { stRevokeBundleFrame(this._bundleReg); this._bundleReg = null; }
   if (!this.items.length) { this.idle(); return; }
 
   this.itemStartedAt = Date.now();   // wall position fallback for non-video items
@@ -1604,8 +1665,45 @@ PlaylistPlayer.prototype.renderBundle = function (item, single) {
     } catch (e) { /* never let caching break playback */ }
   }
 
+  // #649: this frame, and only while it is the item on screen, may ask to be skipped — from the
+  // moment it exists, before its own load event.
+  this._bundleReg = stRegisterBundleFrame(f, function (reg, reason) { self._bundleSkip(reg, item, reason); });
   this.stage.appendChild(f);
   if (!single) this.schedule(this.durationMs(item));
+};
+
+/*
+ * #649: the fullscreen bundle asked to be skipped. Moves on as if its duration had ended, minus the
+ * play: the play_start already sent is retracted (play_end skipped:true — the server deletes the row;
+ * app.js drops an offline one). Ignored on a shared clock (wall follower, synced group, a wall), with
+ * nothing else to play, or when the guard says it already skipped this pass.
+ */
+PlaylistPlayer.prototype._bundleSkip = function (reg, mounted, reason) {
+  var item = this.items[this.index];
+  if (reg !== this._bundleReg || !item || this.itemIdentity(item) !== this.itemIdentity(mounted)) return;   // stale
+  var sync = !!(this.wallFollower || this.scheduleDriven || this.wallActive());
+  var next = this.nextActiveIndex(this.index);
+  var canAdvance = next >= 0 && next !== this.index && !this.held;
+  var verdict = this._skipGuard ? this._skipGuard.decide(this.index + '|' + this.itemIdentity(item), canAdvance, sync) : 'sync';
+  if (verdict !== 'skip') { stBundleIgnored(reg, item, verdict); return; }
+  stRevokeBundleFrame(reg);
+  this._bundleReg = null;
+  stBundleLog('info', 'skipped "' + stBundleLabel(item) + '"' + (reason ? ' \u2014 ' + reason : ''));
+  if (this._loggedItem === item) {
+    if (typeof this.onPlayEvent === 'function' && item.log_play !== 0) {
+      try {
+        this.onPlayEvent({
+          device_id: this.getDeviceId(), event: 'play_end',
+          content_id: item.content_id || item.widget_id || null, content_name: item.filename || 'Unknown',
+          completed: false, skipped: true, elapsed_ms: Math.max(0, Date.now() - this.itemStartedAt)
+        });
+      } catch (e) {}
+    }
+    this._loggedItem = null;   // so the next playCurrent sends no play_end for it
+  }
+  if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+  this._skipAdvancing = true;
+  try { this.advance(); } finally { this._skipAdvancing = false; }
 };
 
 PlaylistPlayer.prototype.renderFrame = function (src, advanceMs, allow, vertical) {
@@ -1744,6 +1842,24 @@ ZoneRenderer.prototype.render = function (layout, assignments) {
   });
 };
 
+/* #649: a zone's bundle asked to be skipped — the zone moves on; the other zones keep their timers. */
+ZoneRenderer.prototype._zoneBundleSkip = function (reg, zone, list, idx, item, advance, reason) {
+  if (zone.bundleReg !== reg) return;   // stale: the zone moved on
+  if (!zone.skipGuard) zone.skipGuard = stNewSkipGuard();
+  var self = this;
+  var canAdvance = false;
+  for (var i = 0; i < list.length; i++) { if (i !== idx && self.allows(list[i])) { canAdvance = true; break; } }
+  var key = idx + '|' + (item.content_id || '') + '|' + (item.widget_id || '') + '|' + (item.remote_url || '');
+  var verdict = zone.skipGuard ? zone.skipGuard.decide(key, canAdvance, false) : 'sync';
+  if (verdict !== 'skip') { stBundleIgnored(reg, item, verdict); return; }
+  stRevokeBundleFrame(reg);
+  zone.bundleReg = null;
+  stBundleLog('info', 'skipped "' + stBundleLabel(item) + '" in zone "' + (zone.name || zone.id) + '"' + (reason ? ' \u2014 ' + reason : ''));
+  if (this.timers[zone.id]) { clearTimeout(this.timers[zone.id]); this.timers[zone.id] = null; }
+  zone.skipAdvancing = true;
+  advance();
+};
+
 ZoneRenderer.prototype.scheduleAdvance = function (zone, ms, fn) {
   if (this.timers[zone.id]) clearTimeout(this.timers[zone.id]);
   this.timers[zone.id] = setTimeout(fn, ms);
@@ -1806,6 +1922,12 @@ ZoneRenderer.prototype.contentUrl = function (item) {
 
 ZoneRenderer.prototype.showItem = function (zone, list, index) {
   if (this.timers[zone.id]) { clearTimeout(this.timers[zone.id]); this.timers[zone.id] = null; }
+  // #649: the zone's bundle may no longer ask to be skipped; an item that left by anything but its
+  // own skip closes the zone's skip pass (one guard per zone, so a skip moves only its zone).
+  if (zone.bundleReg) { stRevokeBundleFrame(zone.bundleReg); zone.bundleReg = null; }
+  if (zone.skipGuard && !zone.skipAdvancing) zone.skipGuard.ended(Date.now() - (zone.shownAt || 0));
+  zone.skipAdvancing = false;
+  zone.shownAt = Date.now();
   // #624: whatever this zone showed before is gone, so its YouTube listener must not move it on.
   if (!this.ytStops) this.ytStops = {};
   if (this.ytStops[zone.id]) { try { this.ytStops[zone.id](); } catch (e) {} this.ytStops[zone.id] = null; }
@@ -1879,6 +2001,8 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
       // the zone rendered an empty div that never advanced.
       var bf = zrFrame(this.getBase() + '/api/content/' + a.content_id + '/bundle?rev=' + (a.content_rev || 0));
       bf.setAttribute('sandbox', 'allow-scripts');
+      // #649: this zone's bundle may ask to be skipped; it moves THIS zone on.
+      zone.bundleReg = stRegisterBundleFrame(bf, function (reg, reason) { self._zoneBundleSkip(reg, zone, list, activeIdx, a, advance, reason); });
       zone.el.appendChild(bf);
       if (multi) this.scheduleAdvance(zone, dur, advance);
     } else if (mime.indexOf('video/') === 0) {

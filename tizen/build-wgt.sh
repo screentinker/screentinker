@@ -55,6 +55,8 @@ cp ../server/lib/schedule-eval.js js/schedule-eval.js
 cp ../server/lib/play-order.js js/play-order.js
 # #473: the interactive-page rules, same single-source discipline (shared/kiosk-vectors.json tests the source).
 cp ../server/lib/kiosk-logic.js js/kiosk-logic.js
+# #649: the bundle-skip rules, same discipline (shared/bundle-skip-vectors.json tests the source).
+cp ../server/lib/bundle-skip.js js/bundle-skip.js
 # 3.0 screen share: the web player's receiver, same single-source discipline (js/screen-share-tizen.js is the glue).
 cp ../server/lib/screen-share-player.js js/screen-share.js
 

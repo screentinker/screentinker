@@ -57,3 +57,8 @@ test('the browser global is set even where `module` exists (BrightSign nodejs_en
   assert.equal(typeof self.BundleSkip.Guard, 'function');
   assert.equal(typeof module.exports.Guard, 'function');
 });
+
+test('the Tizen copy is the same file (build-wgt.sh copies it; the committed copy must not drift)', () => {
+  assert.equal(fs.readFileSync(path.join(ROOT, 'tizen', 'js', 'bundle-skip.js'), 'utf8'),
+    fs.readFileSync(require.resolve('../lib/bundle-skip.js'), 'utf8'));
+});
