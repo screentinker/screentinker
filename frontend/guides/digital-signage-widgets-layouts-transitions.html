@@ -207,7 +207,7 @@
       <thead><tr><th>Player</th><th>Full screen (no layout)</th><th>Inside layout zones</th></tr></thead>
       <tbody>
         <tr><td>Raspberry Pi, Windows and Mac (native player)</td><td class="yes">Your effect</td><td class="yes">Your effect, in each zone</td></tr>
-        <tr><td>Android TV, Fire TV and Android panels</td><td class="yes">Your effect</td><td class="no">Plain cut</td></tr>
+        <tr><td>Android TV, Fire TV and Android panels</td><td class="yes">Your effect</td><td class="yes">Your effect, in each zone (from 3.0.1)</td></tr>
         <tr><td>Web player (a browser, ChromeOS)</td><td class="yes">Your effect</td><td class="no">Plain cut</td></tr>
         <tr><td>Samsung Tizen</td><td class="yes">Your effect</td><td class="no">Plain cut</td></tr>
         <tr><td>LG webOS</td><td class="partial">As the web player, where the panel can run it</td><td class="no">Plain cut</td></tr>
@@ -219,16 +219,17 @@
     </div>
     <ul>
       <li><strong>Raspberry Pi, Windows and Mac:</strong> each zone has its own transition runner. On a machine without a graphics driver the player cross-fades instead of running the effect.</li>
+      <li><strong>Android TV, Fire TV and Android panels</strong> (from 3.0.1): each zone wipes on its own while the other zones keep playing. On low-memory devices such as the Fire TV Stick 4K, at most two zones run the full effect at the same moment; any others that change at that instant fade instead. If an effect cannot start in time, that change cuts.</li>
       <li><strong>Web player, webOS, BrightSign and Vega:</strong> these all run the web player, which needs WebGL in the browser; without it, it cuts. On BrightSign, video plays on a separate hardware layer, so an effect over a video may not be visible and you see a cut. On the Vega sticks a video change always cuts, because drawing a video frame crashes their compositor.</li>
       <li><strong>Roku</strong> has no way to run the effects, so it cross-fades for the duration you set.</li>
-      <li><strong>Widgets</strong> (a clock, a ticker, a web page) appear with a plain cut on the web, Android and Tizen players. Transitions are for pictures and videos.</li>
+      <li><strong>Widgets</strong> (a clock, a ticker, a web page) appear with a plain cut on every player. Transitions are for pictures and videos.</li>
       <li><strong>Older players</strong> that do not know about transitions ignore them and cut. Nothing else changes, and the playlist plays as normal.</li>
     </ul>
 
     <h2 id="troubleshooting">Troubleshooting</h2>
     <h3>My transition does nothing</h3>
     <ul>
-      <li><strong>The screen plays a layout, on a player that cuts in zones.</strong> See the table above: on Android, the web player, Tizen, webOS, BrightSign and Vega, items inside zones change with a cut. Full-screen playlists get the transition on those players.</li>
+      <li><strong>The screen plays a layout, on a player that cuts in zones.</strong> See the table above: on the web player, Tizen, webOS, BrightSign and Vega, items inside zones change with a cut. Full-screen playlists get the transition on those players. Android players need 3.0.1 or later for transitions in zones.</li>
       <li><strong>The transition is in a different zone from the items.</strong> Look at the Zone column. The transition and the pictures it should affect must be in the same zone. <em>Main zone (Main)</em> and <em>Main</em> are the same zone.</li>
       <li><strong>The items are widgets.</strong> Widgets change with a cut on most players.</li>
       <li><strong>The zone has only one item,</strong> so nothing ever changes in it.</li>
