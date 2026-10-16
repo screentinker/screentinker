@@ -8,15 +8,29 @@
  * title/summary are PLAIN TEXT (tags stripped, entities decoded, whitespace collapsed), link/image
  * are absolute http(s) URLs or '', published is an ISO string or null.
  *
- * ⚠️ NOT AN XML PARSER, ON PURPOSE, like lib/data-sources/rss-resolver.js: bounded regular
- * expressions over a size-capped string. No DTD processing, no external entities, no entity
- * expansion beyond the XML five, numeric references and a fixed table of HTML names — so XXE and
- * "billion laughs" have nothing to act on. Real-world feeds are often not well-formed XML (a bare
- * `&` in a title, an HTML entity XML does not define), and a strict parser would refuse exactly the
- * feeds people paste most; this reads them.
+ * ⚠️ NOT AN XML PARSER, ON PURPOSE, like lib/data-sources/rss-resolver.js: a scan for elements over
+ * a size-capped string. No DTD processing, no external entities, no entity expansion beyond the XML
+ * five, numeric references and a fixed table of HTML names — so XXE and "billion laughs" have
+ * nothing to act on. Real-world feeds are often not well-formed XML (a bare `&` in a title, an HTML
+ * entity XML does not define), and a strict parser would refuse exactly the feeds people paste
+ * most; this reads them.
+ *
+ * ⚠️ LINEAR TIME IN THE INPUT, ON PURPOSE. Anyone who can make a news widget can point it at a feed
+ * they wrote, and this runs on the main thread. The element access below used to be lazy regexes
+ * (/<item…>([\s\S]*?)<\/item>/g and the like), which are quadratic on a run of openers with no
+ * closer: 50 KB of "<item>" or "<!--" took tens to hundreds of ms, 4 MB would take minutes. They are
+ * now indexOf-style scans (lib/news-feed/scan.js explains the one idea behind all of them) that give
+ * the same answers — test/news-feed-linear.test.js holds the old regexes and checks both agree. Do
+ * not bring back a `[\s\S]*?` or an unbounded `[^>]*` over feed text; small token regexes with no
+ * nested quantifier (an opener, a closer) are fine.
  *
  * Everything here is pure: no I/O. lib/news-feed/index.js fetches and caches.
  */
+
+const { stripTags } = require('../strip-tags');
+const {
+  isWs, finder, gtFinder, replacePairs, replaceBlocks, closerByName, replaceOpenTags, esc,
+} = require('./scan');
 
 const MAX_INPUT = 4 * 1024 * 1024;
 const MAX_ITEMS = 100;
@@ -97,14 +111,41 @@ function decodeEntities(s) {
 
 /* ───────────── element access ───────────── */
 
-const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/**
+ * Where the opening tag that starts at `i` (just past "<name") ends: the index of its ">", -1 when
+ * this opener does not count, -2 when no ">" is left at all (so no later opener can count either).
+ * The scan for `(?:\s[^>]{0,maxAttr})?>`, plus `(?<!/)` before the ">" when noSelfClose.
+ */
+function openEnd(s, i, gt, maxAttr, noSelfClose) {
+  const c = s.charCodeAt(i);
+  if (c === 62) return i;
+  if (!isWs(c)) return -1;
+  const g = gt(i + 1);
+  if (g < 0) return -2;
+  if (g - (i + 1) > maxAttr) return -1;
+  if (noSelfClose && s.charCodeAt(g - 1) === 47) return -1;
+  return g;
+}
 
-/** Raw inner text of the first <tag>…</tag> in block ('' when absent). Tag names are literal (media:content). */
+/**
+ * Raw inner text of the first <tag>…</tag> in block ('' when absent). Tag names are literal (media:content).
+ * Was /<tag(?:\s[^>]{0,2000})?(?<!\/)>([\s\S]{0,200000}?)<\/tag\s*>/i.
+ */
 function rawOf(block, tag) {
-  // (?<!/) — a self-closing <link href="…"/> has no content and must not swallow the next </link>.
-  const re = new RegExp(`<${esc(tag)}(?:\\s[^>]{0,2000})?(?<!/)>([\\s\\S]{0,200000}?)</${esc(tag)}\\s*>`, 'i');
-  const m = re.exec(block);
-  return m ? m[1] : '';
+  const open = new RegExp(`<${esc(tag)}`, 'gi');
+  const gt = gtFinder(block);
+  const close = finder(block, new RegExp(`</${esc(tag)}\\s*>`, 'gi'));
+  let m;
+  while ((m = open.exec(block))) {
+    // noSelfClose is the old (?<!/): a self-closing <link href="…"/> has no content and must not swallow the next </link>.
+    const end = openEnd(block, open.lastIndex, gt, 2000, true);
+    if (end === -2) return '';
+    if (end < 0) continue;
+    const c = close(end + 1);
+    if (!c) return '';
+    if (c.index - (end + 1) <= 200000) return block.slice(end + 1, c.index);
+  }
+  return '';
 }
 
 /**
@@ -115,23 +156,36 @@ function rawOf(block, tag) {
 function unwrap(s) {
   let out = '';
   let last = 0;
-  const re = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
-  let m;
-  while ((m = re.exec(s))) {
-    out += decodeEntities(s.slice(last, m.index)) + m[1];
-    last = re.lastIndex;
+  for (;;) {
+    const a = s.indexOf('<![CDATA[', last);
+    if (a < 0) break;
+    const b = s.indexOf(']]>', a + 9);
+    if (b < 0) break;
+    out += decodeEntities(s.slice(last, a)) + s.slice(a + 9, b);
+    last = b + 3;
   }
   return out + decodeEntities(s.slice(last));
 }
 
 const textOf = (block, tag) => unwrap(rawOf(block, tag));
 
-/** Attribute `attr` of the first <tag …> in block whose attribute string passes filter. */
+/**
+ * Attribute `attr` of the first <tag …> in block whose attribute string passes filter.
+ * Each <tag …> was /<tag\s([^>]{0,4000}?)\/?>/gi: the attributes run to the first ">", less a "/" before it.
+ */
 function attrOf(block, tag, attr, filter) {
-  const re = new RegExp(`<${esc(tag)}\\s([^>]{0,4000}?)/?>`, 'gi');
+  const open = new RegExp(`<${esc(tag)}`, 'gi');
+  const gt = gtFinder(block);
   let m;
-  while ((m = re.exec(block))) {
-    const attrs = m[1];
+  while ((m = open.exec(block))) {
+    const start = open.lastIndex + 1;
+    if (!isWs(block.charCodeAt(start - 1))) continue;
+    const g = gt(start);
+    if (g < 0) return '';
+    const end = g > start && block.charCodeAt(g - 1) === 47 ? g - 1 : g;
+    if (end - start > 4000) continue;
+    open.lastIndex = g + 1;
+    const attrs = block.slice(start, end);
     if (filter && !filter(attrs)) continue;
     const v = attrIn(attrs, attr);
     if (v) return v;
@@ -145,15 +199,20 @@ function attrIn(attrs, attr) {
 
 /* ───────────── values ───────────── */
 
-/** HTML or text → one line of plain text, clipped at a word boundary. */
+const BLOCK_TAG = /<\/?(?:br|p|div|li|ul|ol|h[1-6]|tr|td|th|table|section|article|blockquote|figure|figcaption|header|footer|hr|img)\b/gi;
+
+/**
+ * HTML or text → one line of plain text, clipped at a word boundary. Each step is the linear form of
+ * the regex in its comment, applied in the same order.
+ */
 function plain(html, max) {
-  let s = String(html == null ? '' : html)
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-    .replace(/<(script|style|noscript|template)\b[\s\S]*?<\/\1\s*>/gi, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    // Block boundaries become spaces; inline tags (<b>, <a>, <span>) vanish, so "in <b>x</b>." stays "in x.".
-    .replace(/<\/?(?:br|p|div|li|ul|ol|h[1-6]|tr|td|th|table|section|article|blockquote|figure|figcaption|header|footer|hr|img)\b[^>]*>/gi, ' ')
-    .replace(/<[^>]*>/g, '');
+  let s = String(html == null ? '' : html);
+  s = replacePairs(s, '<![CDATA[', ']]>', (inner) => inner);                     // /<!\[CDATA\[([\s\S]*?)\]\]>/g → $1
+  s = replaceBlocks(s, /<(script|style|noscript|template)\b/gi, closerByName(s), ' '); // /<(script|…)\b[\s\S]*?<\/\1\s*>/gi
+  s = replacePairs(s, '<!--', '-->', () => ' ');                                 // /<!--[\s\S]*?-->/g
+  // Block boundaries become spaces; inline tags (<b>, <a>, <span>) vanish, so "in <b>x</b>." stays "in x.".
+  s = replaceOpenTags(s, BLOCK_TAG, ' ');                                         // /<\/?(?:br|p|…)\b[^>]*>/gi
+  s = stripTags(s);                                                               // /<[^>]*>/g (one pass is a fixed point)
   s = decodeEntities(s).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim();
   if (max && s.length > max) s = s.slice(0, max).replace(/\s+\S*$/, '') + '…';
   return s;
@@ -177,15 +236,50 @@ function isoDate(raw) {
   if (!v) return null;
   let d = new Date(v);
   // "Wed, 14 Oct 2026 20:44:21 EDT"-style zones Date handles; "CEST" and friends it does not.
-  if (Number.isNaN(d.getTime())) d = new Date(v.replace(/\s+[A-Z]{3,5}$/, ' GMT'));
+  if (Number.isNaN(d.getTime())) d = new Date(zoneToGmt(v));
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+/**
+ * v.replace(/\s+[A-Z]{3,5}$/, ' GMT') without the regex, which is quadratic on a long run of
+ * whitespace inside the value (each space restarts \s+ and walks the run). v is trimmed.
+ */
+function zoneToGmt(v) {
+  let k = 0;
+  while (k < 6 && k < v.length && v.charCodeAt(v.length - 1 - k) >= 65 && v.charCodeAt(v.length - 1 - k) <= 90) k++;
+  if (k < 3 || k > 5) return v;
+  let a = v.length - k;
+  if (a === 0 || !isWs(v.charCodeAt(a - 1))) return v;
+  while (a > 0 && isWs(v.charCodeAt(a - 1))) a--;
+  return v.slice(0, a) + ' GMT';
 }
 
 const IMAGE_EXT = /\.(?:jpe?g|png|gif|webp|avif)(?:[?#]|$)/i;
 
+const IMG_SRC_AT = /\s(?:data-src|src)\s*=\s*(?:"([^"]+)"|'([^']+)')/iy;
+
+/**
+ * The src (or data-src) of the first <img>. Was /<img\b[^>]*?\s(?:data-src|src)\s*=\s*(?:"…"|'…')/i:
+ * the attribute must start before the tag's first ">". An <img> whose attributes before that ">"
+ * hold no src means every <img> up to that ">" fails too (it sees a subset of the same attributes),
+ * so the next one tried is past it.
+ */
 function firstImgSrc(html, base) {
-  const m = /<img\b[^>]*?\s(?:data-src|src)\s*=\s*(?:"([^"]+)"|'([^']+)')/i.exec(String(html || ''));
-  return m ? absUrl(decodeEntities(m[1] || m[2]), base) : '';
+  const h = String(html || '');
+  const open = /<img\b/gi;
+  let m;
+  while ((m = open.exec(h))) {
+    const g = h.indexOf('>', open.lastIndex);
+    const end = g < 0 ? h.length : g;
+    for (let q = open.lastIndex; q < end; q++) {
+      if (!isWs(h.charCodeAt(q))) continue;
+      IMG_SRC_AT.lastIndex = q;
+      const a = IMG_SRC_AT.exec(h);
+      if (a) return absUrl(decodeEntities(a[1] || a[2]), base);
+    }
+    if (g < 0) break;
+    open.lastIndex = g;
+  }
+  return '';
 }
 
 /* ───────────── formats ───────────── */
@@ -196,7 +290,15 @@ function detectFormat(text) {
   if (/^\s*\{/.test(head)) {
     return /"version"\s*:\s*"https?:\/\/jsonfeed\.org\/version\//i.test(String(text).slice(0, 65536)) ? 'json' : null;
   }
-  const body = head.replace(/<\?xml[\s\S]*?\?>/, '').replace(/<!--[\s\S]*?-->/g, '').replace(/<!DOCTYPE[^>]*>/i, '');
+  // Was head.replace(/<\?xml[\s\S]*?\?>/, '').replace(/<!--[\s\S]*?-->/g, '').replace(/<!DOCTYPE[^>]*>/i, '').
+  let body = head;
+  const decl = body.indexOf('<?xml');
+  const declEnd = decl < 0 ? -1 : body.indexOf('?>', decl + 5);
+  if (declEnd >= 0) body = body.slice(0, decl) + body.slice(declEnd + 2);
+  body = replacePairs(body, '<!--', '-->', () => '');
+  const dt = /<!DOCTYPE/i.exec(body);
+  const dtEnd = dt ? body.indexOf('>', dt.index + 9) : -1;
+  if (dtEnd >= 0) body = body.slice(0, dt.index) + body.slice(dtEnd + 1);
   if (/<rss[\s>]/i.test(body)) return 'rss';
   if (/<rdf:RDF[\s>]/i.test(body)) return 'rdf';
   if (/<feed[\s>]/i.test(body)) return 'atom';
@@ -220,25 +322,63 @@ function finishItem(it) {
   return { title, link: it.link || '', summary: summary === title ? '' : summary, published: it.published || null, image: it.image || '' };
 }
 
+/** /<guid(\s[^>]*)?>/i.exec(b)[1]: the attributes of the first <guid> tag ('' when it has none). */
+function guidAttrs(b) {
+  const open = /<guid/gi;
+  let m;
+  while ((m = open.exec(b))) {
+    const c = b.charCodeAt(open.lastIndex);
+    if (c === 62) return '';
+    if (!isWs(c)) continue;
+    const g = b.indexOf('>', open.lastIndex + 1);
+    return g < 0 ? '' : b.slice(open.lastIndex, g);
+  }
+  return '';
+}
+
+/** /<item(\s[^>]*)>/i.exec(whole)[1]: the attributes of the first <item …> in an item ('' when none). */
+function itemAttrs(whole) {
+  const open = /<item/gi;
+  let m;
+  while ((m = open.exec(whole))) {
+    if (!isWs(whole.charCodeAt(open.lastIndex))) continue;
+    const g = whole.indexOf('>', open.lastIndex + 1);
+    return g < 0 ? '' : whole.slice(open.lastIndex, g);
+  }
+  return '';
+}
+
 function parseXmlFeed(raw, format, base) {
   // Comments first: one that mentions a tag (an <image> in a note) would otherwise be read as one.
-  const src = raw.replace(/<!--[\s\S]*?-->/g, '');
+  const src = replacePairs(raw, '<!--', '-->', () => '');
   const atom = format === 'atom';
   const itemTag = atom ? 'entry' : 'item';
   const firstItem = src.search(new RegExp(`<${itemTag}[\\s>]`, 'i'));
   let channel = firstItem >= 0 ? src.slice(0, firstItem) : src;
   // RSS 2.0's <image> carries its own <title>/<link>: drop it before reading the channel's.
-  channel = channel.replace(/<image[\s>][\s\S]*?<\/image\s*>/gi, '');
+  // Was channel.replace(/<image[\s>][\s\S]*?<\/image\s*>/gi, '').
+  const imageClose = finder(channel, /<\/image\s*>/gi);
+  channel = replaceBlocks(channel, /<image[\s>]/gi, () => imageClose, '');
   const feedTitle = plain(textOf(channel, 'title'), 200);
   const feedLink = atom
     ? absUrl(attrOf(channel, 'link', 'href', (a) => !/rel\s*=\s*["'](?!alternate)/i.test(a)), base)
-    : absUrl(textOf(channel.replace(/<atom:link[^>]*>/gi, ''), 'link'), base);
+    : absUrl(textOf(replaceOpenTags(channel, /<atom:link/gi, ''), 'link'), base);
 
+  // Each item was /<item(?:\s[^>]{0,2000})?>([\s\S]*?)<\/item\s*>/gi (entry for Atom).
   const items = [];
-  const re = new RegExp(`<${itemTag}(?:\\s[^>]{0,2000})?>([\\s\\S]*?)</${itemTag}\\s*>`, 'gi');
+  const open = new RegExp(`<${itemTag}`, 'gi');
+  const gt = gtFinder(src);
+  const close = finder(src, new RegExp(`</${itemTag}\\s*>`, 'gi'));
   let m;
-  while ((m = re.exec(src)) && items.length < MAX_ITEMS) {
-    const b = m[1];
+  while (items.length < MAX_ITEMS && (m = open.exec(src))) {
+    const end = openEnd(src, open.lastIndex, gt, 2000, false);
+    if (end === -2) break;
+    if (end < 0) continue;
+    const c = close(end + 1);
+    if (!c) break;
+    open.lastIndex = c.end;
+    const b = src.slice(end + 1, c.index);
+    const whole = src.slice(m.index, c.end);
     let summaryHtml, link, published;
     if (atom) {
       summaryHtml = textOf(b, 'summary') || textOf(b, 'content') || textOf(b, 'media:description');
@@ -247,9 +387,9 @@ function parseXmlFeed(raw, format, base) {
     } else {
       summaryHtml = textOf(b, 'description') || textOf(b, 'content:encoded') || textOf(b, 'media:description');
       const guid = rawOf(b, 'guid') ? textOf(b, 'guid') : '';
-      const guidIsLink = /^\s*https?:\/\//i.test(guid) && !/isPermaLink\s*=\s*["']false/i.test((/<guid(\s[^>]*)?>/i.exec(b) || [])[1] || '');
+      const guidIsLink = /^\s*https?:\/\//i.test(guid) && !/isPermaLink\s*=\s*["']false/i.test(guidAttrs(b));
       link = absUrl(textOf(b, 'link'), base) || absUrl(attrOf(b, 'link', 'href'), base) || (guidIsLink ? absUrl(guid, base) : '')
-        || (format === 'rdf' ? absUrl(attrOf(`<x ${(/<item(\s[^>]*)>/i.exec(m[0]) || [])[1] || ''}>`, 'x', 'rdf:about'), base) : '');
+        || (format === 'rdf' ? absUrl(attrOf(`<x ${itemAttrs(whole)}>`, 'x', 'rdf:about'), base) : '');
       published = isoDate(textOf(b, 'pubDate') || textOf(b, 'dc:date') || textOf(b, 'published') || textOf(b, 'updated'));
     }
     items.push(finishItem({
@@ -290,4 +430,5 @@ function parseFeed(text, base = '') {
 module.exports = {
   parseFeed, detectFormat, decodeBody, decodeEntities, plain, absUrl, isoDate, attrIn, unwrap, firstImgSrc,
   MAX_ITEMS, TITLE_MAX,
+  _test: { rawOf, attrOf, zoneToGmt, guidAttrs, itemAttrs },
 };
