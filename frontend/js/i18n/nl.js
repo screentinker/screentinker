@@ -5989,4 +5989,14 @@ export default {
   // playlist bulk Transition picker dialog
   'playlist.bulk.transition_title': "Overgang toevoegen",
   'playlist.bulk.transition_pick': "Kies de overgang naar elk geselecteerd item.",
+  // #632: unpublished-change cues and Reload Player
+  'library.playlist.done_draft': "{count} toegevoegd aan {playlist}. Schermen tonen het zodra je de playlist publiceert.",
+  'device.draft.notice_published': "Dit scherm blijft de laatst gepubliceerde versie tonen tot je publiceert.",
+  'device.draft.review_publish': "Bekijken en publiceren",
+  'device.ctl.reload_player': "Player herladen",
+  'device.ctl.reload_player_tip': "Start de player op dit scherm opnieuw. Hij haalt zijn gepubliceerde playlist opnieuw op en tekent opnieuw wat hij toont.",
+  'device.toast.removed_publish_to_update': "Uit de playlist verwijderd. Het scherm blijft het tonen tot je publiceert.",
+  'device.toast.added_publish_to_update': "Aan de playlist toegevoegd. Het scherm toont het zodra je publiceert.",
+  'device.toast.reload_sent': "Herladen verzonden. Het scherm start zijn player zo opnieuw.",
+  'templates.added_to_playlist_draft': "Toegevoegd aan {name}. Schermen tonen het zodra je de playlist publiceert.",
 };

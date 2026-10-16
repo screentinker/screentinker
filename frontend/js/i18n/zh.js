@@ -3937,4 +3937,14 @@ export default {
   'playlist.bulk.transition_pick': "选择转入每个所选项目时使用的转场。",
   'playlist.bulk.apply': "应用",
   'playlist.bulk.no_transition': "此工作区中没有转场小组件",
+  // #632: unpublished-change cues and Reload Player
+  'library.playlist.done_draft': "已将 {count} 项添加到 {playlist}。发布播放列表后屏幕才会显示。",
+  'device.draft.notice_published': "在你发布之前，此屏幕会继续显示上次发布的版本。",
+  'device.draft.review_publish': "检查并发布",
+  'device.ctl.reload_player': "重新加载播放器",
+  'device.ctl.reload_player_tip': "重启此屏幕上的播放器。它会重新获取已发布的播放列表并重新绘制显示内容。",
+  'device.toast.removed_publish_to_update': "已从播放列表移除。在你发布之前屏幕仍会显示它。",
+  'device.toast.added_publish_to_update': "已添加到播放列表。发布后屏幕才会显示。",
+  'device.toast.reload_sent': "已发送重新加载。屏幕稍后会重启播放器。",
+  'templates.added_to_playlist_draft': "已添加到 {name}。发布播放列表后屏幕才会显示。",
 };

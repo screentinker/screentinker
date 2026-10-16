@@ -3127,4 +3127,14 @@ export default {
   'playlist.bulk.transition_pick': "हर चुने गए आइटम में जाने वाला ट्रांज़िशन चुनें।",
   'playlist.bulk.apply': "लागू करें",
   'playlist.bulk.no_transition': "इस वर्कस्पेस में कोई ट्रांज़िशन विजेट नहीं है",
+  // #632: unpublished-change cues and Reload Player
+  'library.playlist.done_draft': "{playlist} में {count} जोड़े गए। प्लेलिस्ट प्रकाशित करने पर स्क्रीन इसे दिखाएँगी।",
+  'device.draft.notice_published': "जब तक आप प्रकाशित नहीं करते, यह स्क्रीन अंतिम प्रकाशित संस्करण ही दिखाती रहेगी।",
+  'device.draft.review_publish': "समीक्षा करें और प्रकाशित करें",
+  'device.ctl.reload_player': "प्लेयर फिर से लोड करें",
+  'device.ctl.reload_player_tip': "इस स्क्रीन का प्लेयर फिर से शुरू करें। यह अपनी प्रकाशित प्लेलिस्ट फिर से लाता है और जो दिखा रहा है उसे फिर से बनाता है।",
+  'device.toast.removed_publish_to_update': "प्लेलिस्ट से हटाया गया। प्रकाशित करने तक स्क्रीन इसे दिखाती रहेगी।",
+  'device.toast.added_publish_to_update': "प्लेलिस्ट में जोड़ा गया। प्रकाशित करने पर स्क्रीन इसे दिखाएगी।",
+  'device.toast.reload_sent': "रीलोड भेजा गया। स्क्रीन कुछ ही पल में अपना प्लेयर फिर से शुरू करेगी।",
+  'templates.added_to_playlist_draft': "{name} में जोड़ा गया। प्लेलिस्ट प्रकाशित करने पर स्क्रीन इसे दिखाएँगी।",
 };

@@ -4273,4 +4273,14 @@ export default {
   'playlist.bulk.transition_pick': "Scegli la transizione che porta a ogni elemento selezionato.",
   'playlist.bulk.apply': "Applica",
   'playlist.bulk.no_transition': "Nessun widget di transizione in questo spazio di lavoro",
+  // #632: unpublished-change cues and Reload Player
+  'library.playlist.done_draft': "{count} aggiunti a {playlist}. Gli schermi li mostrano quando pubblichi la playlist.",
+  'device.draft.notice_published': "Questo schermo continua a mostrare l'ultima versione pubblicata finché non pubblichi.",
+  'device.draft.review_publish': "Rivedi e pubblica",
+  'device.ctl.reload_player': "Ricarica player",
+  'device.ctl.reload_player_tip': "Riavvia il player di questo schermo. Ricarica la playlist pubblicata e ridisegna ciò che mostra.",
+  'device.toast.removed_publish_to_update': "Rimosso dalla playlist. Lo schermo continua a mostrarlo finché non pubblichi.",
+  'device.toast.added_publish_to_update': "Aggiunto alla playlist. Lo schermo lo mostra quando pubblichi.",
+  'device.toast.reload_sent': "Ricarica inviata. Lo schermo riavvierà il player tra un momento.",
+  'templates.added_to_playlist_draft': "Aggiunto a {name}. Gli schermi lo mostrano quando pubblichi la playlist.",
 };

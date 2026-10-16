@@ -4399,4 +4399,14 @@ export default {
   'playlist.bulk.transition_pick': "Wählen Sie den Übergang, der zu jedem ausgewählten Element führt.",
   'playlist.bulk.apply': "Anwenden",
   'playlist.bulk.no_transition': "Keine Übergangs-Widgets in diesem Arbeitsbereich",
+  // #632: unpublished-change cues and Reload Player
+  'library.playlist.done_draft': "{count} zu {playlist} hinzugefügt. Bildschirme zeigen es, sobald Sie die Playlist veröffentlichen.",
+  'device.draft.notice_published': "Dieser Bildschirm zeigt weiter die zuletzt veröffentlichte Version, bis Sie veröffentlichen.",
+  'device.draft.review_publish': "Prüfen und veröffentlichen",
+  'device.ctl.reload_player': "Player neu laden",
+  'device.ctl.reload_player_tip': "Startet den Player auf diesem Bildschirm neu. Er lädt seine veröffentlichte Playlist erneut und zeichnet die Anzeige neu.",
+  'device.toast.removed_publish_to_update': "Aus der Playlist entfernt. Der Bildschirm zeigt es weiter, bis Sie veröffentlichen.",
+  'device.toast.added_publish_to_update': "Zur Playlist hinzugefügt. Der Bildschirm zeigt es, sobald Sie veröffentlichen.",
+  'device.toast.reload_sent': "Neu laden gesendet. Der Bildschirm startet seinen Player gleich neu.",
+  'templates.added_to_playlist_draft': "Zu {name} hinzugefügt. Bildschirme zeigen es, sobald Sie die Playlist veröffentlichen.",
 };

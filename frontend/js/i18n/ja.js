@@ -5026,4 +5026,14 @@ export default {
   'playlist.bulk.transition_pick': "選択した各アイテムに切り替わるときのトランジションを選んでください。",
   'playlist.bulk.apply': "適用",
   'playlist.bulk.no_transition': "このワークスペースにトランジションウィジェットがありません",
+  // #632: unpublished-change cues and Reload Player
+  'library.playlist.done_draft': "{playlist} に {count} 件追加しました。プレイリストを公開すると画面に表示されます。",
+  'device.draft.notice_published': "公開するまで、この画面は最後に公開されたバージョンを表示し続けます。",
+  'device.draft.review_publish': "確認して公開",
+  'device.ctl.reload_player': "プレーヤーを再読み込み",
+  'device.ctl.reload_player_tip': "この画面のプレーヤーを再起動します。公開済みのプレイリストを読み込み直し、表示を描き直します。",
+  'device.toast.removed_publish_to_update': "プレイリストから削除しました。公開するまで画面には表示され続けます。",
+  'device.toast.added_publish_to_update': "プレイリストに追加しました。公開すると画面に表示されます。",
+  'device.toast.reload_sent': "再読み込みを送信しました。まもなく画面のプレーヤーが再起動します。",
+  'templates.added_to_playlist_draft': "{name} に追加しました。プレイリストを公開すると画面に表示されます。",
 };
