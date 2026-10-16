@@ -609,11 +609,19 @@ function proxyImportIfCopied(req, res, next) {
 
 router.post('/import', proxyImportIfCopied, authenticateImport, importUpload.single('file'), async (req, res) => {
   // The upload and its extraction are removed however the handler ends (return, throw, or success).
+  // ⚠️ AND BEFORE THE RESPONSE LEAVES. The finally alone ran after res.json() had already written
+  // the reply, so a client could read it, look in tmp, and still find screentinker-import-*. Every
+  // response handleImport sends is its last act, so cleaning up as the response ends is safe.
+  const cleanup = () => {
+    discardImportZip(req);
+    if (req.importExtractDir) { try { fs.rmSync(req.importExtractDir, { recursive: true, force: true }); } catch (_) {} }
+  };
+  const end = res.end;
+  res.end = function (...args) { cleanup(); return end.apply(this, args); };
   try {
     await handleImport(req, res);
   } finally {
-    discardImportZip(req);
-    if (req.importExtractDir) { try { fs.rmSync(req.importExtractDir, { recursive: true, force: true }); } catch (_) {} }
+    cleanup();
   }
 });
 

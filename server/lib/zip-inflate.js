@@ -45,6 +45,13 @@ function inflateCapped(entry, cap, makeError) {
  * Stream one entry to a file, counting real bytes against `cap` (bytes for this entry) and an
  * optional shared `budget` ({ remaining }) for the whole extraction. A partial file is removed on
  * failure.
+ *
+ * ⚠️ SETTLE ON 'close', NEVER BEFORE. The WriteStream opens its file asynchronously, so a failure
+ * that lands before the open completes (an entry that overflows on its first chunk) used to rm the
+ * path, reject, and THEN have the file created — the caller's recursive rm of its extract dir had
+ * already run and the dir was left behind. 'finish' is no better on success: the fd is still open.
+ * Both outcomes wait for 'close' (which fires after destroy() even when the fd never opened), the
+ * partial file is removed there, and only then does the promise settle.
  */
 function inflateToFileCapped(entry, destPath, cap, budget, makeError) {
   const fs = require('fs');
@@ -54,15 +61,16 @@ function inflateToFileCapped(entry, destPath, cap, budget, makeError) {
   return new Promise((resolve, reject) => {
     let n = 0;
     let done = false;
+    let finished = false;
+    let failure = null;
     const s = entry.stream();
     const out = fs.createWriteStream(destPath, { flags: 'wx' });
     const fail = (err) => {
       if (done) return;
       done = true;
+      failure = err;
       try { s.destroy(); } catch (_) {}
-      out.destroy();
-      try { fs.rmSync(destPath, { force: true }); } catch (_) {}
-      reject(err);
+      out.destroy();   // the rm and the reject happen on 'close'
     };
     s.on('data', (c) => {
       n += c.length;
@@ -71,7 +79,13 @@ function inflateToFileCapped(entry, destPath, cap, budget, makeError) {
     });
     s.on('error', () => fail(mk('corrupt')));
     out.on('error', (e) => fail(e));
-    out.on('finish', () => { if (!done) { done = true; resolve(n); } });
+    out.on('finish', () => { if (!done) { done = true; finished = true; } });
+    out.on('close', () => {
+      if (finished) { resolve(n); return; }
+      if (!failure) { done = true; failure = mk('corrupt'); }   // closed without finishing or failing
+      try { fs.rmSync(destPath, { force: true }); } catch (_) {}
+      reject(failure);
+    });
     s.pipe(out);
   });
 }
