@@ -24,11 +24,14 @@
   and password. Guests now get STUN only. Where the server's TURN uses a shared secret
   (`GO2RTC_TURN_SECRET`), they still get its short-lived credentials.
 - Passkey sign-in issued a session to an account its organization had deactivated (SCIM).
-  It now returns 403 `account_disabled`, as password sign-in does.
+  It now returns 403 `account_disabled`, as password sign-in does. So do the steps that finish a
+  sign-in later: the TOTP or passkey second factor, and the Manager app and SSO hand-offs, for an
+  account deactivated after the password or the identity provider's answer.
 - Crafted text could tie up the server for seconds to minutes (regular expressions that slow down
   sharply on long inputs). This affected:
   - news feeds and feed discovery: any feed a widget points at, up to 4 MB, plus pages, sitemaps
     and robots.txt
+  - RSS and Atom data sources, up to 2 MB
   - uploaded or transcribed captions
   - A.I. starter and translation text
   - stock-media results
