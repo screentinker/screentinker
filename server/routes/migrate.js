@@ -27,6 +27,7 @@ const express = require('express');
 const router = express.Router();
 router.use(require('../lib/backstop-limiter'));
 const fs = require('fs');
+const { resolveWithin } = require('../lib/safe-path');
 const multer = require('multer');
 const { db } = require('../db/database');
 const { denyReadOnly } = require('../lib/tenancy');
@@ -88,7 +89,11 @@ function uploadOne(req, res, next) {
 }
 
 router.post('/jobs/upload', uploadOne, wrap(async (req, res) => {
-  const discard = () => { if (req.file) { try { fs.rmSync(req.file.path, { force: true }); } catch { /* gone */ } } };
+  // multer named the file (a random UUID in uploadDir); resolved within that folder all the same.
+  const discard = () => {
+    const p = req.file && req.file.path ? resolveWithin(migrate.uploadDir(), req.file.path) : null;
+    if (p) { try { fs.rmSync(p, { force: true }); } catch { /* gone */ } }
+  };
   const adapter = vendors.get(String((req.body && req.body.vendor) || ''));
   if (!req.file) return res.status(400).json({ error: 'Choose a file to upload.' });
   if (!adapter || adapter.mode !== 'file') { discard(); return res.status(400).json({ error: 'This source does not import from a file.' }); }

@@ -225,6 +225,14 @@ test('generic zip: run imports into a new folder, keeps names, order and duratio
   assert.equal(fs.readdirSync(migrate.uploadDir()).length, 0);
 });
 
+test('an upload for a source that does not import from a file is refused and its file deleted', async () => {
+  const before = fs.readdirSync(migrate.uploadDir()).filter((f) => f.endsWith('.upload')).length;
+  const r = await upload(OWNER, firstZip, WS_A, 'xibo');
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /does not import from a file/);
+  assert.equal(fs.readdirSync(migrate.uploadDir()).filter((f) => f.endsWith('.upload')).length, before, 'the refused upload is not left on disk');
+});
+
 test('re-running the same source creates nothing new', async () => {
   const counts = () => ({
     content: db.prepare('SELECT COUNT(*) AS n FROM content WHERE workspace_id = ?').get(WS_A).n,
