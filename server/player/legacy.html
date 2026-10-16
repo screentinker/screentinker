@@ -1774,6 +1774,7 @@ function bundleReport(level, msg) {
 function registerBundleFrame(iframe, onSkip) {
   const reg = { iframe, onSkip, live: true, ignoredLogged: false };
   bundleSkipFrames.add(reg);
+  if (bundleSkipFrames.size > 64) bundleSkipFrames.delete(bundleSkipFrames.values().next().value);
   return reg;
 }
 function revokeBundleFrame(reg) {
@@ -1812,7 +1813,7 @@ window.addEventListener("message", (ev) => {
   if (typeof BundleSkip === "undefined" || !BundleSkip.isSkipMessage(ev.data) || !ev.source) return;
   let reg = null;
   for (const r of bundleSkipFrames) {
-    if (!r.iframe.isConnected) {
+    if (r.iframe.isConnected === false) {
       bundleSkipFrames.delete(r);
       continue;
     }
@@ -6713,7 +6714,7 @@ function renderWallBuffered(item) {
   watchdog = setTimeout(() => reveal(stage.querySelector("video")), WALL_SWAP_TIMEOUT_MS);
 }
 function zoneBundleSkip(reg, z, reason) {
-  if (z.div.__stBundleReg !== reg || !z.div.isConnected) return;
+  if (z.div.__stBundleReg !== reg || z.div.isConnected === false) return;
   if (!z.div.__stSkipGuard) z.div.__stSkipGuard = newBundleSkipGuard();
   const n = z.items.length;
   const here = (z.index % n + n) % n;
@@ -6885,9 +6886,9 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     }
     div.appendChild(iframe);
     fetch(bundleUrl, { credentials: "omit" }).then((r) => r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status))).then((html) => {
-      if (iframe.isConnected) iframe.srcdoc = html;
+      if (iframe.isConnected !== false) iframe.srcdoc = html;
     }).catch(() => {
-      if (iframe.isConnected) iframe.src = bundleUrl;
+      if (iframe.isConnected !== false) iframe.src = bundleUrl;
     });
     if (multi) timers[zone.id] = setTimeout(advance, dur);
   } else if (a.widget_id) {

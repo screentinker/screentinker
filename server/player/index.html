@@ -1871,6 +1871,9 @@
     function registerBundleFrame(iframe, onSkip) {
       const reg = { iframe, onSkip, live: true, ignoredLogged: false };
       bundleSkipFrames.add(reg);
+      // Bounded: revokes keep this at one per zone plus fullscreen; a zone layout torn down whole
+      // (and a browser with no isConnected to prune by) must not grow it for ever. Oldest first.
+      if (bundleSkipFrames.size > 64) bundleSkipFrames.delete(bundleSkipFrames.values().next().value);
       return reg;
     }
     function revokeBundleFrame(reg) {
@@ -1912,7 +1915,8 @@
       if (typeof BundleSkip === 'undefined' || !BundleSkip.isSkipMessage(ev.data) || !ev.source) return;
       let reg = null;
       for (const r of bundleSkipFrames) {
-        if (!r.iframe.isConnected) { bundleSkipFrames.delete(r); continue; }
+        // `=== false`: Chrome 53 (the legacy player on webOS 4) has no isConnected; unknown is attached.
+        if (r.iframe.isConnected === false) { bundleSkipFrames.delete(r); continue; }
         if (r.live && r.iframe.contentWindow === ev.source) { reg = r; break; }
       }
       if (!reg) return;   // not the frame of a bundle that is on screen now
@@ -8182,7 +8186,7 @@
      * logged this item's start retracts it.
      */
     function zoneBundleSkip(reg, z, reason) {
-      if (z.div.__stBundleReg !== reg || !z.div.isConnected) return;   // stale: the zone moved on
+      if (z.div.__stBundleReg !== reg || z.div.isConnected === false) return;   // stale: the zone moved on
       if (!z.div.__stSkipGuard) z.div.__stSkipGuard = newBundleSkipGuard();
       const n = z.items.length;
       const here = ((z.index % n) + n) % n;
@@ -8354,8 +8358,8 @@
         div.appendChild(iframe);
         fetch(bundleUrl, { credentials: 'omit' })
           .then((r) => (r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status))))
-          .then((html) => { if (iframe.isConnected) iframe.srcdoc = html; })
-          .catch(() => { if (iframe.isConnected) iframe.src = bundleUrl; });
+          .then((html) => { if (iframe.isConnected !== false) iframe.srcdoc = html; })   // no isConnected on Chrome 53
+          .catch(() => { if (iframe.isConnected !== false) iframe.src = bundleUrl; });
         if (multi) timers[zone.id] = setTimeout(advance, dur);
       } else if (a.widget_id) {
         const iframe = document.createElement('iframe');
