@@ -17,6 +17,27 @@ test('every complete tag is dropped, and a stray < with no > is left as text', (
   assert.equal(stripTags(42), '42');
 });
 
+test('stripTags gives what /<[^>]*>/g gave, in linear time', () => {
+  const old = (s) => String(s).replace(/<[^>]*>/g, '');
+  for (const s of ['', '<', '>', '<>', 'a<b', 'a>b', '<a<b>', '<<a>b<<c>>d>', 'x <y <b>z</b>', '<p>a</p><', 'a < b > c', '<<<', '<x>>>']) {
+    assert.equal(stripTags(s), old(s), JSON.stringify(s));
+  }
+  let seed = 7;
+  const r = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32; };
+  for (let i = 0; i < 5000; i++) {
+    let s = '';
+    for (let n = Math.floor(r() * 14); n > 0; n--) s += '<<>>ab /'[Math.floor(r() * 8)];
+    assert.equal(stripTags(s), old(s), JSON.stringify(s));
+  }
+  // A run of "<" with no ">" made the regex walk the rest of the string from every one of them:
+  // ~0.6 s for 50 KB, minutes for a 2 MB caption file.
+  for (const evil of ['<'.repeat(50000), 'a' + '<x'.repeat(25000), '<>' + '<'.repeat(50000)]) {
+    const t0 = process.hrtime.bigint();
+    stripTags(evil);
+    assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 100, 'stripTags is linear');
+  }
+});
+
 test('a rendition never reassembles a tag from the halves of a removed block', () => {
   const html = '<main><p>x</p><scr<script>1</script>ipt>alert(1)</script><!<!-- c -->-- d --></main>';
   const out = md.toMarkdown(html);
