@@ -490,7 +490,16 @@ async function openNewDeckModal(container) {
 
 /* ============================================================ render */
 
+/*
+ * render() awaits content, fonts and the deck list after painting the page. If the page is left, or
+ * rendered again, meanwhile, the earlier call must not resume and draw into an #deckArea that is gone
+ * ("Cannot set properties of null (setting 'innerHTML')") or over the view now showing.
+ */
+let renderSeq = 0;
+
 export async function render(container) {
+  const seq = ++renderSeq;
+  const stale = () => seq !== renderSeq || !container.querySelector('#deckArea');
   container.innerHTML = `<div class="page-header"><div><h1>Slides</h1>
     <div class="subtitle">Build a deck of slides and publish it as a playlist.</div></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -508,14 +517,17 @@ export async function render(container) {
   // a deck without its image list is still perfectly editable, and every other control works.
   if (state.contentIndex === null) await loadContent();
   if (!FONT_CATALOGUE.length) await loadFonts();
+  if (stale()) return;
 
   try {
     state.decks = await api.get('/slide-decks');
   } catch (e) {
+    if (stale()) return;
     container.querySelector('#deckArea').innerHTML =
       `<p style="color:var(--danger)">Could not load decks: ${esc(e.message || '')}</p>`;
     return;
   }
+  if (stale()) return;
   if (state.deck) return renderEditor(container);
   // 3.0 accessibility: "Open the editor" from the Accessibility page lands on #/slides?deck=<id>.
   const want = new URLSearchParams((window.location.hash.split('?')[1]) || '').get('deck');
@@ -525,6 +537,7 @@ export async function render(container) {
 
 function renderList(container) {
   const host = container.querySelector('#deckArea');
+  if (!host) return;
   if (!state.decks.length) {
     host.innerHTML = `<div class="settings-section" style="text-align:center;padding:38px 20px">
       <p style="margin:0 0 6px;font-weight:600">No decks yet</p>
