@@ -761,10 +761,16 @@ async function submitRequest(form, ticket, body, { ip, origin } = {}) {
     if (room !== null && session.declared_size > room) { uploadSession.discard(session); throw new RequestError('This workspace has no room for the file. Tell the people who run the screens.', 507, 'storage_full'); }
 
     // The SAME ingest a dashboard upload runs: sniff, thumbnail, dimensions, digest, storage, row.
+    //
+    // ⚠️ CREATED SWITCHED OFF (is_active=0), and nothing is told the library changed. A request is
+    // only on screens once someone approves it, but an active row is fair game for any SMART playlist
+    // whose rules it matches (its type, the form's folder, a "name contains" on the title the
+    // requester chose), and in a workspace without require_approval a smart playlist's refresh
+    // republishes additions straight to screens. publishRequest switches it on.
     const { ingestUploadedFile } = require('./content-ingest');
     let content;
     try {
-      content = await ingestUploadedFile({ file: uploadSession.stageForIngest(session), userId: ownerOf(form), workspaceId: form.workspace_id, folderId: form.folder_id || null });
+      content = await ingestUploadedFile({ file: uploadSession.stageForIngest(session), userId: ownerOf(form), workspaceId: form.workspace_id, folderId: form.folder_id || null, active: false });
       uploadSession.forget(session.id);
     } catch (e) {
       if (e && e.name === 'StorageWriteError') e.discard();
@@ -792,7 +798,6 @@ async function submitRequest(form, ticket, body, { ip, origin } = {}) {
     });
     db.prepare('UPDATE content_requests SET submission_id = ? WHERE id = ?').run(sub.id, id);
     audit('request:submitted', { workspaceId: form.workspace_id, ip, details: { request_id: id, ref, form_id: form.id, content_id: content.id, submission_id: sub.id, verified_via: ticket.verified_via } });
-    try { require('./smart-playlist').notifyContentChanged(form.workspace_id); } catch (_) { /* best effort */ }
 
     const statusUrl = `${originOf(origin)}/r/status#${statusToken}`;
     notifyReviewers(form, { ref, title: v.title, label, origin });
@@ -961,6 +966,11 @@ async function publishRequest(req, id, { origin } = {}) {
     : (form ? form.item_duration_sec : 10);
   const label = `${r.requester_name} <${r.requester_email}>`;
   const donePlaylists = new Set(Object.values(results).filter((x) => x && x.ok).map((x) => x.playlist_id));
+  // The file was ingested switched off (submitRequest). It goes on now, before the releases below,
+  // which drop inactive content from the snapshot; if no target goes live it goes back off, so an
+  // approved request that reached no screen is not picked up by a smart playlist either.
+  const activated = content.is_active === 0;
+  if (activated) db.prepare('UPDATE content SET is_active = 1 WHERE id = ?').run(content.id);
 
   for (const t of pending) {
     if (donePlaylists.has(t.playlist_id)) { results[t.id] = { ok: true, playlist_id: t.playlist_id, shared: true, at: nowSec() }; continue; }
@@ -1008,6 +1018,9 @@ async function publishRequest(req, id, { origin } = {}) {
 
   const anyOk = Object.values(results).some((x) => x && x.ok);
   const allOk = r.targets.every((t) => results[t.id] && results[t.id].ok);
+  if (activated && !anyOk) db.prepare('UPDATE content SET is_active = 0 WHERE id = ?').run(content.id);
+  // Smart playlists whose rules match it pick it up now, and not before.
+  if (activated && anyOk) { try { require('./smart-playlist').notifyContentChanged(r.workspace_id); } catch (_) { /* best effort */ } }
   if (anyOk && contentGate) policy.afterRelease(db, { type: 'content', id: r.content_id, gate: contentGate, actor, summary: `Published (request ${r.ref})` });
   if (anyOk && sub.status === 'approved' && !contentGate.submission) {
     // Approval off: the gate is direct, so close the request's own submission here.

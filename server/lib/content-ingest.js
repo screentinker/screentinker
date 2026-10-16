@@ -123,7 +123,11 @@ async function deriveMediaMetadata(sourcePath, filepath, mime) {
 // Process a multer-uploaded file (thumbnail + dimensions + duration) and insert a content
 // row. Returns the content row. Throws on a hard failure (the caller maps to 500);
 // thumbnail/metadata failures are best-effort (logged, non-fatal) exactly as before.
-async function ingestUploadedFile({ file, userId, workspaceId, folderId = null }) {
+//
+// `active: false` creates the row switched off (is_active=0) and does not wake the smart playlists:
+// for a file that must not reach any screen until someone approves it (lib/content-requests.js).
+// Whoever switches it on later owes the notifyContentChanged this skipped.
+async function ingestUploadedFile({ file, userId, workspaceId, folderId = null, active = true }) {
   const id = uuidv4();
   // Content-derived extension + mime. Throws UnsupportedUploadError (and removes the temp
   // file) when the bytes are not a supported media type; the caller maps that to a 400.
@@ -205,9 +209,9 @@ async function ingestUploadedFile({ file, userId, workspaceId, folderId = null }
 
   db.transaction(() => {
     db.prepare(`
-      INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec, thumbnail_path, width, height, folder_id, byte_digest, bundle_entry)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, ownerUserId, workspaceId, safeFilename(file.originalname), filepath, mime, file.size, durationSec, thumbnailPath, width, height, folderId || null, digest, bundleEntry);
+      INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec, thumbnail_path, width, height, folder_id, byte_digest, bundle_entry, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, ownerUserId, workspaceId, safeFilename(file.originalname), filepath, mime, file.size, durationSec, thumbnailPath, width, height, folderId || null, digest, bundleEntry, active ? 1 : 0);
     plan.commit(id);
   })();
   // Only now, with the row committed and its remote copy recorded, may the local copy go.
@@ -220,7 +224,7 @@ async function ingestUploadedFile({ file, userId, workspaceId, folderId = null }
       mime,
     });
   } catch { /* hooks must not fail an upload */ }
-  require('./smart-playlist').notifyContentChanged(workspaceId);
+  if (active) require('./smart-playlist').notifyContentChanged(workspaceId);
 
   const row = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
   // 3.0 accessibility: start the flash/caption check of a video or GIF now, while its bytes are

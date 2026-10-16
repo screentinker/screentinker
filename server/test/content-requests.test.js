@@ -578,6 +578,77 @@ test('the requester can withdraw a waiting request from the status link', async 
   assert.equal((await pub('POST', '/status/cancel', { token: r.json.status_token })).status, 409);
 });
 
+test('a smart playlist never picks up a request before it is approved (approval off), and does after', async () => {
+  // WS has require_approval off, which is where a smart refresh publishes additions straight to screens.
+  const smart = require('../lib/smart-playlist');
+  const playlists = require('../routes/playlists');
+  const http = require('http');
+  const { Server } = require('socket.io');
+  const setupDeviceSocket = require('../ws/deviceSocket');
+  const sockServer = http.createServer();
+  const realIo = new Server(sockServer);
+  setupDeviceSocket(realIo);
+  const SPL = 'pl-req-smart', SDEV = 'd-req-smart';
+  try {
+    // "name contains" on the title the requester chooses: the rule a requester can aim at.
+    ins("INSERT INTO playlists (id,user_id,workspace_id,name,status,smart_rules) VALUES (?,?,?,?,'draft',?)", SPL, U.admin, WS, 'Smart posters',
+      JSON.stringify(smart.normalizeRules({ match: 'all', rules: [{ field: 'name', op: 'contains', value: 'Smartmatch' }] })));
+    ins("INSERT INTO devices (id,workspace_id,name,status,playlist_id,playlist_source) VALUES (?,?,?,'offline',?,'device')", SDEV, WS, 'Smart screen', SPL);
+    releases.releasePlaylist(db, SPL, io, { actor: { userId: U.admin, kind: 'user' } });
+    const refresh = () => smart.refreshNow(db, (id, seen) => playlists.publishPlaylist(id, io, seen), WS);
+    const inSnapshot = (cid) => (JSON.parse(db.prepare('SELECT published_snapshot FROM playlists WHERE id = ?').get(SPL).published_snapshot || '[]')).some((i) => i.content_id === cid);
+    const inPayload = (cid) => JSON.stringify(setupDeviceSocket.buildPlaylistPayload(SDEV)).includes(cid);
+
+    const f = await makeForm();
+    const submitOne = async (email) => {
+      const r = await fullSubmit(f, { email, body: { title: `Smartmatch ${email}` } });
+      assert.equal(r.status, 201, JSON.stringify(r.json));
+      return { r, row: db.prepare('SELECT * FROM content_requests WHERE ref = ?').get(r.json.ref) };
+    };
+    const a = await submitOne('sm-a@x.org');
+    const rej = await submitOne('sm-rej@x.org');
+    const wd = await submitOne('sm-wd@x.org');
+    for (const x of [a, rej, wd]) assert.equal(db.prepare('SELECT is_active FROM content WHERE id = ?').get(x.row.content_id).is_active, 0, 'a waiting request is switched off');
+
+    refresh();
+    for (const x of [a, rej, wd]) {
+      assert.ok(!inSnapshot(x.row.content_id), 'not in the smart playlist while it waits');
+      assert.ok(!inPayload(x.row.content_id), 'not in what the screen is sent while it waits');
+    }
+    // Belt and braces: even switched on by something else, a pending request is not selected.
+    db.prepare('UPDATE content SET is_active = 1 WHERE id = ?').run(a.row.content_id);
+    refresh();
+    assert.ok(!inSnapshot(a.row.content_id), 'a pending request is excluded even if active');
+    db.prepare('UPDATE content SET is_active = 0 WHERE id = ?').run(a.row.content_id);
+
+    // Rejected and withdrawn requests stay out.
+    assert.equal((await call('POST', `/api/content-requests/requests/${rej.row.id}/reject`, 'ed', { reason: 'No thanks' })).status, 200);
+    assert.equal((await pub('POST', '/status/cancel', { token: wd.r.json.status_token })).status, 200);
+    refresh();
+    for (const x of [rej, wd]) {
+      assert.ok(!inSnapshot(x.row.content_id), 'rejected / withdrawn: not in the smart playlist');
+      assert.ok(!inPayload(x.row.content_id), 'rejected / withdrawn: not sent to the screen');
+    }
+
+    // Approval switches it on and tells the smart playlists; the refresh then carries it.
+    const notified = [];
+    const realNotify = smart.notifyContentChanged;
+    smart.notifyContentChanged = (ws) => notified.push(ws);
+    let ap;
+    try { ap = await call('POST', `/api/content-requests/requests/${a.row.id}/approve`, 'ed'); } finally { smart.notifyContentChanged = realNotify; }
+    assert.equal(ap.status, 200, JSON.stringify(ap.json));
+    assert.equal(db.prepare('SELECT is_active FROM content WHERE id = ?').get(a.row.content_id).is_active, 1);
+    assert.ok(notified.includes(WS), 'approval wakes the smart playlists');
+    refresh();
+    assert.ok(inSnapshot(a.row.content_id), 'approved: in the smart playlist');
+    assert.ok(inPayload(a.row.content_id), 'approved: sent to the screen');
+    for (const x of [rej, wd]) assert.ok(!inSnapshot(x.row.content_id));
+  } finally {
+    realIo.close(); sockServer.close();
+    db.prepare('DELETE FROM devices WHERE id = ?').run(SDEV);
+  }
+});
+
 // ─── approval on: reviewers decide, and the gate sees a real approval ────────────────────────
 
 test('approval on: only reviewers decide, and the playlist release passes the gate with its own approval', async () => {

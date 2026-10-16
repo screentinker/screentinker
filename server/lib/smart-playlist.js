@@ -197,10 +197,16 @@ let contentCache = null;
 function playableRows(db, playlist) {
   const key = playlist.workspace_id ? `w:${playlist.workspace_id}` : `u:${playlist.user_id}`;
   if (contentCache && contentCache.has(key)) return contentCache.get(key);
+  // ⚠️ A content request's file waiting for a decision is never selected, even if something switched
+  // it on (lib/content-requests.js creates it inactive): approval is always explicit, and a smart
+  // refresh in a workspace without require_approval would put it straight on screens. Requests
+  // always carry a workspace, so the user-scoped branch has none to exclude.
   const rows = playlist.workspace_id
     ? db.prepare(`SELECT * FROM content WHERE workspace_id = ?
                     AND COALESCE(is_active, 1) = 1
-                    AND (expires_at IS NULL OR expires_at > strftime('%s','now'))`).all(playlist.workspace_id)
+                    AND (expires_at IS NULL OR expires_at > strftime('%s','now'))
+                    AND NOT EXISTS (SELECT 1 FROM content_requests cr
+                                     WHERE cr.workspace_id = content.workspace_id AND cr.status = 'pending' AND cr.content_id = content.id)`).all(playlist.workspace_id)
     : db.prepare(`SELECT * FROM content WHERE workspace_id IS NULL AND user_id = ?
                     AND COALESCE(is_active, 1) = 1
                     AND (expires_at IS NULL OR expires_at > strftime('%s','now'))`).all(playlist.user_id);
