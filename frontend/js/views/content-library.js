@@ -1019,7 +1019,8 @@ async function playlistDialog(items) {
         });
         rd.root.querySelector('[data-ok]').addEventListener('click', () => rd.close());
       } else {
-        showToast(t('library.playlist.done', { count: added, playlist: pl.name }), 'success');
+        // #632: this leaves the playlist with unpublished changes, and nothing here shows that.
+        showToast(t('library.playlist.done_draft', { count: added, playlist: pl.name }), 'success', 7000);
       }
       afterBulk(items.length > 1);
     } catch (err) {

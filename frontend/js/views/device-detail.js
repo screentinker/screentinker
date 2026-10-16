@@ -916,6 +916,14 @@ async function loadDevice(deviceId, activeTab = null) {
 
       <!-- Now Playing Tab -->
       <div class="tab-content active" id="tab-nowplaying">
+        ${/* #632: the page opens on THIS tab, and the only sign of an unpublished edit was the banner
+              on the Playlist tab — so "I added a picture and the screen never changed" looked like a
+              player fault. Say it where the operator is looking; the Publish button stays where it was. */ ''}
+        ${device.playlist_status === 'draft' && device.playlist_source !== 'corporate' && !device.mirror_source ? `
+        <div id="deviceDraftNotice" role="status" style="background:#78350f;border:1px solid #92400e;border-radius:var(--radius);padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;color:#fbbf24">
+          <div style="font-size:13px"><strong>${t('device.draft.banner_title')}.</strong> <span style="color:#fcd34d">${device.playlist_has_published ? t('device.draft.notice_published') : t('device.draft.never_published')}</span></div>
+          <button class="btn btn-sm" id="deviceDraftReviewBtn" style="background:#f59e0b;color:#000;font-weight:600;border:none">${t('device.draft.review_publish')}</button>
+        </div>` : ''}
         <div class="screenshot-container" id="screenshotStage">
           <!-- Live WebRTC overlay (#go2rtc). Present but hidden; the viewer reveals it only once a
                stream connects, and re-hides on any failure so the screenshot below shows through. -->
@@ -1039,6 +1047,16 @@ async function loadDevice(deviceId, activeTab = null) {
               <polygon points="5 3 19 12 5 21 5 3"/>
             </svg>
             ${t('device.ctl.launch_player')}
+          </button>` : ''}
+          ${/* #632: the `refresh` command (lib/device-command.js, write tier) had a handler on every
+                player that declares system.restart_player and no control anywhere that sent it. A web
+                player reloads its page; Android reconnects and re-fetches its playlist. */ ''}
+          ${can('system.restart_player') && canEditWorkspace() ? `
+          <button class="btn btn-secondary btn-sm" id="reloadPlayerBtn" title="${esc(t('device.ctl.reload_player_tip'))}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+            </svg>
+            ${t('device.ctl.reload_player')}
           </button>` : ''}
           ${can('system.self_update') ? `
           <button class="btn btn-secondary btn-sm" id="forceUpdateBtn">
@@ -2968,6 +2986,12 @@ function setupActions(device) {
   // fallback for when the fingerprint changed and automatic restore couldn't fire).
   document.getElementById('reAdoptBtn')?.addEventListener('click', () => showReAdoptModal(device));
 
+  // #632: the Now Playing notice opens the Playlist tab, where Publish and Discard live.
+  document.getElementById('deviceDraftReviewBtn')?.addEventListener('click', () => {
+    document.querySelector('.tab[data-tab="playlist"]')?.click();
+    document.getElementById('deviceDraftBanner')?.scrollIntoView({ block: 'center' });
+  });
+
   // Publish / Discard from device detail
   const devicePublishBtn = document.getElementById('devicePublishBtn');
   if (devicePublishBtn && device.playlist_id) {
@@ -3258,6 +3282,11 @@ function setupActions(device) {
   // Launch Player
   document.getElementById('launchAppBtn')?.addEventListener('click', () => {
     sendWithFeedback('launch', 'Launch', 'device.toast.launch_sent');
+  });
+
+  // Reload player (#632): reload the player on the screen, which re-fetches its playlist.
+  document.getElementById('reloadPlayerBtn')?.addEventListener('click', () => {
+    sendWithFeedback('refresh', t('device.ctl.reload_player'), 'device.toast.reload_sent');
   });
 
   // Force Update
@@ -3638,6 +3667,8 @@ async function setupPlaylistActions(device) {
       onClose: async (changed) => {
         if (!changed) return;
         if (isSimpleMode() && addedTo) await publishForSimpleMode(addedTo);
+        // #632: Advanced keeps the add as a draft. Say so, or "the screen never changed" reads as a fault.
+        else showToast(t('device.toast.added_publish_to_update'), 'info', 7000);
         loadDevice(device.id, 'playlist');
       },
     });
@@ -3767,7 +3798,8 @@ function attachRemoveHandlers(device) {
       const id = btn.dataset.removeAssignment;
       try {
         await api.deleteAssignment(id, device.id);
-        showToast(t('device.toast.removed_from_playlist'), 'success');
+        // #632: a removal is a draft in both views; the screen keeps the item until Publish.
+        showToast(t('device.toast.removed_publish_to_update'), 'info', 7000);
         loadDevice(device.id, 'playlist');
       } catch (err) {
         showToast(err.message, 'error');

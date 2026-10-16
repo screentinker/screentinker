@@ -1046,7 +1046,7 @@ async function showCreated(m, w) {
     try {
       await api.addPlaylistItem(sel.value, { widget_id: w.id });
       const pl = pls.find((p) => String(p.id) === sel.value);
-      msg.innerHTML = `${esc(t('templates.added_to_playlist', { name: pl ? pl.name : '' }))} <a href="#/playlists/${encodeURIComponent(sel.value)}">${esc(t('templates.open_playlist'))}</a>`;
+      msg.innerHTML = `${esc(t('templates.added_to_playlist_draft', { name: pl ? pl.name : '' }))} <a href="#/playlists/${encodeURIComponent(sel.value)}">${esc(t('templates.open_playlist'))}</a>`;
     } catch (e) { btn.disabled = false; msg.innerHTML = `<span class="tpl-warn-text">${esc(e.message)}</span>`; }
   });
 }

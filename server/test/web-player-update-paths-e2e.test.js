@@ -8,6 +8,8 @@
  *      long-polling and still receive a publish. It did not: engine.io-client only tries the next
  *      transport when `tryAllTransports` is set, so the player retried ws:// forever and never
  *      connected at all.
+ *   b. "Reload player" on the device page reloads a web player from the dashboard (the reporter's
+ *      ask). The server and the player already handled the `refresh` command; no control sent it.
  *
  * Skips cleanly without Chrome or puppeteer-core, like the other browser suites.
  */
@@ -77,5 +79,61 @@ describe('#632 a published change reaches a long-running web player', { skip: SK
       assert.ok(await waitFor(() => player(page, 'playlist.length === 2'), 20000), 'the publish never reached the player over polling');
       assert.deepEqual(page.errors, [], 'the player threw');
     } finally { await ctx.close(); }
+  });
+
+  /** The dashboard's device page for `deviceId`, signed in as the suite's account. */
+  async function devicePage(ctx, deviceId) {
+    const dash = await ctx.newPage();
+    await dash.setViewport({ width: 1400, height: 1000 });
+    await dash.evaluateOnNewDocument((tok) => { localStorage.setItem('token', tok); localStorage.setItem('rd_onboarded', '1'); }, srv.token);
+    await dash.goto(`${srv.base}/app#/device/${deviceId}`, { waitUntil: 'domcontentloaded' });
+    await dash.waitForSelector('.tab[data-tab="info"]', { timeout: 30000 });
+    return dash;
+  }
+
+  test('b. "Reload Player" on the device page reloads the web player', { timeout: 120000 }, async () => {
+    const d = await srv.webPlayerDisplay('Reload me');
+    const clip = await srv.upload(CLIP, 'video/webm');
+    await playlistOn(d.id, [clip.id]);
+    const ctxP = await browser.createBrowserContext();
+    const ctxD = await browser.createBrowserContext();
+    try {
+      const page = await playerPage(ctxP);
+      await page.goto(`${srv.base}/player?k=${encodeURIComponent(d.key)}`, { waitUntil: 'domcontentloaded' });
+      assert.ok(await waitFor(() => player(page, 'socket && socket.connected && playlist.length === 1'), 30000), 'precondition: the player is up');
+      await page.evaluate(() => { window.__beforeReload = true; });
+
+      const dash = await devicePage(ctxD, d.id);
+      await dash.click('.tab[data-tab="info"]');
+      const btn = await dash.waitForSelector('#reloadPlayerBtn', { visible: true, timeout: 10000 }).catch(() => null);
+      assert.ok(btn, 'the device page offers no Reload Player control for a web player');
+      await btn.click();
+
+      // A reload drops the page's globals; the fresh page connects and plays again.
+      assert.ok(await waitFor(() => player(page, '!window.__beforeReload && socket && socket.connected && playlist.length === 1'), 30000),
+        'the player was not reloaded');
+      assert.ok(page.logs.some((l) => l.includes('operator refresh')), 'the reload was not the operator refresh');
+    } finally { await ctxP.close(); await ctxD.close(); }
+  });
+
+  test('c. an unpublished edit is called out on the tab the device page opens on', { timeout: 120000 }, async () => {
+    const d = await srv.webPlayerDisplay('Draft');
+    const clip = await srv.upload(CLIP, 'video/webm');
+    const clock = await srv.api('POST', '/widgets', { widget_type: 'clock', name: 'Clock', config: {} });
+    const pl = await playlistOn(d.id, [clip.id]);
+    const ctxD = await browser.createBrowserContext();
+    try {
+      let dash = await devicePage(ctxD, d.id);
+      assert.equal(await dash.$('#deviceDraftNotice'), null, 'a published playlist shows no unpublished-changes notice');
+      await dash.close();
+
+      await srv.api('POST', `/playlists/${pl.id}/items`, { widget_id: clock.id, duration_sec: 5 });   // no Publish
+      dash = await devicePage(ctxD, d.id);
+      const notice = await dash.waitForSelector('#tab-nowplaying #deviceDraftNotice', { visible: true, timeout: 10000 }).catch(() => null);
+      assert.ok(notice, 'Now Playing does not say the playlist has unpublished changes');
+      await dash.click('#deviceDraftReviewBtn');
+      assert.ok(await dash.waitForSelector('#devicePublishBtn', { visible: true, timeout: 10000 }).catch(() => null),
+        '"Review and publish" does not lead to the Publish button');
+    } finally { await ctxD.close(); }
   });
 });

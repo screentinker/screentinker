@@ -123,6 +123,8 @@ function render(device, telemetry) {
     activeLayoutIdOf: (d) => (d && d.layout_id) || null,
     layoutSourceNote: () => '',
     localStorage: { getItem: () => null, setItem: () => {} },
+    // Role gate (a workspace viewer sees no Reload Player). Overridable per render for that test.
+    canEditWorkspace: () => render.canEdit !== false,
     Math, Date, JSON, String, Array, Object,
   };
   return vm.runInNewContext('`' + template + '`', sandbox);
@@ -171,6 +173,17 @@ test('a browser tab is no longer offered controls over a machine it cannot touch
   assert.equal(has(html, 'screenOnBtn'), false);
   assert.equal(has(html, 'forceUpdateBtn'), false, 'nor update itself — the page reloads instead');
   assert.ok(has(html, 'launchAppBtn'), 'but reloading the player IS something it can do');
+  // #632: `launch` on a web player only lifts a screen-off overlay; `refresh` is the reload.
+  assert.ok(has(html, 'reloadPlayerBtn'), 'a web player is offered Reload Player');
+});
+
+test('#632 Reload Player follows system.restart_player and the edit role', () => {
+  assert.ok(has(render(ANDROID_FULL), 'reloadPlayerBtn'), 'Android re-fetches on refresh too');
+  const noRestart = { ...WEB, capabilities: WEB.capabilities.filter((c) => c !== 'system.restart_player') };
+  assert.equal(has(render(noRestart), 'reloadPlayerBtn'), false, 'not offered to a player that cannot restart');
+  render.canEdit = false;
+  try { assert.equal(has(render(WEB), 'reloadPlayerBtn'), false, 'a view-only member is not offered it'); }
+  finally { render.canEdit = true; }
 });
 
 test('a Tizen TV is not offered screen power or the reboot it has no API for', () => {
