@@ -2,6 +2,7 @@ const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const { resolveWithin } = require('../lib/safe-path');
 const { db, pruneTelemetry, pruneScreenshots } = require('../db/database');
 const { effectiveDeviceTz } = require('../lib/device-timezone');
 const config = require('../config');
@@ -1621,7 +1622,10 @@ const screenshotPersistedAt = new Map();   // deviceId -> ms of the last disk wr
 function persistScreenshot(deviceId, imageB64) {
   try {
     const filename = `${deviceId}_latest.jpg`;
-    fs.writeFileSync(path.join(config.screenshotsDir, filename), Buffer.from(imageB64, 'base64'));
+    // deviceId is an authenticated screen's own id; contained to the folder all the same.
+    const file = resolveWithin(config.screenshotsDir, filename);
+    if (!file || path.dirname(file) !== path.resolve(config.screenshotsDir)) return;
+    fs.writeFileSync(file, Buffer.from(imageB64, 'base64'));
     const existing = db.prepare('SELECT id FROM screenshots WHERE device_id = ?').get(deviceId);
     if (existing) {
       db.prepare('UPDATE screenshots SET filepath = ?, captured_at = strftime(\'%s\',\'now\') WHERE device_id = ?').run(filename, deviceId);
