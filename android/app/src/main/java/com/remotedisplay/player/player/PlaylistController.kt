@@ -293,6 +293,43 @@ class PlaylistController(
     fun playsToEnd(item: PlaylistItem): Boolean =
         !wallFollower && PlayToEnd.applies(item.mimeType, item.playToEnd, syncDriven(), items.size)
 
+    /*
+     * #649: a bundle asked to be skipped (MediaPlayerManager -> BundleSkip). The rules are BundleSkip's,
+     * held to shared/bundle-skip-vectors.json; this applies them to the playlist. [onBundleLog] carries
+     * the line to the dashboard's device log; [onPlaySkipped] retracts the play_start already sent.
+     */
+    var onBundleLog: (String) -> Unit = {}
+    var onPlaySkipped: (PlaylistItem, Long) -> Unit = { _, _ -> }
+    private val skipGuard = BundleSkip.Guard()
+    private var skipAdvancing = false
+    private var skipIgnoredLoggedAt = -1L   // itemStartedAt of the mount whose refusal was logged
+
+    /** Whether some OTHER item could play now (non-consuming: the shuffle bag is left alone). */
+    private fun canAdvanceFrom(index: Int): Boolean =
+        items.indices.any { it != index && (playableNow(it) || playableStale(it)) }
+
+    fun onBundleSkip(rawReason: String?) {
+        val item = currentItem ?: return
+        if (item.mimeType != ItemTiming.BUNDLE_MIME) return
+        val reason = BundleSkip.sanitizeReason(rawReason)
+        val verdict = skipGuard.decide("$currentIndex|${item.itemKey}", !held && canAdvanceFrom(currentIndex), wallFollower || syncDriven())
+        if (verdict != "skip") {
+            if (skipIgnoredLoggedAt != itemStartedAt) {
+                skipIgnoredLoggedAt = itemStartedAt
+                onBundleLog("skip ignored for \"${item.filename}\": ${BundleSkip.ignoredText(verdict)}")
+            }
+            return
+        }
+        onBundleLog("skipped \"${item.filename}\"" + (if (reason != null) " \u2014 $reason" else ""))
+        // Proof-of-play: retract the start this item sent, and make sure no play_end follows for it.
+        if (!wallFollower && loggedItem === item) {
+            if (item.logPlay) onPlaySkipped(item, System.currentTimeMillis() - itemStartedAt)
+            loggedItem = null
+        }
+        skipAdvancing = true
+        try { next() } finally { skipAdvancing = false }
+    }
+
     /** #624: the YouTube page reported the video's length: wait for the rest of it, plus slack. */
     fun onYoutubeLength(lengthSec: Double) {
         val item = currentItem ?: return
@@ -675,6 +712,8 @@ class PlaylistController(
 
     fun next() {
         if (held) return
+        // #649: any end but a bundle's own skip, after a real run, closes the skip guard's pass.
+        if (!skipAdvancing) skipGuard.ended(System.currentTimeMillis() - itemStartedAt)
         // #157: a deferred rotation-out — the just-finished item was removed (expired) while live.
         // Swap in the stashed list now and continue at the preserved successor (or first playable).
         pendingItems?.let { p ->

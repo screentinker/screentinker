@@ -451,8 +451,14 @@ class MainActivity : AppCompatActivity() {
             transitionView = transitionView,
             // #624 play to end: the YouTube page reports the video's length and its end.
             onYoutubeLength = { sec -> playlistController.onYoutubeLength(sec) },
-            onYoutubeEnded = { playlistController.onYoutubeEnded() }
+            onYoutubeEnded = { playlistController.onYoutubeEnded() },
+            // #649: the bundle on screen asked to be skipped.
+            onBundleSkip = { reason -> playlistController.onBundleSkip(reason) }
         )
+        playlistController.onBundleLog = { msg -> Log.i("BundleSkip", msg); wsService?.sendLog("bundle", "info", msg) }
+        playlistController.onPlaySkipped = { item, elapsedMs ->
+            wsService?.sendPlaySkipped(item.contentId.ifEmpty { item.widgetId ?: "" }, item.filename, elapsedMs)
+        }
 
         /*
          * Offline fallback (OfflineGate). An item cannot load when the socket to the server is down,

@@ -46,7 +46,10 @@ class MediaPlayerManager(
     // #624 play to end: the YouTube wrapper reported the video's length (seconds) / that it ended.
     // Only for the page currently mounted (see YoutubeBridge); always on the main thread.
     private val onYoutubeLength: (Double) -> Unit = {},
-    private val onYoutubeEnded: () -> Unit = {}
+    private val onYoutubeEnded: () -> Unit = {},
+    // #649: the bundle on screen asked to be skipped (BundleSkip); the raw reason, unsanitised.
+    // Always on the main thread, and only for the bundle mounted now.
+    private val onBundleSkip: (String?) -> Unit = {}
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -68,6 +71,27 @@ class MediaPlayerManager(
         }
     }
     private var youtubeBridgeInstalled = false
+
+    /*
+     * #649: the bundle document's way to say "skip me" (BundleSkip.inject). The interface is visible to
+     * every page and frame this WebView loads, so a call counts only with the random token of the
+     * bundle mounted NOW, under the mount it was loaded in: a replaced bundle, a widget, or a frame the
+     * bundle embeds cannot know it.
+     */
+    private inner class BundleSkipBridge {
+        @android.webkit.JavascriptInterface
+        fun skip(token: String?, reason: String?) {
+            mainHandler.post {
+                if (bundleMount.accepts(token, mountGeneration) && currentType == MediaType.WIDGET) onBundleSkip(reason)
+            }
+        }
+    }
+    private var bundleBridgeInstalled = false
+    private val tokenRandom = java.security.SecureRandom()
+    private val bundleMount = BundleSkip.MountToken {
+        val b = ByteArray(16); tokenRandom.nextBytes(b)
+        b.joinToString("") { "%02x".format(it) }
+    }
     private var exoPlayer: ExoPlayer? = null
     private var currentType: MediaType = MediaType.NONE
     // The URL the widget WebView currently has loaded, so re-showing the same widget can be a
@@ -650,9 +674,12 @@ class MediaPlayerManager(
 
         exoPlayer?.stop()
 
+        // #649: this mount's token; the bridge is installed once and applies from this load on.
+        val token = bundleMount.mount(mountGeneration)
         youtubeWebView?.apply {
             com.remotedisplay.player.util.WebViewSupport.configure(this, "Bundle", webLoadState)
-            loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+            if (!bundleBridgeInstalled) { addJavascriptInterface(BundleSkipBridge(), BundleSkip.BRIDGE); bundleBridgeInstalled = true }
+            loadDataWithBaseURL(null, BundleSkip.inject(html, token), "text/html", "UTF-8", null)
         }
     }
 

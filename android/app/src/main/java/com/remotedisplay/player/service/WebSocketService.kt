@@ -1699,6 +1699,27 @@ class WebSocketService : Service() {
         } catch (e: Throwable) { Log.w("WebSocketService", "sendPlayEnd: ${e.message}") }
     }
 
+    /**
+     * #649: a bundle asked to be skipped, so the play it opened was not a play. Live: play_end with
+     * skipped=true (the server deletes the row; an older server records it incomplete). Offline: the
+     * remembered start is dropped, never queued.
+     */
+    fun sendPlaySkipped(contentId: String, contentName: String, elapsedMs: Long) {
+        if (socket?.connected() != true) { offlineStart = null; return }
+        try {
+            val data = JSONObject().apply {
+                put("device_id", config.deviceId)
+                put("event", "play_end")
+                put("content_id", if (contentId.isEmpty()) JSONObject.NULL else contentId)
+                put("content_name", contentName)
+                put("completed", false)
+                put("skipped", true)
+                put("elapsed_ms", elapsedMs.coerceAtLeast(0L))
+            }
+            socket?.emit("device:play-event", data)
+        } catch (e: Throwable) { Log.w("WebSocketService", "sendPlaySkipped: ${e.message}") }
+    }
+
     // Video-wall senders. Guarded on socket.connected() like sendPlaybackState, so a
     // pre-register tick is a no-op (the server would reject it as unauthenticated).
     fun emitWallSync(wallId: String, currentIndex: Int, contentId: String?, positionSec: Float) {
