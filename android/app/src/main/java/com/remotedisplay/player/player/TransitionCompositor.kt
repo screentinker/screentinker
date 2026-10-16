@@ -40,6 +40,15 @@ object TransitionGlsl {
 
     fun fragmentFor(shaderSrc: String): String = PREAMBLE + "\n" + shaderSrc + "\n" + EPILOGUE
 
+    /*
+     * The fallback a ZONE wipe drops to when its shader is missing or will not compile on this GPU:
+     * a plain crossfade, the same thing the native player's TransitionRunner does in that case, so
+     * the operator still sees a transition and never a black frame. Written against the same
+     * preamble as the library shaders, so it runs through the identical program path.
+     */
+    const val CROSSFADE_SRC = "vec4 transition(vec2 uv){ return mix(getFromColor(uv), getToColor(uv), progress); }"
+    val CROSSFADE: String get() = fragmentFor(CROSSFADE_SRC)
+
     // Load a shader's GLSL source by id from assets/transitions/<id>.glsl (copied from shared/Transitions
     // at build). Returns null if missing -> the caller hard-cuts (never a black frame).
     /*
@@ -235,30 +244,23 @@ class TransitionGLView(context: Context) : GLSurfaceView(context) {
 
     private inner class TxRenderer : Renderer {
         private var vShader = 0
-        private var program = 0
-        private var texFrom = 0
-        private var texTo = 0
-        private var uFrom = 0; private var uTo = 0; private var uProgress = 0; private var uRatio = 0
-        private val uParam = HashMap<String, Int>()
+        private val gl = WipeGl()
         private var vw = 1; private var vh = 1
         private var active: Job? = null
-        private val quad: FloatBuffer = ByteBuffer
-            .allocateDirect(8 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            .apply { put(floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)); position(0) }
 
-        override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        override fun onSurfaceCreated(gl10: GL10?, config: EGLConfig?) {
             GLES20.glClearColor(0f, 0f, 0f, 0f)  // transparent: content behind shows through pre-wipe
-            vShader = compile(GLES20.GL_VERTEX_SHADER, TransitionGlsl.VERTEX)
+            vShader = WipeGl.compile(GLES20.GL_VERTEX_SHADER, TransitionGlsl.VERTEX)
             // a context (re)create drops any active job's GL objects — abandon it (hard-cut to its target),
             // and park if nothing new is queued so the overlay never sticks visible.
             active?.let { swapOnMain(it) }
-            active = null; program = 0; texFrom = 0; texTo = 0
+            active = null; gl.forget()
             parkIfIdle()
         }
 
-        override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) { vw = width; vh = height; GLES20.glViewport(0, 0, width, height) }
+        override fun onSurfaceChanged(gl10: GL10?, width: Int, height: Int) { vw = width; vh = height; GLES20.glViewport(0, 0, width, height) }
 
-        override fun onDrawFrame(gl: GL10?) {
+        override fun onDrawFrame(gl10: GL10?) {
             incoming?.let { j -> incoming = null; active?.let { supersede(it) }; setup(j) } // pick up a new request
             val j = active
             // Clear ONLY when a frame is actually going to be drawn over it. Clearing
@@ -271,7 +273,7 @@ class TransitionGLView(context: Context) : GLSurfaceView(context) {
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
             if (j.startNs == 0L) j.startNs = System.nanoTime()
             val p = ((System.nanoTime() - j.startNs).toFloat() / (j.durationMs * 1_000_000f)).coerceIn(0f, 1f)
-            draw(j, p)
+            gl.draw(p, vw, vh, j.params)
             if (p >= 1f) finish(j)
         }
 
@@ -280,24 +282,8 @@ class TransitionGLView(context: Context) : GLSurfaceView(context) {
         private fun setup(j: Job) {
             active = j
             try {
-                val frag = compile(GLES20.GL_FRAGMENT_SHADER, j.fragmentSrc)
-                val prog = GLES20.glCreateProgram()
-                GLES20.glAttachShader(prog, vShader)
-                GLES20.glAttachShader(prog, frag)
-                GLES20.glBindAttribLocation(prog, 0, "aPos")
-                GLES20.glLinkProgram(prog)
-                val ok = IntArray(1); GLES20.glGetProgramiv(prog, GLES20.GL_LINK_STATUS, ok, 0)
-                GLES20.glDeleteShader(frag)
-                if (ok[0] == 0) { val log = GLES20.glGetProgramInfoLog(prog); GLES20.glDeleteProgram(prog); throw RuntimeException("link: $log") }
-                program = prog
-                uFrom = GLES20.glGetUniformLocation(prog, "uFrom")
-                uTo = GLES20.glGetUniformLocation(prog, "uTo")
-                uProgress = GLES20.glGetUniformLocation(prog, "progress")
-                uRatio = GLES20.glGetUniformLocation(prog, "ratio")
-                uParam.clear()
-                for (name in j.params.keys) uParam[name] = GLES20.glGetUniformLocation(prog, name)
-                texFrom = uploadTexture(j.from)
-                texTo = uploadTexture(j.to)
+                gl.useProgram(WipeGl.link(vShader, j.fragmentSrc), j.params.keys, owned = true)
+                gl.upload(j.from, j.to)
                 // pixels now live in the GL textures — free the (full-screen ARGB) fit bitmaps promptly
                 // rather than waiting on GC, which matters on a long-lived signage device.
                 try { j.from.recycle(); j.to.recycle() } catch (_: Throwable) {}
@@ -305,21 +291,6 @@ class TransitionGLView(context: Context) : GLSurfaceView(context) {
                 Log.w("TransitionGL", "wipe setup failed, hard-cutting: ${e.message}")
                 j.failed = true
             }
-        }
-
-        private fun draw(j: Job, p: Float) {
-            GLES20.glUseProgram(program)
-            GLES20.glViewport(0, 0, vw, vh)
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE0); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texFrom); GLES20.glUniform1i(uFrom, 0)
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE1); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texTo); GLES20.glUniform1i(uTo, 1)
-            GLES20.glUniform1f(uProgress, p)
-            GLES20.glUniform1f(uRatio, vw.toFloat() / maxOf(1, vh))
-            for ((name, v) in j.params) { val loc = uParam[name] ?: -1; if (loc >= 0) GLES20.glUniform1f(loc, v) }
-            GLES20.glEnableVertexAttribArray(0)
-            quad.position(0)
-            GLES20.glVertexAttribPointer(0, 2, GLES20.GL_FLOAT, false, 0, quad)
-            GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
-            GLES20.glDisableVertexAttribArray(0)
         }
 
         // Wipe completed (or failed): release its GL, run the content swap on the main thread, then park
@@ -332,7 +303,7 @@ class TransitionGLView(context: Context) : GLSurfaceView(context) {
             // real content is mounted underneath. Any frame drawn in that gap is a regression:
             // there is nothing left to draw, so it can only be an empty one.
             renderMode = RENDERMODE_WHEN_DIRTY
-            releaseGl()
+            gl.release()
             swapOnMain(j)
             parkIfIdle()
         }
@@ -341,7 +312,7 @@ class TransitionGLView(context: Context) : GLSurfaceView(context) {
         // both textures leak) and run its content swap, but do NOT park — the new wipe keeps the overlay
         // visible + rendering. setup(new) runs immediately after and rebuilds the GL objects.
         private fun supersede(old: Job) {
-            releaseGl()
+            gl.release()
             swapOnMain(old)
         }
 
@@ -368,14 +339,100 @@ class TransitionGLView(context: Context) : GLSurfaceView(context) {
                 }, PARK_DELAY_MS)
             }
         }
+    }
+}
 
-        private fun releaseGl() {
-            if (texFrom != 0) { GLES20.glDeleteTextures(1, intArrayOf(texFrom), 0); texFrom = 0 }
-            if (texTo != 0) { GLES20.glDeleteTextures(1, intArrayOf(texTo), 0); texTo = 0 }
-            if (program != 0) { GLES20.glDeleteProgram(program); program = 0 }
+/*
+ * One wipe's GL objects — the linked program, its uniform locations and the two frame textures —
+ * and the draw that composites them. Lifted out of TransitionGLView's renderer so the zone engine
+ * (ZoneTransitionEngine) runs the SAME program path, uniform contract and texture setup as the
+ * full-screen overlay instead of a second copy that could drift. Not thread-safe: every call must
+ * be made on the thread whose EGL context is current.
+ *
+ * `owned` says whether release() deletes the program. The full-screen overlay links a program per
+ * wipe and owns it; the zone engine shares linked programs across zones through a small cache and
+ * deletes them itself.
+ */
+internal class WipeGl {
+    private var program = 0
+    private var ownsProgram = false
+    private var texFrom = 0
+    private var texTo = 0
+    private var uFrom = 0; private var uTo = 0; private var uProgress = 0; private var uRatio = 0
+    private val uParam = HashMap<String, Int>()
+
+    val ready: Boolean get() = program != 0 && texFrom != 0 && texTo != 0
+
+    fun useProgram(prog: Int, paramNames: Collection<String>, owned: Boolean) {
+        program = prog; ownsProgram = owned
+        uFrom = GLES20.glGetUniformLocation(prog, "uFrom")
+        uTo = GLES20.glGetUniformLocation(prog, "uTo")
+        uProgress = GLES20.glGetUniformLocation(prog, "progress")
+        uRatio = GLES20.glGetUniformLocation(prog, "ratio")
+        uParam.clear()
+        for (name in paramNames) uParam[name] = GLES20.glGetUniformLocation(prog, name)
+    }
+
+    fun upload(from: Bitmap, to: Bitmap) {
+        texFrom = uploadTexture(from)
+        texTo = uploadTexture(to)
+    }
+
+    fun draw(p: Float, vw: Int, vh: Int, params: Map<String, Float>) {
+        GLES20.glUseProgram(program)
+        GLES20.glViewport(0, 0, vw, vh)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texFrom); GLES20.glUniform1i(uFrom, 0)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE1); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texTo); GLES20.glUniform1i(uTo, 1)
+        GLES20.glUniform1f(uProgress, p)
+        GLES20.glUniform1f(uRatio, vw.toFloat() / maxOf(1, vh))
+        for ((name, v) in params) { val loc = uParam[name] ?: -1; if (loc >= 0) GLES20.glUniform1f(loc, v) }
+        GLES20.glEnableVertexAttribArray(0)
+        QUAD.position(0)
+        GLES20.glVertexAttribPointer(0, 2, GLES20.GL_FLOAT, false, 0, QUAD)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        GLES20.glDisableVertexAttribArray(0)
+    }
+
+    /** Delete this wipe's textures (and its program, if it owns it). Safe to call twice. */
+    fun release() {
+        if (texFrom != 0) { GLES20.glDeleteTextures(1, intArrayOf(texFrom), 0); texFrom = 0 }
+        if (texTo != 0) { GLES20.glDeleteTextures(1, intArrayOf(texTo), 0); texTo = 0 }
+        if (program != 0 && ownsProgram) GLES20.glDeleteProgram(program)
+        program = 0; ownsProgram = false
+    }
+
+    /** The context that held these objects is gone: drop the names without deleting anything. */
+    fun forget() { program = 0; ownsProgram = false; texFrom = 0; texTo = 0 }
+
+    companion object {
+        private val QUAD: FloatBuffer = ByteBuffer
+            .allocateDirect(8 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+            .apply { put(floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)); position(0) }
+
+        /** Compile + link [fragmentSrc] against [vShader]. Throws with the driver's log on failure. */
+        fun link(vShader: Int, fragmentSrc: String): Int {
+            val frag = compile(GLES20.GL_FRAGMENT_SHADER, fragmentSrc)
+            val prog = GLES20.glCreateProgram()
+            GLES20.glAttachShader(prog, vShader)
+            GLES20.glAttachShader(prog, frag)
+            GLES20.glBindAttribLocation(prog, 0, "aPos")
+            GLES20.glLinkProgram(prog)
+            val ok = IntArray(1); GLES20.glGetProgramiv(prog, GLES20.GL_LINK_STATUS, ok, 0)
+            GLES20.glDeleteShader(frag)
+            if (ok[0] == 0) { val log = GLES20.glGetProgramInfoLog(prog); GLES20.glDeleteProgram(prog); throw RuntimeException("link: $log") }
+            return prog
         }
 
-        private fun uploadTexture(bmp: Bitmap): Int {
+        fun compile(type: Int, src: String): Int {
+            val s = GLES20.glCreateShader(type)
+            GLES20.glShaderSource(s, src)
+            GLES20.glCompileShader(s)
+            val ok = IntArray(1); GLES20.glGetShaderiv(s, GLES20.GL_COMPILE_STATUS, ok, 0)
+            if (ok[0] == 0) { val log = GLES20.glGetShaderInfoLog(s); GLES20.glDeleteShader(s); throw RuntimeException("compile: $log") }
+            return s
+        }
+
+        fun uploadTexture(bmp: Bitmap): Int {
             val ids = IntArray(1); GLES20.glGenTextures(1, ids, 0)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
             GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
@@ -384,15 +441,6 @@ class TransitionGLView(context: Context) : GLSurfaceView(context) {
             GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
             GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
             return ids[0]
-        }
-
-        private fun compile(type: Int, src: String): Int {
-            val s = GLES20.glCreateShader(type)
-            GLES20.glShaderSource(s, src)
-            GLES20.glCompileShader(s)
-            val ok = IntArray(1); GLES20.glGetShaderiv(s, GLES20.GL_COMPILE_STATUS, ok, 0)
-            if (ok[0] == 0) { val log = GLES20.glGetShaderInfoLog(s); GLES20.glDeleteShader(s); throw RuntimeException("compile: $log") }
-            return s
         }
     }
 }

@@ -386,9 +386,7 @@ class MediaPlayerManager(
     // Pick one effect at random (variety) and resolve its wrapped fragment source + params. Null if the
     // shader isn't in assets -> hard cut.
     private fun pickEffect(spec: TransitionSpec): Pair<String, Map<String, Float>>? {
-        if (spec.effects.isEmpty()) return null
-        val idx = (Math.random() * spec.effects.size).toInt().coerceIn(0, spec.effects.size - 1)
-        val e = spec.effects[idx]
+        val e = Transitions.pick(spec) ?: return null
         val src = TransitionGlsl.loadSource(context.assets, e.shader) ?: return null
         return TransitionGlsl.fragmentFor(src) to e.params
     }

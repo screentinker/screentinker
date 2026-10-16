@@ -25,9 +25,23 @@ data class TransitionSpec(val effects: List<TransitionEffect>, val durationMs: I
 }
 
 object Transitions {
-    private const val MIN_MS = 150
-    private const val MAX_MS = 3000
-    private const val DEFAULT_MS = 800
+    const val MIN_MS = 150
+    const val MAX_MS = 3000
+    const val DEFAULT_MS = 800
+
+    /**
+     * Which of [count] effects plays this advance, for a uniform random [r] in [0, 1). Several
+     * effects on one transition widget mean "vary it": one is picked per advance, independently per
+     * zone. Clamped so r == 1.0 (or a bad r) can never index past the end.
+     */
+    fun pickIndex(count: Int, r: Double): Int {
+        if (count <= 0) return -1
+        if (r.isNaN()) return 0
+        return (r * count).toInt().coerceIn(0, count - 1)
+    }
+
+    fun pick(spec: TransitionSpec, r: Double = Math.random()): TransitionEffect? =
+        pickIndex(spec.effects.size, r).let { if (it < 0) null else spec.effects[it] }
 
     // Parse the per-item `transition` object off an assignment. Tolerant + defensive: an absent/empty/
     // malformed object -> null (the renderer hard-cuts, never a black frame), mirroring the server's
