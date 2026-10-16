@@ -510,6 +510,13 @@ function refreshWidgetRevs(assignments, deviceId = null) {
       // player to remount — otherwise an edit reloads the page with the settings from the last
       // publish. Webpage widgets only: other widgets render from the server and ignore it here.
       if (a.widget_type === 'webpage' && typeof facts.config === 'string') a.widget_config = facts.config;
+      // A TRANSITION widget is the same case: its settings (effects, duration, scope) are resolved
+      // from widget_config by assemblePayload -> normalizeTransitions, which runs AFTER this. The
+      // published snapshot froze the config at publish time, so without this an edited transition
+      // never reached a screen at all: the edit moved updated_at, the save pushed a payload, and the
+      // payload carried the old settings. Live, like every other widget's content, so an edit needs
+      // no re-publish. An edit saved as a draft (approval on) is in draft_config, not here.
+      else if (a.widget_type === 'transition' && facts.widget_type === 'transition' && typeof facts.config === 'string') a.widget_config = facts.config;
     } catch (_) { /* keep published */ }
   }
 }
