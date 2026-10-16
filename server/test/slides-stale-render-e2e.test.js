@@ -35,13 +35,18 @@ after(async () => {
 test('leaving the Slides page while its deck list is loading throws nothing', { skip: SKIP }, async () => {
   let held = 0;
   const release = [];
-  await page.setRequestInterception(true);
-  page.on('request', (req) => {
+  // Every interception call is guarded: a request can still arrive after interception is switched
+  // off below, and continue() on it would reject ("Request Interception is not enabled!").
+  let intercepting = true;
+  const go = (req) => { if (intercepting) req.continue().catch(() => {}); };
+  const onRequest = (req) => {
     if (/\/api\/slide-decks(\?|$)/.test(req.url()) && req.method() === 'GET') {
       held++;
-      release.push(() => req.continue());
-    } else req.continue();
-  });
+      release.push(() => go(req));
+    } else go(req);
+  };
+  await page.setRequestInterception(true);
+  page.on('request', onRequest);
 
   await page.goto(`${srv.base}/app#/slides`, { waitUntil: 'domcontentloaded' });
   assert.ok(await waitFor(() => held > 0, 15000, 50), 'the deck list request was made');
@@ -49,8 +54,10 @@ test('leaving the Slides page while its deck list is loading throws nothing', { 
   await page.evaluate(() => { window.location.hash = '#/settings'; });
   assert.ok(await waitFor(() => page.evaluate(() => !document.getElementById('deckArea')), 10000, 50),
     'the Slides page was replaced');
-  for (const go of release.splice(0)) go();
+  for (const releaseOne of release.splice(0)) releaseOne();
   await sleep(1500);
+  page.off('request', onRequest);
+  intercepting = false;
   await page.setRequestInterception(false);
 
   assert.deepEqual(errors, []);
