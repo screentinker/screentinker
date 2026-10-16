@@ -3407,6 +3407,15 @@
         // seconds to first connect while WS times out. Worth it for the common
         // case where WS is fine but the upgrade dance was hanging the device.
         transports: ['websocket', 'polling'],
+        /*
+         * ⚠️ THE FALLBACK ABOVE NEVER HAPPENED WITHOUT THIS. engine.io-client 6.x only moves on to
+         * the next transport in the list when `tryAllTransports` is set; otherwise a failed
+         * WebSocket is a failed connect, retried as a WebSocket forever. Behind a reverse proxy
+         * that does not pass the Upgrade header (a common nginx/Apache setup) the player sat on
+         * "Connection failed" retrying ws:// — measured in Chrome against a proxy that refuses
+         * upgrades (test/web-player-update-paths-e2e.test.js). An older client ignores the key.
+         */
+        tryAllTransports: true,
       });
 
       // v4 liveness: a fresh socket is assumed alive; DIS-arm until a heartbeat-ack re-arms; pick a
