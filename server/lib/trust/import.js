@@ -29,6 +29,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const config = require('../../config');
+const { resolveWithin } = require('../safe-path');
 const archive = require('./import-archive');
 const restoreLib = require('./import-restore');
 const { ImportError } = archive;
@@ -73,9 +74,9 @@ function listDisk() {
 
 function diskFile(name) {
   if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.zip$/.test(name)) return null;
-  const dir = importsDir();
-  const p = path.join(dir, name);
-  if (path.dirname(p) !== dir) return null;
+  const dir = path.resolve(importsDir());
+  const p = resolveWithin(dir, name);
+  if (!p || path.dirname(p) !== dir) return null;
   try {
     const st = fs.lstatSync(p);
     if (!st.isFile() || st.isSymbolicLink()) return null;
