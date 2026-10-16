@@ -192,7 +192,11 @@ function extractJsonLd(html, baseUrl) {
   };
   eachLdScript(String(html || ''), (body) => {
     if (items.length >= MAX_ITEMS) return false;
-    const raw = body.trim().replace(/^<!--|-->$/g, '');
+    // A CMS may wrap the JSON in an HTML comment. Unwrapped by position, not a regex, which code
+    // scanning reads as a (bad) comment filter; this only feeds JSON.parse below.
+    let raw = body.trim();
+    if (raw.startsWith('<!--')) raw = raw.slice(4);
+    if (raw.endsWith('-->')) raw = raw.slice(0, -3);
     if (raw.length > 512 * 1024) return true;
     let data;
     try { data = JSON.parse(raw); } catch (_) {
