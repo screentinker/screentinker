@@ -25,6 +25,18 @@
   (`GO2RTC_TURN_SECRET`), they still get its short-lived credentials.
 - Passkey sign-in issued a session to an account its organization had deactivated (SCIM).
   It now returns 403 `account_disabled`, as password sign-in does.
+- Crafted text could tie up the server for seconds to minutes (regular expressions that slow down
+  sharply on long inputs). This affected:
+  - news feeds and feed discovery: any feed a widget points at, up to 4 MB, plus pages, sitemaps
+    and robots.txt
+  - uploaded or transcribed captions
+  - A.I. starter and translation text
+  - stock-media results
+  - a few trailing-slash trims on admin settings
+
+  All now run in linear time, and their output is unchanged.
+- Three file paths built from a device ID, a disk-import name or an upload path are now checked
+  against their own folder at the point of use. None was reachable with untrusted input.
 
 ## 3.0.0
 
