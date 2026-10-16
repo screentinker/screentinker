@@ -524,7 +524,13 @@ class PlaybackEngine:
                  "x": float(z.get("x_percent") or 0), "y": float(z.get("y_percent") or 0),
                  "w": float(z.get("width_percent") or 100), "h": float(z.get("height_percent") or 100),
                  "z": int(z.get("z_index") or 0), "fit_mode": z.get("fit_mode") or "cover",
-                 "bg": z.get("background_color") or ""} for z in zones]
+                 # ⚠️ NO FILL in a layout zone (#657). Every zone is saved with background_color
+                 # "#000000" (the layout editor's default), and the web player and Android never paint
+                 # it, so a zone is see-through: a full-screen zone holding a transparent PNG is a
+                 # frame over the zones beneath. Painted here, that zone was a black sheet with the
+                 # PNG on it, and a logo's transparent corners were black. Wall zones keep their colour
+                 # (_enter_wall_zones), as the web player's wall renderer does.
+                 "bg": ""} for z in zones]
         items = [Item.parse(a) for a in assignments]
         sig = json.dumps([spec, [i.sig() for i in items]], sort_keys=True)
         if self.mode == "zones" and getattr(self, "_zone_sig", None) == sig:

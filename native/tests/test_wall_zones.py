@@ -526,6 +526,22 @@ def test_engine_hold_in_single_mode(eng):
     assert 2_900 <= e.controller._advance.interval() <= 3_000
 
 
+def test_layout_zones_are_see_through_whatever_background_color_says(eng):
+    # #657: a full-screen zone on top holding a transparent PNG (a seasonal frame) covered every zone
+    # beneath it in black on the Pi, because each zone painted its saved background_color — "#000000"
+    # unless someone changed it. The web player and Android paint no fill in a layout zone.
+    e, app = eng
+    app.cache.files.update(A="/c/A.png", F="/c/F.png")
+    e.on_payload({"assignments": [
+        {"id": 1, "content_id": "A", "mime_type": "image/png", "duration_sec": 5, "zone_id": "a", "sort_order": 0},
+        {"id": 2, "content_id": "F", "mime_type": "image/png", "duration_sec": 5, "zone_id": "b", "sort_order": 0}],
+        "layout": {"zones": [dict(Z2[0], background_color="#000000"),
+                             dict(Z2[1], background_color="#ff0000", z_index=5,
+                                  x_percent=0, y_percent=0, width_percent=100, height_percent=100)]}})
+    assert e.mode == "zones"
+    assert [z["bg"] for z in app.stage.props["zones"]] == ["", ""]
+
+
 def test_engine_hold_blank_in_normal_zones(eng):
     e, app = eng
     app.cache.files.update(A="/c/A.mp4")

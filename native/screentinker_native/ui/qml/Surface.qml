@@ -12,7 +12,8 @@ Item {
     property string surfaceId: ""
     property real volume: 1.0
     property bool forceMute: false
-    // A zone's background_color (a blank hold, or a zone between items, shows it).
+    // A WALL zone's background_color (a blank hold, or a zone between items, shows it). Layout zones
+    // pass "" and stay see-through (#657, engine._enter_zones).
     property string fill: ""
     property var current: null
     property int frontIndex: 0
