@@ -28,6 +28,7 @@ const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const config = require('../config');
+const { stripTags } = require('./strip-tags');
 
 class StockError extends Error {
   constructor(message, code = 'stock', status = 502) {
@@ -261,7 +262,7 @@ async function providerJson(p, url, headers) {
 // Provider text is shown in pickers and stored on the row: tags and control characters go, and any
 // stray angle bracket with them. (Escaping is still the renderer's job; this is about what we keep.)
 function cleanText(s, max = 120) {
-  return String(s == null ? '' : s).replace(/<[^>]*>/g, '').replace(/[\u0000-\u001f\u007f<>]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+  return stripTags(String(s == null ? '' : s)).replace(/[\u0000-\u001f\u007f<>]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 function httpsUrl(u) {
   try { const x = new URL(String(u)); return x.protocol === 'https:' ? x.toString() : null; } catch { return null; }

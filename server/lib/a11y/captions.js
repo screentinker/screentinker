@@ -33,6 +33,7 @@ const { execFile } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
 const config = require('../../config');
 const { encrypt, decrypt } = require('../secretbox');
+const { stripTags } = require('../strip-tags');
 
 const MAX_AUDIO_SEC = 60 * 60;
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;   // OpenAI's limit; local servers take it too
@@ -102,8 +103,7 @@ function fmtTs(sec) {
 }
 /** Cue text as plain words: no tags, no entities beyond the three VTT needs, no stray arrows. */
 function cleanText(t) {
-  return String(t || '')
-    .replace(/<[^>]*>/g, '')
+  return stripTags(String(t || ''))
     .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
     .replace(/-->/g, '→')
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '')

@@ -22,6 +22,7 @@
  */
 
 const signs = require('./sign-templates');
+const { stripTags } = require('./strip-tags');
 
 const MIN_SIGNS = 3;
 const MAX_SIGNS = 6;
@@ -86,13 +87,12 @@ function userPrompt(description) {
 
 // C0 controls and DEL; the template validator removes them too, this keeps lengths honest first.
 const CTRL = /[\u0000-\u0009\u000B-\u001F\u007F]/g;
-const MARKUP = /<[^>]*>/g;
 
 /** Plain one-line text, or null if the model gave something that is not text. */
 function cleanLine(v) {
   if (typeof v === 'number' && Number.isFinite(v)) v = String(v);
   if (typeof v !== 'string') return null;
-  return v.replace(MARKUP, '').replace(/\r\n?|\n/g, ' ').replace(CTRL, '').replace(/\s+/g, ' ').trim();
+  return stripTags(v).replace(/\r\n?|\n/g, ' ').replace(CTRL, '').replace(/\s+/g, ' ').trim();
 }
 
 /** Shorten at a word boundary rather than mid-word; a model that ran a little long still helps. */

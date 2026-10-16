@@ -190,3 +190,51 @@ function decodeTextWith(cdata, s) {
     .replace(/&amp;/g, '&');
   return t.replace(/\s+/g, ' ').trim();
 }
+
+/*
+ * Code-scanning js/polynomial-redos (3.0.1). Each call site below ran `/<[^>]*>/g` or `/\/+$/` on a
+ * value someone outside the server controls, uncapped (a JSON body may be 12 MB). On the old code
+ * each of these 50 KB inputs took ~0.5 s; the input sizes they can really reach took minutes.
+ */
+const LINEAR_MS = 100;
+const LT_RUN = '<'.repeat(50000);
+
+test('captions: a cue full of "<" is linear', () => {
+  const captions = require('../lib/a11y/captions');
+  let cues;
+  assert.ok(fast(() => { cues = captions.parseCues(`WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi ${LT_RUN}`); }) < LINEAR_MS);
+  assert.strictEqual(cues.length, 1);
+  assert.ok(cues[0].text.startsWith('hi &lt;&lt;'), 'the stray brackets are still escaped as before');
+});
+
+test('ai-starter: a description of "<" is linear', async () => {
+  const starter = require('../lib/ai-starter');
+  const t0 = process.hrtime.bigint();
+  const r = await starter.suggest({ description: LT_RUN, ask: async () => ({ error: 'stop here', status: 502 }) });
+  assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < LINEAR_MS);
+  assert.strictEqual(r.error, 'stop here');
+});
+
+test('stock-media: a query and provider text of "<" are linear', async () => {
+  const stock = require('../lib/stock-media');
+  const saved = process.env.PEXELS_API_KEY;
+  process.env.PEXELS_API_KEY = 'k';
+  stock._setTransport({ api: async () => ({ status: 200, body: { photos: [{ id: 1, alt: LT_RUN, photographer: LT_RUN, width: 10, height: 10, url: 'https://www.pexels.com/photo/x-1/', src: { original: 'https://images.pexels.com/1.jpeg', medium: 'https://images.pexels.com/1m.jpeg' } }] } }) });
+  try {
+    const t0 = process.hrtime.bigint();
+    const r = await stock.search({ provider: 'pexels', type: 'photo', q: 'a' + LT_RUN, userId: 'u', workspaceId: 'w' });
+    assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < LINEAR_MS);
+    assert.strictEqual(r.items.length, 1);
+  } finally {
+    stock._setTransport(null);
+    if (saved === undefined) delete process.env.PEXELS_API_KEY; else process.env.PEXELS_API_KEY = saved;
+  }
+});
+
+test('sign-translate: a model reply of "<" is linear', async () => {
+  const tr = require('../lib/sign-translate');
+  const t0 = process.hrtime.bigint();
+  const r = await tr.translateStrings({ sources: ['Hello'], lang: 'fr', ask: async () => ({ parsed: { 1: 'Bonjour ' + LT_RUN } }) });
+  assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < LINEAR_MS * 2); // two attempts
+  assert.ok(r.map.has('Hello'));
+});

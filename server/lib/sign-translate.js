@@ -30,6 +30,7 @@
 const { v4: uuidv4 } = require('uuid');
 const deckLib = require('./slide-deck');
 const slideRender = require('./slide-render');
+const { stripTags } = require('./strip-tags');
 
 const MAX_LANGS = 6;
 const MAX_STRINGS = 300;
@@ -147,7 +148,7 @@ async function translateStrings({ sources, lang, ask }) {
       const failed = [];
       for (const it of pending) {
         const raw = Object.prototype.hasOwnProperty.call(reply, it.id) ? reply[it.id] : undefined;
-        const text = typeof raw === 'string' ? raw.replace(/<[^>]*>/g, '').trim() : '';
+        const text = typeof raw === 'string' ? stripTags(raw).trim() : '';
         const restored = text ? unmask(text, it.masked, it.tokens) : null;
         const tooLong = restored != null && restored.length > Math.min(slideRender.MAX_FIELD_CHARS, it.source.length * 3 + 40);
         if (restored == null || tooLong) { failed.push(it); continue; }
