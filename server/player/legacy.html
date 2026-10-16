@@ -322,6 +322,8 @@
   <!-- #473 interactive web pages: the shared rules, then the web player's session engine. -->
   <script src="/player/kiosk-logic.js"></script>
   <script src="/player/kiosk-player.js"></script>
+  <!-- #649: a bundle asking to be skipped — the shared rules (window.BundleSkip). -->
+  <script src="/player/bundle-skip.js"></script>
   <script src="/player/unpair-gate.js"></script>
   <!-- #299: the offline proof-of-play queue, from the same source the Tizen .wgt copies. -->
   <script src="/player/offline-play-queue.js"></script>
@@ -1748,6 +1750,105 @@ function mediaFailureSkip(el, label, src, mayAdvance = true) {
 }
 const UNKNOWN_ITEM_HOLD_MS = 15e3;
 const BUNDLE_MIME = "application/vnd.screentinker.bundle+zip";
+const bundleSkipFrames = /* @__PURE__ */ new Set();
+let fullscreenBundleReg = null;
+let bundleSkipAdvancing = false;
+function newBundleSkipGuard() {
+  return typeof BundleSkip !== "undefined" && BundleSkip.Guard ? new BundleSkip.Guard() : null;
+}
+const bundleSkipGuard = newBundleSkipGuard();
+function bundleReport(level, msg) {
+  try {
+    if ((socket == null ? void 0 : socket.connected) && config.deviceId) socket.emit("device:log", { device_id: config.deviceId, tag: "bundle", level, message: msg });
+  } catch (e) {
+  }
+  try {
+    window.__debugLog_push && window.__debugLog_push({ type: "bundle", level, msg });
+  } catch (e) {
+  }
+  try {
+    console.log("[bundle] " + msg);
+  } catch (e) {
+  }
+}
+function registerBundleFrame(iframe, onSkip) {
+  const reg = { iframe, onSkip, live: true, ignoredLogged: false };
+  bundleSkipFrames.add(reg);
+  return reg;
+}
+function revokeBundleFrame(reg) {
+  if (!reg) return;
+  reg.live = false;
+  bundleSkipFrames.delete(reg);
+}
+function bundleItemLabel(item) {
+  return item && (item.filename || item.title || item.content_id) || "bundle";
+}
+function bundleSkipIgnored(reg, item, why) {
+  if (reg.ignoredLogged) return;
+  reg.ignoredLogged = true;
+  const text = why === "sync" ? "this screen is on a shared clock (wall or synced group)" : why === "alone" ? "there is nothing else to play" : why === "repeat" ? "it already skipped this pass, so it plays its duration" : why;
+  bundleReport("info", 'skip ignored for "'.concat(bundleItemLabel(item), '": ').concat(text));
+}
+function retractBundlePlay(item, zoneId, startedAt) {
+  if (PREVIEW_MODE || !item) return;
+  if (!(socket == null ? void 0 : socket.connected)) return;
+  try {
+    socket.emit("device:play-event", {
+      device_id: config.deviceId,
+      event: "play_end",
+      content_id: item.content_id || null,
+      widget_id: item.widget_id || null,
+      content_name: item.filename || item.widget_name || item.title || null,
+      zone_id: zoneId || null,
+      completed: false,
+      skipped: true,
+      elapsed_ms: Math.max(0, Date.now() - (startedAt || Date.now()))
+    });
+  } catch (e) {
+  }
+}
+window.addEventListener("message", (ev) => {
+  if (typeof BundleSkip === "undefined" || !BundleSkip.isSkipMessage(ev.data) || !ev.source) return;
+  let reg = null;
+  for (const r of bundleSkipFrames) {
+    if (!r.iframe.isConnected) {
+      bundleSkipFrames.delete(r);
+      continue;
+    }
+    if (r.live && r.iframe.contentWindow === ev.source) {
+      reg = r;
+      break;
+    }
+  }
+  if (!reg) return;
+  try {
+    reg.onSkip(reg, BundleSkip.sanitizeReason(ev.data.reason));
+  } catch (e) {
+    console.log("[bundle] skip failed:", e && e.message);
+  }
+});
+function fullscreenBundleSkip(reg, mounted, reason) {
+  const item = playlist[currentIndex];
+  if (reg !== fullscreenBundleReg || !item || itemIdentity(item) !== itemIdentity(mounted)) return;
+  const idx = currentIndex;
+  const sync = !!(wallConfig || groupSync || typeof wallZonesActive === "function" && wallZonesActive() || typeof campaignActive === "function" && campaignActive());
+  const next = peekNextIndex(currentIndex);
+  const canAdvance = next !== -1 && next !== currentIndex && !(typeof kioskHeld !== "undefined" && kioskHeld);
+  const verdict = bundleSkipGuard ? bundleSkipGuard.decide(idx + "|" + itemIdentity(item), canAdvance, sync) : "sync";
+  if (verdict !== "skip") {
+    bundleSkipIgnored(reg, item, verdict);
+    return;
+  }
+  revokeBundleFrame(reg);
+  fullscreenBundleReg = null;
+  bundleReport("info", 'skipped "'.concat(bundleItemLabel(item), '"').concat(reason ? " \u2014 " + reason : ""));
+  if (shouldLogPlay(item)) retractBundlePlay(item, null, currentItemStartedAt);
+  offlinePlayOpen = null;
+  bundleSkipAdvancing = true;
+  nextItem();
+  bundleSkipAdvancing = false;
+}
 const LIVE_MIME = "video/hls";
 const HOLD_MIME = "application/x-st-hold";
 let wallZoneState = null;
@@ -5281,6 +5382,8 @@ function nextItem() {
     return;
   }
   if (typeof campaignActive === "function" && campaignActive()) return;
+  const bySkip = typeof bundleSkipAdvancing !== "undefined" && bundleSkipAdvancing;
+  if (!bySkip && typeof bundleSkipGuard !== "undefined" && bundleSkipGuard) bundleSkipGuard.ended(Date.now() - currentItemStartedAt);
   if (deferredRotation) {
     deferredRotation = false;
     if (deferredRotationDeadline) {
@@ -5294,12 +5397,12 @@ function nextItem() {
     startPlaybackAt(idx2);
     return;
   }
-  if (!PREVIEW_MODE && playlist[currentIndex] && !(socket == null ? void 0 : socket.connected) && offlinePlayOpen) {
+  if (!bySkip && !PREVIEW_MODE && playlist[currentIndex] && !(socket == null ? void 0 : socket.connected) && offlinePlayOpen) {
     const open = offlinePlayOpen;
     offlinePlayOpen = null;
     queueOfflinePlay(open, true);
   }
-  if (playlist[currentIndex] && (socket == null ? void 0 : socket.connected)) {
+  if (!bySkip && playlist[currentIndex] && (socket == null ? void 0 : socket.connected)) {
     socket.emit("device:play-event", {
       device_id: config.deviceId,
       event: "play_end",
@@ -5655,6 +5758,7 @@ function renderBundleBuffered(item) {
     teardownCurrentMedia(iframe);
   };
   iframe.addEventListener("load", reveal);
+  fullscreenBundleReg = registerBundleFrame(iframe, (reg, reason) => fullscreenBundleSkip(reg, item, reason));
   container.appendChild(iframe);
   pendingWidgetSwap = { iframe, timer: setTimeout(discardPendingSwap, WIDGET_SWAP_TIMEOUT_MS) };
   const url = "".concat(config.serverUrl, "/api/content/").concat(item.content_id, "/bundle?rev=").concat(item.content_rev || 0);
@@ -6323,6 +6427,10 @@ function renderContent(item) {
   var _a, _b;
   if (typeof campaignActive === "function" && campaignActive()) return;
   renderSeq++;
+  if (fullscreenBundleReg) {
+    revokeBundleFrame(fullscreenBundleReg);
+    fullscreenBundleReg = null;
+  }
   if (advanceTimer) {
     clearTimeout(advanceTimer);
     advanceTimer = null;
@@ -6604,6 +6712,25 @@ function renderWallBuffered(item) {
   }
   watchdog = setTimeout(() => reveal(stage.querySelector("video")), WALL_SWAP_TIMEOUT_MS);
 }
+function zoneBundleSkip(reg, z, reason) {
+  if (z.div.__stBundleReg !== reg || !z.div.isConnected) return;
+  if (!z.div.__stSkipGuard) z.div.__stSkipGuard = newBundleSkipGuard();
+  const n = z.items.length;
+  const here = (z.index % n + n) % n;
+  const canAdvance = z.items.some((it, i) => i !== here && scheduleAllows(it));
+  const sync = !!(wallConfig || groupSync);
+  const verdict = z.div.__stSkipGuard ? z.div.__stSkipGuard.decide(here + "|" + itemIdentity(z.item), canAdvance, sync) : "sync";
+  if (verdict !== "skip") {
+    bundleSkipIgnored(reg, z.item, verdict);
+    return;
+  }
+  revokeBundleFrame(reg);
+  z.div.__stBundleReg = null;
+  bundleReport("info", 'skipped "'.concat(bundleItemLabel(z.item), '" in zone "').concat(z.zone.name || z.zone.id, '"').concat(reason ? " \u2014 " + reason : ""));
+  if (z.div.__stOnShow && shouldLogPlay(z.item)) retractBundlePlay(z.item, z.zone.id, z.div.__stShownAt);
+  z.div.__stSkipAdvance = true;
+  z.advance();
+}
 function zoneNextActive(items, from, zoneId) {
   try {
     if (window.PlayOrder) {
@@ -6680,6 +6807,13 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     clearTimeout(div.__stYtSafety);
     div.__stYtSafety = null;
   }
+  if (div.__stBundleReg) {
+    if (typeof revokeBundleFrame === "function") revokeBundleFrame(div.__stBundleReg);
+    div.__stBundleReg = null;
+  }
+  if (div.__stSkipGuard && !div.__stSkipAdvance) div.__stSkipGuard.ended(Date.now() - (div.__stShownAt || 0));
+  div.__stSkipAdvance = false;
+  div.__stShownAt = Date.now();
   const activeIdx = zoneNextActive(items, index, zone.id);
   if (activeIdx === -1) {
     showZoneEmpty(zone, div, items, timers);
@@ -6738,7 +6872,25 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
   const isVideo = !isYoutube && !isHls && ((_a = a.mime_type) == null ? void 0 : _a.startsWith("video/"));
   const src = mediaUrl(a);
   const dur = (a.duration_sec || 10) * 1e3;
-  if (a.widget_id) {
+  if (a.mime_type === "application/vnd.screentinker.bundle+zip" && !a.widget_id) {
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("sandbox", "allow-scripts");
+    iframe.allow = "autoplay; fullscreen";
+    const bundleUrl = "".concat(config.serverUrl, "/api/content/").concat(a.content_id, "/bundle?rev=").concat(a.content_rev || 0);
+    if (typeof registerBundleFrame === "function" && typeof zoneBundleSkip === "function") {
+      div.__stBundleReg = registerBundleFrame(
+        iframe,
+        (reg, reason) => zoneBundleSkip(reg, { zone, div, items, index, item: a, advance }, reason)
+      );
+    }
+    div.appendChild(iframe);
+    fetch(bundleUrl, { credentials: "omit" }).then((r) => r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status))).then((html) => {
+      if (iframe.isConnected) iframe.srcdoc = html;
+    }).catch(() => {
+      if (iframe.isConnected) iframe.src = bundleUrl;
+    });
+    if (multi) timers[zone.id] = setTimeout(advance, dur);
+  } else if (a.widget_id) {
     const iframe = document.createElement("iframe");
     iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(a.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(a.widget_rev || 0).concat(a.widget_panel ? "#panel=" + encodeURIComponent(a.widget_panel) : "");
     iframe.setAttribute("sandbox", widgetSandboxAttr(a));

@@ -1,0 +1,48 @@
+{
+  "_comment": "#649 a bundle asks to be skipped. Every player's skip rules are checked against these: server/test/bundle-skip.test.js (JS: web, legacy web, Tizen, BrightSign, Vega), Android BundleSkipVectorsTest, native tests/test_bundle_skip.py. Change a rule here and in all three, or a test fails.",
+  "minRunMs": 1000,
+  "reasonMax": 64,
+  "message": [
+    { "name": "the documented message", "data": { "type": "screentinker:skip" }, "expect": true },
+    { "name": "with a reason", "data": { "type": "screentinker:skip", "reason": "offline" }, "expect": true },
+    { "name": "another type", "data": { "type": "screentinker:next" }, "expect": false },
+    { "name": "type in another case", "data": { "type": "ScreenTinker:Skip" }, "expect": false },
+    { "name": "a bare string", "data": "screentinker:skip", "expect": false },
+    { "name": "null", "data": null, "expect": false },
+    { "name": "no type", "data": { "reason": "offline" }, "expect": false }
+  ],
+  "reason": [
+    { "name": "plain", "raw": "offline", "expect": "offline" },
+    { "name": "trimmed", "raw": "  no data  ", "expect": "no data" },
+    { "name": "newlines and tabs become one space", "raw": "line one\n\tline two\r\n", "expect": "line one line two" },
+    { "name": "C1 control and line separator", "raw": "a\u0085b\u2028c", "expect": "a b c" },
+    { "name": "empty", "raw": "", "expect": null },
+    { "name": "only whitespace", "raw": " \n ", "expect": null },
+    { "name": "not a string", "raw": 42, "expect": null },
+    { "name": "missing", "raw": null, "expect": null },
+    { "name": "capped at 64", "raw": "0123456789012345678901234567890123456789012345678901234567890123456789", "expect": "0123456789012345678901234567890123456789012345678901234567890123" },
+    { "name": "capped by code point, never splitting an emoji", "raw": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀XYZ", "expectCodePoints": 64 }
+  ],
+  "guard": [
+    { "name": "a first skip is honoured",
+      "steps": [ { "skip": "A", "expect": "skip" } ] },
+    { "name": "a shared clock never skips",
+      "steps": [ { "skip": "A", "sync": true, "expect": "sync" }, { "skip": "A", "expect": "skip" } ] },
+    { "name": "nothing else to play: a one-item playlist never skips",
+      "steps": [ { "skip": "A", "canAdvance": false, "expect": "alone" }, { "skip": "A", "canAdvance": false, "expect": "alone" } ] },
+    { "name": "the same item twice without a full play in between is ignored",
+      "steps": [ { "skip": "A", "expect": "skip" }, { "skip": "A", "expect": "repeat" } ] },
+    { "name": "a normal end resets the pass",
+      "steps": [ { "skip": "A", "expect": "skip" }, { "ended": 10000 }, { "skip": "A", "expect": "skip" } ] },
+    { "name": "an end under minRunMs does not reset it (a broken item cannot unlock a spin)",
+      "steps": [ { "skip": "A", "expect": "skip" }, { "ended": 999 }, { "skip": "A", "expect": "repeat" }, { "ended": 1000 }, { "skip": "A", "expect": "skip" } ] },
+    { "name": "every item skips: each once, then one plays its duration",
+      "steps": [
+        { "skip": "A", "expect": "skip" }, { "skip": "B", "expect": "skip" }, { "skip": "C", "expect": "skip" },
+        { "skip": "A", "expect": "repeat" }, { "ended": 10000 },
+        { "skip": "B", "expect": "skip" }, { "skip": "C", "expect": "skip" }, { "skip": "A", "expect": "skip" },
+        { "skip": "B", "expect": "repeat" } ] },
+    { "name": "an ignored skip records nothing",
+      "steps": [ { "skip": "A", "sync": true, "expect": "sync" }, { "skip": "A", "canAdvance": false, "expect": "alone" }, { "skip": "A", "expect": "skip" } ] }
+  ]
+}

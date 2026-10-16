@@ -58,6 +58,8 @@ test('legacy player dependencies need no Chrome 53 syntax lowering', () => {
     // arrow in it would be a parse error on a webOS 4 TV — which fails as a player that cannot boot,
     // not as a feature that cannot unpair.
     ['unpair gate', path.join(__dirname, '..', 'lib', 'unpair-gate.js')],
+    // #649: also loaded by both players untranspiled, and copied into the Tizen .wgt.
+    ['bundle skip', path.join(__dirname, '..', 'lib', 'bundle-skip.js')],
     ['Socket.IO client', path.join(__dirname, '..', 'node_modules', 'socket.io', 'client-dist', 'socket.io.js')],
   ];
 

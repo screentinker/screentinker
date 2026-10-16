@@ -103,6 +103,64 @@ function takeOpenPlay(deviceId, contentId, widgetId) {
 }
 
 /*
+ * #649: a bundle asked to be skipped, so the play it opened was not a play. The row is DELETED, not
+ * closed with completed=0: Reports count rows, so an "incomplete" row would still be a play.
+ *
+ * ⚠️ ONLY THE ROW THAT ITEM OPENED. The remembered rowid when it describes this item; otherwise the
+ * newest open row for this device and item (and zone) that started no earlier than the item did —
+ * the player says how long the item was on screen, so the window needs no clock agreement between
+ * the two. Nothing older can match: an earlier, real play of the same bundle (a campaign zone never
+ * sends play_end, so those stay open) must survive its later skip. When nothing matches, the start
+ * was throttled and never written, and there is nothing to retract.
+ *
+ * playLogAtBeforeOpen is the throttle clock as it stood before the remembered row was written, so a
+ * retraction can wind the throttle back (see the play_end branch). Same bound as openPlayRow: one
+ * entry per device, replaced on each logged start, deleted on disconnect.
+ */
+const playLogAtBeforeOpen = new Map();
+const _deleteOpenPlayById = db.prepare(`DELETE FROM play_logs WHERE rowid = ? AND ended_at IS NULL
+  AND (content_id = ? OR widget_id = ?)`);
+const _deleteRecentOpenPlay = db.prepare(`
+  DELETE FROM play_logs WHERE id = (
+    SELECT id FROM play_logs
+    WHERE device_id = ? AND ended_at IS NULL
+      AND (content_id = ? OR widget_id = ?)
+      AND COALESCE(zone_id, '') = COALESCE(?, '')
+      AND started_at >= ?
+    ORDER BY started_at DESC, id DESC LIMIT 1
+  )
+`);
+const SKIP_WINDOW_SLACK_SEC = 2;
+
+function retractSkippedPlay(deviceId, data, endSec) {
+  const contentId = data.content_id || null;
+  const widgetId = data.widget_id || data.content_id || null;
+  /*
+   * The remembered row, if it is this item's. Matched against the ROW rather than playKey: a player
+   * may name a widget in content_id (Android does), and the row's columns are what the start resolved.
+   */
+  const e = openPlayRow.get(deviceId);
+  const before = playLogAtBeforeOpen.get(deviceId);
+  let removed = e ? _deleteOpenPlayById.run(e.rowid, contentId, widgetId).changes : 0;
+  const known = removed ? e.rowid : null;
+  if (known != null) { openPlayRow.delete(deviceId); playLogAtBeforeOpen.delete(deviceId); }
+  if (!removed) {
+    const ranSec = Math.ceil(Math.max(0, Math.min(Number(data.elapsed_ms) || 0, 86400000)) / 1000);
+    removed = _deleteRecentOpenPlay.run(deviceId, contentId, widgetId, data.zone_id || null,
+      endSec - ranSec - SKIP_WINDOW_SLACK_SEC).changes;
+  }
+  /*
+   * Wind the throttle back to before the retracted play. The next item starts within the same second
+   * or two, and a throttle still counting the retracted play would drop THAT one: a real play lost
+   * to make room for one that never happened.
+   */
+  if (removed && known != null) {
+    if (before) lastPlayLogAt.set(deviceId, before); else lastPlayLogAt.delete(deviceId);
+  }
+  return removed;
+}
+
+/*
  * #299 offline backfill insert. Hoisted for the same reason as the others (#307) and with more
  * cause: this one runs in a LOOP over a replayed batch, so an inline prepare recompiled the
  * statement once per replayed play.
@@ -2047,6 +2105,7 @@ const EVENT_APPLIERS = Object.freeze({
            * however much history accumulates — which matters because history only grows.
            */
           rememberOpenPlay(device_id, cid, wid, info.lastInsertRowid);
+          playLogAtBeforeOpen.set(device_id, lastMs);
         }
         /*
          * #299: a new play beginning is the evidence that closes whatever the last outage or
@@ -2187,6 +2246,12 @@ const EVENT_APPLIERS = Object.freeze({
          * this process did not open (a restart mid-play, a play replayed by the #299 offline
          * backfill, a second server behind the same database).
          */
+        /*
+         * #649: the item asked to be skipped (a bundle's screentinker:skip), so the row it opened is
+         * retracted rather than closed. An older server ignores `skipped` and closes the row with
+         * completed=0, which is why the player also sends completed:false.
+         */
+        if (data.skipped === true) { retractSkippedPlay(device_id, data, Math.floor(eventTimeMs(data, ctx) / 1000)); return; }
         const known = takeOpenPlay(device_id, content_id || null, widget_id || content_id || null);
         const endSec = Math.floor(eventTimeMs(data, ctx) / 1000);
         if (known != null) _closePlayById.run(endSec, endSec, completed ? 1 : 0, known);
@@ -3592,7 +3657,7 @@ module.exports = function setupDeviceSocket(io) {
        * the next play_start. Holding the rowid would only risk closing a row a LATER session
        * legitimately reopened.
        */
-      openPlayRow.delete(currentDeviceId);
+      openPlayRow.delete(currentDeviceId); playLogAtBeforeOpen.delete(currentDeviceId);
 
       // Stale-disconnect guard: a newer socket already took over this device_id
       // via eviction. Skip the offline transition entirely - don't even start a

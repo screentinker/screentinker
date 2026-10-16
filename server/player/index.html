@@ -322,6 +322,8 @@
   <!-- #473 interactive web pages: the shared rules, then the web player's session engine. -->
   <script src="/player/kiosk-logic.js"></script>
   <script src="/player/kiosk-player.js"></script>
+  <!-- #649: a bundle asking to be skipped — the shared rules (window.BundleSkip). -->
+  <script src="/player/bundle-skip.js"></script>
   <script src="/player/unpair-gate.js"></script>
   <!-- #299: the offline proof-of-play queue, from the same source the Tizen .wgt copies. -->
   <script src="/player/offline-play-queue.js"></script>
@@ -1832,6 +1834,114 @@
     /* The mime lib/html-bundle.js stamps on an uploaded HTML bundle. Deliberately matches no
      * image/ or video/ prefix, so nothing routes it as media by accident. */
     const BUNDLE_MIME = 'application/vnd.screentinker.bundle+zip';
+    /*
+     * #649: a bundle can ask to be skipped — "I have nothing to show right now":
+     *
+     *   parent.postMessage({ type: 'screentinker:skip', reason: 'offline' }, '*')
+     *
+     * The rules (which messages count, the reason's shape, the anti-spin guard) are
+     * window.BundleSkip (server/lib/bundle-skip.js), checked against shared/bundle-skip-vectors.json
+     * like the Android and native players. What lives here is WHO may ask and what a skip does.
+     *
+     * ⚠️ ONLY THE BUNDLE ON SCREEN MAY ASK. Every bundle frame is registered when it is mounted and
+     * revoked the moment its item stops being current — so a message from any other frame, a widget,
+     * a frame the bundle itself embeds, or a bundle that has already been replaced (its iframe can
+     * still be on the page for a moment, under the buffered swap) is ignored. The check is the
+     * message's `source` against the registered frame's window: a sandboxed frame's origin is "null"
+     * for every bundle alike, so the origin can tell nothing apart.
+     *
+     * A skip is the item's duration ending early, minus the play: the play_start already sent is
+     * retracted (play_end with skipped:true, which the server deletes), and an offline play is never
+     * queued. Fullscreen it moves the playlist on; in a zone it moves that zone only. On a shared
+     * clock (a wall, a synced group, wall zones) one screen leaving early would break the clock every
+     * other screen keeps, so there it is ignored and the item runs its duration.
+     */
+    const bundleSkipFrames = new Set();   // { iframe, onSkip, live } for every mounted bundle frame
+    let fullscreenBundleReg = null;       // the fullscreen bundle's registration, while it is current
+    let bundleSkipAdvancing = false;      // the next nextItem() is a skip, not the item's end
+    function newBundleSkipGuard() {
+      return (typeof BundleSkip !== 'undefined' && BundleSkip.Guard) ? new BundleSkip.Guard() : null;
+    }
+    const bundleSkipGuard = newBundleSkipGuard();   // the fullscreen playlist's; each zone has its own
+    function bundleReport(level, msg) {
+      try { if (socket?.connected && config.deviceId) socket.emit('device:log', { device_id: config.deviceId, tag: 'bundle', level, message: msg }); } catch (e) {}
+      try { window.__debugLog_push && window.__debugLog_push({ type: 'bundle', level: level, msg: msg }); } catch (e) {}
+      try { console.log('[bundle] ' + msg); } catch (e) {}
+    }
+    function registerBundleFrame(iframe, onSkip) {
+      const reg = { iframe, onSkip, live: true, ignoredLogged: false };
+      bundleSkipFrames.add(reg);
+      return reg;
+    }
+    function revokeBundleFrame(reg) {
+      if (!reg) return;
+      reg.live = false;
+      bundleSkipFrames.delete(reg);
+    }
+    function bundleItemLabel(item) {
+      return (item && (item.filename || item.title || item.content_id)) || 'bundle';
+    }
+    // An ignored skip is logged once per mount: a bundle posting in a loop must not flood the log.
+    function bundleSkipIgnored(reg, item, why) {
+      if (reg.ignoredLogged) return;
+      reg.ignoredLogged = true;
+      const text = why === 'sync' ? 'this screen is on a shared clock (wall or synced group)'
+        : why === 'alone' ? 'there is nothing else to play'
+          : why === 'repeat' ? 'it already skipped this pass, so it plays its duration' : why;
+      bundleReport('info', `skip ignored for "${bundleItemLabel(item)}": ${text}`);
+    }
+    // Retract the play an item opened: the server deletes the row (an older one marks it incomplete).
+    function retractBundlePlay(item, zoneId, startedAt) {
+      if (PREVIEW_MODE || !item) return;
+      if (!socket?.connected) return;
+      try {
+        socket.emit('device:play-event', {
+          device_id: config.deviceId,
+          event: 'play_end',
+          content_id: item.content_id || null,
+          widget_id: item.widget_id || null,
+          content_name: item.filename || item.widget_name || item.title || null,
+          zone_id: zoneId || null,
+          completed: false,
+          skipped: true,
+          elapsed_ms: Math.max(0, Date.now() - (startedAt || Date.now())),
+        });
+      } catch (e) { /* proof-of-play is best effort */ }
+    }
+    window.addEventListener('message', (ev) => {
+      if (typeof BundleSkip === 'undefined' || !BundleSkip.isSkipMessage(ev.data) || !ev.source) return;
+      let reg = null;
+      for (const r of bundleSkipFrames) {
+        if (!r.iframe.isConnected) { bundleSkipFrames.delete(r); continue; }
+        if (r.live && r.iframe.contentWindow === ev.source) { reg = r; break; }
+      }
+      if (!reg) return;   // not the frame of a bundle that is on screen now
+      try { reg.onSkip(reg, BundleSkip.sanitizeReason(ev.data.reason)); } catch (e) { console.log('[bundle] skip failed:', e && e.message); }
+    });
+    // The fullscreen bundle asked to be skipped.
+    function fullscreenBundleSkip(reg, mounted, reason) {
+      // Stale unless it is still the item on screen. Compared by identity, not by object: a playlist
+      // refresh that keeps this item playing hands over fresh objects (and maybe a new index).
+      const item = playlist[currentIndex];
+      if (reg !== fullscreenBundleReg || !item || itemIdentity(item) !== itemIdentity(mounted)) return;
+      const idx = currentIndex;
+      const sync = !!(wallConfig || groupSync || (typeof wallZonesActive === 'function' && wallZonesActive())
+        || (typeof campaignActive === 'function' && campaignActive()));
+      const next = peekNextIndex(currentIndex);
+      const canAdvance = next !== -1 && next !== currentIndex
+        && !(typeof kioskHeld !== 'undefined' && kioskHeld);
+      const verdict = bundleSkipGuard ? bundleSkipGuard.decide(idx + '|' + itemIdentity(item), canAdvance, sync) : 'sync';
+      if (verdict !== 'skip') { bundleSkipIgnored(reg, item, verdict); return; }
+      revokeBundleFrame(reg);
+      fullscreenBundleReg = null;
+      bundleReport('info', `skipped "${bundleItemLabel(item)}"${reason ? ' — ' + reason : ''}`);
+      // Proof-of-play: the start went to the server only from a leader/solo screen that logs this item.
+      if (shouldLogPlay(item)) retractBundlePlay(item, null, currentItemStartedAt);
+      offlinePlayOpen = null;   // offline, the play was only opened locally: never queue it
+      bundleSkipAdvancing = true;
+      nextItem();
+      bundleSkipAdvancing = false;
+    }
     const LIVE_MIME = 'video/hls';   // IPTV: a live stream item's mime (see renderLiveStream)
     const HOLD_MIME = 'application/x-st-hold';   // a hold item: blank or freeze for its duration (see Wall zones)
     let wallZoneState = null;   // wall-layout renderer state { stage, zones, timer } (see Wall zones)
@@ -6462,6 +6572,11 @@
       // typeof: playback tests extract this function on its own, without the kiosk state.
       if (typeof kioskHeld !== 'undefined' && kioskHeld) { console.log('[Kiosk] advance ignored — a visitor is using the interactive page'); return; }
       if (typeof campaignActive === 'function' && campaignActive()) return;   // 3.0: the campaign engine owns the stage
+      // #649: a bundle's skip has already retracted its play (fullscreenBundleSkip). Any other way an
+      // item leaves the screen is its end, and an end after a real run resets the skip guard's pass.
+      // typeof: playback tests extract this function on its own.
+      const bySkip = typeof bundleSkipAdvancing !== 'undefined' && bundleSkipAdvancing;
+      if (!bySkip && typeof bundleSkipGuard !== 'undefined' && bundleSkipGuard) bundleSkipGuard.ended(Date.now() - currentItemStartedAt);
       // #157: apply a deferred rotation-out — the removed-but-live item has finished, so rotate
       // into the (already-swapped) list at the preserved successor instead of interrupting.
       if (deferredRotation) {
@@ -6480,12 +6595,12 @@
        */
       // Keep preview out of reporting while allowing real playback to close its offline
       // record from the shared queue, whether or not connect() has run yet.
-      if (!PREVIEW_MODE && playlist[currentIndex] && !socket?.connected && offlinePlayOpen) {
+      if (!bySkip && !PREVIEW_MODE && playlist[currentIndex] && !socket?.connected && offlinePlayOpen) {
         const open = offlinePlayOpen; offlinePlayOpen = null;
         queueOfflinePlay(open, true);
       }
-      // Send play_end for current
-      if (playlist[currentIndex] && socket?.connected) {
+      // Send play_end for current (a skipped bundle's was already sent, as a retraction)
+      if (!bySkip && playlist[currentIndex] && socket?.connected) {
         socket.emit('device:play-event', {
           device_id: config.deviceId,
           event: 'play_end',
@@ -6904,6 +7019,12 @@
         teardownCurrentMedia(iframe);
       };
       iframe.addEventListener('load', reveal);
+      /*
+       * #649: this frame — and only this one — may ask to be skipped, from the moment it exists: a
+       * bundle that knows at once it has nothing to show posts before its own load event, while it
+       * is still the hidden half of the swap. Registered before it is attached for the same reason.
+       */
+      fullscreenBundleReg = registerBundleFrame(iframe, (reg, reason) => fullscreenBundleSkip(reg, item, reason));
       container.appendChild(iframe);
       pendingWidgetSwap = { iframe, timer: setTimeout(discardPendingSwap, WIDGET_SWAP_TIMEOUT_MS) };
 
@@ -7664,6 +7785,8 @@
       if (typeof campaignActive === 'function' && campaignActive()) return;   // 3.0: the campaign engine owns the stage
       // New dispatch supersedes any in-flight buffered (async warm-play) render — see renderSeq.
       renderSeq++;
+      // #649: whatever bundle was on screen is no longer the one that may ask to be skipped.
+      if (fullscreenBundleReg) { revokeBundleFrame(fullscreenBundleReg); fullscreenBundleReg = null; }
       // Cancel any pending advance/refresh timer up front so a prior item's timer (incl. a
       // self-rescheduling widget refresh) can't fire against the new content.
       if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
@@ -8052,6 +8175,28 @@
     }
 
     // #74/#75 zone-level schedule helpers.
+    /*
+     * #649: a bundle in a zone asked to be skipped. It moves THIS zone on — the other zones keep
+     * their own timers — under the zone's own guard, so a pass is per zone. Same rules as fullscreen
+     * (fullscreenBundleSkip): a zone with nothing else to show never skips, and a campaign zone that
+     * logged this item's start retracts it.
+     */
+    function zoneBundleSkip(reg, z, reason) {
+      if (z.div.__stBundleReg !== reg || !z.div.isConnected) return;   // stale: the zone moved on
+      if (!z.div.__stSkipGuard) z.div.__stSkipGuard = newBundleSkipGuard();
+      const n = z.items.length;
+      const here = ((z.index % n) + n) % n;
+      const canAdvance = z.items.some((it, i) => i !== here && scheduleAllows(it));
+      const sync = !!(wallConfig || groupSync);
+      const verdict = z.div.__stSkipGuard ? z.div.__stSkipGuard.decide(here + '|' + itemIdentity(z.item), canAdvance, sync) : 'sync';
+      if (verdict !== 'skip') { bundleSkipIgnored(reg, z.item, verdict); return; }
+      revokeBundleFrame(reg);
+      z.div.__stBundleReg = null;
+      bundleReport('info', `skipped "${bundleItemLabel(z.item)}" in zone "${z.zone.name || z.zone.id}"${reason ? ' — ' + reason : ''}`);
+      if (z.div.__stOnShow && shouldLogPlay(z.item)) retractBundlePlay(z.item, z.zone.id, z.div.__stShownAt);
+      z.div.__stSkipAdvance = true;
+      z.advance();
+    }
     function zoneNextActive(items, from, zoneId) {
       try {
         if (window.PlayOrder) {
@@ -8147,6 +8292,13 @@
       // the zone on later (its callbacks check this token; see createYoutubeEmbed's zone mode).
       div.__stYtToken = (div.__stYtToken || 0) + 1;
       if (div.__stYtSafety) { clearTimeout(div.__stYtSafety); div.__stYtSafety = null; }
+      // #649: the bundle this zone showed may no longer ask to be skipped, and an item that left by
+      // anything but its own skip ends the zone's skip pass (see zoneBundleSkip). typeof: this
+      // function is extracted + eval'd in isolation by tests.
+      if (div.__stBundleReg) { if (typeof revokeBundleFrame === 'function') revokeBundleFrame(div.__stBundleReg); div.__stBundleReg = null; }
+      if (div.__stSkipGuard && !div.__stSkipAdvance) div.__stSkipGuard.ended(Date.now() - (div.__stShownAt || 0));
+      div.__stSkipAdvance = false;
+      div.__stShownAt = Date.now();
       // #74/#75: skip items whose schedule excludes them now; idle the zone if none.
       const activeIdx = zoneNextActive(items, index, zone.id);
       if (activeIdx === -1) { showZoneEmpty(zone, div, items, timers); return; }
@@ -8184,7 +8336,28 @@
       // a widget can be placed in a 'content' zone, and gating on zone_type==='widget'
       // left those zones blank (mime_type is null -> no video/image match). Matches the
       // Android player, which keys off the assignment's widget_type.
-      if (a.widget_id) {
+      if (a.mime_type === 'application/vnd.screentinker.bundle+zip' && !a.widget_id) {
+        /*
+         * An HTML bundle in a zone: the same server-flattened document, sandbox and same-origin
+         * fetch -> srcdoc as the fullscreen mount (renderBundleBuffered says why each matters). Without
+         * this branch a zone bundle fell through to the <img> below and showed nothing at all.
+         * Literal mime: this function is extracted + eval'd in isolation by tests.
+         */
+        const iframe = document.createElement('iframe');
+        iframe.setAttribute('sandbox', 'allow-scripts');   // never the widget same-origin opt-out
+        iframe.allow = 'autoplay; fullscreen';
+        const bundleUrl = `${config.serverUrl}/api/content/${a.content_id}/bundle?rev=${a.content_rev || 0}`;
+        if (typeof registerBundleFrame === 'function' && typeof zoneBundleSkip === 'function') {
+          div.__stBundleReg = registerBundleFrame(iframe,
+            (reg, reason) => zoneBundleSkip(reg, { zone, div, items, index, item: a, advance }, reason));
+        }
+        div.appendChild(iframe);
+        fetch(bundleUrl, { credentials: 'omit' })
+          .then((r) => (r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status))))
+          .then((html) => { if (iframe.isConnected) iframe.srcdoc = html; })
+          .catch(() => { if (iframe.isConnected) iframe.src = bundleUrl; });
+        if (multi) timers[zone.id] = setTimeout(advance, dur);
+      } else if (a.widget_id) {
         const iframe = document.createElement('iframe');
         iframe.src = `${config.serverUrl}/api/widgets/${a.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}&rev=${a.widget_rev||0}${a.widget_panel ? '#panel=' + encodeURIComponent(a.widget_panel) : ''}`;
         // Sandbox into a unique origin so widget scripts can't read window.parent
