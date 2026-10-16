@@ -157,6 +157,7 @@ describe content rendering. They are informational, and shown to the operator in
 | `playback.transitions` — in layout zones | ✅ `ZoneManager` + `ZoneTransitionEngine`: every zone plays its own transition concurrently (one shared GL thread, a TextureView per zone wipe). Same media rule as full screen. Missing shader → GL crossfade; more than 4 GL zone wipes at once (2 on low-RAM / <2.5 GB devices) → a view crossfade; not started in 1.2 s → cut. Emulator: 4 concurrent wipes on a rotated stage, image↔video, layout switch mid-wipe. ❓ not yet seen on a Fire TV Stick | ❌ zones cut (the transition is ignored) | ❌ zones cut | ❌ zones cut (inherits the web player) | ✅ each zone `Surface` has its own `TransitionRunner` (live snapshots, so widgets wipe too); missing/uncompiled shader → crossfade | ✅ as Pi — shared engine |
 | `playback.pip` | ✅ `PipOverlay` | ✅ `#pipContainer` | ✅ `pip-overlay.js` | ⚠️ same hwz caveat as transitions | ✅ `PipLayer.qml` (Android geometry) | ✅ as Pi — shared engine |
 | `playback.bundle` | ✅ WebView, `playItem` + `ZoneManager` | ✅ `renderBundleBuffered`, server-flattened document | ✅ `renderBundle` + zone branch | ✅ inherits the web player | ✅ server-flattened render, cached on disk (24 MB) like Android's `BundleCache` | ✅ as Pi — shared engine |
+| bundle skip, `screentinker:skip` (#649; no capability: nothing on the dashboard depends on it) | ⚠️ full screen only: `BundleSkip.inject` + `STBundleSkip` bridge, token per mount (JVM-tested); zone bundles load by URL and play their duration | ✅ full screen + zones (headless-Chrome e2e with real zips) | ✅ full screen + zones (`player.js` in the vm harness); ❓ not on a panel | ✅ inherits the web player; ❓ not run on hardware | ⚠️ from the cached render only (not a bundle's first, uncached play): console bridge + token (pytest) | ⚠️ as Pi — shared engine |
 
 **Transitions in zones.** A transition is a widget placed in a zone; the server resolves it per
 zone (`server/lib/transition-config.js`, #647) onto each item as `item.transition`, and the player
@@ -197,6 +198,18 @@ declares a policy granting `data:` to script/style/img/font — untested on real
 shipping that policy needs a **new `.wgt`**, which the fleet has no in-app OTA to receive. The
 online `src=` path is deliberately left as the default so the unproven path can only ever replace
 "nothing to show at all".
+
+**Bundle skip (#649).** A bundle may post `{ type: 'screentinker:skip', reason? }` to its parent
+and the player moves on at once without counting a play ([html-bundles.md](html-bundles.md) has the
+contract). The rules — which message counts, the reason's shape, and the once-per-pass guard — are
+one module per language held to `shared/bundle-skip-vectors.json` (`server/lib/bundle-skip.js` for
+web and Tizen, `BundleSkip.kt`, `logic/bundle_skip.py`). Who may ask differs by mount: the web player
+and Tizen frame a bundle and match the message's `source` to the registered frame; Android and the
+native player load it top-level, so an injected listener accepts only the bundle's own window and
+forwards a random per-mount token the player checks. Ignored on a wall, in a synced group and in
+wall zones (the shared clock), and in a campaign's full-screen step (a one-item zone). Proof of play:
+`play_end` with `skipped: true`, which the server turns into a DELETE of that item's open row and a
+throttle wind-back.
 
 ⚠️ Baselines: `playback.bundle` is in the **web** and **brightsign** baselines only. Those two are
 served from this server, so there is no such thing as a panel stuck on last release's player.
