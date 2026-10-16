@@ -75,7 +75,9 @@ function placeholderOnError(root) {
 export function mountFeedPicker(host, { url = '', mode = 'feed', simple = false, onChange = null } = {}) {
   if (!host) return null;
   const state = { url: String(url || ''), mode: mode === 'page' ? 'page' : 'feed', found: null };
-  const uid = `np${Math.random().toString(36).slice(2, 8)}`;
+  // A DOM id prefix (label for= / radio name=), not a secret. getRandomValues, not randomUUID: the
+  // latter is secure-context only, and self-hosted dashboards are often plain http on a LAN address.
+  const uid = `np${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
   host.innerHTML = `
     <div class="news-picker${simple ? ' news-picker--simple' : ''}">
       <label for="${uid}Url">${esc(t('news.picker.address'))}</label>

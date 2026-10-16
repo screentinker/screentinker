@@ -202,6 +202,9 @@ function iceServers() {
  * Time-limited TURN credentials (draft-uberti-behave-turn-rest; coturn `use-auth-secret`): the
  * username is "<unix expiry>:screentinker" and the password is base64(HMAC-SHA1(secret, username)).
  * The TURN server checks both without asking us, and refuses them after the expiry.
+ * ⚠️ SHA-1 IS THE PROTOCOL, not a choice: coturn verifies exactly HMAC-SHA1, so any other hash makes
+ * every credential fail. HMAC-SHA1 is a keyed MAC (SHA-1 collisions do not forge it), and the
+ * credential lives for the TTL only. Do not "upgrade" it.
  */
 function turnCredentials(secret, ttlSec, now = Date.now()) {
   const username = `${Math.floor(now / 1000) + ttlSec}:screentinker`;
