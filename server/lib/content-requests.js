@@ -42,6 +42,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const config = require('../config');
+const { trimTrailing } = require('./trim-trailing');
 const { db } = require('../db/database');
 const approvals = require('./approvals');
 const revisions = require('./revisions');
@@ -820,7 +821,7 @@ async function submitRequest(form, ticket, body, { ip, origin } = {}) {
  * the same module's request-free answer, never to a relative link.
  */
 function linkOrigin(origin) {
-  return String(origin || require('./public-origin').publicOrigin(null)).replace(/\/+$/, '');
+  return trimTrailing(String(origin || require('./public-origin').publicOrigin(null)), '/');
 }
 
 function mail(to, subject, text) {

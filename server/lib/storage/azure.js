@@ -3,6 +3,7 @@
 const fs = require('fs');
 const { classify, StorageError } = require('./errors');
 const { agentsFor, vetRequestHost } = require('./endpoint-guard');
+const { trimTrailing } = require('../trim-trailing');
 
 /*
  * Azure Blob. Credentials, one of:
@@ -53,14 +54,14 @@ class AzureBackend {
     this.profile = profile;
     this.provider = 'azure';
     this.container = profile.bucket;
-    this.prefix = profile.prefix ? String(profile.prefix).replace(/\/+$/, '') : '';
+    this.prefix = profile.prefix ? trimTrailing(String(profile.prefix), '/') : '';
     this._cc = null;
     const c = profile.credentials || {};
     const cs = c.connectionString ? parseConnectionString(c.connectionString) : {};
     this.accountName = c.accountName || cs.AccountName || null;
     this.accountKey = c.accountKey || cs.AccountKey || null;
     this.sasToken = (c.sasToken || cs.SharedAccessSignature || '').replace(/^\?/, '') || null;
-    this.accountUrl = (profile.endpoint || cs.BlobEndpoint || (this.accountName ? `https://${this.accountName}.blob.core.windows.net` : '')).replace(/\/+$/, '');
+    this.accountUrl = trimTrailing(profile.endpoint || cs.BlobEndpoint || (this.accountName ? `https://${this.accountName}.blob.core.windows.net` : ''), '/');
   }
 
   /** The endpoint actually connected to; endpoint-guard vets it like any typed URL. */

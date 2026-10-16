@@ -238,3 +238,31 @@ test('sign-translate: a model reply of "<" is linear', async () => {
   assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < LINEAR_MS * 2); // two attempts
   assert.ok(r.map.has('Hello'));
 });
+
+const SLASH_RUN = '/'.repeat(50000) + 'x';
+
+test('captions: an STT base URL full of "/" is linear', () => {
+  const captions = require('../lib/a11y/captions');
+  const fakeDb = { prepare: () => ({ get: () => ({}), run: () => {} }) };
+  let r;
+  assert.ok(fast(() => { r = captions.saveStt(fakeDb, 'ws', { base_url: SLASH_RUN }); }) < LINEAR_MS);
+  assert.strictEqual(r.ok, false); // over 500 characters
+});
+
+test('storage/azure: an endpoint and a prefix full of "/" are linear', () => {
+  const { AzureBackend } = require('../lib/storage/azure');
+  let be;
+  assert.ok(fast(() => { be = new AzureBackend({ bucket: 'c', prefix: 'p' + SLASH_RUN, credentials: { connectionString: `BlobEndpoint=https://a.test${SLASH_RUN}` } }); }) < LINEAR_MS);
+  assert.ok(be.endpointUrl().endsWith('/x'));
+  assert.strictEqual(new AzureBackend({ bucket: 'c', prefix: 'st/', endpoint: 'https://a.test///' }).endpointUrl(), 'https://a.test');
+  assert.strictEqual(new AzureBackend({ bucket: 'c', prefix: 'st//' }).prefix, 'st');
+});
+
+test('trust/import-screens: a handover server address full of "/" is linear', () => {
+  const screens = require('../lib/trust/import-screens');
+  require('../lib/device-command'); // applyHandover requires it lazily; load it outside the timing
+  const doc = { format: screens.HANDOVER_FORMAT, server: 'https://a.test' + SLASH_RUN, screens: [] };
+  let err;
+  assert.ok(fast(() => { try { screens.applyHandover(null, { doc, orgId: 'o', deviceNs: null, actor: null }); } catch (e) { err = e; } }) < LINEAR_MS);
+  assert.ok(!err || err.code === 'bad_handover', String(err && err.message));
+});

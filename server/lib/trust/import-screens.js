@@ -27,6 +27,7 @@
 
 const T = require('./import-tables');
 const enrolKey = require('../enrol-key');
+const { trimTrailing } = require('../trim-trailing');
 
 const HANDOVER_FORMAT = 'screentinker-screen-handover-v1';
 
@@ -94,7 +95,7 @@ function handoverDoc(db, job, origin, orgName) {
 function applyHandover(db, { doc, orgId, deviceNs, actor, onlyIds = null }) {
   if (!doc || doc.format !== HANDOVER_FORMAT || !Array.isArray(doc.screens)) throw Object.assign(new Error('That is not a screen handover file from the new server.'), { status: 400, code: 'bad_handover' });
   const { validateCommand, deliverCommand } = require('../device-command');
-  const url = String(doc.server || '').trim().replace(/\/+$/, '');
+  const url = trimTrailing(String(doc.server || '').trim(), '/');
   const v = validateCommand('set_server_url', { url });
   if (!v.ok) throw Object.assign(new Error('The handover file names no valid server address.'), { status: 400, code: 'bad_handover' });
   const want = onlyIds ? new Set(onlyIds.map(String)) : null;
