@@ -239,6 +239,13 @@ class ZoneTransitionsTest {
         assertEquals(4, ZoneTransitionPolicy.maxConcurrentGl(lowRam = false, totalMemBytes = 0))                     // unknown: not penalised
     }
 
+    @Test fun `the wipe counts inside the item's dwell, as on the native player`() {
+        assertEquals(6_000L, ZoneTransitionPolicy.dwellAfterTransition(6_000L, 0L, 50_000L))          // no transition
+        assertEquals(4_500L, ZoneTransitionPolicy.dwellAfterTransition(6_000L, 10_000L, 11_500L))     // 1.5 s wipe
+        assertEquals(3_000L, ZoneTransitionPolicy.dwellAfterTransition(6_000L, 10_000L, 15_000L))     // floor: half
+        assertEquals(6_000L, ZoneTransitionPolicy.dwellAfterTransition(6_000L, 10_000L, 9_000L))      // clock oddity
+    }
+
     @Test fun `deadlines are short enough not to stall a zone's clock`() {
         assertTrue(ZoneTransitionPolicy.START_DEADLINE_MS <= 1_500)
         assertTrue(ZoneTransitionPolicy.PREP_DEADLINE_MS <= 3_000)

@@ -48,7 +48,7 @@ class ZoneTransitionEngine {
         fun cancel() {
             job.cancelled = true
             val h = glHandler
-            if (h != null) h.post { cancelJob(job) } else job.freeBitmaps()
+            if (h != null) h.post { cancelJob(job) } else job.freeBitmaps()   // no thread yet: nothing uploaded
         }
     }
 
@@ -102,7 +102,7 @@ class ZoneTransitionEngine {
     private var pbuffer: EGLSurface = EGL14.EGL_NO_SURFACE
     private var vShader = 0
     private val jobs = ArrayList<Job>()
-    private var frameScheduled = false
+    @Volatile private var frameScheduled = false
     /*
      * Linked programs by fragment source, shared by every zone (and across advances): zones on one
      * layout usually carry the same few shaders, and a compile is the one GL step that visibly
@@ -162,17 +162,33 @@ class ZoneTransitionEngine {
         return Handle(tv, job)
     }
 
-    /** Drop the GL context and thread (layout teardown). Jobs still running are failed silently. Main thread. */
+    /**
+     * Free the GL context and every job (layout teardown). Main thread.
+     *
+     * ⚠️ The THREAD is kept (an idle HandlerThread costs nothing): every GL field here is confined to
+     * that one thread for the engine's whole life. Quitting it and starting a new one on the next
+     * wipe let the old thread's teardown run concurrently with the new thread's setup on the same
+     * fields — and setupZones() calls cleanup() on every layout. It also stranded a pending
+     * Choreographer frame, so frameScheduled stayed true and no zone wipe ever drew again after a
+     * layout change (seen on the emulator: every wipe sat out its start deadline and cut).
+     */
     fun shutdown() {
         val h = glHandler ?: return
-        val t = thread
-        glHandler = null; thread = null
         h.post {
+            try { Choreographer.getInstance().removeFrameCallback(frameCallback) } catch (_: Throwable) {}
+            frameScheduled = false
             for (j in jobs.toList()) { releaseJobGl(j); j.freeBitmaps(); destroySurface(j) }
             jobs.clear()
             teardownEgl()
-            t?.quitSafely()
         }
+    }
+
+    /** shutdown() and end the GL thread (the owner is being destroyed). Main thread. */
+    fun release() {
+        shutdown()
+        val t = thread
+        glHandler?.post { t?.quitSafely() }
+        glHandler = null; thread = null
     }
 
     // ------------------------------------------------------------------------------------ GL thread

@@ -2394,6 +2394,8 @@ class MainActivity : AppCompatActivity() {
         // — inflating Total Plays and Hours in Reports, and racing over the resume position that
         // #234 relies on. Widget items also re-entered showWidget on a WebView nobody owned.
         kiosk?.hide()
+        // Zone timers are main-looper Runnables too, and zone wipes own a GL thread: release both.
+        try { zoneManager?.release() } catch (e: Throwable) { }
         if (::playlistController.isInitialized) playlistController.stop()
         // Belt and braces: controller.stop() already releases these, but two ExoPlayers on the main
         // looper are exactly the kind of thing that outlives an Activity if the controller never got

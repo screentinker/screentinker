@@ -85,6 +85,7 @@ class ZoneManager(
         var animator: android.view.ViewPropertyAnimator? = null
         var mounted = false
         var firstFrame = false
+        var startedAt = 0L
         var onVideoFrame: (() -> Unit)? = null
         val timers = ArrayList<Runnable>()
     }
@@ -293,7 +294,7 @@ class ZoneManager(
      * what showZoneItem always did; a transition calls it when its wipe lands, passing the image it
      * already decoded as [preDecoded] so the picture is not decoded twice.
      */
-    private fun mountZoneItem(zone: Zone, assignments: List<JSONObject>, activeIdx: Int, params: FrameLayout.LayoutParams, gen: Int, preDecoded: Bitmap?) {
+    private fun mountZoneItem(zone: Zone, assignments: List<JSONObject>, activeIdx: Int, params: FrameLayout.LayoutParams, gen: Int, preDecoded: Bitmap?, txStartedAt: Long = 0L) {
         zoneViews.remove(zone.id)?.let { container.removeView(it) }
         zoneExoPlayers.remove(zone.id)?.release()
         zoneLiveInputs.remove(zone.id)?.release()
@@ -500,7 +501,10 @@ class ZoneManager(
                 }
                 addZoneView(zone, imageView)
                 zoneFaces[zone.id] = ZoneFace.IMAGE
-                if (multi) scheduleZoneAdvance(zone.id, durationMs, advance)
+                // The transition into this image is part of its dwell (native: the zone timer starts
+                // when the item is shown, before its transition). Without the credit every wiped zone
+                // ran slow by the wipe's length each cycle.
+                if (multi) scheduleZoneAdvance(zone.id, ZoneTransitionPolicy.dwellAfterTransition(durationMs, txStartedAt, android.os.SystemClock.uptimeMillis()), advance)
             }
             // Unknown / empty assignment - keep rotating so it doesn't get stuck.
             else -> { if (multi) scheduleZoneAdvance(zone.id, durationMs, advance) }
@@ -546,12 +550,14 @@ class ZoneManager(
         com.remotedisplay.player.util.DebugLog.i("Zone", "'${zone.name}' transition ${mode.name.lowercase()} " +
             (if (mode == ZoneTxMode.SHADER) effect.shader else "crossfade") + " ${spec.durationMs}ms (${texW}x${texH})")
 
+        val startedAt = android.os.SystemClock.uptimeMillis()
+        tx.startedAt = startedAt
         val live = { txBook.isLive(ticket, zoneGeneration[zone.id]) }
         // Give up on the transition and swap plainly — only if it is still this zone's and nothing is mounted yet.
         val cutNow: (Bitmap?) -> Unit = { decoded ->
             if (live() && !tx.mounted) {
                 cancelZoneTransition(zone.id)
-                mountZoneItem(zone, assignments, idx, params, gen, decoded)
+                mountZoneItem(zone, assignments, idx, params, gen, decoded, startedAt)
             }
         }
 
@@ -612,7 +618,7 @@ class ZoneManager(
             override fun onFinished() {
                 if (!live() || tx.mounted) return
                 tx.mounted = true
-                mountZoneItem(zone, assignments, idx, params, gen, decoded)   // goes in UNDER the overlay
+                mountZoneItem(zone, assignments, idx, params, gen, decoded, tx.startedAt)   // goes in UNDER the overlay
                 finishAfterMount(zone.id, tx, target)
             }
         })
@@ -641,7 +647,7 @@ class ZoneManager(
         if (!placeOverlay(zone, iv, params)) { cancelZoneTransition(zone.id); mountZoneItem(zone, assignments, idx, params, gen, decoded); return }
         tx.overlay = iv
         tx.mounted = true
-        mountZoneItem(zone, assignments, idx, params, gen, decoded)
+        mountZoneItem(zone, assignments, idx, params, gen, decoded, tx.startedAt)
         val live = { txBook.isLive(tx.ticket, zoneGeneration[zone.id]) }
         val fade = {
             if (live()) {
@@ -842,6 +848,12 @@ class ZoneManager(
 
     /** Is any zone showing the screen's HDMI input right now? (screenshots show a placeholder) */
     fun hasLiveInput(): Boolean = zoneLiveInputs.values.any { it.isActive }
+
+    /** The Activity is going: cleanup() plus the zone-transition GL thread. */
+    fun release() {
+        cleanup()
+        txEngine.release()
+    }
 
     fun cleanup() {
         cancelAllRotations()

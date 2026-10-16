@@ -106,6 +106,17 @@ object ZoneTransitionPolicy {
     /** View crossfades are a single ImageView alpha animation each; bounded anyway. */
     const val MAX_VIEW_FADES = 4
 
+    /**
+     * The dwell left for an item once the transition into it has landed: the wipe (and its prep) is
+     * counted inside the item's duration, as the native zone timer does, so a zone keeps its cadence.
+     * Never less than half the duration — a slow device still shows the item properly. [startedAt] 0
+     * = no transition, the full duration.
+     */
+    fun dwellAfterTransition(durationMs: Long, startedAt: Long, now: Long): Long {
+        if (startedAt <= 0L || now <= startedAt) return durationMs
+        return (durationMs - (now - startedAt)).coerceAtLeast(durationMs / 2)
+    }
+
     /** Outgoing frame + incoming frame must be ready (decode, frame-0 extract) within this. */
     const val PREP_DEADLINE_MS = 2_500L
     /** From handing a job to the GL engine to its first drawn frame. Missed -> the zone cuts. */
