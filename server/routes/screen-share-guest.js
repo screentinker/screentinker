@@ -52,8 +52,9 @@ router.post('/join', express.json({ limit: '4kb' }), (req, res) => {
   });
   if (out.error) return answer(409, { error: 'Someone is already sharing to this screen', reason: 'busy' });
   // A guest has no account in the workspace: the legs carry no device ids, and which mirrors were
-  // left out (and why) is not theirs to know. The page keys legs by session id.
-  const b = share.displayShareBody(out, []);
+  // left out (and why) is not theirs to know, nor is the org's TURN login (STUN only, unless the
+  // TURN credentials are short-lived). The page keys legs by session id.
+  const b = share.displayShareBody(out, [], true);
   b.legs = b.legs.map(({ device_id: _omit, ...leg }) => leg);
   delete b.skipped;
   res.status(201).json(b);

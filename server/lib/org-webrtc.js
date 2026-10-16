@@ -41,19 +41,48 @@ function talkEnabled(orgId) {
 function talkEnabledForWorkspace(workspaceId) { return talkEnabled(orgIdForWorkspace(workspaceId)); }
 function talkEnabledForDevice(deviceId) { return talkEnabled(orgIdForDevice(deviceId)); }
 
-// ICE servers for this org: the per-org override if set and valid, else the global go2rtc set.
-function iceServers(orgId) {
+// The org's own ICE override, if set and valid; null otherwise.
+function orgIceServers(orgId) {
   const o = orgRow(orgId);
   if (o && o.ice_servers) {
     try { const a = JSON.parse(o.ice_servers); if (Array.isArray(a) && a.length) return a; } catch (_) { /* bad JSON -> fall back */ }
   }
-  return go2rtc.iceServers();
+  return null;
+}
+
+// ICE servers for this org: the per-org override if set and valid, else the global go2rtc set.
+function iceServers(orgId) {
+  return orgIceServers(orgId) || go2rtc.iceServers();
 }
 function iceServersForWorkspace(workspaceId) { return iceServers(orgIdForWorkspace(workspaceId)); }
 function iceServersForDevice(deviceId) { return iceServers(orgIdForDevice(deviceId)); }
+
+// Only the stun:/stuns: URLs of a set of ICE servers, with no username/credential. A TURN URL without
+// its login is useless (and some browsers reject the whole entry), so TURN URLs go with the login.
+function stunOnly(list) {
+  const out = [];
+  for (const e of list || []) {
+    const urls = (Array.isArray(e && e.urls) ? e.urls : [e && e.urls]).filter((u) => typeof u === 'string' && /^stuns?:/i.test(u.trim()));
+    if (urls.length) out.push({ urls: urls.length === 1 ? urls[0] : urls });
+  }
+  return out;
+}
+
+// ICE servers for a GUEST (screen share by code, no account): the org's override and a fixed
+// GO2RTC_TURN_USER/PASS are long-lived logins, so a guest gets their STUN URLs only. The global TURN
+// is handed over as-is only when it mints short-lived credentials (GO2RTC_TURN_SECRET); the org
+// override has no such secret, so it never does.
+function guestIceServers(orgId) {
+  const own = orgIceServers(orgId);
+  if (own) return stunOnly(own);
+  const global = go2rtc.iceServers();
+  return config.go2rtcTurnSecret ? global : stunOnly(global);
+}
+function guestIceServersForDevice(deviceId) { return guestIceServers(orgIdForDevice(deviceId)); }
 
 module.exports = {
   orgIdForWorkspace, orgIdForDevice,
   talkEnabled, talkEnabledForWorkspace, talkEnabledForDevice,
   iceServers, iceServersForWorkspace, iceServersForDevice,
+  stunOnly, guestIceServers, guestIceServersForDevice,
 };

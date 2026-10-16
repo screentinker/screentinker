@@ -204,6 +204,10 @@ function legRoomFor(device, roomKey, shareId) {
 function iceServersFor(deviceId) {
   try { return require('./org-webrtc').iceServersForDevice(deviceId); } catch (_) { return []; }
 }
+// A guest's page: no long-lived TURN login (lib/org-webrtc.js guestIceServers).
+function guestIceServersFor(deviceId) {
+  try { return require('./org-webrtc').guestIceServersForDevice(deviceId); } catch (_) { return []; }
+}
 
 // A display name a person typed. Control characters out, whitespace collapsed, bounded. It is only
 // ever rendered with textContent (player badge, dashboard via esc()), but it is also written to the
@@ -518,10 +522,11 @@ function createDisplayShare(plan, opts) {
   return { out, skipped };
 }
 
-function displayShareBody(out, skipped) {
+function displayShareBody(out, skipped, guest) {
+  const ice = guest ? guestIceServersFor : iceServersFor;
   const legs = out.legs.map((l) => ({
     device_id: l.device.id, screen_name: l.device.name || '', session_id: l.session.id,
-    ticket: l.ticket, ice_servers: iceServersFor(l.device.id),
+    ticket: l.ticket, ice_servers: ice(l.device.id),
   }));
   const main = legs[0];
   return {
@@ -789,7 +794,7 @@ function mintLeg(p, mirror, ws, roomKey) {
     guest: via.guest, ip: via.ip, audio: via.audio,
   });
   if (out.error) return null;
-  const leg = { session_id: out.session.id, ticket: out.ticket, screen_name: name, ice_servers: iceServersFor(mirror.id) };
+  const leg = { session_id: out.session.id, ticket: out.ticket, screen_name: name, ice_servers: (via.guest ? guestIceServersFor : iceServersFor)(mirror.id) };
   if (!via.guest) leg.device_id = mirror.id;   // a guest is told no device ids (routes/screen-share-guest.js)
   send(via.sharer, { type: 'add_leg', share_id: p.shareId, leg });
   return out.session;
@@ -1231,7 +1236,7 @@ function _reset() {
 module.exports = {
   CAP, TILES_CAP, MAX_TILES, CODE_TTL_MS, TICKET_TTL_MS,
   init, attach,
-  featureOn, workspaceOn, availability, isOnline, maxSeconds, iceServersFor, cleanName,
+  featureOn, workspaceOn, availability, isOnline, maxSeconds, iceServersFor, guestIceServersFor, cleanName,
   createSession, endSession, stopForDevice, stopForDisplay, stopWorkspace, sessionForDevice, publicSession, deviceGone,
   maxPresenters, multiOn, slotsFor, canTile, roomPresenters, roomHasSlot, publicPresenters, setSpotlight, removePresenter, opaqueId, guestName,
   maxTargets, expandShareTargets, withMirrors, createDisplayShare, displayShareBody, createShare, stopShare, sessionsForShare,
