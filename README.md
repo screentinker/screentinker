@@ -16,7 +16,7 @@ ScreenTinker is a free, open-source **digital signage CMS** you can self-host on
 
 **Runs on any screen** — Android TV, Fire TV, Samsung Tizen, LG webOS, Amazon Vega OS, Roku, Raspberry Pi, Windows, ChromeOS, or any web browser. No per-device player licence, no hardware lock-in.
 
-**Why self-host?** Keep your content and data on your own infrastructure, avoid per-screen SaaS fees, run air-gapped on a private LAN, and read or fork the source. Set `SELF_HOSTED=true` and a $5 VPS drives hundreds of screens.
+**Why self-host?** Keep your content and data on your own infrastructure, avoid per-screen SaaS fees, run air-gapped on a private LAN, and read or fork the source. Set `SELF_HOSTED=true` to run your own instance; follow [Self-Hosting](#self-hosting) for setup.
 
 **Hosted version:** [screentinker.com](https://screentinker.com) — free tier available, no credit card required.
 **Guides:** [What is digital signage?](https://screentinker.com/guides/what-is-digital-signage.html) · [Open-source digital signage](https://screentinker.com/guides/open-source-digital-signage.html) · [Self-hosting guide](https://screentinker.com/guides/self-hosted-digital-signage.html)
@@ -178,7 +178,8 @@ a kiosk and it has not been certified on hardware; see [docs/vega-player.md](doc
 - Node.js **22.14+** — required. Since 3.0 the server refuses to start on an older Node (exit code 78)
   rather than crash-looping; see [Upgrading to 3.0](docs/upgrading-to-3.0.md). `.nvmrc` pins the major.
 - Linux, macOS, or Windows
-- SQLite (bundled via `better-sqlite3`; no separate install needed — `npm install` handles the native bindings)
+- SQLite is bundled through `better-sqlite3`. On Linux, installation requires Python 3, make
+  and a C++ compiler. See [platform requirements](docs/operations.md#upgrading-nodejs).
 - **ffmpeg** (optional but recommended) — powers video thumbnails and duration extraction
   (`sudo apt-get install ffmpeg` / `brew install ffmpeg`). Without it, videos upload and
   play fine but show no thumbnail in the content library. The Docker image includes it.
@@ -190,17 +191,32 @@ a kiosk and it has not been certified on hardware; see [docs/vega-player.md](doc
 ```bash
 git clone https://github.com/screentinker/screentinker.git
 cd screentinker/server
-npm install
-SELF_HOSTED=true npm start
+npm ci
+cp ../.env.example .env
+# Review server/.env; the example sets SELF_HOSTED=true.
+npm start
 ```
 
-The server starts on port 3001 (HTTP). If SSL certificates are present in `server/certs/`, it starts on port 3443 (HTTPS) with automatic HTTP-to-HTTPS redirect. Open the URL shown in the startup banner. The first registered user gets full access with all features unlocked.
+The server starts on port 3001 (HTTP). If TLS certificates are present in `server/certs/`, HTTPS
+uses port 3443 and HTTP redirects to it. Open the URL shown in the startup banner. The first
+registered user becomes the platform administrator.
 
 Schema migrations run automatically on first boot — no manual migration commands at any point in the lifecycle.
 
-`npm start` is preferred over `node server.js` directly because the script invokes Node with `--env-file-if-exists=.env` so a `server/.env` file (gitignored) is loaded automatically for local dev.
+### Before public access
 
-⚠️ **Only `npm start` reads `server/.env`.** Under pm2, systemd or `node server.js`, set the variables in that process manager instead: systemd `Environment=`, or for pm2 `SELF_HOSTED=true pm2 restart <id> --update-env` then `pm2 save`. A `.env` at the repository root is never read. At boot the server logs a `[config]` warning naming any key in either file that is not in effect.
+Create the first administrator while access is restricted to your machine or trusted network.
+`DISABLE_REGISTRATION=true` blocks later self-service signups but still permits first-user setup
+on an empty database.
+
+Set `APP_URL` to the address users will visit so password-reset, verification and invitation
+links use a fixed origin. Preserve the generated `certs/.jwt_secret`; leave `JWT_SECRET` unset
+unless deliberately supplying your own secret. Changing it invalidates sessions and prevents
+saved secrets from being decrypted. Production rejects known placeholder values.
+
+For Internet access, use HTTPS through a public Nginx/Caddy proxy, Cloudflare Tunnel, or the app's
+own TLS listener. Keep backend ports private when using a proxy or Tunnel. See
+[deployment and Fail2ban examples](docs/operations.md#fail2ban-examples-nginx-caddy-and-cloudflare-tunnel).
 
 ### Environment Variables
 
@@ -209,7 +225,9 @@ Schema migrations run automatically on first boot — no manual migration comman
 | `PORT` | HTTP port | `3001` |
 | `HTTPS_PORT` | HTTPS port (used when SSL certs are present) | `3443` |
 | `NODE_ENV` | Runtime env (`production` enables Express production optimizations + stricter error handling) | _(none)_ |
-| `SELF_HOSTED` | First user gets all features unlocked | `false` |
+| `SELF_HOSTED` | Enable self-hosted mode. New accounts receive Enterprise by default. | `false` |
+| `SELF_HOSTED_SIGNUP_PLAN` | Plan for accounts created after the first self-hosted account: `enterprise` or `trial` (14-day Pro trial, then Free). | `enterprise` |
+| `ACCESS_LOG` | Emit HTTP access records to the application console. Authentication-failure events are always emitted. See [server logs](docs/operations.md#server-logs-and-fail2ban). | `false` |
 | `OUTBOUND_ALLOW_HOSTS` | Hosts, `*.suffixes`, IPs or CIDRs that calendars, data sources, webhooks, OIDC and AI may reach on a private network (refused by default). Cloud metadata stays blocked. See [Outbound requests](docs/outbound-requests.md). | _(none)_ |
 | `OUTBOUND_ALLOW_PRIVATE` | Open every private-network range at once (single-tenant installs) | `false` |
 | `HIDE_BILLING` | Hide the Subscription nav item + billing view; `#/billing` redirects to the dashboard (UI-only, opt-in) | `false` |
@@ -217,7 +235,7 @@ Schema migrations run automatically on first boot — no manual migration comman
 | `DISABLE_HOMEPAGE` | Redirect `/` to `/app` instead of serving the marketing landing page. For internal-only self-hosted deployments. | `false` |
 | `VIEW_ONLY_ENABLED` | View-only display links (`/view/<token>`). Each display is still off until a workspace admin turns it on. `false` removes the feature from the instance — see [View-only display access](docs/view-only-access.md). | `true` when `SELF_HOSTED=true`, else `false` |
 | `VIEW_TRUSTED_PROXIES` | Comma-separated proxy addresses/CIDRs whose `X-Forwarded-For` the view-only **network** check believes. Unset = only the TCP peer counts. | unset |
-| `APP_URL` | Your public URL (used for Stripe callbacks and invite-accept URLs in emailed invites) | _(none)_ |
+| `APP_URL` | Public URL used in emailed links and billing callbacks. | _(none)_ |
 | `JWT_SECRET` | JWT signing key, also the source of the key that encrypts saved secrets. Auto-generated into `certs/.jwt_secret` if not set. ⚠️ Changing it later signs everyone out and makes saved secrets unreadable; the server warns at boot if it changed. | _(auto)_ |
 | `SSL_CERT` | Path to SSL certificate | `server/certs/cert.pem` |
 | `SSL_KEY` | Path to SSL private key | `server/certs/key.pem` |
@@ -414,7 +432,8 @@ one-function patch adding VP8/VP9 to the receive set) and use it in place of
 
 #### Stripe (Billing)
 
-If you want to charge your users, plug in your own Stripe keys. Without them, all features are free for all users.
+To charge users on your instance, configure your own Stripe keys. Stripe is not required
+for self-hosting with `SELF_HOSTED=true`.
 
 1. Create a [Stripe account](https://stripe.com)
 2. Create products/prices for each plan in the Stripe dashboard
@@ -435,7 +454,8 @@ If you want to charge your users, plug in your own Stripe keys. Without them, al
 | `STRIPE_WEBHOOK_SECRET` | Webhook signing secret (`whsec_...`) |
 | `APP_URL` | Your public URL (e.g. `https://signage.yourcompany.com`) |
 
-The default plans are: Free (2 devices), Starter (8 devices), Pro (25 devices), and Enterprise (unlimited). Edit the `plans` table to change pricing, limits, or add/remove tiers. In self-hosted mode, the first user gets Enterprise automatically.
+The default plans are Free (2 devices), Starter (8 devices), Pro (25 devices), and Enterprise
+(unlimited). Edit the `plans` table to change pricing, limits, or tiers.
 
 #### Plans and comped accounts
 
@@ -776,7 +796,11 @@ Use this in local dev when running against a fresh production database clone to 
 
 ### Production Deployment
 
-For production, put the app behind a reverse proxy (nginx, Caddy, etc.) with SSL:
+For a native Linux deployment, run the app as a dedicated service user. The example below
+assumes Node 22.14+ is installed at `/usr/bin/node`; adjust `ExecStart` to your installed path.
+Run from the repository root. Configure HTTPS and complete private first-user setup before
+allowing public access. For containers, use [docker-compose.example.yml](docker-compose.example.yml)
+and the [Docker runbook](docs/operations.md#deploying-docker).
 
 ```bash
 # Create a dedicated user
@@ -787,11 +811,12 @@ sudo cp -r . /opt/screentinker
 sudo chown -R screentinker:screentinker /opt/screentinker
 
 # Install dependencies (ffmpeg is for video thumbnails + durations — see Requirements)
-sudo apt-get install -y ffmpeg
-cd /opt/screentinker/server && npm install --production
+sudo apt-get install -y python3 make g++ ffmpeg logrotate
+cd /opt/screentinker/server
+sudo -u screentinker env npm_config_cache=/opt/screentinker/.npm-cache npm ci --omit=dev
 
 # Create a systemd service
-sudo cat > /etc/systemd/system/screentinker.service << 'EOF'
+sudo tee /etc/systemd/system/screentinker.service > /dev/null << 'EOF'
 [Unit]
 Description=ScreenTinker
 After=network.target
@@ -807,6 +832,14 @@ RestartPreventExitStatus=78
 Environment=PORT=3001
 Environment=NODE_ENV=production
 Environment=SELF_HOSTED=true
+# Optional HTTP access records; security failure events are always enabled.
+# Environment=ACCESS_LOG=true
+# Save the application console to a file; install the rotation policy below.
+LogsDirectory=screentinker
+LogsDirectoryMode=0750
+UMask=0027
+StandardOutput=append:/var/log/screentinker/server.log
+StandardError=inherit
 # Lock down an internal / provisioned-only instance (all accounts created by your
 # team). DISABLE_REGISTRATION closes self-service signup — first-user setup on an
 # empty DB is still allowed, and the login page hides its "Create account" button
@@ -828,40 +861,26 @@ Environment=SELF_HOSTED=true
 WantedBy=multi-user.target
 EOF
 
+sudo install -d -m 0755 /etc/logrotate.d
+sudo install -m 0644 /opt/screentinker/scripts/logging/screentinker.logrotate /etc/logrotate.d/screentinker
+sudo systemctl daemon-reload
 sudo systemctl enable --now screentinker
 ```
 
-#### Nginx Example
+The unit saves application stdout/stderr to `/var/log/screentinker/server.log`; logrotate handles
+retention. HTTP access records require `ACCESS_LOG=true`; password/TOTP failure events remain
+enabled. Existing units using `StandardOutput=journal` already collect console output in journald.
+See [logging and Fail2ban](docs/operations.md#server-logs-and-fail2ban) for collection options,
+rotation and ban configuration. Docker logs use the container logging configuration instead.
 
-```nginx
-server {
-    listen 80;
-    server_name signage.yourcompany.com;
-    return 301 https://$host$request_uri;
-}
+#### Reverse proxy or Cloudflare Tunnel
 
-server {
-    listen 443 ssl http2;
-    server_name signage.yourcompany.com;
-
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
-
-    client_max_body_size 500M;
-
-    location / {
-        proxy_pass http://127.0.0.1:3001;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 86400;
-    }
-}
-```
+Use the [Nginx](scripts/logging/examples/nginx.conf) or
+[Caddy](scripts/logging/examples/Caddyfile) example for a public proxy. For a dashboard-managed
+Cloudflare Tunnel, the connector can reach the app directly; a local proxy is optional.
+Follow the [deployment choices](docs/operations.md#fail2ban-examples-nginx-caddy-and-cloudflare-tunnel)
+for forwarding headers, private backend access and Fail2ban enforcement. The examples assume
+HTTP on port 3001; adjust the upstream if the app uses TLS or a custom port.
 
 #### Don't add security headers at the proxy
 
@@ -911,7 +930,7 @@ git init
 git remote add origin https://github.com/screentinker/screentinker.git
 git fetch origin --tags
 git checkout -f main
-cd server && npm install --production
+cd server && npm ci --omit=dev
 sudo systemctl restart screentinker
 ```
 
@@ -919,7 +938,7 @@ sudo systemctl restart screentinker
 
 ```bash
 cd /opt/screentinker && git checkout main && git pull origin main
-cd server && npm install --production && sudo systemctl restart screentinker
+cd server && npm ci --omit=dev && sudo systemctl restart screentinker
 ```
 
 Your database, uploads, and configuration are preserved — only code files are updated.
@@ -928,8 +947,10 @@ Your database, uploads, and configuration are preserved — only code files are 
 
 ### Backups
 
-The SQLite database is at `server/db/remote_display.db` and uploaded content is in
-`server/uploads/`. For a one-off DB copy (safe while the server runs):
+By default, the database is at `server/db/remote_display.db`, media is in `server/uploads/`,
+and the generated JWT secret is in `server/certs/.jwt_secret`. `DATA_DIR` or individual path
+settings can relocate these; Docker stores them under `/data` in its persistent volume.
+Include the secret and service configuration in backups. For a DB snapshot while the server runs:
 
 ```bash
 sqlite3 server/db/remote_display.db ".backup /path/to/backup.db"
@@ -938,7 +959,8 @@ sqlite3 server/db/remote_display.db ".backup /path/to/backup.db"
 **Recommended: nightly automated backups** via `scripts/backup.sh`. It takes an
 atomic DB snapshot plus a hard-linked, point-in-time copy of your content (durable
 images/videos; ephemeral per-device screenshots are excluded), with daily + monthly
-retention and an error log. Add a cron entry:
+retention and an error log. It covers the database and uploaded content; back up the JWT secret,
+configuration and any additional persistent data separately. Add a cron entry:
 
 ```bash
 # as root (or your service user) — adjust the path to your install
@@ -1114,7 +1136,7 @@ Working on ScreenTinker itself:
 ```bash
 git clone https://github.com/screentinker/screentinker.git
 cd screentinker/server
-npm install
+npm ci
 npm start          # starts in dev with --env-file-if-exists=.env
 # or:
 npm run dev        # same as start, plus --watch for auto-restart
@@ -1124,7 +1146,7 @@ npm run dev        # same as start, plus --watch for auto-restart
 
 ```
 SELF_HOSTED=true
-APP_URL=https://localhost:3443
+APP_URL=http://localhost:3001
 # Optional: Microsoft Graph email config for testing real delivery
 # GRAPH_TENANT_ID=...
 # GRAPH_CLIENT_ID=...

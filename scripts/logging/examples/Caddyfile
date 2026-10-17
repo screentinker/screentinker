@@ -1,0 +1,28 @@
+# Default: public clients connect directly; no CDN/tunnel in front.
+# For Cloudflare Tunnel, apply ALL three changes marked TUNNEL below.
+# See docs/operations.md for trust boundaries and deployment checks.
+# Keep the app's port 3001 private. Use HTTPS upstream instead if app TLS is enabled.
+
+# TUNNEL 1: uncomment this global block (Caddy 2.8+). Merge with any existing
+# global block. The address must match the bind address and port in TUNNEL 2.
+# {
+#     servers 127.0.0.1:8080 {
+#         trusted_proxies static 127.0.0.1/32
+#         trusted_proxies_strict
+#         client_ip_headers CF-Connecting-IP
+#     }
+# }
+
+# TUNNEL 2: replace this site address with http://signage.example.com:8080
+# and uncomment bind. Only local cloudflared may reach this listener.
+signage.example.com {
+    # bind 127.0.0.1
+    reverse_proxy 127.0.0.1:3001 {
+        # Overwrite forwarded host even when the local connector is trusted.
+        header_up X-Forwarded-Host {hostport}
+        # TUNNEL 3: replace {remote_host} with {client_ip} and uncomment proto.
+        header_up X-Forwarded-For {remote_host}
+        # header_up X-Forwarded-Proto https
+        header_up -CF-Connecting-IP
+    }
+}

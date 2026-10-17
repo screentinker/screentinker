@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Self-Hosted Digital Signage Software | ScreenTinker</title>
-  <meta name="description" content="Why and how to self-host your digital signage CMS. Data privacy, cost control, and no recurring fees. Complete deployment guide.">
+  <meta name="description" content="Why and how to self-host your digital signage CMS. Data privacy, cost control, and no recurring fees. Deployment options and security essentials.">
   <meta name="keywords" content="self hosted digital signage, on premise digital signage, self hosted signage cms, open source signage server, deploy signage on premise, private digital signage">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="https://screentinker.com/guides/self-hosted-digital-signage.html">
@@ -13,13 +13,13 @@
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://screentinker.com/guides/self-hosted-digital-signage.html">
   <meta property="og:title" content="Self-Hosted Digital Signage Software">
-  <meta property="og:description" content="Why and how to self-host your digital signage CMS. Data privacy, cost control, and no recurring fees. Complete deployment guide.">
+  <meta property="og:description" content="Why and how to self-host your digital signage CMS. Data privacy, cost control, and no recurring fees. Deployment options and security essentials.">
   <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
   <meta property="og:site_name" content="ScreenTinker">
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Self-Hosted Digital Signage Software">
-  <meta name="twitter:description" content="Why and how to self-host your digital signage CMS. Data privacy, cost control, and no recurring fees. Complete deployment guide.">
+  <meta name="twitter:description" content="Why and how to self-host your digital signage CMS. Data privacy, cost control, and no recurring fees. Deployment options and security essentials.">
   <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
 
   <meta name="theme-color" content="#111827">
@@ -58,7 +58,7 @@
       <span>Self-Hosted Digital Signage</span>
     </nav>
 
-    <h1>Self-Hosted Digital Signage Software: Complete Guide (2026)</h1>
+    <h1>Self-Hosted Digital Signage Software: Deployment Guide (2026)</h1>
     <p class="lead">Why you might want to self-host your digital signage CMS, what you need to do it well, and how to deploy ScreenTinker on your own server.</p>
 
     <h2>Why self-host digital signage?</h2>
@@ -83,53 +83,48 @@
 
     <h3>Software prerequisites</h3>
     <ul>
-      <li>Ubuntu 22.04 or 24.04 LTS (Debian 12 also works)</li>
-      <li>Node.js 18 or newer</li>
-      <li>A domain name pointed at your server (or just an internal hostname / IP for LAN deployments)</li>
-      <li>SSL certificate (Let's Encrypt is free; or self-signed for LAN)</li>
+      <li>Node.js 22.14 or newer</li>
+      <li>A supported Linux host, such as Ubuntu 22.04/24.04 or Debian 12, with Python 3, make and a C++ compiler</li>
+      <li>Optional ffmpeg for video thumbnails and duration extraction</li>
+      <li>A hostname and HTTPS for Internet access, provided by a public reverse proxy, Cloudflare Tunnel, or the app's TLS listener</li>
     </ul>
+    <p>Docker is also available. See the <a href="https://github.com/screentinker/screentinker#self-hosting" target="_blank" rel="noopener">README self-hosting instructions</a> for platform requirements and deployment options.</p>
 
     <h2>Deploying ScreenTinker</h2>
-    <p>Detailed setup is in the <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub README</a>. Quick version:</p>
+    <p>To run the server locally:</p>
     <pre><code>git clone https://github.com/screentinker/screentinker.git
 cd screentinker/server
-npm install
-cp .env.example .env
-# edit .env with your domain, JWT_SECRET, and SELF_HOSTED=true
-node server.js</code></pre>
-    <p>Set <code>SELF_HOSTED=true</code> in the env. This unlocks the enterprise plan for your account, disables subscription expiry checks, and skips Stripe entirely. It is meant for the operator-controlled deployment case.</p>
+npm ci
+cp ../.env.example .env
+npm start</code></pre>
+    <p>The server uses HTTP on port 3001. With app TLS certificates configured, HTTPS uses port 3443 and HTTP redirects to it. The first account becomes the platform administrator.</p>
 
-    <h2>Reverse proxy and TLS</h2>
-    <p>ScreenTinker listens on HTTP/HTTPS directly, but in production you typically front it with nginx or Caddy for TLS termination, gzip, and rate limiting. A minimal Caddyfile:</p>
-    <pre><code>signage.example.com {
-  reverse_proxy localhost:3001
-}</code></pre>
-    <p>Caddy handles Let's Encrypt automatically. nginx works too if your team prefers it.</p>
+    <h2>Before public access</h2>
+    <ul>
+      <li><strong>Complete initial setup privately.</strong> Create the first administrator while the server is reachable only from your machine or trusted network. <code>DISABLE_REGISTRATION=true</code> blocks later self-service signups but still allows first-user setup on an empty database.</li>
+      <li><strong>Set a fixed public address.</strong> Set <code>APP_URL</code> to the URL users visit so password-reset, verification and invitation links use that address.</li>
+      <li><strong>Preserve the signing secret.</strong> Leave <code>JWT_SECRET</code> unset to use the generated <code>certs/.jwt_secret</code>. Changing it invalidates sessions and makes saved encrypted credentials unreadable. Back it up securely.</li>
+      <li><strong>Use HTTPS and restrict backend access.</strong> When using a proxy or Tunnel, keep the app port private.</li>
+    </ul>
 
-    <h2>Running as a service</h2>
-    <p>Use systemd to keep the process alive across reboots. A unit file at <code>/etc/systemd/system/screentinker.service</code>:</p>
-    <pre><code>[Unit]
-Description=ScreenTinker Digital Signage Server
-After=network.target
+    <h2>Reverse proxy or Cloudflare Tunnel</h2>
+    <p>Use the shared <a href="https://github.com/screentinker/screentinker/blob/main/scripts/logging/examples/nginx.conf" target="_blank" rel="noopener">Nginx</a> or <a href="https://github.com/screentinker/screentinker/blob/main/scripts/logging/examples/Caddyfile" target="_blank" rel="noopener">Caddy</a> configuration for a public proxy. A dashboard-managed Cloudflare Tunnel can connect directly to the app; a local proxy is optional. Keep the app's route-specific security headers rather than adding a second policy at the proxy.</p>
+    <p>The <a href="https://github.com/screentinker/screentinker/blob/main/docs/operations.md#fail2ban-examples-nginx-caddy-and-cloudflare-tunnel" target="_blank" rel="noopener">operations runbook</a> covers deployment choices, forwarded client IPs and Fail2ban enforcement.</p>
 
-[Service]
-WorkingDirectory=/opt/screentinker/server
-ExecStart=/usr/bin/node server.js
-EnvironmentFile=/opt/screentinker/.env
-Restart=always
-User=screentinker
-
-[Install]
-WantedBy=multi-user.target</code></pre>
-    <p>Enable with <code>systemctl enable --now screentinker</code>.</p>
+    <h2>Running as a service and collecting logs</h2>
+    <p>Follow the <a href="https://github.com/screentinker/screentinker#production-deployment" target="_blank" rel="noopener">README production deployment</a> for the systemd service.</p>
+    <p>The supplied systemd units save logs to <code>/var/log/screentinker/server.log</code>, with logrotate for retention. Docker collects logs through its container logging configuration.</p>
+    <p>HTTP access logging is off by default; set <code>ACCESS_LOG=true</code> to enable it. Password/TOTP failure events remain enabled and can feed Fail2ban. Fail2ban requires separate setup and an action suited to the deployment: a host firewall for direct connections, or Cloudflare's API for Tunnel traffic. See <a href="https://github.com/screentinker/screentinker/blob/main/docs/operations.md#server-logs-and-fail2ban" target="_blank" rel="noopener">server logs and Fail2ban</a>.</p>
 
     <h2>Backups</h2>
-    <p>The state lives in two places:</p>
+    <p>Preserve the database, uploaded media, signing secret and service configuration:</p>
     <ul>
-      <li><code>server/db/remote_display.db</code> - SQLite database of users, devices, playlists, schedules</li>
-      <li><code>server/uploads/</code> - uploaded media (images, videos, thumbnails)</li>
+      <li><code>server/db/remote_display.db</code> — database</li>
+      <li><code>server/uploads/</code> — uploaded media</li>
+      <li><code>server/certs/.jwt_secret</code>, or your configured <code>JWT_SECRET</code> — needed to decrypt saved credentials</li>
+      <li>Your environment, TLS keys and any other persistent data used by the deployment</li>
     </ul>
-    <p>A nightly tarball of those two paths gives you a full restore point. Pair with offsite sync (rclone, restic) for disaster recovery.</p>
+    <p>These are the default native paths; <code>DATA_DIR</code> or individual path settings can relocate them. Docker keeps its state under <code>/data</code>. The <a href="https://github.com/screentinker/screentinker#backups" target="_blank" rel="noopener">README backup procedure</a> covers database and media snapshots. Back up the secret and configuration separately.</p>
 
     <h2>Self-hosted vs cloud-hosted comparison</h2>
     <div class="compare-table-wrap">
@@ -152,7 +147,7 @@ WantedBy=multi-user.target</code></pre>
     </div>
 
     <h2>When the cloud is the right answer</h2>
-    <p>Self-hosting is not free of cost - it requires someone who can run a Linux server, monitor it, and apply security updates. If your screen count is small (under ~10) and you do not have IT capacity, the managed cloud version is probably the right choice. ScreenTinker's hosted plans start at $39/mo for 5 devices.</p>
+    <p>Self-hosting is not free of cost - it requires someone who can run a Linux server, monitor it, and apply security updates. If your screen count is small (under ~10) and you do not have IT capacity, the managed cloud version is probably the right choice. See the <a href="/#pricing">hosted plans</a> for current pricing.</p>
 
     <div class="related">
       <h2>Related guides</h2>

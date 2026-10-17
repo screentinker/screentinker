@@ -23,6 +23,11 @@ fi
 echo "Installing ScreenTinker service (user $RUN_USER, $WORKDIR, Node $HAVE at $NODE_BIN)..."
 sed -e "s|@USER@|$RUN_USER|" -e "s|@WORKDIR@|$WORKDIR|" -e "s|@NODE@|$NODE_BIN|" "$SERVICE_FILE" \
   | sudo tee /etc/systemd/system/remotedisplay.service >/dev/null
+sudo install -d -m 0755 /etc/logrotate.d
+sudo install -m 0644 "$SCRIPT_DIR/logging/screentinker.logrotate" /etc/logrotate.d/screentinker
+if ! command -v logrotate >/dev/null; then
+    echo "Install logrotate to activate the supplied log rotation policy."
+fi
 sudo systemctl daemon-reload
 sudo systemctl enable remotedisplay
 sudo systemctl start remotedisplay
@@ -32,4 +37,4 @@ echo ""
 echo "Commands:"
 echo "  sudo systemctl status remotedisplay"
 echo "  sudo systemctl restart remotedisplay"
-echo "  sudo journalctl -u remotedisplay -f"
+echo "  sudo tail -F /var/log/screentinker/server.log"

@@ -21,6 +21,8 @@ if (process.env.SITE_CACHE_FOR) {
  * precisely when something else has already gone wrong. Repairing takes seconds; diagnosing at 2am
  * does not. ST_SKIP_DEP_PREFLIGHT=1 turns it off.
  */
+const { accessLogger, installConsoleSafety } = require('./lib/http-logging');
+installConsoleSafety();
 require('./lib/preflight-deps').preflight();
 
 const express = require('express');
@@ -48,7 +50,7 @@ const ghcrCheck = require('./lib/ghcr-check');
 function logFatalAndExit(kind, err) {
   try {
     const e = err instanceof Error ? err : new Error('Non-error thrown: ' + require('util').inspect(err));
-    process.stderr.write(`\n[FATAL ${kind}] ${new Date().toISOString()}\n${e.stack || e.message}\n`);
+    console.error(`[FATAL ${kind}] ${new Date().toISOString()}\n${e.stack || e.message}`);
   } catch (_) { /* the death handler must never throw */ }
   try { require('./lib/status-log-writer').flush(); } catch (_) { /* #146 best-effort: drain buffered audit rows before close */ }
   try { require('./db/database').db.close(); } catch (_) { /* best-effort WAL flush */ }
@@ -73,6 +75,9 @@ const { getClientIp } = require('./services/activity');
 // the original client when fronted by Cloudflare; X-Forwarded-For from any
 // non-trusted source is ignored, so the value can't be spoofed.
 app.set('trust proxy', trustedProxies);
+// Before parsers, CORS, limiters and routes so their rejections are recorded too.
+// Security events remain enabled even when high-volume access logging is disabled.
+if (config.accessLogEnabled) app.use(accessLogger({ getClientIp }));
 
 // Determine if SSL certs are available
 const hasSsl = fs.existsSync(config.sslCert) && fs.existsSync(config.sslKey);

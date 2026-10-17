@@ -6,6 +6,7 @@ const { db } = require('../db/database');
 const { generateToken, bumpTokenVersion, generateMfaPendingToken, verifyMfaPendingToken, requireAuth, requireAdmin, requireSuperAdmin, isPlatformRole, isPlatformStaff, PLATFORM_ROLES } = require('../middleware/auth');
 const { resolveTenancy } = require('../lib/tenancy');
 const { logActivity, getClientIp } = require('../services/activity');
+const { authenticationFailure, AUTH_METHOD } = require('../lib/http-logging');
 const totp = require('../lib/totp');
 const totpLockout = require('../lib/totp-lockout');
 const loginLockout = require('../lib/login-lockout');
@@ -67,7 +68,10 @@ function ensureDefaultOrgForUser(user, { allowCreate = true } = {}) {
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
-function logFailedLogin(email, ip, reason) {
+function logFailedLogin(email, ip, reason, method = null) {
+  // Callers explicitly mark credential failures; policy refusals stay audit-only.
+  // Human-readable audit wording must not determine whether an address is banned.
+  if (method) authenticationFailure(ip, method);
   try {
     db.prepare('INSERT INTO activity_log (user_id, action, details, ip_address) VALUES (NULL, ?, ?, ?)')
       .run('auth:login_failed', `${email} - ${reason}`, ip);
@@ -352,7 +356,7 @@ router.post('/login', (req, res) => {
   if (!user) {
     // An unknown address at an enforced domain answers exactly like a known one — see above.
     if (domainEnforced) return ssoRefusal();
-    logFailedLogin(email, getClientIp(req), 'User not found');
+    logFailedLogin(email, getClientIp(req), 'User not found', AUTH_METHOD.PASSWORD);
     return res.status(401).json({ error: 'Invalid email or password' });
   }
   // The break-glass: the operator may still sign in with a password at an enforced domain, but a
@@ -419,7 +423,7 @@ router.post('/login', (req, res) => {
   // guessing straight through it and stop on the changed answer: the lock would stop nothing.
   if (loginLockout.isLocked(user.id)) {
     loginLockout.warnLocked(user.id, `${email} (user ${user.id})`);
-    logFailedLogin(email, getClientIp(req), 'Locked out (too many failed passwords)');
+    logFailedLogin(email, getClientIp(req), 'Locked out (too many failed passwords)', AUTH_METHOD.PASSWORD);
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
@@ -447,7 +451,7 @@ router.post('/login', (req, res) => {
       logActivity(null, 'auth:login_locked', `${email} - locked after repeated failures`, null, getClientIp(req));
       loginLockout.warnLocked(user.id, `${email} (user ${user.id})`);
     }
-    logFailedLogin(email, getClientIp(req), 'Wrong password');
+    logFailedLogin(email, getClientIp(req), 'Wrong password', AUTH_METHOD.PASSWORD);
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
@@ -815,7 +819,7 @@ router.post('/totp/verify', (req, res) => {
     viaRecovery = true;
   } else {
     totpLockout.recordFailure(decoded.id);
-    logFailedLogin(user.email, getClientIp(req), 'Bad TOTP/recovery code');
+    logFailedLogin(user.email, getClientIp(req), 'Bad TOTP/recovery code', AUTH_METHOD.TOTP);
     return res.status(401).json({ error: 'Invalid code' });
   }
   totpLockout.reset(decoded.id);

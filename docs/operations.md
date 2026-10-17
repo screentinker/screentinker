@@ -16,6 +16,7 @@ did not behave.
 - [Before you deploy](#before-you-deploy)
 - [Deploying: native (git + systemd)](#deploying-native-git--systemd)
 - [Deploying: Docker](#deploying-docker)
+- [Server logs and fail2ban](#server-logs-and-fail2ban)
 - [The served APK](#the-served-apk)
 - [Verifying a deploy](#verifying-a-deploy)
 - [Rolling back](#rolling-back)
@@ -168,6 +169,249 @@ on the **host**, and see the inode warning below.
 
 ---
 
+## Server logs and fail2ban
+
+The supplied systemd units save application logs to `/var/log/screentinker/server.log`.
+HTTP access logging is off by default; set `ACCESS_LOG=true` to enable it. Password/TOTP failure
+events remain enabled and can feed Fail2ban.
+
+### Records
+
+```text
+2026-10-15T12:00:00.000Z [access] {"ip":"203.0.113.10","method":"POST","route":"/login","status":401,"duration_ms":74,"aborted":false}
+2026-10-15T12:00:00.001Z [security] auth_failure ip=203.0.113.10 method=password
+```
+
+**Access records** cover completed HTTP responses and closed connections, including anonymous
+requests, static responses, parser errors and rate-limit rejections. Disconnections use
+`aborted:true` and status 499. WebSocket messages and the separate HTTP-to-HTTPS redirect
+listener are excluded.
+
+`route` contains a route template, relative to its router, or `-` for static responses and
+requests rejected before routing. Raw URLs, query strings, bodies, credentials and account names
+are omitted, so these records cannot identify individual scanner paths.
+
+**Security events** count unknown accounts, wrong passwords, password attempts during lockout,
+and invalid TOTP/recovery codes. Successful logins, SSO-policy refusals and generic 401/429
+responses do not count. Database activity auditing is separate.
+
+Both records use the resolved visitor IP, with IPv4-mapped addresses normalized. Invalid IPs
+are excluded from security events. Diagnostic messages escape newlines as literal `\n`, keeping
+untrusted text from creating forged log entries.
+
+### Native systemd setup
+
+New Debian/Pi server installations and `scripts/install-service.sh` install the log configuration
+and rotation policy. The installer does not install or enable fail2ban. For an existing service,
+create a drop-in with `sudo systemctl edit screentinker` (substitute your actual service name,
+such as `screentinker-server` or `remotedisplay`):
+
+```ini
+[Service]
+LogsDirectory=screentinker
+LogsDirectoryMode=0750
+UMask=0027
+StandardOutput=append:/var/log/screentinker/server.log
+StandardError=inherit
+```
+
+Then, from the repository root:
+
+```bash
+sudo apt-get install logrotate
+sudo install -m 0644 scripts/logging/screentinker.logrotate /etc/logrotate.d/screentinker
+sudo systemctl daemon-reload
+sudo systemctl restart screentinker
+sudo tail -F /var/log/screentinker/server.log
+```
+
+These settings require systemd 240+ and create a restricted log directory for the service.
+Use separate log paths and rotation policies for multiple instances.
+
+Services using `StandardOutput=journal` already collect application output in journald
+(`journalctl -u SERVICE`). The drop-in moves that output to the file; service lifecycle events
+stay in the journal. You can keep journald and configure Fail2ban with `backend=systemd` and a
+service-specific `journalmatch`; the supplied jail uses a file instead.
+
+The rotation policy keeps 14 compressed files, rotating daily or above 50 MiB when logrotate
+runs. For high traffic, run logrotate more frequently: the size limit is checked on each run.
+`copytruncate` allows rotation without restarting the server, with a small possible loss window.
+
+### Fail2ban
+
+Fail2ban reads `[security] auth_failure` events from `/var/log/screentinker/server.log` and
+bans repeat offenders. General 401/429 responses also occur during normal use and are excluded
+from this filter.
+
+From the repository root, install the shared filter and jail:
+
+```bash
+sudo apt-get install fail2ban
+sudo install -m 0644 scripts/logging/fail2ban-filter.conf /etc/fail2ban/filter.d/screentinker.conf
+sudo install -m 0644 scripts/logging/fail2ban-jail.local /etc/fail2ban/jail.d/screentinker.local
+```
+
+The jail is disabled by default. It counts 10 password/TOTP failures from one IP within
+10 minutes and bans that IP for 15 minutes. Adjust these thresholds for shared networks and
+add administrator/VPN addresses to `ignoreip` as needed. Keep it disabled until you have chosen
+an enforcement action and verified the recorded visitor IP.
+
+#### Fail2ban examples: Nginx, Caddy and Cloudflare Tunnel
+
+Choose one deployment below. All use the same application log, filter and jail; only forwarding
+and ban enforcement differ. **Cloudflare** is the public edge; **cloudflared** is the Tunnel
+connector on your server.
+
+| Public traffic path | Cloudflare dashboard service | Local proxy configuration | Ban enforcement |
+| --- | --- | --- | --- |
+| Visitor → Nginx → app | Not used | [nginx.conf](../scripts/logging/examples/nginx.conf), public settings | Host nftables |
+| Visitor → Caddy → app | Not used | [Caddyfile](../scripts/logging/examples/Caddyfile), public settings | Host nftables |
+| Visitor → Cloudflare → cloudflared (Tunnel connector) → app | HTTP, `127.0.0.1:3001` | None | [Cloudflare API](#cloudflare-ban-action) |
+| Visitor → Cloudflare → cloudflared (Tunnel connector) → Nginx → app | HTTP, `127.0.0.1:8080` | [nginx.conf](../scripts/logging/examples/nginx.conf), both `TUNNEL` changes | [Cloudflare API](#cloudflare-ban-action) |
+| Visitor → Cloudflare → cloudflared (Tunnel connector) → Caddy → app | HTTP, `127.0.0.1:8080` | [Caddyfile](../scripts/logging/examples/Caddyfile), all three `TUNNEL` changes | [Cloudflare API](#cloudflare-ban-action) |
+
+The examples assume an HTTP app and native processes on one host. Replace example hostnames
+and certificate paths. If the app uses TLS, adjust the upstream URL and certificate verification.
+Keep backend ports private: the app listens on all interfaces, so a loopback destination alone
+does not restrict incoming connections. Containers need suitable private networking.
+
+For Tunnel, connecting directly to the app is sufficient; Nginx/Caddy are optional. In the
+Cloudflare dashboard, create a published application route using the service in the table and
+set HTTP Host Header to your public hostname, such as `signage.example.com`. Start the connector
+with the dashboard's installation command and keep its token secret. No local Tunnel YAML is
+required. Routing and Fail2ban enforcement are configured separately.
+
+#### Host firewall action
+
+Keep the jail's `nftables` action for connections arriving directly at the app or a public proxy
+on the same host. Set `port` and `protocol` to the public listeners:
+
+| Public listener | `port` | `protocol` |
+| --- | --- | --- |
+| App HTTP, default | `3001` | `tcp` |
+| App TLS and HTTP redirect, defaults | `3001,3443` | `tcp` |
+| Supplied public Nginx example | `443` | `tcp` |
+| Public Caddy, including HTTP/3 | `80,443` | `tcp,udp` |
+
+Adjust for custom ports; include port 80 for Nginx only if an HTTP listener is configured.
+The action requires nftables on the public-facing host and covers traffic through its INPUT
+chain. Docker-published ports need enforcement on Docker's forwarding path. If the proxy runs
+elsewhere, collect the security events there or arrange remote enforcement.
+
+The proxy examples assume a working installation. Nginx uses an existing TLS certificate and
+its example belongs in the `http {}` context; Caddy uses automatic HTTPS in public mode.
+Both replace client-supplied forwarding headers with the connecting client's address and support
+WebSockets. Use the official [Nginx](https://nginx.org/en/docs/) and
+[Caddy](https://caddyserver.com/docs/) documentation for proxy administration.
+
+#### Client IP handling with Cloudflare Tunnel
+
+**Direct to app:** preserve Cloudflare's `X-Forwarded-For` header. The app walks the chain from
+the trusted connector backwards to the first untrusted address. It ignores `CF-Connecting-IP`
+from loopback. Its trust list includes loopback, private networks and Cloudflare ranges, so
+restrict backend access to trusted callers.
+
+**Through Nginx/Caddy:** apply every `TUNNEL` change in the selected example. The private listener
+reads the local connector's `CF-Connecting-IP` and forwards a single visitor IP with HTTPS as
+the public scheme. Nginx needs `ngx_http_realip_module`; Caddy needs 2.8+ for
+`trusted_proxies_strict`. Merge Caddy's global block if necessary, keeping its `servers` address
+identical to the site's bind address and port. Use these settings only on the private Tunnel
+listener; the public proxy settings serve a different trust boundary.
+
+Avoid Cloudflare Pseudo IPv4 **Overwrite Headers** mode, which substitutes synthetic addresses
+for IPv6 visitors. Workers or other header-rewriting intermediaries need separate verification.
+
+#### Cloudflare ban action
+
+Use the Cloudflare API action for all Tunnel variants. Banning a visitor at the origin firewall
+cannot block traffic arriving through Cloudflare. The action ignores the jail's `port` and
+`protocol` settings and creates IP Access rules across the selected zone's proxied hostnames.
+It needs an API token that can list, create and delete these rules; the Tunnel connector token
+cannot be used for this purpose.
+
+Replace the jail's active `action = nftables[...]` line with `action = screentinker-cloudflare`.
+Install the wrapper and create a root-owned credential override:
+
+```bash
+sudo apt-get install curl jq
+sudo install -m 0644 scripts/logging/examples/fail2ban-cloudflare-action.conf /etc/fail2ban/action.d/screentinker-cloudflare.conf
+sudo touch /etc/fail2ban/action.d/screentinker-cloudflare.local
+sudo chown root:root /etc/fail2ban/action.d/screentinker-cloudflare.local
+sudo chmod 0600 /etc/fail2ban/action.d/screentinker-cloudflare.local
+sudoedit /etc/fail2ban/action.d/screentinker-cloudflare.local
+```
+
+Set the zone and API token in that local action file:
+
+```ini
+[Init]
+cfzone = YOUR_ZONE_ID
+cftoken = YOUR_API_TOKEN
+```
+
+The wrapper reuses the distribution's `cloudflare.conf`, including IPv4/IPv6 handling, and
+overrides `_cf_api_url` and `_cf_api_prms` for zone-scoped bearer authentication. Confirm your
+installed action supports those variables. Keep credentials out of the repository.
+
+The action also works with ordinary Cloudflare-proxied DNS. That deployment needs a public proxy
+that trusts only [Cloudflare's published ranges](https://www.cloudflare.com/ips/) and restricts
+origin access; the Tunnel examples' loopback trust settings do not apply.
+
+#### Verify and enable Fail2ban
+
+With the jail still disabled, send one failed login from another machine using deliberately
+false forwarding headers. Replace the URL with your public address:
+
+```bash
+curl -i https://signage.example.com/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -H 'X-Forwarded-For: 203.0.113.123' \
+  -H 'CF-Connecting-IP: 203.0.113.123' \
+  --data '{"email":"fail2ban-probe@example.invalid","password":"incorrect"}'
+```
+
+Confirm the security event contains the test machine's actual public IP, then check the filter:
+
+```bash
+sudo fail2ban-regex /var/log/screentinker/server.log /etc/fail2ban/filter.d/screentinker.conf
+```
+
+Set `enabled=true` in `/etc/fail2ban/jail.d/screentinker.local`, validate and reload:
+
+```bash
+sudo fail2ban-client -t
+sudo fail2ban-client reload
+sudo fail2ban-client status screentinker
+```
+
+From a controlled test address, reach the failure threshold and confirm a new HTTP request is
+blocked. For Cloudflare, also check the rule exists in the correct zone; a local ban status alone
+does not prove the API action succeeded. Test IPv6 if used. Existing WebSocket sessions may stay
+connected. Remove the test ban afterwards:
+
+```bash
+sudo fail2ban-client set screentinker unbanip TEST_SOURCE_IP
+```
+
+#### References
+
+- [Fail2ban filter development](https://github.com/fail2ban/fail2ban/blob/master/FILTERS)
+- [Nginx real-IP module](https://nginx.org/en/docs/http/ngx_http_realip_module.html)
+- [Caddy proxy headers](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers)
+- [Caddy trusted proxies](https://caddyserver.com/docs/caddyfile/options#trusted_proxies)
+- [Cloudflare visitor-IP headers](https://developers.cloudflare.com/fundamentals/reference/http-headers/)
+- [Cloudflare dashboard-managed Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/)
+- [Fail2ban Cloudflare action](https://github.com/fail2ban/fail2ban/blob/master/config/action.d/cloudflare.conf)
+- [Cloudflare IP Access Rules API](https://developers.cloudflare.com/api/resources/firewall/subresources/access_rules/methods/create/)
+
+### Docker and other process managers
+
+Configure log collection and retention through the process manager. Docker collects console
+output through `docker logs` or `docker compose logs`, independently of the systemd settings. Point Fail2ban at the collected source. The supplied filter expects plain
+application lines; Docker JSON wrappers require extraction or an adapted filter.
+
+---
+
 ## The served APK
 
 The file the OTA endpoint hands to Android displays. Two rules, both learned the hard way.
@@ -220,10 +464,14 @@ curl -s http://127.0.0.1:3001/api/status      # health, loop lag, connected disp
 Then, and this is the part people skip:
 
 - **Row counts match** what you recorded beforehand.
-- **The log is clean.** Migrations reported, no errors:
+- **The application log is clean.** Check migration output and startup errors at the configured
+  destination. Supplied native services write to `/var/log/screentinker/server.log`:
   ```bash
-  docker logs <container> 2>&1 | grep -iE 'migrat|error|exception'   # or journalctl -u <service>
+  sudo tail -n 200 /var/log/screentinker/server.log
   ```
+  For Docker Compose, use `docker compose logs --tail=200 screentinker`. For a standalone
+  container, use `docker logs --tail=200 CONTAINER` with its name or ID. Native services that
+  retain `StandardOutput=journal` use `journalctl -u SERVICE` instead.
 - **Check through your reverse proxy / CDN too**, not only on loopback. Cached or misrouted assets
   only show up from outside.
 

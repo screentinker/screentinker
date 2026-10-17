@@ -1,0 +1,13 @@
+# systemd keeps the descriptor open; copytruncate avoids restarting the service.
+# Like any copytruncate policy, a small copy/truncate window can lose new lines.
+/var/log/screentinker/server.log {
+    daily
+    maxsize 50M
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su root root
+}

@@ -247,6 +247,7 @@ const ALLOWED = {
   'lib/screen-share.js': 'inbound',
   'lib/oidc.js': 'inbound',              // net.isIP only; its requests go through lib/ai-fetch guardedFetch
   'lib/forwarded-client-ip.js': 'inbound', // net.isIP only
+  'lib/http-logging.js': 'inbound',        // net.isIP only
   'lib/view-access.js': 'inbound',         // net.isIP only
   'lib/private-ai.js': 'inbound',          // net.isIP only; its requests go through lib/ai-fetch
   'lib/site-cache/node.js': 'feature',     // the cache BOX (its own process): pulls from the origin it is enrolled with

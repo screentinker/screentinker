@@ -15,8 +15,11 @@ RestartSec=5
 # Restarting cannot fix that, so stop instead of looping.
 RestartPreventExitStatus=78
 Environment=NODE_ENV=production
-StandardOutput=journal
-StandardError=journal
+LogsDirectory=screentinker
+LogsDirectoryMode=0750
+UMask=0027
+StandardOutput=append:/var/log/screentinker/server.log
+StandardError=inherit
 SyslogIdentifier=remotedisplay
 
 [Install]

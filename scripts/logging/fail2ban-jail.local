@@ -1,0 +1,24 @@
+# Install as /etc/fail2ban/jail.d/screentinker.local; select/test the enforcement
+# action for your firewall/proxy topology before changing enabled to true.
+# One jail for all deployments; choose ONE action below. See docs/operations.md.
+[screentinker]
+enabled = false
+filter = screentinker
+logpath = /var/log/screentinker/server.log
+backend = auto
+usedns = no
+# Default app HTTP listener. Match these to the ports actually exposed publicly.
+# App TLS enabled: port = 3001,3443 (HTTP redirect + HTTPS), or your custom ports.
+# Public nginx/Caddy: use the proxy's listening ports (see docs/operations.md).
+# Caddy HTTP/3 also needs protocol = tcp,udp.
+port = 3001
+protocol = tcp
+findtime = 10m
+maxretry = 10
+bantime = 15m
+# Native/public nginx or Caddy on this host: requires nftables and the INPUT path.
+action = nftables[type=multiport, name=screentinker, port="%(port)s", protocol="%(protocol)s"]
+# Cloudflare Tunnel/proxied DNS: REPLACE the action above with this one after
+# installing examples/fail2ban-cloudflare-action.conf and its local credentials.
+# The Cloudflare action ignores port/protocol: its ban applies at the zone level.
+# action = screentinker-cloudflare

@@ -354,7 +354,7 @@ log "Installing base dependencies..."
 # dependency and the server falls back to Node's experimental built-in SQLite. On a platform with
 # no prebuild (32-bit ARM) the same toolchain compiles it from source instead.
 apt-get install -y -qq \
-    git curl wget unzip htop \
+    git curl wget unzip htop logrotate \
     python3 make g++ \
     avahi-daemon \
     fonts-liberation fonts-noto-color-emoji \
@@ -451,13 +451,18 @@ Environment=PORT=${SCREENTINKER_PORT}
 Environment=SELF_HOSTED=true
 Environment=HOST=0.0.0.0
 
-StandardOutput=journal
-StandardError=journal
+LogsDirectory=screentinker
+LogsDirectoryMode=0750
+UMask=0027
+StandardOutput=append:/var/log/screentinker/server.log
+StandardError=inherit
 SyslogIdentifier=screentinker-server
 
 [Install]
 WantedBy=multi-user.target
 EOF
+
+    install -m 0644 "$SCREENTINKER_DIR/scripts/logging/screentinker.logrotate" /etc/logrotate.d/screentinker
 
     systemctl daemon-reload
     systemctl enable screentinker-server.service
@@ -1003,13 +1008,15 @@ kiosk_logs() {
     fi
 }
 case "\${1:-server}" in
-    server) journalctl -u screentinker-server.service -f --no-hostname ;;
+    server) tail -n 200 -F /var/log/screentinker/server.log ;;
     kiosk)  kiosk_logs ;;
     all)    if systemctl list-unit-files 2>/dev/null | grep -q '^screentinker-kiosk.service'; then
-                journalctl -u screentinker-server.service -u screentinker-kiosk.service -f --no-hostname
+                tail -n 200 -F /var/log/screentinker/server.log &
+                SERVER_LOG_PID=\$!
+                trap 'kill "\$SERVER_LOG_PID" 2>/dev/null' EXIT
+                journalctl -u screentinker-kiosk.service -f --no-hostname
             else
-                echo "(kiosk log is a file on Desktop installs: \$KIOSK_LOG)"
-                journalctl -u screentinker-server.service -f --no-hostname
+                tail -n 200 -F /var/log/screentinker/server.log "\$KIOSK_LOG"
             fi ;;
     *)      echo "Usage: screentinker-logs [server|kiosk|all]" ;;
 esac
