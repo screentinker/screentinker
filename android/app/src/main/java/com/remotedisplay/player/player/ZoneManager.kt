@@ -43,6 +43,9 @@ class ZoneManager(
     private val handler = Handler(Looper.getMainLooper())
     private val zoneViews = mutableMapOf<String, View>()
     private val zoneExoPlayers = mutableMapOf<String, ExoPlayer>()
+    // A zone showing a fisheye camera as a normal view: its GL view and the view it is pointed at.
+    // Live only while that GL view is still the zone's view (zoneViews), see fisheyeViews().
+    private val zoneFisheye = mutableMapOf<String, Pair<FisheyeGlView, Fisheye.View>>()
     // A zone showing the screen's HDMI input holds a hardware session; released like an ExoPlayer.
     private val zoneLiveInputs = mutableMapOf<String, LiveInputPlayer>()
     // Per-zone rotation timers: each zone cycles its own list of assignments.
@@ -403,6 +406,8 @@ class ZoneManager(
                           else if (contentId != null) renderCache?.getCachedFile(contentId)?.let { Uri.fromFile(it).toString() }
                                ?: "$renderServerUrl/uploads/content/$filepath"
                           else { if (multi) scheduleZoneAdvance(zone.id, durationMs, advance); return }
+                // A fisheye camera (the item's `fisheye`) is drawn by a FisheyeGlView, not a PlayerView.
+                val fisheye = if (isLive) Fisheye.parse(a.optJSONObject("fisheye"))?.let { Fisheye.View(it, contentId) } else null
                 val playerView = (android.view.LayoutInflater.from(context)
                     .inflate(com.remotedisplay.player.R.layout.zone_player, null) as PlayerView).apply {
                     useController = false
@@ -442,8 +447,21 @@ class ZoneManager(
                     prepare()
                     playWhenReady = true
                 }
-                playerView.player = exoPlayer
-                addZoneView(zone, playerView); zoneExoPlayers[zone.id] = exoPlayer
+                if (fisheye != null) {
+                    val gl = FisheyeGlView(context).apply { layoutParams = params; view = fisheye }
+                    fisheye.onChange = { gl.redraw() }
+                    exoPlayer.addListener(object : Player.Listener {
+                        override fun onVideoSizeChanged(size: androidx.media3.common.VideoSize) {
+                            if (size.width > 0 && size.height > 0) gl.setImageSize(size.width, size.height)
+                        }
+                    })
+                    gl.onSurfaceReady = { surf -> if (surf != null && zoneExoPlayers[zone.id] === exoPlayer) exoPlayer.setVideoSurface(surf) }
+                    addZoneView(zone, gl); zoneExoPlayers[zone.id] = exoPlayer
+                    zoneFisheye[zone.id] = gl to fisheye
+                } else {
+                    playerView.player = exoPlayer
+                    addZoneView(zone, playerView); zoneExoPlayers[zone.id] = exoPlayer
+                }
                 zoneFaces[zone.id] = ZoneFace.VIDEO
                 // DWELL for a live stream in a rotating zone: it never fires STATE_ENDED, so advance on
                 // the dwell timer (duration_sec > 0). A dwell-0 stream stays until it is no longer the
@@ -807,9 +825,42 @@ class ZoneManager(
         }
     }
 
+    /**
+     * A payload whose assignments are otherwise unchanged may carry new saved fisheye settings (the
+     * camera's Edit dialog, read at send time on the server): give each fisheye zone showing that
+     * camera its new view without restarting the stream.
+     */
+    fun updateFisheye(assignments: org.json.JSONArray) {
+        for (i in 0 until assignments.length()) {
+            val a = assignments.optJSONObject(i) ?: continue
+            val cid = a.optString("content_id")
+            if (cid.isEmpty()) continue
+            val zid = a.optString("zone_id")
+            val f = Fisheye.parse(a.optJSONObject("fisheye")) ?: continue
+            val (gl, view) = zoneFisheye[zid] ?: continue
+            if (zoneViews[zid] !== gl || view.contentId != cid) continue
+            if (view.saved != f) view.resave(f)
+        }
+    }
+
+    /** The fisheye cameras on screen in zones right now (for camera_view). */
+    fun fisheyeViews(): List<Fisheye.View> =
+        zoneFisheye.filter { (id, p) -> zoneViews[id] === p.first }.map { it.value.second }
+
+    /** The fisheye camera under screen point (x, y) and the view drawing it, for touch; null if none. */
+    fun fisheyeAt(x: Float, y: Float): Pair<Fisheye.View, View>? {
+        val loc = IntArray(2)
+        return zoneFisheye.entries.filter { (id, p) -> zoneViews[id] === p.first }.firstOrNull { (_, p) ->
+            val v = p.first
+            v.getLocationOnScreen(loc)
+            x >= loc[0] && x < loc[0] + v.width && y >= loc[1] && y < loc[1] + v.height
+        }?.value?.let { it.second to it.first }
+    }
+
     private fun releaseExoPlayers() {
         zoneExoPlayers.values.forEach { it.release() }
         zoneExoPlayers.clear()
+        zoneFisheye.clear()
         zoneLiveInputs.values.forEach { it.release() }
         zoneLiveInputs.clear()
     }

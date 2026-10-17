@@ -36,4 +36,17 @@ class RtspUrlTest {
         assertEquals("rtsp://user@cam/s", RtspUrl.redact("rtsp://user@cam/s"))
         assertEquals("null", RtspUrl.redact(null))
     }
+
+    @Test fun `logs never carry a share token`() {
+        assertEquals("rtsps://192.168.1.10:7441/***?enableSrtp", RtspUrl.redact("rtsps://192.168.1.10:7441/Ab12Cd34Ef56Gh78?enableSrtp"))
+        assertEquals("rtsp://cam/h264Preview_01_main", RtspUrl.redact("rtsp://cam/h264Preview_01_main"))
+        assertEquals("rtsp://cam/Streaming/Channels/101", RtspUrl.redact("rtsp://cam/Streaming/Channels/101"))
+    }
+
+    @Test fun `enableSrtp is dropped, media3 has no SRTP and the TLS connection already encrypts`() {
+        assertEquals("rtsps://10.0.0.5:7441/tok", RtspUrl.withoutSrtp("rtsps://10.0.0.5:7441/tok?enableSrtp"))
+        assertEquals("rtsps://h/t?a=1&b=2", RtspUrl.withoutSrtp("rtsps://h/t?a=1&enableSrtp=true&b=2"))
+        assertEquals("rtsps://h/t?a=1", RtspUrl.withoutSrtp("rtsps://h/t?a=1&ENABLESRTP"))
+        assertEquals("rtsps://h/t", RtspUrl.withoutSrtp("rtsps://h/t"))
+    }
 }

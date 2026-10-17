@@ -9,6 +9,7 @@ import json
 from dataclasses import dataclass, field
 
 from . import transitions
+from ..logic import fisheye as fisheye_logic
 
 BUNDLE_MIME = "application/vnd.screentinker.bundle+zip"
 LIVE_MIMES = ("video/hls", "video/rtsp")
@@ -50,6 +51,8 @@ class Item:
     play_to_end: bool = False
     # An rtsps:// camera whose certificate is self-signed: skip the certificate check (logic/rtsp_tls).
     tls_self_signed: bool = False
+    # A fisheye camera shown as a normal view: its normalized settings (logic/fisheye.py), or None.
+    fisheye: dict = None
     zone_id: str = None
     transition: dict = None
     audio: dict = None
@@ -75,6 +78,7 @@ class Item:
             enabled=_i(o.get("enabled"), 1) == 1 if not isinstance(o.get("enabled"), bool) else o.get("enabled"),
             remote_url=_s(o.get("remote_url")),
             tls_self_signed=_i(o.get("tls_self_signed")) == 1 if not isinstance(o.get("tls_self_signed"), bool) else o.get("tls_self_signed"),
+            fisheye=fisheye_logic.normalize(o.get("fisheye")) if o.get("mime_type") in LIVE_MIMES else None,
             muted=_i(o.get("muted")) == 1 if not isinstance(o.get("muted"), bool) else o.get("muted"),
             widget_id=_s(o.get("widget_id")),
             widget_rev=_i(o.get("widget_rev")),
@@ -132,6 +136,9 @@ class Item:
         # Whether an rtsps camera's certificate is checked changes how it connects; appended only
         # when set, so no existing signature changes (Android's sig() does the same).
         tls = "|tls-self-signed" if self.tls_self_signed else ""
+        # A saved fisheye view or setting changed: appended only when set, like the flag above.
+        if self.fisheye:
+            tls += "|fisheye:" + json.dumps(self.fisheye, sort_keys=True)
         return "|".join([
             self.content_id, self.widget_id or "", self.mime_type, self.remote_url or "",
             str(self.widget_rev), "m" if self.muted else "", ";".join(blocks),
@@ -152,7 +159,8 @@ class Item:
         otherwise. A change re-connects a stream that is on screen (controller.set_playlist)."""
         if not self.is_live:
             return None
-        return "%s|%s|%s" % (self.remote_url or "", self.mime_type, "self-signed" if self.tls_self_signed else "verify")
+        return "%s|%s|%s%s" % (self.remote_url or "", self.mime_type, "self-signed" if self.tls_self_signed else "verify",
+                               "|" + json.dumps(self.fisheye, sort_keys=True) if self.fisheye else "")
 
 
 def slot_ms(item):

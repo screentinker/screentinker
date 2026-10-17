@@ -67,6 +67,12 @@ const ALLOWED_COMMANDS = Object.freeze([
   'http_request',
   // Diagnostic log upload for embedded and fielded devices (#3 / mcu#9)
   'upload_logs',
+  /*
+   * Steer a fisheye camera on the screen (lib/fisheye.js): pan / tilt / zoom of the view cut from the
+   * circle, or reset to the item's saved view. Live only, never queued: a view sent to a screen that
+   * is off is stale by the time it is back.
+   */
+  'camera_view',
 ]);
 
 /*
@@ -292,6 +298,9 @@ function deliverCommand(deviceNs, device, type, payload, opts = {}) {
     } catch (e) { /* fall through to the queue */ }
   }
 
+  // A camera view is live steering: stale the moment the screen is gone, so never queued.
+  if (type === 'camera_view') return { status: 'offline' };
+
   /*
    * Offline: try to queue. Lazily required so that reverting the queue commit cannot break this
    * one — a MODULE_NOT_FOUND on the first attempt is cached by Node's loader, which gives a
@@ -354,6 +363,18 @@ function validateCommand(type, payload) {
         return { ok: false, error: 'http_request: timeout_ms must be between 1 and 120000' };
       }
     }
+    return { ok: true };
+  }
+
+  if (type === 'camera_view') {
+    const p = payload || {};
+    if (typeof p.content_id !== 'string' || !p.content_id) return { ok: false, error: 'camera_view requires payload.content_id' };
+    for (const k of ['pan', 'tilt', 'zoom']) {
+      if (p[k] !== undefined && (typeof p[k] !== 'number' || !Number.isFinite(p[k]))) {
+        return { ok: false, error: `camera_view: ${k} must be a number` };
+      }
+    }
+    if (p.reset !== undefined && typeof p.reset !== 'boolean') return { ok: false, error: 'camera_view: reset must be true or false' };
     return { ok: true };
   }
 

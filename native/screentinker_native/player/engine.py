@@ -26,6 +26,8 @@ from PySide6.QtCore import QTimer
 from ..logic import bundle_skip as BS
 from ..logic import kiosk as kiosk_logic
 from ..logic import playlist_logic as PL
+from ..logic import fisheye as fisheye_logic
+from ..logic import rtsp_relay
 from ..logic import rtsp_tls
 from ..logic import schedule_eval
 from ..logic import wall_zones as wz
@@ -311,8 +313,8 @@ class PlaybackEngine:
         self.main_item = None
         self.token_seq = 0
         self.tokens = {}                   # token -> (surface, Item)
-        self.surface_token = {}            # surface -> the token last rendered there (rtsps check)
-        self.tls_ok = {}                   # rtsps URL -> when its certificate last passed
+        self.surface_token = {}            # surface -> the token last rendered there (rtsps relay)
+        self.fisheye_views = {}            # surface -> logic.fisheye.View of the fisheye camera there
         self.acked = set()
         self.orientation = None
         self.wall = None                   # {'id','leader','group':bool}
@@ -672,41 +674,89 @@ class PlaybackEngine:
         if tr:
             d["transition"] = tr
         self.surface_token[surface] = tok
-        if it.is_live and rtsp_tls.needs_check(it.remote_url, it.tls_self_signed) and not self._tls_fresh(it.remote_url):
-            self._check_camera_then_show(surface, tok, d, it.remote_url)
+        self._attach_fisheye(surface, it, d)
+        if it.is_live and rtsp_tls.is_rtsps(it.remote_url):
+            self._relay_camera_then_show(surface, tok, d, it)
             return tok
         self.stage.showItem.emit(surface, d)
         return tok
 
-    # A camera whose certificate passed is not re-checked for this long (an item re-shown every
-    # dwell, a zone advancing back to it). A failure is never cached: the retry checks again.
-    TLS_OK_FOR_S = 600
+    def _attach_fisheye(self, surface, it, d):
+        """A fisheye camera (the item's `fisheye`, logic/fisheye.py) is drawn as a normal view by a
+        ShaderEffect in Slot.qml. Its live view is kept per surface for camera_view and touch. Without
+        a shader backend or qsb the picture is shown as it comes, the circle, rather than not at all."""
+        if not (it.is_live and it.fisheye):
+            self.fisheye_views.pop(surface, None)
+            return
+        qsb = self.shaders.bake_fragment("fisheye", fisheye_logic.FRAGMENT_440)
+        if not qsb:
+            self.fisheye_views.pop(surface, None)
+            log.warning("fisheye view unavailable (no shader baker): showing the camera as it comes")
+            return
+        view = fisheye_logic.View(it.fisheye, it.content_id)
+        self.fisheye_views[surface] = view
+        d["fisheye"] = dict(view.qml(), qsb=pathlib.Path(qsb).as_uri())
 
-    def _tls_fresh(self, url):
-        at = self.tls_ok.get(url)
-        return at is not None and time.monotonic() - at < self.TLS_OK_FOR_S
+    def camera_view(self, p):
+        """The camera_view command: point every fisheye camera on screen showing p['content_id'] (all
+        of them when it is absent), or put it back on its saved view."""
+        cid = (p or {}).get("content_id")
+        num = lambda k: p.get(k) if isinstance(p.get(k), (int, float)) and not isinstance(p.get(k), bool) else None
+        for surface, view in list(self.fisheye_views.items()):
+            if cid and view.content_id and cid != view.content_id:
+                continue
+            if p.get("reset") is True:
+                view.reset()
+            else:
+                view.set(num("pan"), num("tilt"), num("zoom"))
+            self.stage.control.emit(surface, {"fisheye": view.qml()})
 
-    def _check_camera_then_show(self, surface, tok, d, url):
-        """rtsps without tls_self_signed: check the camera's certificate (logic/rtsp_tls) on a worker
-        thread, and give Qt the URL only if it passes. FFmpeg would otherwise accept any certificate
-        and send the camera's credentials to whoever answered."""
+    def on_fisheye_touch(self, surface, detail):
+        """Touch on a fisheye camera (Slot.qml, only when the item allows it): "drag dx dy aspect",
+        "pinch scale" or "reset"."""
+        view = self.fisheye_views.get(surface)
+        if view is None or not view.saved.get("touch"):
+            return
+        parts = (detail or "").split()
+        try:
+            if parts[0] == "drag":
+                view.drag(float(parts[1]), float(parts[2]), float(parts[3]))
+            elif parts[0] == "pinch":
+                view.pinch(float(parts[1]))
+            elif parts[0] == "reset":
+                view.reset()
+            else:
+                return
+        except (IndexError, ValueError):
+            return
+        self.stage.control.emit(surface, {"fisheye": view.qml()})
+
+    def _relay_camera_then_show(self, surface, tok, d, it):
+        """rtsps: Qt is never given the camera's URL, because FFmpeg would accept any certificate and
+        send the camera's login to whoever answered. The TLS connection is made here on a worker
+        thread (certificate checked unless the item is tls_self_signed) and handed to Qt as plain
+        RTSP on loopback (logic/rtsp_relay.py), so the checked connection is the one that plays."""
         self.stage.clearSurface.emit(surface)
+        relay = rtsp_relay.RtspsRelay(it.remote_url, it.tls_self_signed)
 
         def work():
-            ok, why = rtsp_tls.verify(url)
-            self.app.on_ui(lambda: done(ok, why))
+            try:
+                local, why = relay.open(), ""
+            except (rtsp_tls.CameraTlsError, OSError) as e:
+                local, why = None, str(e)
+            self.app.on_ui(lambda: done(local, why))
 
-        def done(ok, why):
+        def done(local, why):
             if self.surface_token.get(surface) != tok:
-                return                                    # something else is on that surface now
-            if ok:
-                self.tls_ok[url] = time.monotonic()
-                self.stage.showItem.emit(surface, d)
+                relay.close()                             # something else is on that surface now
+                return
+            if local:
+                self.stage.showItem.emit(surface, dict(d, source=local))
             else:
-                log.warning("camera %s refused: %s", rtsp_tls.redact(url), why)
+                log.warning("camera %s refused: %s", rtsp_tls.redact(it.remote_url), why)
                 self.on_slot_event(surface, tok, "failed", why)
 
-        threading.Thread(target=work, name="rtsps-check", daemon=True).start()
+        threading.Thread(target=work, name="rtsps-connect", daemon=True).start()
 
     def _on_item_changed(self, it):
         self.app.hide_status()
@@ -756,6 +806,9 @@ class PlaybackEngine:
             self.stage.clearSurface.emit(sid)
 
     def on_slot_event(self, surface, token, event, detail):
+        if event == "fisheye_touch":
+            self.on_fisheye_touch(surface, detail)
+            return
         if event == "bundle_skip":
             # #649: honoured only with the skip token of THIS render, from a layout zone or the main
             # surface; never on wall zones (the shared clock) or the trigger overlay.
@@ -1088,8 +1141,9 @@ class PlaybackEngine:
         d["token"] = tok
         zs.token = tok
         self.surface_token[zs.sid] = tok
-        if it.is_live and rtsp_tls.needs_check(it.remote_url, it.tls_self_signed) and not self._tls_fresh(it.remote_url):
-            self._check_camera_then_show(zs.sid, tok, d, it.remote_url)   # same rule as render()
+        self._attach_fisheye(zs.sid, it, d)
+        if it.is_live and rtsp_tls.is_rtsps(it.remote_url):
+            self._relay_camera_then_show(zs.sid, tok, d, it)   # same rule as render()
             return tok
         # Surface.show loads into the back slot and reveals once it has a frame: a buffered swap.
         self.stage.showItem.emit(zs.sid, d)

@@ -110,3 +110,14 @@ test('a browser player gets neither camera', () => {
   const got = ids('dev-web');
   assert.ok(!got.includes('cam-plain') && !got.includes('cam-tls'));
 });
+
+// ------------------------------------------------------------------ live dwell on edit (source)
+
+test('editing a playlist item accepts dwell 0 on every live type, not just HLS', () => {
+  const src = readF('server/routes/playlists.js');
+  const i = src.indexOf('accepts dwell 0 ("stay until skipped")');
+  assert.ok(i > 0, 'the edit-path comment moved');
+  const block = src.slice(i, i + 900);
+  assert.match(block, /LIVE_MIMES\.includes/, 'the edit path uses the shared live list');
+  assert.doesNotMatch(block, /mime_type = 'video\/hls'/, 'no HLS-only check');
+});

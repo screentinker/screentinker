@@ -65,6 +65,7 @@ Item {
         if (cmd.loop !== undefined) s.setLoop(cmd.loop)
         if (cmd.pause !== undefined) s.pauseMedia(cmd.pause)
         if (cmd.js !== undefined) s.runJs(cmd.js)
+        if (cmd.fisheye !== undefined) s.setFisheye(cmd.fisheye)
     }
 
     function reveal(slot) {
@@ -98,6 +99,7 @@ Item {
         onBundleSkip: function(detail) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "bundle_skip", detail) }
         onFailed: function(msg) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "failed", msg) }
         onPosition: function(p, d) { if (front) stage.slotPosition(surface.surfaceId, item ? item.token : "", p, d) }
+        onFisheyeTouch: function(detail) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "fisheye_touch", detail) }
     }
     Slot {
         id: slotB
@@ -111,6 +113,7 @@ Item {
         onBundleSkip: function(detail) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "bundle_skip", detail) }
         onFailed: function(msg) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "failed", msg) }
         onPosition: function(p, d) { if (front) stage.slotPosition(surface.surfaceId, item ? item.token : "", p, d) }
+        onFisheyeTouch: function(detail) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "fisheye_touch", detail) }
     }
 
     TransitionRunner { id: transition; anchors.fill: parent; z: 2 }

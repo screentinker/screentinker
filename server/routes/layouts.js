@@ -534,6 +534,18 @@ router.put('/device/:deviceId', (req, res) => {
 
   db.prepare("UPDATE devices SET layout_id = ?, updated_at = strftime('%s','now') WHERE id = ?")
     .run(layout_id || null, req.params.deviceId);
+  /*
+   * Tell the screen. This only wrote the row: the dashboard said "Layout applied" and the screen kept
+   * its old layout until it next reconnected or its playlist changed for another reason. Same
+   * best-effort push as the other device writes (routes/devices.js); the DB stays the source of truth.
+   */
+  try {
+    const io = req.app.get('io');
+    if (io) {
+      const { buildPlaylistPayload } = require('../ws/deviceSocket');
+      require('../lib/command-queue').queueOrEmitPlaylistUpdate(io.of('/device'), req.params.deviceId, buildPlaylistPayload);
+    }
+  } catch (e) { /* the push is best-effort */ }
   res.json({ success: true });
 });
 

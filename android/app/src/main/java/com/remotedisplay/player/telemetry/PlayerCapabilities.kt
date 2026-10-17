@@ -57,6 +57,9 @@ object PlayerCapabilities {
                 // tls_self_signed (player/RtspSources.kt). Separate so the server never sends rtsps
                 // to a 3.0.1 player, which would open it as plain RTSP.
                 "playback.rtsps",
+                // A fisheye camera shown as a normal 16:9 view, steered by camera_view and touch
+                // (player/FisheyeGlView.kt). Full-screen items; zones show the circle as it comes.
+                "playback.fisheye",
                 "playback.zones", "playback.transitions", "playback.pip",
                 // 3.0 campaigns: a playlist whose items are whole layouts (player/CampaignPlayer.kt).
                 // In no server baseline: an older APK gets the plain fallback list instead.

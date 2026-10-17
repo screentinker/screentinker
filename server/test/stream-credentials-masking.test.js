@@ -154,3 +154,72 @@ test('the middleware leaves a device-token request (the screen itself) unmasked'
   assert.ok(run({ device: { id: 'd1' }, app: null }).includes(SECRET), 'the screen gets the real URL');
   assert.ok(!run({ app: null }).includes(SECRET), 'everyone else gets the mask');
 });
+
+// ------------------------------------------------------------------ passwords stored as typed
+
+test('a password holding a quote, an apostrophe, a space or an @ is masked whole', () => {
+  const { maskDeep } = require('../middleware/mask-stream-credentials');
+  for (const pw of [`ab"cd`, `it's-me`, 'two words', 'p@ss@word', 'back\\slash']) {
+    const url = `rtsp://admin:${pw}@10.0.0.5:554/stream1`;
+    const body = { remote_url: url, items: [{ remote_url: url }] };
+    const text = JSON.stringify(maskDeep(body));
+    assert.ok(!text.includes(JSON.stringify(pw).slice(1, -1)), `password ${JSON.stringify(pw)} leaked: ${text}`);
+    assert.equal(maskDeep(body).remote_url, `rtsp://admin:${CREDENTIAL_MASK}@10.0.0.5:554/stream1`);
+  }
+});
+
+test('JSON put into a string (an MCP tool result) is masked inside and stays valid JSON', () => {
+  const { maskDeep } = require('../middleware/mask-stream-credentials');
+  const inner = { content: [{ remote_url: `rtsps://v:it"s ${SECRET}@cam:7441/x` }], email: 'a@b.example' };
+  const out = maskDeep({ result: { content: [{ type: 'text', text: JSON.stringify(inner, null, 2) }] } });
+  const text = out.result.content[0].text;
+  assert.ok(!text.includes(SECRET));
+  const back = JSON.parse(text);
+  assert.equal(back.content[0].remote_url, `rtsps://v:${CREDENTIAL_MASK}@cam:7441/x`);
+  assert.equal(back.email, 'a@b.example', 'nothing next to the URL is touched');
+});
+
+test('the middleware masks a stored-as-typed password end to end', async () => {
+  const pw = `q"uote d'pw`;
+  const r = await jfetch('/api/content/hls', post(S.jwt, { url: `rtsp://admin:${pw}@10.0.0.6/live`, name: 'Odd password' }));
+  assert.equal(r.status, 201, r.text);
+  assert.equal(stored(r.body.id).remote_url, `rtsp://admin:${pw}@10.0.0.6/live`, 'stored as typed');
+  assert.equal(r.body.remote_url, `rtsp://admin:${CREDENTIAL_MASK}@10.0.0.6/live`);
+  const list = await jfetch('/api/content', auth(S.jwt));
+  assert.ok(!list.text.includes('uote'), 'the library list leaks part of the password');
+});
+
+// ------------------------------------------------------------------ share tokens in the path (UniFi)
+
+const UNIFI_TOKEN = 'Ab12Cd34Ef56Gh78';
+
+test('a UniFi share token in the path is a secret: masked, and never the default name', async () => {
+  const ru = require('../lib/remote-url');
+  assert.ok(ru.isSecretPathSegment(UNIFI_TOKEN));
+  for (const seg of ['stream1', 'h264Preview_01_main', 'Streaming', 'realmonitor', 'cam', 'abcdefghijklmnopqr', '101']) {
+    assert.ok(!ru.isSecretPathSegment(seg), `${seg} is a path people type, not a token`);
+  }
+  const r = await jfetch('/api/content/hls', post(S.jwt, { url: `rtsps://192.168.1.10:7441/${UNIFI_TOKEN}?enableSrtp`, tls_self_signed: true }));
+  assert.equal(r.status, 201, r.text);
+  assert.ok(!r.text.includes(UNIFI_TOKEN), 'the token is in the add reply');
+  assert.equal(r.body.remote_url, `rtsps://192.168.1.10:7441/${CREDENTIAL_MASK}?enableSrtp`);
+  assert.equal(r.body.filename, '192.168.1.10', 'named from the host, not the token');
+  S.unifi = r.body.id;
+  assert.equal(stored(S.unifi).remote_url, `rtsps://192.168.1.10:7441/${UNIFI_TOKEN}?enableSrtp`, 'the screen still needs it');
+  const list = await jfetch('/api/content', auth(S.jwt));
+  assert.ok(!list.text.includes(UNIFI_TOKEN), 'the library list leaks the token');
+});
+
+test('an edit that keeps the masked token on the same camera keeps the stored token', async () => {
+  const r = await jfetch('/api/content/' + S.unifi, put(S.jwt, { remote_url: `rtsps://192.168.1.10:7441/${CREDENTIAL_MASK}` }));
+  assert.equal(r.status, 200, r.text);
+  assert.equal(stored(S.unifi).remote_url, `rtsps://192.168.1.10:7441/${UNIFI_TOKEN}`);
+  const moved = await jfetch('/api/content/' + S.unifi, put(S.jwt, { remote_url: `rtsps://203.0.113.9:7441/${CREDENTIAL_MASK}` }));
+  assert.equal(moved.status, 400, 'the masked token cannot be sent to another host');
+  assert.equal(stored(S.unifi).remote_url, `rtsps://192.168.1.10:7441/${UNIFI_TOKEN}`, 'unchanged');
+});
+
+test('a new stream added with the masked token is refused (the stars are not a token)', async () => {
+  const r = await jfetch('/api/content/hls', post(S.jwt, { url: `rtsps://192.168.1.10:7441/${CREDENTIAL_MASK}` }));
+  assert.equal(r.status, 400, r.text);
+});

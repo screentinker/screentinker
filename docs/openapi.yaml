@@ -1842,7 +1842,8 @@ paths:
                          set_time, set_timezone, status_bar, block_uninstall, unblock_uninstall,
                          shell, install_apk,
                          set_volume, set_brightness, set_system_brightness, set_screen_timeout,
-                         set_server_url, set_power_schedule, http_request, upload_logs]
+                         set_server_url, set_power_schedule, http_request, upload_logs,
+                         camera_view]
                   # ⚠️ http_request answers with an `id` alongside status. The result arrives
                   # separately, tagged with that id — it is how a caller matches an answer to its
                   # own request when more than one is in flight to the same screen.
@@ -1926,7 +1927,8 @@ paths:
                          set_time, set_timezone, status_bar, block_uninstall, unblock_uninstall,
                          shell, install_apk,
                          set_volume, set_brightness, set_system_brightness, set_screen_timeout,
-                         set_server_url, set_power_schedule, http_request, upload_logs]
+                         set_server_url, set_power_schedule, http_request, upload_logs,
+                         camera_view]
                   # ⚠️ http_request answers with an `id` alongside status. The result arrives
                   # separately, tagged with that id — it is how a caller matches an answer to its
                   # own request when more than one is in flight to the same screen.

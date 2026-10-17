@@ -16,6 +16,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -1131,6 +1132,8 @@ class MainActivity : AppCompatActivity() {
                         zoneManager?.lastAssignmentSig = assignmentSig
                     }
                 } else {
+                    // A saved fisheye view is applied in place: the camera keeps streaming.
+                    handler.post { zoneManager?.updateFisheye(assignments) }
                     Log.i("MainActivity", "Multi-zone unchanged, skipping")
                 }
             } else {
@@ -1473,6 +1476,18 @@ class MainActivity : AppCompatActivity() {
                 "refresh" -> {
                     wsService?.connect()
                 }
+                // A fisheye camera on screen: point its view (pan / tilt / zoom) or go back to the
+                // item's saved view. Only the camera the dashboard is steering: a content_id that is
+                // not the one on screen is ignored.
+                "camera_view" -> runOnUiThread {
+                    val cid = payload?.optString("content_id").orEmpty()
+                    val views = listOfNotNull(mediaPlayer.fisheyeView) + (zoneManager?.fisheyeViews() ?: emptyList())
+                    for (v in views) {
+                        if (cid.isNotEmpty() && v.contentId != null && cid != v.contentId) continue
+                        if (payload?.optBoolean("reset", false) == true) v.reset()
+                        else v.set(payload?.numOrNull("pan"), payload?.numOrNull("tilt"), payload?.numOrNull("zoom"))
+                    }
+                }
                 // #160 Track-A system control — NO device owner required. All best-effort (no-op if
                 // unsupported at this panel's tier). Tier 0: media volume + per-window brightness.
                 "set_volume" -> {
@@ -1656,7 +1671,8 @@ class MainActivity : AppCompatActivity() {
             Log.i("MainActivity", "Playing remote content: ${com.remotedisplay.player.player.RtspUrl.redact(item.remoteUrl)}")
             if (item.mimeType.startsWith("video/")) {
                 applyVideoTurn(item)
-                mediaPlayer.playVideoFromUrl(item.remoteUrl!!, item.muted, item.tlsSelfSigned) // remote video: plain (no wipe)
+                mediaPlayer.playVideoFromUrl(item.remoteUrl!!, item.muted, item.tlsSelfSigned,
+                    item.fisheye?.let { com.remotedisplay.player.player.Fisheye.View(it, item.contentId) }) // remote video: plain (no wipe)
             } else if (item.mimeType.startsWith("image/")) {
                 mediaPlayer.showImageFromUrl(item.remoteUrl!!, item.transition)
             }
@@ -1772,7 +1788,11 @@ class MainActivity : AppCompatActivity() {
     private fun zoneAssignmentSig(assignments: org.json.JSONArray): String =
         (0 until assignments.length()).map { i ->
             val a = assignments.getJSONObject(i)
-            "${a.optString("content_id")}:${a.optString("zone_id")}:${a.optString("widget_id")}:${a.optLong("widget_rev", 0L)}"
+            // A live item's URL and certificate rule decide how it connects: an edit must reconnect it
+            // (the full-screen path does this through liveConnectionOf). Appended only when set.
+            "${a.optString("content_id")}:${a.optString("zone_id")}:${a.optString("widget_id")}:${a.optLong("widget_rev", 0L)}" +
+                (if (a.optString("mime_type") == "video/rtsp" || a.optString("mime_type") == "video/hls")
+                    ":${a.optString("remote_url")}" + (if (a.optInt("tls_self_signed", 0) == 1) ":tls-self-signed" else "") else "")
         }.sorted().joinToString("|")
 
     private fun zoneGeometrySig(layoutZones: org.json.JSONArray): String =
@@ -1990,6 +2010,54 @@ class MainActivity : AppCompatActivity() {
         w?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
         w?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
         focus?.requestFocus()
+    }
+
+    /*
+     * Touch steering of a fisheye camera (Fisheye.View): drag to pan / tilt, pinch to zoom, double-tap
+     * for the saved view. Only on a fisheye camera that is on screen (full screen, or the zone under
+     * the finger) AND whose settings allow touch (off unless the operator turned it on); every other
+     * touch goes where it always went. The camera is picked when the finger goes down.
+     */
+    private var touchFisheye: Pair<com.remotedisplay.player.player.Fisheye.View, View>? = null
+
+    private val fisheyeGestures by lazy {
+        android.view.GestureDetector(this, object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
+                val (v, on) = touchFisheye ?: return false
+                // dx/dy are the distance scrolled (previous minus current), so the finger moved -dx.
+                v.drag(-dx.toDouble() / on.width.coerceAtLeast(1), -dy.toDouble() / on.height.coerceAtLeast(1))
+                return true
+            }
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                touchFisheye?.first?.reset() ?: return false
+                return true
+            }
+        })
+    }
+    private val fisheyePinch by lazy {
+        android.view.ScaleGestureDetector(this, object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(d: android.view.ScaleGestureDetector): Boolean {
+                touchFisheye?.first?.pinch(d.scaleFactor.toDouble()) ?: return false
+                return true
+            }
+        })
+    }
+
+    /** The touch-enabled fisheye camera under (x, y), and the view it is drawn in. */
+    private fun fisheyeUnder(x: Float, y: Float): Pair<com.remotedisplay.player.player.Fisheye.View, View>? {
+        if (::mediaPlayer.isInitialized) mediaPlayer.fisheyeView?.takeIf { it.saved.touch }?.let { return it to window.decorView }
+        return zoneManager?.fisheyeAt(x, y)?.takeIf { it.first.saved.touch }
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) touchFisheye = fisheyeUnder(ev.rawX, ev.rawY)
+        if (touchFisheye != null) {
+            fisheyePinch.onTouchEvent(ev)
+            fisheyeGestures.onTouchEvent(ev)
+            return true
+        }
+        return super.dispatchTouchEvent(ev)
     }
 
     private fun showPinDialog() {
@@ -2462,3 +2530,7 @@ class MainActivity : AppCompatActivity() {
         const val CACHE_SWEEP_EVERY_MS = 30L * 60 * 1000
     }
 }
+
+/** A JSON number, or null when the key is absent or not a finite number. */
+private fun org.json.JSONObject.numOrNull(key: String): Double? =
+    if (has(key) && !isNull(key)) optDouble(key, Double.NaN).takeIf { it.isFinite() } else null

@@ -45,6 +45,11 @@ const CAPABILITIES = [
    * Separate from playback.rtsp because a 3.0.1 player declares rtsp and would open an rtsps URL
    * as plain RTSP. In no baseline. */
   'playback.rtsps',
+  /* A fisheye (360°) camera item shown as a normal 16:9 view, re-projected on the GPU from the item's
+   * `fisheye` settings (lib/fisheye.js), and steered live by the camera_view command. A player
+   * without it shows the fisheye circle as it comes. Android (a media3 video effect) and the native
+   * player (a Qt shader) declare it. In no baseline. */
+  'playback.fisheye',
   /* The screen's own HDMI INPUT played as an item (mime video/hdmi-in, remote_url hdmi://<port>):
    * a cable box or console plugged into a Fire TV Cube / Android TV box with HDMI in. Declared by
    * the native Android player ONLY when it found an HDMI passthrough input on this device at
@@ -799,6 +804,8 @@ const COMMAND_CAPABILITY = {
 
   // audio
   set_volume: 'audio.volume',
+  // Steer a fisheye camera's view live (lib/fisheye.js).
+  camera_view: 'playback.fisheye',
 
   // system control (#160 Track-A)
   set_brightness: 'display.brightness',       // per-window overlay dim (Tier 0)

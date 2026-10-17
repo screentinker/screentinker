@@ -654,6 +654,10 @@ class App:
         self.power.note_manual_screen_on()
         self.set_blank(False, reason="manual")
 
+    def _cmd_camera_view(self, p):
+        # A fisheye camera on screen: point its view, or back to the saved one (player/engine.py).
+        self.engine.camera_view(p or {})
+
     def _cmd_screen_off(self, p):
         self.power.note_manual_screen_off()
         self.set_blank(True, reason="manual")

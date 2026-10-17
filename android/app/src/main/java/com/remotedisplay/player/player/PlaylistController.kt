@@ -53,6 +53,8 @@ data class PlaylistItem(
     val videoPrerotated: Boolean = false,
     // An rtsps:// camera whose certificate is self-signed: skip the certificate check (RtspSources).
     val tlsSelfSigned: Boolean = false,
+    // A fisheye camera shown as a normal view, and its saved view (Fisheye, FisheyeGlView).
+    val fisheye: Fisheye.Settings? = null,
     /* Slide voiceover + deck music bed. Metadata on the ITEM, not inside the slide document — a
      * player that only renders the widget iframe makes no sound, which is why this exists. */
     val slideAudio: SlideAudio? = null,
@@ -444,6 +446,7 @@ class PlaylistController(
                     enabled = obj.optInt("enabled", 1) == 1,
                     remoteUrl = if (obj.isNull("remote_url")) null else obj.optString("remote_url", "").ifEmpty { null },
                     tlsSelfSigned = obj.optInt("tls_self_signed", 0) == 1,
+                    fisheye = Fisheye.parse(obj.optJSONObject("fisheye")),
                     muted = obj.optInt("muted", 0) == 1,
                     widgetId = if (obj.isNull("widget_id")) null else obj.optString("widget_id", "").ifEmpty { null },
                     widgetRev = obj.optLong("widget_rev", 0L),
@@ -505,7 +508,9 @@ class PlaylistController(
             "|" + it.tags.joinToString(",") + "|" + (it.meta?.toString() ?: "") +
             // Whether an rtsps camera's certificate is checked changes how the stream connects, so a
             // flip must restart it; appended only when set, so no existing signature changes.
-            (if (it.tlsSelfSigned) "|tls-self-signed" else "")
+            (if (it.tlsSelfSigned) "|tls-self-signed" else "") +
+            // A saved fisheye view or setting changed: appended only when set, like the flag above.
+            (it.fisheye?.let { f -> "|fisheye:$f" } ?: "")
         // Compared BEFORE items is replaced: an alert raised or cleared skips the deferral below.
         val interruptChanged = Interrupt.changed(Interrupt.keys(items), Interrupt.keys(newItems))
         val oldContentIds = items.map(::sig)
@@ -781,7 +786,8 @@ class PlaylistController(
     private val fault = PlaybackFault()
     /** For a live item: what decides how it connects. Null for anything else. */
     private fun liveConnectionOf(it: PlaylistItem): String? =
-        if (isLiveStream(it)) (it.remoteUrl ?: "") + "|" + it.mimeType + "|" + (if (it.tlsSelfSigned) "self-signed" else "verify") else null
+        if (isLiveStream(it)) (it.remoteUrl ?: "") + "|" + it.mimeType + "|" + (if (it.tlsSelfSigned) "self-signed" else "verify") +
+            (it.fisheye?.let { f -> "|$f" } ?: "") else null
     private val faultBackoff = FaultBackoff()
     private var faultRetry: Runnable? = null
     private fun cancelFaultRetry() { faultRetry?.let { handler.removeCallbacks(it) }; faultRetry = null }

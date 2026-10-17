@@ -1,0 +1,3044 @@
+{
+ "_comment": "Fisheye dewarp (digital PTZ) vectors, generated from server/lib/fisheye.js. Checked by server/test/fisheye.test.js, android Fisheye test and native tests/test_fisheye.py. uv null = outside the lens circle (black).",
+ "normalize": [
+  {
+   "input": {
+    "pan": 400,
+    "tilt": -5,
+    "zoom": 5
+   },
+   "output": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 40,
+    "tilt": 0,
+    "zoom": 20,
+    "touch": false
+   }
+  },
+  {
+   "input": {
+    "mount": "wall",
+    "pan": 150,
+    "tilt": 120,
+    "zoom": 300
+   },
+   "output": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 85,
+    "zoom": 120,
+    "touch": false
+   }
+  },
+  {
+   "input": {
+    "mount": "bogus",
+    "lens_fov": "200",
+    "touch": "true"
+   },
+   "output": {
+    "mount": "ceiling",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": true
+   }
+  },
+  {
+   "input": {
+    "tilt": "abc",
+    "r": 9,
+    "cx": -1
+   },
+   "output": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0,
+    "cy": 0.5,
+    "r": 1.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   }
+  }
+ ],
+ "project": [
+  {
+   "settings": {},
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.805555556,
+    0.5
+   ]
+  },
+  {
+   "settings": {},
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": 1,
+   "uv": [
+    0.862112641,
+    0.778791777
+   ]
+  },
+  {
+   "settings": {},
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": 1,
+   "uv": [
+    0.862112641,
+    0.221208223
+   ]
+  },
+  {
+   "settings": {},
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.640520241,
+    0.714997325
+   ]
+  },
+  {
+   "settings": {},
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.640520241,
+    0.285002675
+   ]
+  },
+  {
+   "settings": {},
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.752677851,
+    0.641071249
+   ]
+  },
+  {
+   "settings": {},
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": [
+    0.910684328,
+    0.400185023
+   ]
+  },
+  {
+   "settings": {},
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.671875,
+    0.5
+   ]
+  },
+  {
+   "settings": {},
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": 1,
+   "uv": [
+    0.703688361,
+    0.778791777
+   ]
+  },
+  {
+   "settings": {},
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": 1,
+   "uv": [
+    0.703688361,
+    0.221208223
+   ]
+  },
+  {
+   "settings": {},
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.579042635,
+    0.714997325
+   ]
+  },
+  {
+   "settings": {},
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.579042635,
+    0.285002675
+   ]
+  },
+  {
+   "settings": {},
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.642131291,
+    0.641071249
+   ]
+  },
+  {
+   "settings": {},
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 55,
+    "zoom": 80,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": [
+    0.731009934,
+    0.400185023
+   ]
+  },
+  {
+   "settings": {
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.5,
+    0.666666667
+   ]
+  },
+  {
+   "settings": {
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": 1,
+   "uv": [
+    0.321428321,
+    0.741636891
+   ]
+  },
+  {
+   "settings": {
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": 1,
+   "uv": [
+    0.678571679,
+    0.741636891
+   ]
+  },
+  {
+   "settings": {
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.339061981,
+    0.56097718
+   ]
+  },
+  {
+   "settings": {
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.660938019,
+    0.56097718
+   ]
+  },
+  {
+   "settings": {
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.407908189,
+    0.637076926
+   ]
+  },
+  {
+   "settings": {
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": [
+    0.558554459,
+    0.745096638
+   ]
+  },
+  {
+   "settings": {
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.5,
+    0.666666667
+   ]
+  },
+  {
+   "settings": {
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": 1,
+   "uv": [
+    0.399553431,
+    0.741636891
+   ]
+  },
+  {
+   "settings": {
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": 1,
+   "uv": [
+    0.600446569,
+    0.741636891
+   ]
+  },
+  {
+   "settings": {
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.409472365,
+    0.56097718
+   ]
+  },
+  {
+   "settings": {
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.590527635,
+    0.56097718
+   ]
+  },
+  {
+   "settings": {
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.448198356,
+    0.637076926
+   ]
+  },
+  {
+   "settings": {
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 90,
+    "tilt": 30,
+    "zoom": 60,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": [
+    0.532936883,
+    0.745096638
+   ]
+  },
+  {
+   "settings": {
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "rotation": 20
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 20,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.300430265,
+    0.072021323
+   ]
+  },
+  {
+   "settings": {
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "rotation": 20
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 20,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": 1,
+   "uv": null
+  },
+  {
+   "settings": {
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "rotation": 20
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 20,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": 1,
+   "uv": null
+  },
+  {
+   "settings": {
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "rotation": 20
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 20,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.684080008,
+    0.205820362
+   ]
+  },
+  {
+   "settings": {
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "rotation": 20
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 20,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.156320975,
+    0.451918441
+   ]
+  },
+  {
+   "settings": {
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "rotation": 20
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 20,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.582107194,
+    0.08208675
+   ]
+  },
+  {
+   "settings": {
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "rotation": 20
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 20,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": null
+  },
+  {
+   "settings": {
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "rotation": 20
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 20,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.387742024,
+    0.072021323
+   ]
+  },
+  {
+   "settings": {
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "rotation": 20
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 20,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": 1,
+   "uv": null
+  },
+  {
+   "settings": {
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "rotation": 20
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 20,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": 1,
+   "uv": null
+  },
+  {
+   "settings": {
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "rotation": 20
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 20,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.603545005,
+    0.205820362
+   ]
+  },
+  {
+   "settings": {
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "rotation": 20
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 20,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.306680548,
+    0.451918441
+   ]
+  },
+  {
+   "settings": {
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "rotation": 20
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 20,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.546185297,
+    0.08208675
+   ]
+  },
+  {
+   "settings": {
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "rotation": 20
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 20,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": -135,
+    "tilt": 85,
+    "zoom": 110,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": null
+  },
+  {
+   "settings": {
+    "mount": "floor",
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70
+   },
+   "normalized": {
+    "mount": "floor",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.73570226,
+    0.73570226
+   ]
+  },
+  {
+   "settings": {
+    "mount": "floor",
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70
+   },
+   "normalized": {
+    "mount": "floor",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": 1,
+   "uv": [
+    0.77230133,
+    0.493812316
+   ]
+  },
+  {
+   "settings": {
+    "mount": "floor",
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70
+   },
+   "normalized": {
+    "mount": "floor",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": 1,
+   "uv": [
+    0.493812316,
+    0.77230133
+   ]
+  },
+  {
+   "settings": {
+    "mount": "floor",
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70
+   },
+   "normalized": {
+    "mount": "floor",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.951020765,
+    0.592792347
+   ]
+  },
+  {
+   "settings": {
+    "mount": "floor",
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70
+   },
+   "normalized": {
+    "mount": "floor",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.592792347,
+    0.951020765
+   ]
+  },
+  {
+   "settings": {
+    "mount": "floor",
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70
+   },
+   "normalized": {
+    "mount": "floor",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.840173885,
+    0.651933507
+   ]
+  },
+  {
+   "settings": {
+    "mount": "floor",
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70
+   },
+   "normalized": {
+    "mount": "floor",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": [
+    0.615827347,
+    0.71346038
+   ]
+  },
+  {
+   "settings": {
+    "mount": "floor",
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70
+   },
+   "normalized": {
+    "mount": "floor",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.632582521,
+    0.73570226
+   ]
+  },
+  {
+   "settings": {
+    "mount": "floor",
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70
+   },
+   "normalized": {
+    "mount": "floor",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": 1,
+   "uv": [
+    0.653169498,
+    0.493812316
+   ]
+  },
+  {
+   "settings": {
+    "mount": "floor",
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70
+   },
+   "normalized": {
+    "mount": "floor",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": 1,
+   "uv": [
+    0.496519428,
+    0.77230133
+   ]
+  },
+  {
+   "settings": {
+    "mount": "floor",
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70
+   },
+   "normalized": {
+    "mount": "floor",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.75369918,
+    0.592792347
+   ]
+  },
+  {
+   "settings": {
+    "mount": "floor",
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70
+   },
+   "normalized": {
+    "mount": "floor",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.552195695,
+    0.951020765
+   ]
+  },
+  {
+   "settings": {
+    "mount": "floor",
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70
+   },
+   "normalized": {
+    "mount": "floor",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.69134781,
+    0.651933507
+   ]
+  },
+  {
+   "settings": {
+    "mount": "floor",
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70
+   },
+   "normalized": {
+    "mount": "floor",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 45,
+    "tilt": 60,
+    "zoom": 70,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": [
+    0.565152883,
+    0.71346038
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.659590867,
+    0.61617265
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": 1,
+   "uv": [
+    0.894445013,
+    0.448615135
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": 1,
+   "uv": [
+    0.436682667,
+    0.460623857
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.88394703,
+    0.769637017
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.387639967,
+    0.6986715
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.8050677,
+    0.664600004
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": [
+    0.581304696,
+    0.477097729
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.589769863,
+    0.61617265
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": 1,
+   "uv": [
+    0.72187532,
+    0.448615135
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": 1,
+   "uv": [
+    0.464384,
+    0.460623857
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.715970205,
+    0.769637017
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.436797481,
+    0.6986715
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.671600581,
+    0.664600004
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 30,
+    "tilt": -20,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": [
+    0.545733891,
+    0.477097729
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "lens_fov": 200,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.48,
+    0.52
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "lens_fov": 200,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": 1,
+   "uv": [
+    0.700470772,
+    0.395985191
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "lens_fov": 200,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": 1,
+   "uv": [
+    0.259529228,
+    0.395985191
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "lens_fov": 200,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.700470772,
+    0.644014809
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "lens_fov": 200,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.259529228,
+    0.644014809
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "lens_fov": 200,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.623684749,
+    0.560411336
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "lens_fov": 200,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": [
+    0.394478629,
+    0.391717943
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "lens_fov": 200,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.48,
+    0.52
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "lens_fov": 200,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": 1,
+   "uv": [
+    0.604014809,
+    0.395985191
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "lens_fov": 200,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": 1,
+   "uv": [
+    0.355985191,
+    0.395985191
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "lens_fov": 200,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.604014809,
+    0.644014809
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "lens_fov": 200,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.355985191,
+    0.644014809
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "lens_fov": 200,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.560822671,
+    0.560411336
+   ]
+  },
+  {
+   "settings": {
+    "mount": "wall",
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "lens_fov": 200,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47
+   },
+   "normalized": {
+    "mount": "wall",
+    "lens_fov": 200,
+    "rotation": 0,
+    "cx": 0.48,
+    "cy": 0.52,
+    "r": 0.47,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 100,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": [
+    0.431894229,
+    0.391717943
+   ]
+  },
+  {
+   "settings": {
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.5,
+    0.5
+   ]
+  },
+  {
+   "settings": {
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": 1,
+   "uv": [
+    0.63325679,
+    0.736900961
+   ]
+  },
+  {
+   "settings": {
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": 1,
+   "uv": [
+    0.63325679,
+    0.263099039
+   ]
+  },
+  {
+   "settings": {
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.36674321,
+    0.736900961
+   ]
+  },
+  {
+   "settings": {
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.36674321,
+    0.263099039
+   ]
+  },
+  {
+   "settings": {
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.458715327,
+    0.646789949
+   ]
+  },
+  {
+   "settings": {
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": [
+    0.631306651,
+    0.412462232
+   ]
+  },
+  {
+   "settings": {
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.5,
+    0.5
+   ]
+  },
+  {
+   "settings": {
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": 1,
+   "uv": [
+    0.574956945,
+    0.736900961
+   ]
+  },
+  {
+   "settings": {
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": 1,
+   "uv": [
+    0.574956945,
+    0.263099039
+   ]
+  },
+  {
+   "settings": {
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.425043055,
+    0.736900961
+   ]
+  },
+  {
+   "settings": {
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.425043055,
+    0.263099039
+   ]
+  },
+  {
+   "settings": {
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.476777371,
+    0.646789949
+   ]
+  },
+  {
+   "settings": {
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 180,
+    "rotation": 0,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 0,
+    "tilt": 0,
+    "zoom": 90,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": [
+    0.573859991,
+    0.412462232
+   ]
+  },
+  {
+   "settings": {
+    "lens_fov": 220,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "rotation": -90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 220,
+    "rotation": -90,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.57893099,
+    0.947639888
+   ]
+  },
+  {
+   "settings": {
+    "lens_fov": 220,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "rotation": -90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 220,
+    "rotation": -90,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": 1,
+   "uv": null
+  },
+  {
+   "settings": {
+    "lens_fov": 220,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "rotation": -90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 220,
+    "rotation": -90,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": 1,
+   "uv": null
+  },
+  {
+   "settings": {
+    "lens_fov": 220,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "rotation": -90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 220,
+    "rotation": -90,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.417682534,
+    0.88730703
+   ]
+  },
+  {
+   "settings": {
+    "lens_fov": 220,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "rotation": -90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 220,
+    "rotation": -90,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.709819921,
+    0.835795327
+   ]
+  },
+  {
+   "settings": {
+    "lens_fov": 220,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "rotation": -90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 220,
+    "rotation": -90,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.48653216,
+    0.93855541
+   ]
+  },
+  {
+   "settings": {
+    "lens_fov": 220,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "rotation": -90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 220,
+    "rotation": -90,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "touch": false
+   },
+   "image_aspect": 1,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": null
+  },
+  {
+   "settings": {
+    "lens_fov": 220,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "rotation": -90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 220,
+    "rotation": -90,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0,
+   "y": 0,
+   "uv": [
+    0.544398682,
+    0.947639888
+   ]
+  },
+  {
+   "settings": {
+    "lens_fov": 220,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "rotation": -90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 220,
+    "rotation": -90,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": 1,
+   "uv": null
+  },
+  {
+   "settings": {
+    "lens_fov": 220,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "rotation": -90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 220,
+    "rotation": -90,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": 1,
+   "uv": null
+  },
+  {
+   "settings": {
+    "lens_fov": 220,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "rotation": -90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 220,
+    "rotation": -90,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 1,
+   "y": -1,
+   "uv": [
+    0.453696425,
+    0.88730703
+   ]
+  },
+  {
+   "settings": {
+    "lens_fov": 220,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "rotation": -90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 220,
+    "rotation": -90,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -1,
+   "y": -1,
+   "uv": [
+    0.618023706,
+    0.835795327
+   ]
+  },
+  {
+   "settings": {
+    "lens_fov": 220,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "rotation": -90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 220,
+    "rotation": -90,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": 0.5,
+   "y": -0.25,
+   "uv": [
+    0.49242434,
+    0.93855541
+   ]
+  },
+  {
+   "settings": {
+    "lens_fov": 220,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "rotation": -90
+   },
+   "normalized": {
+    "mount": "ceiling",
+    "lens_fov": 220,
+    "rotation": -90,
+    "cx": 0.5,
+    "cy": 0.5,
+    "r": 0.5,
+    "pan": 170,
+    "tilt": 100,
+    "zoom": 45,
+    "touch": false
+   },
+   "image_aspect": 1.7777777777777777,
+   "x": -0.3,
+   "y": 0.8,
+   "uv": null
+  }
+ ]
+}

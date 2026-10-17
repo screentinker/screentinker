@@ -24,6 +24,9 @@ Item {
     // #649: a bundle page asked to be skipped: "<token> <reason>" (the engine checks the token).
     signal bundleSkip(string detail)
     signal position(real posMs, real durMs)
+    // A fisheye camera steered by touch (only when its item allows it): "drag dx dy aspect",
+    // "pinch scale" or "reset" (player/engine.py on_fisheye_touch).
+    signal fisheyeTouch(string detail)
 
     function fillFor(fit, forVideo) {
         if (forVideo) {
@@ -62,6 +65,7 @@ Item {
     // Wall zones: loop only a clip shorter than its slot — decided once the duration is known.
     function setLoop(b) { if (loader.item && loader.item.setLoop) loader.item.setLoop(b) }
     function runJs(js) { if (loader.item && loader.item.runJs) loader.item.runJs(js) }
+    function setFisheye(u) { if (loader.item && loader.item.setFisheye) loader.item.setFisheye(u) }
 
     Loader {
         id: loader
@@ -116,10 +120,82 @@ Item {
             // frozenEnd (a wall zone joining mid-FREEZE): the clip's last frame, paused — what the
             // other panels froze on.
             readonly property bool frozenEnd: !!(slot.item && slot.item.frozenEnd)
+            /*
+             * A FISHEYE CAMERA (logic/fisheye.py): the picture is captured whole (Stretch, so image
+             * coordinates are the texture's) and re-projected to a normal view by the ShaderEffect
+             * below, which fills the slot. `fish` holds the shader and the view; a camera_view or a
+             * touch replaces the view part (setFisheye), the shader stays.
+             */
+            property var fish: (slot.item && slot.item.fisheye) ? slot.item.fisheye : null
+            function setFisheye(u) {
+                if (!fish) return
+                var f = {}
+                for (var k in fish) f[k] = fish[k]
+                for (var j in u) f[j] = u[j]
+                fish = f
+            }
             VideoOutput {
                 id: vo
                 anchors.fill: parent
-                fillMode: slot.fillFor(slot.item ? slot.item.fit : "", true)
+                fillMode: videoRoot.fish ? VideoOutput.Stretch : slot.fillFor(slot.item ? slot.item.fit : "", true)
+            }
+            ShaderEffectSource {
+                id: fishSrc
+                sourceItem: videoRoot.fish ? vo : null
+                hideSource: true
+                visible: false
+                live: true
+                // The camera's own resolution (capped), not the slot's: the view zooms into it.
+                textureSize: Qt.size(Math.min(2048, vo.sourceRect.width > 0 ? vo.sourceRect.width : 1024),
+                                     Math.min(2048, vo.sourceRect.height > 0 ? vo.sourceRect.height : 1024))
+            }
+            ShaderEffect {
+                id: fishFx
+                anchors.fill: parent
+                visible: !!videoRoot.fish
+                fragmentShader: videoRoot.fish ? videoRoot.fish.qsb : ""
+                property variant src: fishSrc
+                readonly property var f: videoRoot.fish
+                property vector3d uDir: f ? Qt.vector3d(f.dir[0], f.dir[1], f.dir[2]) : Qt.vector3d(0, 0, 1)
+                property vector3d uRight: f ? Qt.vector3d(f.right[0], f.right[1], f.right[2]) : Qt.vector3d(1, 0, 0)
+                property vector3d uUp: f ? Qt.vector3d(f.up[0], f.up[1], f.up[2]) : Qt.vector3d(0, -1, 0)
+                property vector2d uTan: f ? Qt.vector2d(f.tanX, f.tanX * height / Math.max(1, width)) : Qt.vector2d(1, 1)
+                property real uLensHalf: f ? f.lensHalf : 1.5708
+                property real uRot: f ? f.rot : 0
+                property vector2d uCenter: f ? Qt.vector2d(f.cx, f.cy) : Qt.vector2d(0.5, 0.5)
+                property vector2d uRadius: {
+                    if (!f) return Qt.vector2d(0.5, 0.5)
+                    var w = vo.sourceRect.width, h = vo.sourceRect.height
+                    return Qt.vector2d(f.r * (w > 0 && h > 0 ? h / w : 1), f.r)
+                }
+                onStatusChanged: if (status === ShaderEffect.Error) console.warn("fisheye shader error: " + log)
+            }
+            // Touch steering, only when the item allows it: drag moves the picture with the finger,
+            // pinch zooms, double-tap goes back to the saved view.
+            DragHandler {
+                target: null
+                enabled: !!(videoRoot.fish && videoRoot.fish.touch)
+                property point last: Qt.point(0, 0)
+                onActiveChanged: last = Qt.point(0, 0)
+                onTranslationChanged: {
+                    var dx = translation.x - last.x, dy = translation.y - last.y
+                    last = Qt.point(translation.x, translation.y)
+                    slot.fisheyeTouch("drag " + (dx / Math.max(1, videoRoot.width)) + " " + (dy / Math.max(1, videoRoot.height))
+                                      + " " + (videoRoot.width / Math.max(1, videoRoot.height)))
+                }
+            }
+            PinchHandler {
+                target: null
+                enabled: !!(videoRoot.fish && videoRoot.fish.touch)
+                property real last: 1
+                onActiveChanged: last = 1
+                onActiveScaleChanged: {
+                    if (activeScale > 0) { slot.fisheyeTouch("pinch " + (activeScale / last)); last = activeScale }
+                }
+            }
+            TapHandler {
+                enabled: !!(videoRoot.fish && videoRoot.fish.touch)
+                onDoubleTapped: slot.fisheyeTouch("reset")
             }
             MediaPlayer {
                 id: player

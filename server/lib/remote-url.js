@@ -122,47 +122,81 @@ function validateRtspUrl(url) {
   if (parsed.password === CREDENTIAL_MASK || decodeURIComponent(parsed.password || '') === CREDENTIAL_MASK) {
     return { status: 400, error: 'Type the camera password: the stars only stand in for a saved one.' };
   }
+  if (parsed.pathname.split('/').includes(CREDENTIAL_MASK)) {
+    return { status: 400, error: 'Paste the full camera link: the stars only stand in for a saved stream token.' };
+  }
   return null;
 }
 
 /*
- * ⚠️ CAMERA PASSWORDS ARE WRITE-ONLY. An rtsp(s) URL may carry the camera's username and password,
- * and the content library is readable by every workspace member, API token, MCP client, the Manager
- * app and (through the item's payload) anyone holding a /view link. Only the screen that opens the
- * stream needs the password, so every other response replaces it with CREDENTIAL_MASK; the username
- * stays visible so people can tell which camera account an item uses.
+ * ⚠️ CAMERA SECRETS ARE WRITE-ONLY. An rtsp(s) URL may carry the camera's username and password, or
+ * (UniFi Protect, and other NVRs that share links) a random token in the PATH that alone opens the
+ * stream: rtsps://nvr:7441/Ab12Cd34Ef56Gh78. The content library is readable by every workspace
+ * member, API token, MCP client, the Manager app and (through the item's payload) anyone holding a
+ * /view link. Only the screen that opens the stream needs the secret, so every other response
+ * replaces it with CREDENTIAL_MASK; the username and the rest of the path stay visible so people can
+ * tell which camera an item is.
  *
- * An edit that sends the masked URL back keeps the stored password (restoreMaskedPassword), but
- * only for the same camera: changing the scheme, host or port with the mask in place is refused,
- * or an editor could point the stream at a host of their own and receive the real password from
- * the screen.
+ * An edit that sends the masked URL back keeps the stored secret (restoreMaskedSecrets), but only for
+ * the same camera: changing the scheme, host or port with the mask in place is refused, or an editor
+ * could point the stream at a host of their own and receive the real secret from the screen.
  */
 const CREDENTIAL_MASK = '********';
-// userinfo of an rtsp/rtsps URL anywhere in a string (JSON text included, even when the JSON was
-// itself escaped into a string, as MCP tool results are): scheme://user:password@
-const RTSP_USERINFO_RE = /(rtsps?:\/\/[^\s"'\\/@:]*):([^\s"'\\/@]*)@/gi;
+/*
+ * Both run on ONE string value (the middleware walks the response, and parses JSON that was itself
+ * put into a string, as MCP tool results are), never on serialized JSON: a URL is stored as typed, so
+ * its password can hold a quote, a space or an '@', which JSON escaping would split from the match.
+ * The password runs to the LAST '@' before the path, as URL parsing does (rtsp://u:p@ss@cam has the
+ * password "p@ss").
+ */
+const RTSP_USERINFO_RE = /(rtsps?:\/\/[^\/?#@:\r\n]*):([^\/?#\r\n]*)@/gi;
+const RTSP_PATH_RE = /(rtsps?:\/\/[^\/?#\s]*)(\/[^?#\s"'<>]*)/gi;
+
+// A path segment that is a share token rather than a name: 16+ letters and digits in mixed case
+// (UniFi's are 16). Camera paths people type (Streaming/Channels/101, h264Preview_01_main,
+// cam/realmonitor) are short, lowercase or carry punctuation.
+function isSecretPathSegment(seg) {
+  return typeof seg === 'string' && seg.length >= 16 && /^[A-Za-z0-9]+$/.test(seg) && /[a-z]/.test(seg) && /[A-Z]/.test(seg);
+}
 
 function maskStreamCredentials(text) {
   if (typeof text !== 'string' || !/rtsps?:\/\//i.test(text)) return text;
-  return text.replace(RTSP_USERINFO_RE, (m, head, pass) => (pass ? `${head}:${CREDENTIAL_MASK}@` : m));
+  return text
+    .replace(RTSP_USERINFO_RE, (m, head, pass) => (pass ? `${head}:${CREDENTIAL_MASK}@` : m))
+    .replace(RTSP_PATH_RE, (m, head, p) => head + p.split('/').map((seg) => (isSecretPathSegment(seg) ? CREDENTIAL_MASK : seg)).join('/'));
 }
 
 /**
- * An edit's new URL, with a masked password swapped back for the stored one. Returns { url } or
- * { error: { status, error } }. A URL without the mask is returned as typed.
+ * An edit's new URL, with a masked password or path token swapped back for the stored one. Returns
+ * { url } or { error: { status, error } }. A URL without the mask is returned as typed.
  */
-function restoreMaskedPassword(newUrl, storedUrl) {
+function restoreMaskedSecrets(newUrl, storedUrl) {
   if (typeof newUrl !== 'string' || !newUrl.includes(CREDENTIAL_MASK)) return { url: newUrl };
   let next, prev;
   try { next = new URL(newUrl.trim()); } catch { return { url: newUrl }; }
-  if (decodeURIComponent(next.password || '') !== CREDENTIAL_MASK) return { url: newUrl };
-  try { prev = storedUrl ? new URL(storedUrl) : null; } catch { prev = null; }
-  const same = prev && prev.password && prev.protocol === next.protocol && prev.hostname === next.hostname
+  const passMasked = decodeURIComponent(next.password || '') === CREDENTIAL_MASK;
+  const segs = next.pathname.split('/');
+  const pathMasked = segs.includes(CREDENTIAL_MASK);
+  if (!passMasked && !pathMasked) return { url: newUrl };
+  const refuse = { error: { status: 400, error: 'Type the camera password or paste the full camera link again: a saved one stays only while the camera address is unchanged.' } };
+  try { prev = storedUrl ? new URL(String(storedUrl).trim()) : null; } catch { prev = null; }
+  const same = prev && prev.protocol === next.protocol && prev.hostname === next.hostname
     && (prev.port || '') === (next.port || '');
-  if (!same) {
-    return { error: { status: 400, error: 'Type the camera password again: a saved password stays only while the camera address is unchanged.' } };
+  if (!same) return refuse;
+  if (passMasked) {
+    if (!prev.password) return refuse;
+    next.password = prev.password;
   }
-  next.password = prev.password;
+  if (pathMasked) {
+    const old = prev.pathname.split('/');
+    if (old.length !== segs.length) return refuse;
+    for (let i = 0; i < segs.length; i++) {
+      if (segs[i] !== CREDENTIAL_MASK) continue;
+      if (!isSecretPathSegment(old[i])) return refuse;
+      segs[i] = old[i];
+    }
+    next.pathname = segs.join('/');
+  }
   return { url: next.toString() };
 }
 
@@ -201,6 +235,6 @@ function classifyLiveUrl(url) {
 module.exports = {
   LIVE_MIME, RTSP_MIME, HDMI_IN_MIME, LIVE_MIMES, isLiveItem, isInfiniteDwell,
   looksLikeHlsUrl, looksLikeRtspUrl, isRtspsUrl, looksLikeHdmiInUrl,
-  CREDENTIAL_MASK, maskStreamCredentials, restoreMaskedPassword,
+  CREDENTIAL_MASK, maskStreamCredentials, restoreMaskedSecrets, isSecretPathSegment,
   validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, validateHdmiInUrl, classifyLiveUrl,
 };

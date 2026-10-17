@@ -152,7 +152,7 @@ function captureDeck(db, row) {
 }
 
 const CONTENT_FIELDS = ['filename', 'mime_type', 'file_size', 'duration_sec', 'width', 'height', 'remote_url', 'subtitle_url',
-  'subtitle_lang', 'expires_at', 'folder_id', 'bundle_entry', 'byte_digest', 'captions_enabled', 'captions_lang', 'unstable_connection', 'tls_self_signed', 'tags', 'meta'];
+  'subtitle_lang', 'expires_at', 'folder_id', 'bundle_entry', 'byte_digest', 'captions_enabled', 'captions_lang', 'unstable_connection', 'tls_self_signed', 'fisheye', 'tags', 'meta'];
 /*
  * The fields a content DRAFT can carry and a release applies, in one place so that what a restore
  * writes into the draft and what publishing the draft copies to the live row cannot drift apart
@@ -162,7 +162,7 @@ const CONTENT_FIELDS = ['filename', 'mime_type', 'file_size', 'duration_sec', 'w
  */
 const CONTENT_DRAFT_FIELDS = CONTENT_FIELDS.filter((k) => k !== 'folder_id');
 /* Of those, the ones that change what a screen shows. Under approval, edits to these are drafts. */
-const CONTENT_PLAYBACK_FIELDS = ['remote_url', 'mime_type', 'subtitle_url', 'subtitle_lang', 'captions_enabled', 'captions_lang', 'unstable_connection', 'tls_self_signed'];
+const CONTENT_PLAYBACK_FIELDS = ['remote_url', 'mime_type', 'subtitle_url', 'subtitle_lang', 'captions_enabled', 'captions_lang', 'unstable_connection', 'tls_self_signed', 'fisheye'];
 function captureContent(db, row) {
   const draft = parseJson(row.draft_json, null);
   const src = draft ? { ...row, ...draft } : row;

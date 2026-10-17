@@ -599,7 +599,7 @@ function refreshWidgetRevs(assignments, deviceId = null) {
  */
 const contentFactsOf = db.prepare(`
   SELECT COALESCE(NULLIF(updated_at, 0), created_at) AS rev, filepath, mime_type, file_size, bundle_entry,
-         width, height, video_prerotated
+         width, height, video_prerotated, fisheye
     FROM content WHERE id = ?
 `);
 function refreshContentRevs(assignments) {
@@ -629,6 +629,12 @@ function refreshContentRevs(assignments) {
        * at send time, so neither needs a republish. */
       if (row.width > 0 && row.height > 0) { a.width = row.width; a.height = row.height; }
       if (Number(row.video_prerotated) === 1) a.video_prerotated = 1; else delete a.video_prerotated;
+      /* A fisheye camera's view settings (lib/fisheye.js), read at send time like the flag above, so
+       * "Save" in the camera's Edit dialog moves every screen showing it without a republish. The row
+       * is the approved state: an approval workspace keeps the edit as a draft until it is released. */
+      const fisheye = row.fisheye && require('../lib/remote-url').LIVE_MIMES.includes(a.mime_type)
+        ? require('../lib/fisheye').normalize(row.fisheye) : null;
+      if (fisheye) a.fisheye = fisheye; else delete a.fisheye;
     } catch (_) { /* keep published */ }
   }
 }

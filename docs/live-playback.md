@@ -83,30 +83,76 @@ the player uses RTSPS's standard 322.
 URL), exactly as a browser checks a website. A camera that fails the check is refused before it is
 sent the username and password, and the screen retries it with the usual backoff.
 
+UniFi share links end in `?enableSrtp`. Keep it as UniFi gives it. With it, the camera also
+encrypts the RTP inside the TLS connection (SRTP). The native player plays that as it is, and the
+Android player leaves the parameter out when connecting, because Android's media engine has no
+SRTP and the TLS connection already encrypts the stream.
+
 Many cameras ship a **self-signed** certificate (UniFi Protect included), which no screen can verify.
 For those, tick **Camera uses a self-signed certificate** when you add the stream (or in the item's
 Edit dialog). The stream is still encrypted; the screen only stops checking who answers, for that
 camera alone. Leave it off for a camera with a proper certificate. Changing it reconnects a screen
 that is showing the stream.
 
-On the native Pi / Windows / Mac player, the check is done by the player itself before the stream is
-handed to Qt, because FFmpeg (Qt's video engine) does not verify TLS certificates on its own.
+On the native Pi / Windows / Mac player, Qt is never given the `rtsps://` URL, because FFmpeg (Qt's
+video engine) does not verify TLS certificates and can't be told to. The player makes the TLS
+connection itself, checks the certificate on it, and relays that same connection to Qt as plain RTSP
+on 127.0.0.1. The video always travels over TCP inside the encrypted connection: a request from Qt for
+RTP over UDP, which would carry the picture outside it, is turned down by the relay, and Qt then asks
+for TCP.
 
-## Camera passwords
+## Camera passwords and share tokens
 
 Only the screens that play a stream ever receive its password. Everywhere else (the content library,
 the playlist editor, device pages, the API, MCP, the Manager app, `/view` links) the URL
 comes back as `rtsp://user:********@camera/…`: the username stays visible so you can tell which camera
 account an item uses.
 
-To keep the saved password when you edit an item, leave the stars as they are. To change it, type the
-new one. Changing the camera's address, port or `rtsp`/`rtsps` while the stars are in place is refused:
-type the password again for the new address. That stops anyone with edit access from pointing the
-stream at a host of their own to collect the password from a screen.
+Some systems put the secret in the path instead. A UniFi Protect share link,
+`rtsps://192.168.1.10:7441/Ab12Cd34Ef56Gh78?enableSrtp`, has no password: the token
+`Ab12Cd34Ef56Gh78` opens the stream on its own. A path segment that looks like such a token (16 or more
+letters and digits, mixed case) is masked the same way, `rtsps://192.168.1.10:7441/********?enableSrtp`,
+and a stream added without a name is named after the host rather than the token. Ordinary camera paths
+(`Streaming/Channels/101`, `h264Preview_01_main`, `cam/realmonitor`) are shown as they are.
+
+To keep the saved password or token when you edit an item, leave the stars as they are. To change it,
+type the new one, or paste the whole new link. Changing the camera's address, port or `rtsp`/`rtsps`
+while the stars are in place is refused: type the password or paste the link again for the new
+address. That stops anyone with edit access from pointing the stream at a host of their own to collect
+the secret from a screen.
 
 Data exports (Settings → Data & privacy, and the organization export) are the exception: they are
 backups, so they keep the full URL and an import restores working cameras. Store export files
 accordingly.
+
+## Fisheye (360°) cameras: a normal view you can move
+
+A 360° camera (UniFi's AI 360 and the like) sends one round fisheye picture. Tick **Fisheye camera:
+show a normal view** in the camera's Edit dialog and the screen shows a flat, upright view cut out of
+that circle instead: "digital PTZ". Nothing moves on the camera, and every screen can point its own
+way.
+
+- **Pan** turns the view around the camera, **tilt** goes from straight down out to the horizon (or,
+  for a wall camera, up and down), and **zoom** is the field of view (20°–120°).
+- **The picture is always upright.** "Up" comes from **how the camera is mounted**: looking down
+  (ceiling, or high on a wall pointing down), looking up (floor or desk), or facing out (flat on a
+  wall). Tilt stops at the edge of the lens, so the view can never swing over the top and flip.
+  **Lens** settings (the lens angle, 180° by default, and a one-time **straighten** for a camera
+  mounted a little crooked) are under the Lens heading.
+- **Steer it live.** In the Edit dialog, pick a screen under **Steer live on a screen**: moving the
+  sliders moves the view on that screen at once, so you point the camera by watching the real screen.
+  **Saved view** puts it back. **Save Changes** stores the view, and every screen showing the camera
+  moves to it straight away, without a republish.
+- **Touch** (off unless you tick **Let people move it by touch on the screen**): drag to pan and tilt,
+  pinch to zoom, double-tap for the saved view. In a layout, only the zone under the finger moves.
+- The view fills the screen or zone it is in: zoom is the width of the view, and the height follows
+  the shape of the screen.
+
+It works full screen and in layout zones, on the Android player and the native Pi / Windows / Mac
+player (`playback.fisheye`). Other players show the round picture as it comes. The `camera_view`
+command steers it from the API too: `{"content_id": "…", "pan": 30, "tilt": 50, "zoom": 70}`, or
+`{"content_id": "…", "reset": true}`; a screen that is offline is told so rather than sent a stale
+view later.
 
 ## When a camera is down
 
