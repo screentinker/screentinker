@@ -224,7 +224,7 @@ function attachSlideAudio(it) {
 // the playlist query below and snapshotItemForRef (a slot's fallback item), so a fallback is
 // denormalized exactly like any other item and the two cannot drift.
 const SNAPSHOT_MEDIA_COLS = `COALESCE(c.filename, w.name) as filename, c.mime_type, c.filepath, c.file_size,
-           c.duration_sec as content_duration, c.remote_url, c.unstable_connection,
+           c.duration_sec as content_duration, c.remote_url, c.unstable_connection, c.tls_self_signed, c.fisheye,
            c.captions_enabled, c.captions_lang, c.subtitle_url, c.subtitle_lang,
            c.tags AS content_tags, c.meta AS content_meta,
            w.name as widget_name, w.widget_type, w.config as widget_config, w.updated_at as widget_rev`;
@@ -258,6 +258,12 @@ function decorateSnapshotItem(it) {
   if (!it.repeat_every_sec) delete it.repeat_every_sec;
   // #624: sent only when set and only on YouTube, so every other snapshot stays byte-identical.
   if (it.play_to_end && playToEnd.appliesTo(it.mime_type)) it.play_to_end = 1; else delete it.play_to_end;
+  // rtsps camera with a self-signed certificate: sent only when set and only on a camera item, so
+  // every other snapshot stays byte-identical.
+  if (Number(it.tls_self_signed) === 1 && it.mime_type === 'video/rtsp') it.tls_self_signed = 1; else delete it.tls_self_signed;
+  // A fisheye camera's view settings (lib/fisheye.js): sent only when set, on a live item.
+  const fisheye = it.fisheye && require('../lib/remote-url').LIVE_MIMES.includes(it.mime_type) ? require('../lib/fisheye').normalize(it.fisheye) : null;
+  if (fisheye) it.fisheye = fisheye; else delete it.fisheye;
   // #660: likewise only when set, and only where there is a page of ours to draw see-through.
   if (it.transparent_bg && backgrounds.transparentApplies(it)) it.transparent_bg = 1; else delete it.transparent_bg;
   delete it._iid;
@@ -1907,10 +1913,12 @@ router.put('/:id/items/:itemId', requirePlaylistWrite, (req, res) => {
     updates.push('zone_id = ?'); values.push(zone_id || null);
   }
   if (duration_sec !== undefined) {
-    // A live stream (video/hls) accepts dwell 0 ("stay until skipped"); finite media must stay
-    // >= 1, because 0 self-loops into a black screen. The item's content mime decides which.
-    const liveItem = !!(item.content_id
-      && db.prepare("SELECT 1 AS live FROM content WHERE id = ? AND mime_type = 'video/hls'").get(item.content_id));
+    // A live stream (HLS, an RTSP camera, HDMI in) accepts dwell 0 ("stay until skipped"); finite
+    // media must stay >= 1, because 0 self-loops into a black screen. The item's content mime
+    // decides which. This used to check video/hls only, so a camera could be ADDED with 0 but never
+    // set back to it.
+    const liveMime = item.content_id && db.prepare('SELECT mime_type FROM content WHERE id = ?').get(item.content_id);
+    const liveItem = !!(liveMime && require('../lib/remote-url').LIVE_MIMES.includes(liveMime.mime_type));
     const minDur = liveItem ? 0 : 1;
     if (typeof duration_sec !== 'number' || duration_sec < minDur) {
       return res.status(400).json({ error: liveItem ? 'duration_sec must be 0 or a positive integer' : 'duration_sec must be a positive integer' });

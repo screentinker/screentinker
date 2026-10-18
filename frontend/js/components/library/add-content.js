@@ -76,7 +76,7 @@ export function youtubeId(raw) {
 // lib/remote-url.js classifyLiveUrl, mirrored for inline feedback; the server still decides.
 export function liveKind(raw) {
   const s = String(raw || '').trim();
-  if (/^rtsp:\/\//i.test(s)) { const u = parseUrl(s); return u && u.protocol === 'rtsp:' ? 'rtsp' : null; }
+  if (/^rtsps?:\/\//i.test(s)) { const u = parseUrl(s); return u && (u.protocol === 'rtsp:' || u.protocol === 'rtsps:') ? 'rtsp' : null; }
   const u = parseUrl(s);
   if (!u || !/^https?:$/.test(u.protocol) || u.username || u.password) return null;
   const path = (u.pathname || '').toLowerCase(), q = (u.search || '').toLowerCase();
@@ -498,7 +498,14 @@ export function openAddContent(opts) {
     dlg.body.innerHTML = `
       ${formHead(t('library.add.src_stream'))}
       <form novalidate aria-labelledby="libFormTitle">
-        ${field('libStream', t('library.add.stream_label'), f.url, { placeholder: 'https://…/live.m3u8  ·  rtsp://camera.local/stream', required: true, inputmode: 'url', help: esc(t('content.hls_desc')) })}
+        ${field('libStream', t('library.add.stream_label'), f.url, { placeholder: 'https://…/live.m3u8  ·  rtsp(s)://camera.local/stream', required: true, inputmode: 'url', help: esc(t('content.hls_desc')) })}
+        <div class="lib-field" id="libStreamTlsRow" ${/^rtsps:/i.test(String(f.url || '').trim()) ? '' : 'hidden'}>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="libStreamSelfSigned" ${f.selfSigned ? 'checked' : ''} style="width:auto;margin:0" aria-describedby="libStreamSelfSigned-help">
+            <span>${esc(t('content.label_tls_self_signed'))}</span>
+          </label>
+          <div class="lib-field-help" id="libStreamSelfSigned-help">${esc(t('content.tls_self_signed_hint'))}</div>
+        </div>
         ${field('libStreamName', t('library.add.name_label'), f.name, { help: esc(t('library.add.name_from_link')) })}
         <p class="lib-field-help">${esc(t('library.add.stream_no_preview'))}</p>
         ${destFooter()}
@@ -506,13 +513,16 @@ export function openAddContent(opts) {
       </form>`;
     const b = dlg.body;
     const urlIn = b.querySelector('#libStream'), nameIn = b.querySelector('#libStreamName');
-    urlIn.addEventListener('input', () => { f.url = urlIn.value; setErr('libStream', ''); });
+    const tlsRow = b.querySelector('#libStreamTlsRow'), selfSignedIn = b.querySelector('#libStreamSelfSigned');
+    urlIn.addEventListener('input', () => { f.url = urlIn.value; setErr('libStream', ''); tlsRow.hidden = !/^rtsps:/i.test(f.url.trim()); });
     urlIn.addEventListener('change', () => { const u = parseUrl(urlIn.value); if (u && !f.name) { f.name = lastSegment(u) || ''; nameIn.value = f.name; } });
+    selfSignedIn.addEventListener('change', () => { f.selfSigned = selfSignedIn.checked; });
     nameIn.addEventListener('input', () => { f.name = nameIn.value; });
     wireForm((form) => {
       if (!liveKind(f.url)) return setErr('libStream', t('library.add.err_stream'));
       return submitting(form, async () => {
-        const item = await api.addHlsContent(f.url.trim(), (f.name || '').trim(), state.dest.folderId);
+        const rtsps = /^rtsps:/i.test(f.url.trim());
+        const item = await api.addHlsContent(f.url.trim(), (f.name || '').trim(), state.dest.folderId, { tls_self_signed: rtsps && !!f.selfSigned });
         done(item, 'stream', t('content.toast.hls_added'));
       });
     });

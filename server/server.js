@@ -66,6 +66,8 @@ const app = express();
 // First, before anything can send a file: Express 5 refuses a dot-directory anywhere in an absolute
 // sendFile path, so an install under ~/.local (or any dot-dir) would 404 every page. See the module.
 app.use(require('./middleware/send-file-compat').sendFileCompat);
+// Camera passwords in rtsp(s) URLs reach only the screen that opens the stream. See the module.
+app.use(require('./middleware/mask-stream-credentials').maskStreamCredentialsMiddleware);
 const { trustedProxies } = require('./config/cloudflareIps');
 const { getClientIp } = require('./services/activity');
 // Trust loopback / link-local / unique-local (local dev, LAN reverse proxies)

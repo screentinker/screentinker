@@ -1,7 +1,7 @@
 # Live TV, IPTV, camera feeds and HDMI input
 
-Play a **live stream on a screen**: an IPTV/TV channel over HLS, or an `rtsp://` camera/NVR on an
-Android player. A live stream is an ordinary playlist item, so it schedules, sits in a zone, and
+Play a **live stream on a screen**: an IPTV/TV channel over HLS, or an `rtsp://` / `rtsps://`
+camera/NVR on an Android or native Raspberry Pi / Windows / Mac player. A live stream is an ordinary playlist item, so it schedules, sits in a zone, and
 takes a dwell time like any other content.
 
 > **This is the opposite of live *view*.** [`live-video.md`](live-video.md) is the *dashboard
@@ -22,16 +22,16 @@ player; the player opens it directly. So:
 
 | | HLS (`video/hls`) | RTSP (`video/rtsp`) |
 |---|---|---|
-| **URL** | an `http(s)` `.m3u8` | an `rtsp://` URL (credentials in the URL allowed) |
-| **Plays on** | web player, BrightSign / webOS, Tizen, native Android | **native Android only** (ExoPlayer, forced over TCP) |
+| **URL** | an `http(s)` `.m3u8` | an `rtsp://` or `rtsps://` URL (credentials in the URL allowed, [never shown back](#camera-passwords)) |
+| **Plays on** | web player, BrightSign / webOS, Tizen, native Android | native **Android** (ExoPlayer, forced over TCP) and the native **Raspberry Pi / Windows / Mac** player (Qt + FFmpeg) |
 | **e-ink** | skipped (single-zone e-ink cannot play video) | skipped |
 | **Latency** | a few seconds (HLS segments) | sub-second |
 | **Fan-out** | one source feeds many screens | a camera caps its own sessions; does **not** fan out |
 | **Extra infra** | none | none |
 
 Which to use: **HLS** for a TV/IPTV channel and for anything that must reach non-Android screens or
-many screens at once; **RTSP** for a camera/NVR shown on an Android panel where you want the lowest
-latency. If you have a camera but need it on many screens or on non-Android players, bridge it to HLS
+many screens at once; **RTSP** for a camera/NVR shown on an Android or native Pi/Windows/Mac screen where you want the
+lowest latency. If you have a camera but need it on many screens or on browser/TV players, bridge it to HLS
 (see [Fan-out](#fan-out-many-screens-off-one-camera) below).
 
 ## Adding a live stream
@@ -39,9 +39,10 @@ latency. If you have a camera but need it on many screens or on non-Android play
 1. **Content library → Add content → Live stream.** Paste the URL:
    - HLS: `https://…/channel.m3u8`
    - RTSP: `rtsp://user:pass@10.0.0.5/stream`
+   - RTSPS (RTSP over TLS): `rtsps://user:pass@10.0.0.5:7441/stream`
 
    ScreenTinker classifies it automatically: an `http(s)` `.m3u8` becomes `video/hls`, an `rtsp://`
-   URL becomes `video/rtsp`. Give it a channel name (optional) and add it. It appears in the library's
+   or `rtsps://` URL becomes `video/rtsp`. Give it a channel name (optional) and add it. It appears in the library's
    **Live** filter.
 2. **Add it to a playlist** like any other item.
 3. **Set the dwell** (the item's duration):
@@ -61,7 +62,10 @@ Live items are **capability-gated**, so a player only ever receives a stream it 
 
 - `video/hls` is sent only to a player that declares `playback.hls` (web, BrightSign / webOS, Tizen,
   native Android).
-- `video/rtsp` is sent only to a player that declares `playback.rtsp` — **native Android only**.
+- `video/rtsp` is sent only to a player that declares `playback.rtsp` (native Android and the native
+  Pi / Windows / Mac player), and an `rtsps://` item only to one that also declares `playback.rtsps`
+  (those players from 3.0.2). A 3.0.1 player would open an `rtsps://` URL as plain RTSP, so it never
+  gets one.
 - A player that declares neither (an old build, e-ink) simply never receives the item and shows the
   rest of the playlist. Nothing errors, nothing goes black.
 
@@ -69,10 +73,98 @@ This gating happens server-side in the device socket, per transport, so the same
 an RTSP camera and still play correctly on a Tizen TV in the same workspace (that TV just skips the
 RTSP item).
 
+## RTSPS (RTSP over TLS)
+
+`rtsps://` encrypts the camera connection, picture and login included. UniFi Protect's share links are
+`rtsps://…:7441/…` by default; most other cameras offer RTSPS as an option. Without a port in the URL,
+the player uses RTSPS's standard 322.
+
+**The camera's certificate is checked** (the screen's trusted authorities, plus the host name in the
+URL), exactly as a browser checks a website. A camera that fails the check is refused before it is
+sent the username and password, and the screen retries it with the usual backoff.
+
+UniFi share links end in `?enableSrtp`. Keep it as UniFi gives it. With it, the camera also
+encrypts the RTP inside the TLS connection (SRTP). The native player plays that as it is, and the
+Android player leaves the parameter out when connecting, because Android's media engine has no
+SRTP and the TLS connection already encrypts the stream.
+
+Many cameras ship a **self-signed** certificate (UniFi Protect included), which no screen can verify.
+For those, tick **Camera uses a self-signed certificate** when you add the stream (or in the item's
+Edit dialog). The stream is still encrypted; the screen only stops checking who answers, for that
+camera alone. Leave it off for a camera with a proper certificate. Changing it reconnects a screen
+that is showing the stream.
+
+On the native Pi / Windows / Mac player, Qt is never given the `rtsps://` URL, because FFmpeg (Qt's
+video engine) does not verify TLS certificates and can't be told to. The player makes the TLS
+connection itself, checks the certificate on it, and relays that same connection to Qt as plain RTSP
+on 127.0.0.1. The video always travels over TCP inside the encrypted connection: a request from Qt for
+RTP over UDP, which would carry the picture outside it, is turned down by the relay, and Qt then asks
+for TCP.
+
+## Camera passwords and share tokens
+
+Only the screens that play a stream ever receive its password. Everywhere else (the content library,
+the playlist editor, device pages, the API, MCP, the Manager app, `/view` links) the URL
+comes back as `rtsp://user:********@camera/…`: the username stays visible so you can tell which camera
+account an item uses.
+
+Some systems put the secret in the path instead. A UniFi Protect share link,
+`rtsps://192.168.1.10:7441/Ab12Cd34Ef56Gh78?enableSrtp`, has no password: the token
+`Ab12Cd34Ef56Gh78` opens the stream on its own. A path segment that looks like such a token (16 or more
+letters and digits, mixed case) is masked the same way, `rtsps://192.168.1.10:7441/********?enableSrtp`,
+and a stream added without a name is named after the host rather than the token. Ordinary camera paths
+(`Streaming/Channels/101`, `h264Preview_01_main`, `cam/realmonitor`) are shown as they are.
+
+To keep the saved password or token when you edit an item, leave the stars as they are. To change it,
+type the new one, or paste the whole new link. Changing the camera's address, port or `rtsp`/`rtsps`
+while the stars are in place is refused: type the password or paste the link again for the new
+address. That stops anyone with edit access from pointing the stream at a host of their own to collect
+the secret from a screen.
+
+Data exports (Settings → Data & privacy, and the organization export) are the exception: they are
+backups, so they keep the full URL and an import restores working cameras. Store export files
+accordingly.
+
+## Fisheye (360°) cameras: a normal view you can move
+
+A 360° camera (UniFi's AI 360 and the like) sends one round fisheye picture. Tick **Fisheye camera:
+show a normal view** in the camera's Edit dialog and the screen shows a flat, upright view cut out of
+that circle instead: "digital PTZ". Nothing moves on the camera, and every screen can point its own
+way.
+
+- **Pan** turns the view around the camera, **tilt** goes from straight down out to the horizon (or,
+  for a wall camera, up and down), and **zoom** is the field of view (20°–120°).
+- **The picture is always upright.** "Up" comes from **how the camera is mounted**: looking down
+  (ceiling, or high on a wall pointing down), looking up (floor or desk), or facing out (flat on a
+  wall). Tilt stops at the edge of the lens, so the view can never swing over the top and flip.
+  **Lens** settings (the lens angle, 180° by default, and a one-time **straighten** for a camera
+  mounted a little crooked) are under the Lens heading.
+- **Steer it live.** In the Edit dialog, pick a screen under **Steer live on a screen**: moving the
+  sliders moves the view on that screen at once, so you point the camera by watching the real screen.
+  **Saved view** puts it back. **Save Changes** stores the view, and every screen showing the camera
+  moves to it straight away, without a republish.
+- **Touch** (off unless you tick **Let people move it by touch on the screen**): drag to pan and tilt,
+  pinch to zoom, double-tap for the saved view. In a layout, only the zone under the finger moves.
+- The view fills the screen or zone it is in: zoom is the width of the view, and the height follows
+  the shape of the screen.
+
+It works full screen and in layout zones, on the Android player and the native Pi / Windows / Mac
+player (`playback.fisheye`). Other players show the round picture as it comes. The `camera_view`
+command steers it from the API too: `{"content_id": "…", "pan": 30, "tilt": 50, "zoom": 70}`, or
+`{"content_id": "…", "reset": true}`; a screen that is offline is told so rather than sent a stale
+view later.
+
+## When a camera is down
+
+A stream that fails skips to the next item. When it is the **only** item that can play, the screen
+retries it after 2, 4, 8 and 15 seconds, then every 30 seconds, so a camera that comes back is picked
+up within half a minute without being hammered while it is away. Editing the stream's URL reconnects a
+screen showing it at once.
+
 ## Fan-out: many screens off one camera
 
-An RTSP camera limits its own concurrent sessions, and RTSP only plays on Android. For **many screens
-off one camera**, or for **non-Android screens**, run an on-site **RTSP-to-HLS bridge** and point a
+An RTSP camera limits its own concurrent sessions, and RTSP plays only on the Android and native
+players. For **many screens off one camera**, or for **browser and TV players**, run an on-site **RTSP-to-HLS bridge** and point a
 `video/hls` item at its HLS output. ScreenTinker does not run this for you and still never fetches the
 stream — the bridge is yours, on your LAN.
 

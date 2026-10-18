@@ -94,6 +94,11 @@ class MediaPlayerManager(
     }
     private var exoPlayer: ExoPlayer? = null
     private var currentType: MediaType = MediaType.NONE
+        set(value) {
+            field = value
+            // Anything that is not the fisheye camera takes the screen back from its GL view.
+            if (value != MediaType.VIDEO) hideFisheye()
+        }
     // The URL the widget WebView currently has loaded, so re-showing the same widget can be a
     // no-op. Cleared whenever anything else takes the surface (see clearWidgetUrl callers).
     private var currentWidgetUrl: String? = null
@@ -683,9 +688,61 @@ class MediaPlayerManager(
         }
     }
 
-    fun playVideoFromUrl(url: String, muted: Boolean = false) {
-        Log.i("MediaPlayerManager", "Streaming video from URL: $url (muted=$muted)")
+    /*
+     * ⚠️ A FISHEYE CAMERA PLAYS ON A PLAYER OF ITS OWN, INTO A VIEW OF ITS OWN. Its player decodes into
+     * FisheyeGlView's SurfaceTexture (not PlayerView), which re-projects every frame to a normal view.
+     * The player is rebuilt when a fisheye item starts and again when anything else follows one
+     * (fisheyePlayer), so an ordinary video never lands on a player wired to the GL view, and a warm
+     * swap never parks that player as the next preload.
+     */
+    private var fisheyePlayer = false
+    private var fisheyeGl: FisheyeGlView? = null
+
+    /** The view the fisheye camera on screen is showing, for camera_view and touch; null otherwise. */
+    var fisheyeView: Fisheye.View? = null
+        get() = if (currentType == MediaType.VIDEO) field else null   // an image or page has replaced it
+        private set
+
+    private fun rebuildActivePlayer(fisheye: Fisheye.View?) {
+        exoPlayer?.let { p -> try { p.release() } catch (_: Throwable) {} }
+        val p = buildPlayer()
+        exoPlayer = p
+        fisheyePlayer = fisheye != null
+        stall.reset()
+        if (fisheye == null) {
+            hideFisheye()
+            playerView.player = p
+            return
+        }
+        playerView.player = null
+        val gl = fisheyeGl ?: FisheyeGlView(context).also { v ->
+            fisheyeGl = v
+            val parent = playerView.parent as android.view.ViewGroup
+            parent.addView(v, parent.indexOfChild(playerView) + 1,
+                android.view.ViewGroup.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+        fisheye.onChange = { gl.redraw() }
+        gl.view = fisheye
+        gl.visibility = android.view.View.VISIBLE
+        p.addListener(object : Player.Listener {
+            override fun onVideoSizeChanged(size: androidx.media3.common.VideoSize) {
+                if (size.width > 0 && size.height > 0) gl.setImageSize(size.width, size.height)
+            }
+        })
+        gl.surface?.let { p.setVideoSurface(it) }
+        gl.onSurfaceReady = { s -> if (exoPlayer === p && s != null) p.setVideoSurface(s) }
+    }
+
+    private fun hideFisheye() {
+        fisheyeGl?.let { it.visibility = android.view.View.GONE; it.view = null }
+    }
+
+    fun playVideoFromUrl(url: String, muted: Boolean = false, tlsSelfSigned: Boolean = false, fisheye: Fisheye.View? = null) {
+        // Redacted: a camera URL can carry its password (rtsp://user:pass@cam).
+        Log.i("MediaPlayerManager", "Streaming video from URL: ${RtspUrl.redact(url)} (muted=$muted${if (fisheye != null) ", fisheye" else ""})")
         mountGeneration++
+        if (fisheye != null || fisheyePlayer) rebuildActivePlayer(fisheye)
+        fisheyeView = fisheye
         stopYoutubeIfPlaying()
         stopLiveInputIfPlaying()
         currentType = MediaType.VIDEO
@@ -698,16 +755,10 @@ class MediaPlayerManager(
         exoPlayer?.apply {
             volume = if (muted || wallMute || triggerMute) 0f else 1f
             val item = MediaItem.fromUri(Uri.parse(url))
-            if (url.startsWith("rtsp://", ignoreCase = true)) {
-                // RTSP camera/stream: force TCP (interleaved) so it works through NAT/firewalls and on
-                // cameras that refuse UDP. ExoPlayer plays it via the media3-exoplayer-hls sibling
-                // media3-exoplayer-rtsp module; a dead camera lands in a player error -> onVideoComplete
-                // skips it, same as HLS.
-                setMediaSource(
-                    androidx.media3.exoplayer.rtsp.RtspMediaSource.Factory()
-                        .setForceUseRtpTcp(true)
-                        .createMediaSource(item)
-                )
+            if (url.startsWith("rtsp://", ignoreCase = true) || url.startsWith("rtsps://", ignoreCase = true)) {
+                // RTSP/RTSPS camera: TCP-interleaved, TLS for rtsps (RtspSources). A dead camera lands
+                // in a player error -> onVideoComplete skips it, same as HLS.
+                setMediaSource(RtspSources.create(url, tlsSelfSigned))
             } else {
                 setMediaItem(item)   // ExoPlayer infers HLS/DASH/progressive from the URL/content
             }
@@ -815,6 +866,7 @@ class MediaPlayerManager(
 
         // Warm swap: if this exact file was preloaded, promote the parked player instead of a cold
         // prepare — the container is already open/buffered so the first frame renders near-instantly.
+        fisheyeView = null
         val pp = preloadPlayer
         val claim = if (pp == null) PreloadSlot.Claim.COLD
                     else preloadSlot.claim(file.absolutePath, playerIsIdle = pp.playbackState == Player.STATE_IDLE)
@@ -832,10 +884,19 @@ class MediaPlayerManager(
                 playWhenReady = true
             }
             playerView.player = pp
-            // Park the previous active player as the new preload slot (idle until the next preloadVideo).
-            old?.apply { playWhenReady = false; clearMediaItems() }
+            if (fisheyePlayer) {
+                // The outgoing player decoded into the fisheye view: never reuse it for a file.
+                try { old?.release() } catch (_: Throwable) {}
+                preloadPlayer = null
+                fisheyePlayer = false
+                hideFisheye()
+            } else {
+                // Park the previous active player as the new preload slot (idle until the next preloadVideo).
+                old?.apply { playWhenReady = false; clearMediaItems() }
+            }
             return
         }
+        if (fisheyePlayer) rebuildActivePlayer(null)
 
         Log.i("MediaPlayerManager", "Playing video: ${file.absolutePath} (muted=$muted)")
         exoPlayer?.apply {

@@ -248,6 +248,9 @@ function snapshotItems(db, playlist) {
       content_duration: c.duration_sec,
       remote_url: c.remote_url,
       unstable_connection: c.unstable_connection,
+      ...(Number(c.tls_self_signed) === 1 && c.mime_type === 'video/rtsp' ? { tls_self_signed: 1 } : {}),
+      ...(c.fisheye && require('./remote-url').LIVE_MIMES.includes(c.mime_type) && require('./fisheye').normalize(c.fisheye)
+        ? { fisheye: require('./fisheye').normalize(c.fisheye) } : {}),
       captions_enabled: c.captions_enabled,
       captions_lang: c.captions_lang,
       subtitle_url: c.subtitle_url,

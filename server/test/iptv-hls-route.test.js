@@ -84,7 +84,9 @@ test('POST /hls accepts an rtsp:// camera URL as video/rtsp (credentials allowed
   const r = await jfetch('/api/content/hls', post(S.jwt, { url: 'rtsp://admin:pass@10.0.0.7:554/h264', name: 'Front door cam' }));
   assert.equal(r.status, 201, JSON.stringify(r.body));
   assert.equal(r.body.mime_type, 'video/rtsp');
-  assert.equal(r.body.remote_url, 'rtsp://admin:pass@10.0.0.7:554/h264');
+  // The password is stored for the screen but never shown back (stream-credentials-masking.test.js).
+  assert.equal(r.body.remote_url, 'rtsp://admin:********@10.0.0.7:554/h264');
+  assert.equal(db.prepare('SELECT remote_url FROM content WHERE id = ?').get(r.body.id).remote_url, 'rtsp://admin:pass@10.0.0.7:554/h264');
   S.rtspId = r.body.id;
 });
 

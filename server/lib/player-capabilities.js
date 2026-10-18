@@ -35,11 +35,21 @@ const CAPABILITIES = [
    * to decode HLS — web/BrightSign/webOS, Android via ExoPlayer, Tizen natively — declares it
    * for itself. E-ink never declares it. */
   'playback.hls',
-  /* A live RTSP camera/stream (mime video/rtsp) opened by the player. Android/ExoPlayer ONLY —
-   * browsers, BrightSign/webOS, Tizen and e-ink cannot open rtsp://, so only the native Android
-   * player declares it and the deviceSocket strip keeps rtsp items off every other screen. In no
-   * baseline (brand new). */
+  /* A live RTSP camera/stream (mime video/rtsp) opened by the player. The native Android player
+   * (ExoPlayer) and the native Pi/Windows/Mac player (Qt's FFmpeg backend) declare it — browsers,
+   * BrightSign/webOS, Tizen, Roku and e-ink cannot open rtsp://, and the deviceSocket strip keeps
+   * rtsp items off every other screen. In no baseline (brand new). */
   'playback.rtsp',
+  /* RTSP over TLS (rtsps://, still mime video/rtsp): the player opens a TLS socket, checks the
+   * camera's certificate unless the item says tls_self_signed, and plays over interleaved TCP.
+   * Separate from playback.rtsp because a 3.0.1 player declares rtsp and would open an rtsps URL
+   * as plain RTSP. In no baseline. */
+  'playback.rtsps',
+  /* A fisheye (360°) camera item shown as a normal 16:9 view, re-projected on the GPU from the item's
+   * `fisheye` settings (lib/fisheye.js), and steered live by the camera_view command. A player
+   * without it shows the fisheye circle as it comes. Android (a media3 video effect) and the native
+   * player (a Qt shader) declare it. In no baseline. */
+  'playback.fisheye',
   /* The screen's own HDMI INPUT played as an item (mime video/hdmi-in, remote_url hdmi://<port>):
    * a cable box or console plugged into a Fire TV Cube / Android TV box with HDMI in. Declared by
    * the native Android player ONLY when it found an HDMI passthrough input on this device at
@@ -794,6 +804,8 @@ const COMMAND_CAPABILITY = {
 
   // audio
   set_volume: 'audio.volume',
+  // Steer a fisheye camera's view live (lib/fisheye.js).
+  camera_view: 'playback.fisheye',
 
   // system control (#160 Track-A)
   set_brightness: 'display.brightness',       // per-window overlay dim (Tier 0)

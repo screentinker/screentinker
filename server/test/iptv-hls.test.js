@@ -166,12 +166,16 @@ test('native RTSP is wired in the Android player (fullscreen + zones), gated and
   assert.match(gradle, /media3-exoplayer-rtsp/, 'the RTSP ExoPlayer module is a dependency');
   const caps = readF('android/app/src/main/java/com/remotedisplay/player/telemetry/PlayerCapabilities.kt');
   assert.match(caps, /"playback\.rtsp"/, 'Android declares playback.rtsp');
+  // One builder for every path (full screen, zones, wall zones): RtspSources.kt.
+  const src = readF('android/app/src/main/java/com/remotedisplay/player/player/RtspSources.kt');
+  assert.match(src, /RtspMediaSource/, 'RtspSources builds an RtspMediaSource');
+  assert.match(src, /setForceUseRtpTcp\(true\)/, 'and forces TCP (NAT/firewall/camera-friendly)');
   const mpm = readF('android/app/src/main/java/com/remotedisplay/player/player/MediaPlayerManager.kt');
-  assert.match(mpm, /RtspMediaSource/, 'fullscreen path builds an RtspMediaSource');
-  assert.match(mpm, /setForceUseRtpTcp\(true\)/, 'and forces TCP (NAT/firewall/camera-friendly)');
+  assert.match(mpm, /RtspSources\.create\(/, 'the full-screen path uses it');
   const zm = readF('android/app/src/main/java/com/remotedisplay/player/player/ZoneManager.kt');
   assert.match(zm, /video\/rtsp/, 'ZoneManager handles video/rtsp');
-  assert.match(zm, /RtspMediaSource/, 'zones build an RtspMediaSource too');
+  assert.match(zm, /RtspSources\.create\(/, 'zones use it too');
+  assert.match(readF('android/app/src/main/java/com/remotedisplay/player/player/WallZoneRenderer.kt'), /RtspSources\.create\(/, 'and wall zones');
   // No other player claims RTSP (browsers/Tizen cannot open rtsp://).
   assert.doesNotMatch(readF('server/player/index.html'), /'playback\.rtsp'/, 'the web player must NOT declare playback.rtsp');
   assert.doesNotMatch(readF('tizen/js/capabilities.js'), /playback\.rtsp/, 'Tizen must NOT declare playback.rtsp');

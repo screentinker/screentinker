@@ -102,3 +102,26 @@ class PreloadSlot {
         return if (playerIsIdle) Claim.WARM_NEEDS_PREPARE else Claim.WARM
     }
 }
+
+/**
+ * How long to wait before retrying an item that failed when nothing else can play. The backoff of
+ * WebViewRetryPolicy (2, 4, 8, 15, then every 30 s, no cap: a camera that comes back is picked up
+ * within 30 s). A fault more than [healthyMs] after the last one starts again from the shortest
+ * wait: the item played in between, so this is a new outage, not the same one.
+ *
+ * Pure, so it runs on the JVM next to PlaybackFault.
+ */
+class FaultBackoff(private val healthyMs: Long = 60_000L) {
+    private var attempt = 0
+    private var lastAtMs: Long? = null
+    private var lastWaitMs = 0L
+
+    fun next(nowMs: Long): Long {
+        val at = lastAtMs
+        if (at == null || nowMs - at > lastWaitMs + healthyMs) attempt = 0
+        attempt++
+        lastAtMs = nowMs
+        lastWaitMs = com.remotedisplay.player.util.WebViewRetryPolicy.delayMsFor(attempt)
+        return lastWaitMs
+    }
+}

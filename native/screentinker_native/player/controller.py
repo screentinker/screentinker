@@ -78,6 +78,10 @@ class PlaylistController:
         self._retry = _timer(self._on_retry)
         self._retry_mode = None
         self._pending_deadline = _timer(self._on_pending_deadline)
+        # The only playable item failed (a one-camera playlist whose camera is down): retry it with
+        # FaultBackoff's waits instead of at once (on_video_fault).
+        self._fault_retry = _timer(lambda: self.next() if self.is_running else None)
+        self.fault_backoff = PL.FaultBackoff()
         # #473: a visitor is using an interactive web page. While HELD nothing moves the playlist on:
         # no advance timer, no deferred-swap deadline, and a playlist update is PARKED until release —
         # applying it mid-session would restart the item under someone filling in a form. release()
@@ -247,6 +251,7 @@ class PlaylistController:
         cur = self.current_item
         playing_key = cur.key if cur else None
         playing_rev = cur.widget_rev if cur else 0
+        playing_conn = cur.live_connection if cur else None
         # An emergency alert raised or cleared: applied NOW, mid-item, never deferred; a raised one is
         # put on screen at once rather than when the rotation reaches it.
         old_int, new_int = _interrupt_keys(self.items), _interrupt_keys(new_items)
@@ -290,6 +295,11 @@ class PlaylistController:
                     # only field that separates "same item" from "same thing on screen").
                     if self.items[ni].widget_rev != playing_rev and not self._releasing:
                         log.info("same item at %d, widget_rev %s -> %s: re-rendering", ni, playing_rev, self.items[ni].widget_rev)
+                        self._play_current()
+                    # The same for a live stream whose URL or certificate rule was edited: a live item
+                    # never reaches a natural end, so the old stream stayed up until a restart.
+                    elif playing_conn is not None and self.items[ni].live_connection != playing_conn and not self._releasing:
+                        log.info("same live item at %d but its stream changed: reconnecting", ni)
                         self._play_current()
                     return
             fp = self._first_playable()
@@ -361,6 +371,7 @@ class PlaylistController:
         self.held, self.held_key, self.parked_update = False, None, None   # a stop ends any hold
         self._advance.stop()
         self._retry.stop()
+        self._fault_retry.stop()
         self._pending_deadline.stop()
         self.has_content_on_screen = False
         self.pending_items = self.pending_successor = None
@@ -470,7 +481,13 @@ class PlaylistController:
     def on_video_fault(self):
         r = self.fault.recovery(self.wall_follower, self.current_index, _now_ms())
         if r == PL.Recovery.ADVANCE:
-            self.next()
+            if self._only_playable_is_current():
+                wait = self.fault_backoff.next(_now_ms())
+                log.warning("the only playable item failed: retrying %s in %d ms",
+                            self.current_item.filename if self.current_item else "?", wait)
+                self._fault_retry.start(wait)
+            else:
+                self.next()
         elif r == PL.Recovery.REPLAY_CURRENT:
             if self.current_item:
                 log.warning("video fault in follower/group mode: replaying index %d", self.current_index)
@@ -484,9 +501,14 @@ class PlaylistController:
             self.next()
 
     # ------------------------------------------------------------------ playing
+    def _only_playable_is_current(self):
+        ok = [i for i in range(len(self.items)) if self._playable_now(i) or self._playable_stale(i)]
+        return ok == [self.current_index]
+
     def _play_current(self):
         self._advance.stop()
         self._retry.stop()
+        self._fault_retry.stop()
         item = self.current_item
         if item is None:
             return

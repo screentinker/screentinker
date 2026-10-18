@@ -505,7 +505,8 @@ function simulate(deviceId, atMs, opts = {}) {
   // condition that fails here.
   const skipped = [];
   for (const it of entry.trace.unsupported || []) {
-    const cap = it.mime_type === 'video/hls' ? 'playback.hls' : it.mime_type === 'video/rtsp' ? 'playback.rtsp'
+    const cap = it.mime_type === 'video/hls' ? 'playback.hls'
+      : it.mime_type === 'video/rtsp' ? (/^rtsps:/i.test(String(it.remote_url || '')) ? 'playback.rtsps' : 'playback.rtsp')
       : it.mime_type === 'video/hdmi-in' ? 'playback.hdmi_in' : 'playback.hold';
     skipped.push({ label: itemLabel(it), reason: 'unsupported', capability: cap });
   }

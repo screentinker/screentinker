@@ -15,12 +15,29 @@
   old to send it shows the item as before. A web page inside a URL widget, YouTube, images and
   videos draw their own background, so the tick isn't offered on them. Additive column
   `playlist_items.transparent_bg`.
+- **RTSPS camera streams** (`rtsps://`, RTSP over TLS, e.g. UniFi Protect's default share link) on the
+  Android and native Raspberry Pi / Windows / Mac players. The camera's certificate is checked (trusted
+  authorities plus the host name) before the player sends it the login. A camera with a self-signed
+  certificate can be marked **Camera uses a self-signed certificate**: still encrypted, but not
+  verified, for that camera only. The native player makes the TLS connection itself, checks the
+  certificate on it and relays that connection to Qt on loopback, because FFmpeg doesn't check
+  certificates and can't be told to. New capability `playback.rtsps`, so a 3.0.1 player, which would open an rtsps URL as plain
+  RTSP, is never sent one. Additive column `content.tls_self_signed`.
+
+- **Fisheye (360°) cameras shown as a normal view, steered live ("digital PTZ").** A camera item can
+  be marked as a fisheye: the screen cuts a flat, always-upright view out of the round picture and
+  re-projects it on the GPU every frame, full screen or in a layout zone, on the Android and native
+  players (`playback.fisheye`). Pan, tilt and zoom are set in the camera's Edit dialog, which can
+  steer a chosen screen live while the sliders move; Save stores the view and moves every screen to
+  it without a republish (read at send time, like `video_prerotated`). Optional touch steering on the
+  screen (drag, pinch, double-tap to reset), off by default. New `camera_view` command (live only,
+  never queued) and additive column `content.fisheye`. One shared definition (server/lib/fisheye.js)
+  held to the Android and native maths by `shared/fisheye-vectors.json`.
 
 ### Fixed
 
 - **Android and Samsung Tizen now paint the device's background colour** (#325 parity). Only the web,
   native and Roku players did; on these two it was saved and never shown.
-
 - **Web content is see-through unless you choose a background colour** (#660, reported by @djalfe).
   The web player gave full-screen widgets and HTML bundles a black frame that it never removed, so a
   transparent widget hid the screen's background colour behind black when it filled the screen (in a
@@ -30,6 +47,45 @@
 - **Widget backgrounds can be Transparent.** The colour pickers for the clock, RSS, text, cloud document
   and BI dashboard widgets had no way to say "no colour", so saving a clock or text widget turned its
   transparent default into black. Each now has a **Transparent** checkbox, ticked by default.
+
+- **Applying a layout to a screen didn't reach the screen** until it next reconnected: the dashboard
+  said "Layout applied" and the old layout stayed up. The screen is now told at once.
+- **In a layout zone, an edited camera URL or certificate setting didn't reach the screen** (the zone
+  only compared content ids). It now reconnects, as full screen already did.
+
+- **UniFi Protect cameras did not play on Android.** Two media3 limits, both now handled in the
+  player's own RTSP socket: (1) UniFi's share link ends in `?enableSrtp`, which makes the camera
+  encrypt every RTP payload with SRTP, and media3 has no SRTP, so every track arrived as ciphertext
+  (on the emulator this looked like an HEVC decoder fault). Over `rtsps://` the stream already
+  rides the TLS connection, so the Android player now drops `enableSrtp` there. (2) media3's RTP Opus
+  reader expects Ogg-style OpusHead/OpusTags packets that RTP Opus never sends, and one Opus track
+  failed the whole stream; the player now puts those two headers in front of the first Opus packet,
+  so Opus audio plays. Verified on a real Allwinner tablet (hardware HEVC + Opus) against a UniFi
+  camera. The native player needed neither: FFmpeg handles SRTP and RTP Opus.
+- **A camera or HDMI-in item couldn't be set back to "stay until skipped"** (play time 0) when
+  editing it: the check only counted HLS as live. It now uses the same live types as adding.
+- **A camera that was down or refused the connection reconnected about 60 times a second** when it was
+  the only item that could play (Android and the native player). It now retries after 2, 4, 8 and
+  15 s, then every 30 s.
+- **Editing a live stream's URL didn't reach a screen that was showing it**: the stream never ends, so
+  the new URL waited for a reboot. The screen now reconnects at once (Android and the native player).
+- A stream added without a name was named from the end of its URL, which for `rtsp://user:pass@host`
+  was the user name and password. It is now named from the path or the host, and never after a share
+  token.
+
+### Security
+
+- **Camera passwords are no longer shown back.** A camera URL's password reaches only the screens that
+  play it; every other JSON response (content library, playlist editor, device pages, API tokens, MCP,
+  the Manager app, `/view` links) shows `rtsp://user:********@…`. An edit that keeps the stars keeps
+  the saved password, but only for the same scheme, host and port, so an editor can't point the stream
+  at their own host to collect it. A password is masked whole even when it holds a quote, a space or an
+  `@`. Data exports keep the full URL, as backups.
+- **Share tokens in a camera URL's path are masked too.** A UniFi Protect link
+  (`rtsps://nvr:7441/<token>`) has no password; the token alone opens the stream. A path segment that
+  looks like one (16+ letters and digits, mixed case) is shown as `********` and kept on edit, by the
+  same rules as a password.
+- The Android and native players no longer write a camera's password or share token to their logs.
 
 ### Upgrade notes
 

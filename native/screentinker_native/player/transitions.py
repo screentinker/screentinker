@@ -199,6 +199,18 @@ class ShaderLibrary:
         if h in self._baked:
             return self._baked[h]
         wrapped, names = wrap(src)
+        return self._bake_wrapped(shader_id, h, wrapped, names)
+
+    def bake_fragment(self, label, glsl440):
+        """A complete GLSL 440 fragment shader of the player's own (the fisheye view), baked like the
+        library's: the same backends, profile and cache. The .qsb path, or None."""
+        h = hashlib.sha256(glsl440.encode()).hexdigest()[:24]
+        if h not in self._baked:
+            self._bake_wrapped(label, h, glsl440, [])
+        r = self._baked.get(h)
+        return r[0] if r else None
+
+    def _bake_wrapped(self, shader_id, h, wrapped, names):
         frag = os.path.join(self.cache_dir, h + ".frag")
         # The suffix names the variant set (bake_profile): ".v2" replaced GLSL-only bakes, ".v3gles" is
         # the GLES set. A bake is never reused across sets.

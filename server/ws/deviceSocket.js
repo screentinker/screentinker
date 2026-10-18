@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { resolveWithin } = require('../lib/safe-path');
+const { isRtspsUrl } = require('../lib/remote-url');
 const { db, pruneTelemetry, pruneScreenshots } = require('../db/database');
 const { effectiveDeviceTz } = require('../lib/device-timezone');
 const config = require('../config');
@@ -598,7 +599,7 @@ function refreshWidgetRevs(assignments, deviceId = null) {
  */
 const contentFactsOf = db.prepare(`
   SELECT COALESCE(NULLIF(updated_at, 0), created_at) AS rev, filepath, mime_type, file_size, bundle_entry,
-         width, height, video_prerotated
+         width, height, video_prerotated, fisheye
     FROM content WHERE id = ?
 `);
 function refreshContentRevs(assignments) {
@@ -628,6 +629,12 @@ function refreshContentRevs(assignments) {
        * at send time, so neither needs a republish. */
       if (row.width > 0 && row.height > 0) { a.width = row.width; a.height = row.height; }
       if (Number(row.video_prerotated) === 1) a.video_prerotated = 1; else delete a.video_prerotated;
+      /* A fisheye camera's view settings (lib/fisheye.js), read at send time like the flag above, so
+       * "Save" in the camera's Edit dialog moves every screen showing it without a republish. The row
+       * is the approved state: an approval workspace keeps the edit as a draft until it is released. */
+      const fisheye = row.fisheye && require('../lib/remote-url').LIVE_MIMES.includes(a.mime_type)
+        ? require('../lib/fisheye').normalize(row.fisheye) : null;
+      if (fisheye) a.fisheye = fisheye; else delete a.fisheye;
     } catch (_) { /* keep published */ }
   }
 }
@@ -758,6 +765,9 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
    */
   const deviceSupportsHls = capsLib.supports(device, 'playback.hls');
   const deviceSupportsRtsp = capsLib.supports(device, 'playback.rtsp');
+  // rtsps:// (RTSP over TLS) is still video/rtsp, but a player that only declares playback.rtsp
+  // (3.0.1 and earlier) would open it as plain RTSP and fail, so it needs playback.rtsps too.
+  const deviceSupportsRtsps = deviceSupportsRtsp && capsLib.supports(device, 'playback.rtsps');
   // HDMI IN (video/hdmi-in): only a player that found an input on THIS device declares it.
   const deviceSupportsHdmiIn = capsLib.supports(device, 'playback.hdmi_in');
   // A hold (lib/hold-item.js) is not live, but it rides the same strip for the same reason: a player
@@ -765,12 +775,12 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
   const deviceSupportsHold = capsLib.supports(device, 'playback.hold');
   // `sink` (preview trace only) collects what was left out; the base playlist passes it, triggers don't.
   const dropLiveIfUnsupported = (items, sink = null) => {
-    if (!Array.isArray(items) || (deviceSupportsHls && deviceSupportsRtsp && deviceSupportsHdmiIn && deviceSupportsHold)) return items;
+    if (!Array.isArray(items) || (deviceSupportsHls && deviceSupportsRtsps && deviceSupportsHdmiIn && deviceSupportsHold)) return items;
     return items.filter((a) => {
       if (!a) return true;
       let keep = true;
       if (a.mime_type === 'video/hls') keep = deviceSupportsHls;
-      else if (a.mime_type === 'video/rtsp') keep = deviceSupportsRtsp;
+      else if (a.mime_type === 'video/rtsp') keep = isRtspsUrl(a.remote_url) ? deviceSupportsRtsps : deviceSupportsRtsp;
       else if (a.mime_type === 'video/hdmi-in') keep = deviceSupportsHdmiIn;
       else if (a.mime_type === 'application/x-st-hold') keep = deviceSupportsHold;
       if (!keep && sink) sink.push(a);

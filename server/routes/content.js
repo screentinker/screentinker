@@ -45,7 +45,7 @@ const revisionsLib = require('../lib/revisions');
 const libraryLib = require('../lib/content-library');
 // IPTV/HLS: the URL gates (server-fetched vs player-opened) and the live mime live
 // in one place so the route, the PUT boundary and the tests share one definition.
-const { LIVE_MIME, RTSP_MIME, HDMI_IN_MIME, LIVE_MIMES, validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, validateHdmiInUrl, looksLikeHlsUrl, looksLikeRtspUrl, classifyLiveUrl } = require('../lib/remote-url');
+const { LIVE_MIME, RTSP_MIME, HDMI_IN_MIME, LIVE_MIMES, validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, validateHdmiInUrl, looksLikeHlsUrl, looksLikeRtspUrl, classifyLiveUrl, CREDENTIAL_MASK, restoreMaskedSecrets, isSecretPathSegment } = require('../lib/remote-url');
 
 // Multer captures file.originalname directly from the multipart filename header,
 // bypassing sanitizeBody, so it is cleaned here instead.
@@ -717,6 +717,18 @@ router.post('/youtube', async (req, res) => {
 // it off screens that cannot open rtsp). hdmi://<port> becomes video/hdmi-in: the screen's own HDMI
 // input, Android TV boxes that have one only. Private / .local hosts and rtsp credentials are
 // allowed because the screen, not the server, opens the URL on its own LAN.
+// A name for a stream added without one: the last path segment, else the host. Never a secret:
+// rtsp://admin:secret@10.0.0.5 used to be named "admin:secret@10.0.0.5", and a UniFi share link
+// (rtsps://nvr:7441/<token>) would have been named after the token that opens it.
+function defaultStreamName(url) {
+  try {
+    const u = new URL(String(url).trim());
+    const seg = (u.pathname || '').split('/').filter(Boolean).pop();
+    const name = seg && !isSecretPathSegment(seg) ? decodeURIComponent(seg) : '';
+    return name || u.hostname || 'Live stream';
+  } catch (_) { return 'Live stream'; }
+}
+
 router.post('/hls', (req, res) => {
   try {
     if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before adding a live stream.' });
@@ -727,16 +739,19 @@ router.post('/hls', (req, res) => {
     if (!url) return res.status(400).json({ error: 'url is required' });
     const kind = classifyLiveUrl(url);
     if (kind.error) return res.status(kind.error.status).json({ error: kind.error.error });
+    const selfSigned = kind.mime === RTSP_MIME && !!req.body.tls_self_signed ? 1 : 0;
+    const fisheyeSettings = req.body.fisheye ? require('../lib/fisheye').normalize(req.body.fisheye) : null;
 
     const id = uuidv4();
-    const filename = name || url.split('/').pop()?.split('?')[0] || 'Live stream';
+    const filename = name || defaultStreamName(url);
     // filepath '' + file_size 0 like YouTube: no bytes stored, no storage counted.
     // duration_sec on the CONTENT stays null (unknown / infinite) — DWELL is set per
     // playlist item.
     db.prepare(`
-      INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, remote_url, folder_id)
-      VALUES (?, ?, ?, ?, '', ?, 0, ?, ?)
-    `).run(id, req.user.id, req.workspaceId, safeFilename(filename), kind.mime, url, dest.folderId);
+      INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, remote_url, folder_id, tls_self_signed, fisheye)
+      VALUES (?, ?, ?, ?, '', ?, 0, ?, ?, ?, ?)
+    `).run(id, req.user.id, req.workspaceId, safeFilename(filename), kind.mime, url, dest.folderId, selfSigned,
+      fisheyeSettings && kind.mime !== HDMI_IN_MIME ? JSON.stringify(fisheyeSettings) : null);
 
     const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
     try { require('../lib/revisions').recordCurrent(db, 'content', content.id, { actor: require('../lib/releases').actorOf(req), summary: 'Added' }); } catch (_) {}
@@ -1113,8 +1128,20 @@ router.put('/:id', (req, res) => {
   const content = checkContentWrite(req, res);
   if (!content) return;
 
-  const { filename, mime_type, remote_url, folder, folder_id, expires_at, unstable_connection,
-          captions_enabled, captions_lang, subtitle_url, subtitle_lang, tags, meta, video_prerotated } = req.body;
+  const { filename, mime_type, folder, folder_id, expires_at, unstable_connection,
+          captions_enabled, captions_lang, subtitle_url, subtitle_lang, tags, meta, video_prerotated,
+          tls_self_signed, fisheye } = req.body;
+  let { remote_url } = req.body;
+  // A camera URL comes back to the dashboard with its password and share token masked (middleware/
+  // mask-stream-credentials.js). Sent back with the mask in place, it means "keep the saved one",
+  // compared against the draft's URL when there is one, since that is what the editor was shown.
+  if (typeof remote_url === 'string' && remote_url.includes(CREDENTIAL_MASK)) {
+    let stored = content.remote_url;
+    try { const d = content.draft_json ? JSON.parse(content.draft_json) : null; if (d && typeof d.remote_url === 'string') stored = d.remote_url; } catch (_) { /* live row */ }
+    const r = restoreMaskedSecrets(remote_url, stored);
+    if (r.error) return res.status(r.error.status).json({ error: r.error.error });
+    remote_url = r.url;
+  }
   const updates = [];
   const values = [];
   /*
@@ -1186,7 +1213,7 @@ router.put('/:id', (req, res) => {
           return res.status(400).json({ error: 'That does not look like an HLS stream. The URL should point at an .m3u8 playlist.' });
         }
         if (targetMime === RTSP_MIME && !looksLikeRtspUrl(remote_url)) {
-          return res.status(400).json({ error: 'A camera stream URL must use rtsp://.' });
+          return res.status(400).json({ error: 'A camera stream URL must use rtsp:// or rtsps://.' });
         }
       } else {
         const urlErr = validateRemoteUrl(remote_url);
@@ -1232,6 +1259,23 @@ router.put('/:id', (req, res) => {
   // #217: force a lower YouTube quality ceiling for weak/unstable WiFi. Stored 0/1;
   // accepts booleans or 0/1 from the client and coerces to an integer.
   if (unstable_connection !== undefined) set('unstable_connection', unstable_connection ? 1 : 0);
+  // An rtsps camera with a self-signed certificate: the player skips the certificate check for
+  // this item only (still encrypted). Meaningless for anything else, so stored only on video/rtsp.
+  if (tls_self_signed !== undefined) {
+    if (targetMime !== RTSP_MIME) return res.status(400).json({ error: 'tls_self_signed applies to camera (rtsp/rtsps) streams only' });
+    set('tls_self_signed', tls_self_signed ? 1 : 0);
+  }
+  // A fisheye (360°) camera shown as a normal view (lib/fisheye.js). Live streams only: the players
+  // dewarp a camera they open themselves. null / false turns it off; an object is normalized (every
+  // field present and in range) before it is stored.
+  if (fisheye !== undefined) {
+    if (fisheye !== null && fisheye !== false && !LIVE_MIMES.includes(targetMime)) {
+      return res.status(400).json({ error: 'fisheye applies to camera and live streams only' });
+    }
+    const f = require('../lib/fisheye').normalize(fisheye);
+    if (fisheye && !f) return res.status(400).json({ error: 'fisheye must be an object of settings, or null' });
+    set('fisheye', f ? JSON.stringify(f) : null);
+  }
   // #216: caption/subtitle metadata. The subtitle FILE is uploaded via POST /:id/subtitle;
   // these fields toggle YouTube captions, set languages, or clear a subtitle (subtitle_url=null).
   if (captions_enabled !== undefined) set('captions_enabled', captions_enabled ? 1 : 0);
@@ -1265,8 +1309,9 @@ router.put('/:id', (req, res) => {
     return res.json({ ...db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id), draft: true, pending_review: true });
   }
   revisionsLib.recordCurrent(db, 'content', req.params.id, { actor, summary: 'Updated details' });
-  if (prerotatedChanged) {
-    // Screens showing it pick the change up now: the flag is read at send time (ws/deviceSocket.js).
+  if (prerotatedChanged || fisheye !== undefined) {
+    // Screens showing it pick the change up now: the flag and a fisheye camera's view are read at
+    // send time (ws/deviceSocket.js refreshContentRevs).
     try { pushContentUpdates(req, require('../lib/devices-playing').devicesPlayingContent(req.params.id)); } catch (_) { /* next payload */ }
   }
   res.json(db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id));

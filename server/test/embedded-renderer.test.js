@@ -70,7 +70,7 @@ db.exec(`
     -- COALESCE(NULLIF(updated_at,0), created_at) inside a bare catch, so a fixture without this
     -- column made that whole refresh branch throw and be swallowed, silently untested.
     created_at INTEGER NOT NULL DEFAULT 0,
-    expires_at INTEGER, unstable_connection INTEGER DEFAULT 0,
+    expires_at INTEGER, unstable_connection INTEGER DEFAULT 0, tls_self_signed INTEGER DEFAULT 0, fisheye TEXT,
     captions_enabled INTEGER DEFAULT 0, captions_lang TEXT, subtitle_url TEXT, subtitle_lang TEXT,
     tags TEXT, meta TEXT
   );
