@@ -1559,6 +1559,7 @@ export default {
     'widget.field.font_size_px': 'Lettergrootte (px)',
     'widget.field.color': 'Kleur',
     'widget.field.background': 'Achtergrond',
+    'widget.field.background_transparent': 'Transparant',
     'widget.field.location': 'Locatie',
     'widget.field.location_placeholder': 'Stad, provincie',
     'widget.field.units': 'Eenheden',

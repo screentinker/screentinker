@@ -7,6 +7,7 @@
  */
 import { esc } from '../utils.js';
 import { t } from '../i18n.js';
+import { backgroundField, readBackground } from './background-field.js';
 
 const PROVIDERS = {
   grafana: () => t('bi.kind_grafana'),
@@ -37,7 +38,7 @@ export async function mountBiEditor(host, config, { apiGet }) {
       <div class="form-group"><label>${esc(t('bi.w_rotate'))}</label><input type="number" min="0" id="biRotate" class="input" value="${esc(c.rotate_sec ?? '')}" placeholder="0"></div>
       <div class="form-group"><label>${esc(t('bi.w_fit'))}</label><select id="biFit" class="input">
         ${['contain', 'cover', 'fill'].map((f) => `<option value="${f}" ${(c.fit || 'contain') === f ? 'selected' : ''}>${esc({ contain: t('bi.fit_contain'), cover: t('bi.fit_cover'), fill: t('bi.fit_fill') }[f])}</option>`).join('')}</select></div>
-      <div class="form-group"><label>${esc(t('bi.w_background'))}</label><input type="color" id="biBg" class="input" value="${esc(/^#[0-9a-f]{6}$/i.test(c.background || '') ? c.background : '#000000')}"></div>
+      ${backgroundField('biBg', c.background, t('bi.w_background'))}
     </div>
     <div style="font-size:11px;color:var(--text-muted)">${esc(t('bi.w_refresh_hint'))}</div>`;
   const redraw = () => drawFields(c);
@@ -133,7 +134,7 @@ export function readBiConfig() {
     refresh_sec: v('biRefresh') === '' ? undefined : Number(v('biRefresh')),
     rotate_sec: v('biRotate') === '' ? undefined : Number(v('biRotate')),
     fit: v('biFit'),
-    background: v('biBg'),
+    background: readBackground('biBg', host),
   };
   if (out.mode === 'public') { out.public_url = v('biPublicUrl'); return out; }
   out.connection_id = v('biConn');

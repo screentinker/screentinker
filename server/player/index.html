@@ -6716,11 +6716,11 @@
       // Create a div for the YT player to replace
       const playerDiv = document.createElement('div');
       playerDiv.id = 'yt-player-' + Date.now();
-      playerDiv.style.cssText = 'width:100%;height:100%;background:#000';
+      playerDiv.style.cssText = 'width:100%;height:100%;background:transparent';
       let mountEl = playerDiv;
       if (isVertical) {
         const wrap = document.createElement('div');
-        wrap.style.cssText = 'width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center';
+        wrap.style.cssText = 'width:100%;height:100%;background:transparent;display:flex;align-items:center;justify-content:center';   // #660: the pillarbox shows the screen's background
         const inner = document.createElement('div');
         inner.style.cssText = 'width:56.25vh;height:100%;max-width:100%';
         inner.appendChild(playerDiv);
@@ -6961,9 +6961,9 @@
 
       const iframe = document.createElement('iframe');
       iframe.src = `${config.serverUrl}/api/widgets/${item.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}&rev=${item.widget_rev||0}${item.widget_panel ? '#panel=' + encodeURIComponent(item.widget_panel) : ''}`;
-      // Positioned + sized by the `#playerContainer > iframe` CSS rule. Hidden while it
-      // loads so its black background never shows over the outgoing content.
-      iframe.style.background = '#000';
+      // Positioned + sized by the `#playerContainer > iframe` CSS rule. Hidden while it loads, so
+      // the outgoing content stays up until it is ready. No background of its own (#660): a
+      // see-through widget shows the screen's background colour, the way it does in a zone.
       iframe.style.visibility = 'hidden';
       iframe.allow = 'autoplay; fullscreen';
       // Sandbox into a unique origin so widget scripts can't read window.parent state.
@@ -7019,8 +7019,7 @@
       discardPendingSwap();
 
       const iframe = document.createElement('iframe');
-      iframe.style.background = '#000';
-      iframe.style.visibility = 'hidden';
+      iframe.style.visibility = 'hidden';   // no background of its own (#660), as for a widget
       iframe.allow = 'autoplay; fullscreen';
       iframe.setAttribute('sandbox', 'allow-scripts');
 

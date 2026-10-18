@@ -3213,6 +3213,7 @@ export default {
   'widget.field.font_size_px': 'Tamanho da fonte (px)',
   'widget.field.color': 'Cor',
   'widget.field.background': 'Fundo',
+  'widget.field.background_transparent': 'Transparente',
   'widget.field.location': 'Local',
   'widget.field.location_placeholder': 'Cidade, Estado',
   'widget.field.units': 'Unidades',

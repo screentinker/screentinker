@@ -556,8 +556,8 @@ class MediaPlayerManager(
         exoPlayer?.stop()
 
         youtubeWebView?.apply {
+            // configure() leaves it transparent (#660): the letterbox shows what is behind it.
             com.remotedisplay.player.util.WebViewSupport.configure(this, "YouTube", webLoadState)
-            setBackgroundColor(android.graphics.Color.BLACK)
             // Installed once; it takes effect from the next page load, which is the one below.
             if (!youtubeBridgeInstalled) { addJavascriptInterface(YoutubeBridge(), PlayToEnd.BRIDGE); youtubeBridgeInstalled = true }
             // Load via an embed wrapper with a valid youtube.com origin (Error 153 fix).

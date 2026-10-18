@@ -71,11 +71,11 @@ def youtube_html(url, muted, play_to_end=False):
            "&playsinline=1&enablejsapi=1%s") % (YT_BASE, vid, 1 if muted else 0,
                                                 PL.youtube_loop_params(vid, play_to_end), origin)
     if vertical:
-        css = ("html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden;display:flex;"
+        css = ("html,body{margin:0;padding:0;height:100%;background:transparent;overflow:hidden;display:flex;"
                "align-items:center;justify-content:center}iframe{display:block;height:100%;aspect-ratio:9/16;"
                "max-width:100%;border:0}")
     else:
-        css = ("html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden}"
+        css = ("html,body{margin:0;padding:0;height:100%;background:transparent;overflow:hidden}"
                "iframe{display:block;width:100%;height:100%;border:0}")
     return ('<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<style>%s</style></head><body><iframe%s src="%s" allow="autoplay; encrypted-media" allowfullscreen>'

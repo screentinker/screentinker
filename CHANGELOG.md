@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.0.2
+
+### Fixed
+
+- **Web content is see-through unless you choose a background colour** (#660, reported by @djalfe).
+  The web player gave full-screen widgets and HTML bundles a black frame that it never removed, so a
+  transparent widget hid the screen's background colour behind black when it filled the screen (in a
+  zone it didn't). The YouTube
+  letterbox on the web, Android and native players was black too. A widget with no colour now shows
+  the zone, layer or screen background behind it.
+- **Widget backgrounds can be Transparent.** The colour pickers for the clock, RSS, text, cloud document
+  and BI dashboard widgets had no way to say "no colour", so saving a clock or text widget turned its
+  transparent default into black. Each now has a **Transparent** checkbox, ticked by default.
+
+### Upgrade notes
+
+- **RSS, cloud document and BI dashboard widgets with no saved colour were black and are now
+  transparent.** Full screen they look the same, over the screen's background colour (black unless one
+  is set). In a layout zone over other content, that content now shows through the widget. To keep a
+  widget black, untick **Transparent** and pick black. A widget whose colour was already saved,
+  including the #000000 the old picker saved, keeps that colour.
+
 ## 3.0.1
 
 Security fixes, the fixes from the first days of 3.0 in the field, account deletion, Telegram alerts,

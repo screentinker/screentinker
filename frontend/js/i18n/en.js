@@ -3210,6 +3210,7 @@ export default {
   'widget.field.font_size_px': 'Font Size (px)',
   'widget.field.color': 'Color',
   'widget.field.background': 'Background',
+  'widget.field.background_transparent': 'Transparent',
   'widget.field.location': 'Location',
   'widget.field.location_placeholder': 'City, State',
   'widget.field.units': 'Units',

@@ -679,7 +679,7 @@ function cloudDocConfig(config) {
   try {
     const n = require('../lib/cloud-docs').normaliseCloudDoc(c.url, { delaySec: c.delay_sec, refreshMin: c.refresh_min });
     const zoom = Math.min(Math.max(Number(c.zoom) || 100, 25), 400);
-    const background = /^#[0-9a-f]{3,8}$/i.test(c.background || '') ? c.background : '#000000';
+    const background = require('../lib/safe-color').backgroundColor(c.background);
     return { config: { ...n, zoom, background } };
   } catch (e) {
     return { error: e.message };
@@ -1265,7 +1265,7 @@ function renderRSS(c, opts = {}) {
   const fg = safeCss(c.color, '#FFF');
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:${safeCss(c.background, '#000')}; color:${fg}; height:100vh; overflow:hidden; font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  body { background:${safeCss(c.background, 'transparent')}; color:${fg}; height:100vh; overflow:hidden; font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
   .ticker { display:flex; align-items:center; height:100%; white-space:nowrap; position:relative; will-change:transform; }
   .item { display:inline-block; padding:0 40px; font-size:${r.fontSize}px; color:${fg}; }
   .item .title { font-weight:600; }

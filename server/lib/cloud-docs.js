@@ -128,7 +128,7 @@ function safeConfig(config) {
   try {
     const c = config || {};
     const n = normaliseCloudDoc(c.url, { delaySec: c.delay_sec, refreshMin: c.refresh_min });
-    return { ...n, zoom: Math.min(Math.max(Number(c.zoom) || 100, 25), 400), background: require('./safe-color').hexColor(c.background, '#000000') };
+    return { ...n, zoom: Math.min(Math.max(Number(c.zoom) || 100, 25), 400), background: require('./safe-color').backgroundColor(c.background) };
   } catch { return null; }
 }
 
