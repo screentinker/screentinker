@@ -432,6 +432,7 @@ export default {
   'widget.field.name': '小组件名称', 'widget.field.format': '格式', 'widget.field.format_12h': '12 小时制', 'widget.field.format_24h': '24 小时制',
   'widget.field.timezone': '时区', 'widget.field.font_size': '字体大小', 'widget.field.font_size_px': '字体大小（像素）',
   'widget.field.color': '颜色', 'widget.field.background': '背景', 'widget.field.location': '位置', 'widget.field.location_placeholder': '城市、省/州',
+  'widget.field.background_transparent': '透明',
   'widget.field.units': '单位', 'widget.field.units_imperial': '英制（°F）', 'widget.field.units_metric': '公制（°C）',
   'widget.field.feed_url': '信息流 URL', 'widget.field.scroll_speed_seconds': '滚动速度（秒）', 'widget.field.max_items': '最大项目数',
   'widget.field.html_content': 'HTML 内容', 'widget.field.css_optional': 'CSS（可选）', 'widget.field.url': 'URL',

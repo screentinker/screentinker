@@ -1863,7 +1863,9 @@ app.get('/api/content/:id/bundle', async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     if (out.skipped.length) res.setHeader('X-Bundle-Skipped', String(out.skipped.length));
-    return res.send(out.html);
+    // #660: a playlist item marked "Transparent background" asks for the see-through page.
+    const bg = require('./lib/backgrounds');
+    return res.send(bg.wantsTransparent(req.query) ? bg.forceTransparent(out.html) : out.html);
   } catch (err) {
     if (err && err.status === 413) return res.status(413).json({ error: err.message });
     console.error('[bundle] inline failed for', req.params.id, err && err.message);

@@ -1088,6 +1088,7 @@ export default {
   'widget.field.font_size_px': "フォントサイズ(px)",
   'widget.field.color': "カラー",
   'widget.field.background': "背景",
+  'widget.field.background_transparent': "透明",
   'widget.field.location': "場所",
   'widget.field.location_placeholder': "市、州",
   'widget.field.units': "ユニット",

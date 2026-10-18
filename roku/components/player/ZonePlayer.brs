@@ -440,6 +440,8 @@ sub requestRaster(item as object)
     ' The zone's colour goes under the page: widgets are drawn transparent over a player's background.
     q = q + "&bg=" + Mid(ST_ColorOr(ST_Str(cfg, "background"), "0x000000FF"), 3, 6)
     if rev <> "" then q = q + "&rev=" + ST_UrlEncode(rev)
+    ' #660: the page drawn see-through, over that colour.
+    if ST_Str(item, "transparent_bg") = "1" then q = q + "&transparent=1"
     m.rasterSeq = m.rasterSeq + 1
     m.rasterWant = { seq: m.rasterSeq, gen: m.gen, key: key }
     etag = ""
@@ -462,7 +464,9 @@ function rasterKey(item as object) as string
         ch = Mid(id, i, 1)
         if (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or (ch >= "0" and ch <= "9") or ch = "-" then clean = clean + ch
     end for
-    return Left(clean, 48) + "-" + m.w.ToStr() + "x" + m.h.ToStr()
+    key = Left(clean, 48) + "-" + m.w.ToStr() + "x" + m.h.ToStr()
+    if ST_Str(item, "transparent_bg") = "1" then key = key + "-t"   ' #660: a different frame
+    return key
 end function
 
 sub onRasterResult()

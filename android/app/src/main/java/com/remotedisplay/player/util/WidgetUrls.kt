@@ -14,4 +14,19 @@ object WidgetUrls {
         if (token.isNullOrEmpty()) return ""
         return "#panel=" + java.net.URLEncoder.encode(token, "UTF-8")
     }
+
+    /**
+     * #660 "Transparent background" on a playlist item: the query flag that asks the server for the
+     * see-through page (server lib/backgrounds.js), or "". Goes before any fragment.
+     */
+    fun transparentParam(on: Boolean): String = if (on) "&transparent=1" else ""
+
+    /** The style the server adds for that flag, byte for byte; for a bundle played from the cache. */
+    const val TRANSPARENT_CSS = "<style id=\"st-transparent\">html,body,.stage{background:transparent!important;background-color:transparent!important}</style>"
+
+    /** A cached bundle document drawn see-through, as the server would send it with the flag. */
+    fun forceTransparent(html: String): String {
+        val at = html.indexOf("</head>", ignoreCase = true)
+        return if (at >= 0) html.substring(0, at) + TRANSPARENT_CSS + html.substring(at) else TRANSPARENT_CSS + html
+    }
 }

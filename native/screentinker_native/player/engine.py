@@ -24,6 +24,7 @@ import urllib.parse
 from PySide6.QtCore import QTimer
 
 from ..logic import bundle_skip as BS
+from ..logic import transparent_bg as TB
 from ..logic import kiosk as kiosk_logic
 from ..logic import playlist_logic as PL
 from ..logic import fisheye as fisheye_logic
@@ -75,11 +76,11 @@ def youtube_html(url, muted, play_to_end=False):
            "&playsinline=1&enablejsapi=1%s") % (YT_BASE, vid, 1 if muted else 0,
                                                 PL.youtube_loop_params(vid, play_to_end), origin)
     if vertical:
-        css = ("html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden;display:flex;"
+        css = ("html,body{margin:0;padding:0;height:100%;background:transparent;overflow:hidden;display:flex;"
                "align-items:center;justify-content:center}iframe{display:block;height:100%;aspect-ratio:9/16;"
                "max-width:100%;border:0}")
     else:
-        css = ("html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden}"
+        css = ("html,body{margin:0;padding:0;height:100%;background:transparent;overflow:hidden}"
                "iframe{display:block;width:100%;height:100%;border:0}")
     return ('<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<style>%s</style></head><body><iframe%s src="%s" allow="autoplay; encrypted-media" allowfullscreen>'
@@ -609,7 +610,7 @@ class PlaybackEngine:
              "muted": muted, "loop": loop, "live": it.is_live}
         if it.is_widget:
             q = ("?device=" + urllib.parse.quote(self.config.device_id)) if self.config.device_id else "?d="
-            src = "%s/api/widgets/%s/render%s&rev=%d" % (server, it.widget_id, q, it.widget_rev)
+            src = "%s/api/widgets/%s/render%s&rev=%d%s" % (server, it.widget_id, q, it.widget_rev, TB.param(it.transparent_bg))
             # A meeting-room display's panel capability (server/lib/rooms/service.js panelToken) rides in
             # the FRAGMENT: it lets the page book the room, and a fragment never reaches a server log.
             panel = (it.raw or {}).get("widget_panel")
@@ -621,10 +622,12 @@ class PlaybackEngine:
             html = self.bundles.get(it.content_id, it.content_rev)
             if html is None:
                 self.app.fetch_bundle(it.content_id, it.content_rev)
-                d.update(kind="web", source="%s/api/content/%s/bundle?rev=%d" % (server, it.content_id, it.content_rev))
+                d.update(kind="web", source="%s/api/content/%s/bundle?rev=%d%s" % (server, it.content_id, it.content_rev, TB.param(it.transparent_bg)))
             else:
                 # #649: the page may ask to be skipped, with this mount's token (logic/bundle_skip.py).
                 skip_token = BS.new_token()
+                if it.transparent_bg:
+                    html = TB.force(html)   # #660: the cache holds the plain document
                 d.update(kind="html", html=BS.inject(html, skip_token), baseUrl=server + "/", skipToken=skip_token)
             return d
         if it.mime_type == "video/youtube" and it.remote_url:

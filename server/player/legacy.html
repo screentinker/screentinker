@@ -1112,7 +1112,7 @@ function requestOfflineCache(items, extraItems) {
     for (const it of all) {
       if (!it || it.mime_type !== BUNDLE_MIME || !it.content_id) continue;
       fetch(
-        "".concat(config.serverUrl, "/api/content/").concat(it.content_id, "/bundle?rev=").concat(it.content_rev || 0),
+        "".concat(config.serverUrl, "/api/content/").concat(it.content_id, "/bundle?rev=").concat(it.content_rev || 0).concat(it.transparent_bg ? "&transparent=1" : ""),
         { credentials: "omit" }
       ).catch(() => {
       });
@@ -5010,7 +5010,7 @@ function handlePlaylistUpdate(data) {
     for (const k of Object.keys(zoneOrderState)) delete zoneOrderState[k];
   }
   if (data.playback_order) playbackOrder = data.playback_order;
-  const fingerprint = (items) => items.map((a) => "".concat(a.content_id || "", "|").concat(a.widget_id || "", "|").concat(a.widget_rev || "", "|").concat(a.zone_id || "", "|").concat(a.remote_url || "", "|").concat(a.filepath || "", "|").concat(a.filename || "", "|").concat(JSON.stringify(a.schedules || []), "|").concat(a.play_from || "", "|").concat(a.play_until || "", "|").concat(a.enabled === 0 ? 0 : 1, "|").concat(a.log_play === 0 ? 0 : 1, "|").concat(a.fit_mode || "", "|").concat(JSON.stringify(a.play_when || null), "|").concat(JSON.stringify(a.tags || []), "|").concat(JSON.stringify(a.meta || {}), "|").concat(JSON.stringify(a.transition || null))).join(",");
+  const fingerprint = (items) => items.map((a) => "".concat(a.content_id || "", "|").concat(a.widget_id || "", "|").concat(a.widget_rev || "", "|").concat(a.zone_id || "", "|").concat(a.remote_url || "", "|").concat(a.filepath || "", "|").concat(a.filename || "", "|").concat(JSON.stringify(a.schedules || []), "|").concat(a.play_from || "", "|").concat(a.play_until || "", "|").concat(a.enabled === 0 ? 0 : 1, "|").concat(a.log_play === 0 ? 0 : 1, "|").concat(a.fit_mode || "", "|").concat(JSON.stringify(a.play_when || null), "|").concat(JSON.stringify(a.tags || []), "|").concat(JSON.stringify(a.meta || {}), "|").concat(JSON.stringify(a.transition || null)).concat(a.transparent_bg ? "|t" : "")).join(",");
   const newFp = fingerprint(newItems);
   const oldFp = fingerprint(playlist);
   const effectiveOrientation = window.WallGeometry ? window.WallGeometry.orientationForWallMember(data.orientation, (_a = data.wall_config) == null ? void 0 : _a.rotation) : data.orientation;
@@ -5019,10 +5019,11 @@ function handlePlaylistUpdate(data) {
       if (typeof data.custom_shaders[id] === "string") window.__TRANSITION_SHADERS[id] = data.custom_shaders[id];
     }
   }
-  if (data.background_color && /^#[0-9a-fA-F]{3,8}$/.test(data.background_color)) {
+  {
+    const bg = data.background_color && /^#[0-9a-fA-F]{3,8}$/.test(data.background_color) ? data.background_color : "";
     const stage = document.getElementById("playerContainer");
-    if (stage) stage.style.background = data.background_color;
-    document.body.style.background = data.background_color;
+    if (stage) stage.style.background = bg;
+    document.body.style.background = bg;
   }
   const prevDefault = defaultContent && defaultContent.content_rev;
   defaultContent = data.default_content && typeof data.default_content === "object" ? data.default_content : null;
@@ -5522,11 +5523,11 @@ function createYoutubeEmbed(src, item, container, opts) {
   const isVertical = /st_aspect=vertical/i.test(src || "") || /st_aspect=vertical/i.test(item && item.remote_url || "");
   const playerDiv = document.createElement("div");
   playerDiv.id = "yt-player-" + Date.now();
-  playerDiv.style.cssText = "width:100%;height:100%;background:#000";
+  playerDiv.style.cssText = "width:100%;height:100%;background:transparent";
   let mountEl = playerDiv;
   if (isVertical) {
     const wrap = document.createElement("div");
-    wrap.style.cssText = "width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center";
+    wrap.style.cssText = "width:100%;height:100%;background:transparent;display:flex;align-items:center;justify-content:center";
     const inner = document.createElement("div");
     inner.style.cssText = "width:56.25vh;height:100%;max-width:100%";
     inner.appendChild(playerDiv);
@@ -5726,8 +5727,7 @@ function renderWidgetBuffered(item) {
   container.style.display = "block";
   discardPendingSwap();
   const iframe = document.createElement("iframe");
-  iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(item.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(item.widget_rev || 0).concat(item.widget_panel ? "#panel=" + encodeURIComponent(item.widget_panel) : "");
-  iframe.style.background = "#000";
+  iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(item.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(item.widget_rev || 0).concat(item.transparent_bg ? "&transparent=1" : "").concat(item.widget_panel ? "#panel=" + encodeURIComponent(item.widget_panel) : "");
   iframe.style.visibility = "hidden";
   iframe.allow = "autoplay; fullscreen";
   iframe.setAttribute("sandbox", widgetSandboxAttr(item));
@@ -5756,7 +5756,6 @@ function renderBundleBuffered(item) {
   container.style.display = "block";
   discardPendingSwap();
   const iframe = document.createElement("iframe");
-  iframe.style.background = "#000";
   iframe.style.visibility = "hidden";
   iframe.allow = "autoplay; fullscreen";
   iframe.setAttribute("sandbox", "allow-scripts");
@@ -5771,7 +5770,7 @@ function renderBundleBuffered(item) {
   fullscreenBundleReg = registerBundleFrame(iframe, (reg, reason) => fullscreenBundleSkip(reg, item, reason));
   container.appendChild(iframe);
   pendingWidgetSwap = { iframe, timer: setTimeout(discardPendingSwap, WIDGET_SWAP_TIMEOUT_MS) };
-  const url = "".concat(config.serverUrl, "/api/content/").concat(item.content_id, "/bundle?rev=").concat(item.content_rev || 0);
+  const url = "".concat(config.serverUrl, "/api/content/").concat(item.content_id, "/bundle?rev=").concat(item.content_rev || 0).concat(item.transparent_bg ? "&transparent=1" : "");
   fetch(url, { credentials: "omit" }).then((r) => r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status))).then((html) => {
     iframe.srcdoc = html;
   }).catch((e) => {
@@ -6577,7 +6576,7 @@ function renderContent(item) {
       if (!isFollower) scheduleAdvance(nextItem, (item.duration_sec || 10) * 1e3);
     } else if (item.widget_id) {
       const iframe = document.createElement("iframe");
-      iframe.src = "".concat(serverUrl, "/api/widgets/").concat(item.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(item.widget_rev || 0).concat(item.widget_panel ? "#panel=" + encodeURIComponent(item.widget_panel) : "");
+      iframe.src = "".concat(serverUrl, "/api/widgets/").concat(item.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(item.widget_rev || 0).concat(item.transparent_bg ? "&transparent=1" : "").concat(item.widget_panel ? "#panel=" + encodeURIComponent(item.widget_panel) : "");
       iframe.style.cssText = "width:100%;height:100%;border:none;background:transparent";
       iframe.allow = "autoplay; fullscreen";
       iframe.setAttribute("sandbox", widgetSandboxAttr(item));
@@ -6886,7 +6885,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     const iframe = document.createElement("iframe");
     iframe.setAttribute("sandbox", "allow-scripts");
     iframe.allow = "autoplay; fullscreen";
-    const bundleUrl = "".concat(config.serverUrl, "/api/content/").concat(a.content_id, "/bundle?rev=").concat(a.content_rev || 0);
+    const bundleUrl = "".concat(config.serverUrl, "/api/content/").concat(a.content_id, "/bundle?rev=").concat(a.content_rev || 0).concat(a.transparent_bg ? "&transparent=1" : "");
     if (typeof registerBundleFrame === "function" && typeof zoneBundleSkip === "function") {
       div.__stBundleReg = registerBundleFrame(
         iframe,
@@ -6902,7 +6901,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     if (multi) timers[zone.id] = setTimeout(advance, dur);
   } else if (a.widget_id) {
     const iframe = document.createElement("iframe");
-    iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(a.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(a.widget_rev || 0).concat(a.widget_panel ? "#panel=" + encodeURIComponent(a.widget_panel) : "");
+    iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(a.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(a.widget_rev || 0).concat(a.transparent_bg ? "&transparent=1" : "").concat(a.widget_panel ? "#panel=" + encodeURIComponent(a.widget_panel) : "");
     iframe.setAttribute("sandbox", widgetSandboxAttr(a));
     div.appendChild(iframe);
     if (PREVIEW_MODE && a.widget_type === "webpage") addWebpageNote(div);
@@ -7452,7 +7451,7 @@ function wallZoneElement(zs, a, opts) {
   const src = mediaUrl(a);
   if (a.widget_id) {
     const iframe = document.createElement("iframe");
-    iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(a.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(a.widget_rev || 0).concat(a.widget_panel ? "#panel=" + encodeURIComponent(a.widget_panel) : "");
+    iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(a.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(a.widget_rev || 0).concat(a.transparent_bg ? "&transparent=1" : "").concat(a.widget_panel ? "#panel=" + encodeURIComponent(a.widget_panel) : "");
     iframe.setAttribute("sandbox", widgetSandboxAttr(a));
     return { el: iframe, video: null };
   }

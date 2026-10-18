@@ -1094,6 +1094,7 @@ export default {
   'widget.field.font_size_px': "Taille de police (px)",
   'widget.field.color': "Couleur",
   'widget.field.background': "Fond",
+  'widget.field.background_transparent': "Transparent",
   'widget.field.location': "Emplacement",
   'widget.field.location_placeholder': "Ville, Région",
   'widget.field.units': "Unités",

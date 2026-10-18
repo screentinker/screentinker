@@ -660,6 +660,7 @@ export default {
   'widget.field.font_size_px': 'Dimensione Font (px)',
   'widget.field.color': 'Colore',
   'widget.field.background': 'Sfondo',
+  'widget.field.background_transparent': 'Trasparente',
   'widget.field.location': 'Località',
   'widget.field.location_placeholder': 'Città, Provincia',
   'widget.field.units': 'Unità',

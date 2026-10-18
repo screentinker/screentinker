@@ -709,6 +709,7 @@ export default {
   'widget.field.font_size_px': 'Tamaño de fuente (px)',
   'widget.field.color': 'Color',
   'widget.field.background': 'Fondo',
+  'widget.field.background_transparent': 'Transparente',
   'widget.field.location': 'Ubicación',
   'widget.field.location_placeholder': 'Ciudad, Estado',
   'widget.field.units': 'Unidades',

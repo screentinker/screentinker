@@ -42,7 +42,7 @@ test('rss widget: scroll_speed/max_items coerced to numbers (no injection)', asy
   const html = await render('rss1');
   assert.ok(!html.includes('</style><script>y'), 'scroll_speed cannot inject');
   assert.ok(!html.includes('evil('), 'max_items cannot inject into the script');
-  assert.ok(html.includes('background:#000'), 'invalid background -> default');
+  assert.ok(html.includes('background:transparent'), 'invalid background -> default (see-through, #660)');
 });
 
 test('text widget: raw HTML is isolated in a null-origin sandboxed iframe', async () => {

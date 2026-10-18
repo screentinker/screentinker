@@ -473,7 +473,7 @@ PlaylistPlayer.prototype.load = function (assignments, playbackOrder) {
       // update was treated as unchanged, and the screen kept the old render until a restart.
       // 3.0 TV-safe video: a copy becoming ready (or the pre-rotated flag changing) must remount the
       // item, or a screen showing the "preparing" note would keep showing it.
-      return [a.content_id, a.widget_id, a.widget_rev || 0, a.remote_url, a.mime_type, a.schedules || [], a.play_from || '', a.play_until || '', a.enabled === 0 ? 0 : 1, a.fit_mode || '', a.play_when || null, a.tags || [], a.meta || {}, a.transition || null, a.video_variants || null, a.video_prerotated ? 1 : 0];
+      return [a.content_id, a.widget_id, a.widget_rev || 0, a.remote_url, a.mime_type, a.schedules || [], a.play_from || '', a.play_until || '', a.enabled === 0 ? 0 : 1, a.fit_mode || '', a.play_when || null, a.tags || [], a.meta || {}, a.transition || null, a.video_variants || null, a.video_prerotated ? 1 : 0, a.transparent_bg ? 1 : 0];
   }));
   if (sig === this.sig && this.items.length) {
     // In-place duration/weight refresh: patch live items so a duration or weight edit takes effect
@@ -1566,7 +1566,7 @@ PlaylistPlayer.prototype.renderWidget = function (item, single) {
     if (!single) this.schedule(this.durationMs(item));
     return;
   }
-  var src = this.getBase() + '/api/widgets/' + item.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '?d=') + '&rev=' + (item.widget_rev || 0);
+  var src = this.getBase() + '/api/widgets/' + item.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '?d=') + '&rev=' + (item.widget_rev || 0) + (item.transparent_bg ? '&transparent=1' : '');   // #660
   // Anti-flash (#directory-board, parity with the web player): build the new iframe hidden ON TOP of the
   // current content and reveal it on load, THEN drop everything else — so a widget/directory-board
   // reload never black-flashes the stage (playCurrent skipped the pre-clear for widgets).
@@ -1602,9 +1602,19 @@ PlaylistPlayer.prototype.renderWidget = function (item, single) {
  * attribute is set here, now, while the reason is written down, rather than left as a gap for the
  * offline work to walk into.
  */
+// #660: server lib/backgrounds.js forceTransparent, byte for byte, for a bundle played from the store.
+var TRANSPARENT_CSS = '<style id="st-transparent">html,body,.stage{background:transparent!important;background-color:transparent!important}</style>';
+function forceTransparent(html) {
+  var at = html.search(/<\/head>/i);
+  return at >= 0 ? html.slice(0, at) + TRANSPARENT_CSS + html.slice(at) : TRANSPARENT_CSS + html;
+}
+
 PlaylistPlayer.prototype.renderBundle = function (item, single) {
   var self = this;
-  var src = this.getBase() + '/api/content/' + item.content_id + '/bundle?rev=' + (item.content_rev || 0);
+  // #660: the store keeps the PLAIN document (one copy per revision); a see-through item gets the
+  // server's style added to a cached copy, and asks the server for it over the network.
+  var plainSrc = this.getBase() + '/api/content/' + item.content_id + '/bundle?rev=' + (item.content_rev || 0);
+  var src = plainSrc + (item.transparent_bg ? '&transparent=1' : '');
   var f = document.createElement('iframe');
   f.setAttribute('frameborder', '0');
   f.setAttribute('sandbox', 'allow-scripts');
@@ -1643,7 +1653,7 @@ PlaylistPlayer.prototype.renderBundle = function (item, single) {
   } catch (e) { cached = null; }
 
   if (cached) {
-    f.srcdoc = cached;
+    f.srcdoc = item.transparent_bg ? forceTransparent(cached) : cached;
   } else {
     f.src = src;
     // Warm the store for next time, including the next power cut. Fire-and-forget: a failure here
@@ -1651,7 +1661,7 @@ PlaylistPlayer.prototype.renderBundle = function (item, single) {
     try {
       if (typeof BundleStore !== 'undefined' && BundleStore.available()) {
         var xhr = new XMLHttpRequest();
-        xhr.open('GET', src, true);
+        xhr.open('GET', plainSrc, true);
         xhr.timeout = 30000;
         xhr.onload = function () {
           if (xhr.status >= 200 && xhr.status < 300 && xhr.responseText) {
@@ -1784,7 +1794,7 @@ ZoneRenderer.prototype.signature = function (layout, assignments) {
     return [z.id, z.x_percent, z.y_percent, z.width_percent, z.height_percent, z.z_index, z.fit_mode, z.background_color];
   });
   var asig = (assignments || []).map(function (a) {
-    return [a.zone_id || '', a.content_id, a.widget_id, a.remote_url, a.duration_sec, a.mime_type, a.sort_order, a.schedules || [], a.play_from || '', a.play_until || '', a.enabled === 0 ? 0 : 1, a.fit_mode || '', a.play_when || null];
+    return [a.zone_id || '', a.content_id, a.widget_id, a.remote_url, a.duration_sec, a.mime_type, a.sort_order, a.schedules || [], a.play_from || '', a.play_until || '', a.enabled === 0 ? 0 : 1, a.fit_mode || '', a.play_when || null, a.transparent_bg ? 1 : 0];
   });
   return JSON.stringify([layout.id || '', zsig, asig]);
 };
@@ -1994,13 +2004,13 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
         });
       }
     } else if (a.widget_type || (a.widget_id && !a.content_id)) {
-      zone.el.appendChild(zrFrame(this.getBase() + '/api/widgets/' + a.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '?d=') + '&rev=' + (a.widget_rev || 0)));
+      zone.el.appendChild(zrFrame(this.getBase() + '/api/widgets/' + a.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '?d=') + '&rev=' + (a.widget_rev || 0) + (a.transparent_bg ? '&transparent=1' : '')));
       if (multi) this.scheduleAdvance(zone, dur, advance);
     } else if (mime === BUNDLE_MIME) {
       // A zone bundle is the same server-flattened document as the fullscreen one, sandboxed for
       // the reason renderBundle records. Without this branch a bundle in a zone matched nothing and
       // the zone rendered an empty div that never advanced.
-      var bf = zrFrame(this.getBase() + '/api/content/' + a.content_id + '/bundle?rev=' + (a.content_rev || 0));
+      var bf = zrFrame(this.getBase() + '/api/content/' + a.content_id + '/bundle?rev=' + (a.content_rev || 0) + (a.transparent_bg ? '&transparent=1' : ''));
       bf.setAttribute('sandbox', 'allow-scripts');
       // #649: this zone's bundle may ask to be skipped; it moves THIS zone on.
       zone.bundleReg = stRegisterBundleFrame(bf, function (reg, reason) { self._zoneBundleSkip(reg, zone, list, activeIdx, a, advance, reason); });
@@ -2445,7 +2455,7 @@ WallZoneRenderer.fit = function (item, zone) {
 WallZoneRenderer.muted = function (zoneAudio, item) { return !zoneAudio || !!(item && item.muted); };
 WallZoneRenderer.itemKey = function (a) {
   return a ? [a.content_id || '', a.widget_id || '', a.widget_rev || 0, a.remote_url || '', a.content_rev || '',
-    a.mime_type || '', a.fit_mode || '', a.muted ? 1 : 0].join('|') : '';
+    a.mime_type || '', a.fit_mode || '', a.muted ? 1 : 0, a.transparent_bg ? 't' : ''].join('|') : '';
 };
 
 WallZoneRenderer.prototype.active = function () { return this.built; };
@@ -2558,10 +2568,10 @@ WallZoneRenderer.prototype.element = function (zs, a, opts) {
   var fit = WallZoneRenderer.fit(a, zs.zone);
   if (stIsHold(a)) return null;   // never a URL: hold://… has no file
   if (a.widget_id && !a.content_id) {
-    return { el: zrFrame(this.getBase() + '/api/widgets/' + a.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '?d=') + '&rev=' + (a.widget_rev || 0)), video: null };
+    return { el: zrFrame(this.getBase() + '/api/widgets/' + a.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '?d=') + '&rev=' + (a.widget_rev || 0) + (a.transparent_bg ? '&transparent=1' : '')), video: null };
   }
   if (mime === BUNDLE_MIME) {
-    var bf = zrFrame(this.getBase() + '/api/content/' + a.content_id + '/bundle?rev=' + (a.content_rev || 0));
+    var bf = zrFrame(this.getBase() + '/api/content/' + a.content_id + '/bundle?rev=' + (a.content_rev || 0) + (a.transparent_bg ? '&transparent=1' : ''));
     bf.setAttribute('sandbox', 'allow-scripts');
     return { el: bf, video: null };
   }

@@ -14,4 +14,13 @@ function hexColor(value, fallback, digits = [3, 4, 6, 8]) {
   return '#' + parseInt(m[1], 16).toString(16).padStart(m[1].length, '0');
 }
 
-module.exports = { hexColor };
+/*
+ * A widget's page background (#660): see-through unless a colour was chosen. Unset, 'transparent'
+ * and anything that is not a hex colour all mean transparent, so the zone, layer or screen
+ * background behind the widget shows through it, the way the clock and text widgets always did.
+ */
+function backgroundColor(value) {
+  return hexColor(value, 'transparent');
+}
+
+module.exports = { hexColor, backgroundColor };

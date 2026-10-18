@@ -17,6 +17,7 @@
  */
 
 const { escapeHtml } = require('../widget-sanitize');
+const { backgroundColor } = require('../safe-color');
 const connections = require('./connections');
 const grafana = require('./grafana');
 const powerbi = require('./powerbi');
@@ -70,7 +71,7 @@ function normaliseConfig(db, orgId, raw) {
     refresh_sec: bounded(c.refresh_sec, provider === 'grafana' ? 30 : 300, 86400, provider === 'grafana' ? 300 : 0),
     rotate_sec: bounded(c.rotate_sec, 10, 3600, 0),
     fit: FITS.includes(c.fit) ? c.fit : 'contain',
-    background: /^#[0-9a-f]{3,8}$/i.test(String(c.background || '')) ? c.background : '#000000',
+    background: backgroundColor(c.background),
   };
   if (mode === 'public') {
     out.public_url = publicUrlFor(provider, c.public_url);
@@ -216,7 +217,7 @@ if(!publicSrc)setInterval(mount,6*3600*1000);
  */
 function render(db, widget, rawConfig, { origin, iframeSandbox = 'allow-scripts' } = {}) {
   const cfg = rawConfig || {};
-  const bg = /^#[0-9a-f]{3,8}$/i.test(String(cfg.background || '')) ? cfg.background : '#000000';
+  const bg = backgroundColor(cfg.background);
   // Re-checked here, not trusted from the row: `fit` goes into a style attribute as it is.
   const fit = FITS.includes(cfg.fit) ? cfg.fit : 'contain';
   const plain = (text) => ({ html: messagePage(bg, text), csp: "default-src 'none'; style-src 'unsafe-inline'; sandbox" });

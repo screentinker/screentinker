@@ -3,6 +3,7 @@ import { showToast } from '../components/toast.js';
 import { t } from '../i18n.js';
 import { openHistoryModal } from '../components/history-modal.js';
 import { renderApprovalBar } from '../components/approval-actions.js';
+import { backgroundField, readBackground } from '../components/background-field.js';
 
 /*
  * Real IANA zones for the clock widget's picker (#316). Intl.supportedValuesOf is the browser's own
@@ -699,7 +700,7 @@ export async function render(container) {
           <div class="form-group"><label>${t('widget.field.date_font_size_px')}</label><input type="number" id="wDateFontSize" class="input" value="${escAttr(config.date_font_size || Math.max(16, Math.round((config.font_size || 64) / 3)))}" min="8"></div>
           <div class="form-group"><label>${t('widget.field.date_color')}</label><input type="color" id="wDateColor" value="${escAttr(config.date_color || config.color || '#FFFFFF')}" style="width:60px;height:32px;border:none"></div>
           <div class="form-group"><label>${t('widget.field.color')}</label><input type="color" id="wColor" value="${escAttr(config.color || '#FFFFFF')}" style="width:60px;height:32px;border:none"></div>
-          <div class="form-group"><label>${t('widget.field.background')}</label><input type="color" id="wBg" value="${escAttr(config.background || '#000000')}" style="width:60px;height:32px;border:none"></div>`;
+          ${backgroundField('wBg', config.background)}`;
         }
         break;
       case 'weather':
@@ -725,13 +726,13 @@ export async function render(container) {
           <div class="form-group"><label>${t('widget.field.max_items')}</label><input type="number" id="wMaxItems" class="input" value="${escAttr(config.max_items || 10)}"></div>
           <div class="form-group"><label>${t('widget.field.font_size')}</label><input type="number" id="wFontSize" class="input" value="${escAttr(config.font_size || 24)}"></div>
           <div class="form-group"><label>${t('widget.field.color')}</label><input type="color" id="wColor" value="${escAttr(config.color || '#FFFFFF')}" style="width:60px;height:32px;border:none"></div>
-          <div class="form-group"><label>${t('widget.field.background')}</label><input type="color" id="wBg" value="${escAttr(config.background || '#000000')}" style="width:60px;height:32px;border:none"></div>`;
+          ${backgroundField('wBg', config.background)}`;
         break;
       case 'text':
         html += `
           <div class="form-group"><label>${t('widget.field.html_content')}</label><textarea id="wHtml" class="input" rows="6" style="font-family:monospace;font-size:12px">${escAttr(config.html || '<h1 style="color:white;text-align:center;margin-top:40px">Hello World</h1>')}</textarea></div>
           <div class="form-group"><label>${t('widget.field.css_optional')}</label><textarea id="wCss" class="input" rows="3" style="font-family:monospace;font-size:12px">${escAttr(config.css || '')}</textarea></div>
-          <div class="form-group"><label>${t('widget.field.background')}</label><input type="color" id="wBg" value="${escAttr(config.background || '#000000')}" style="width:60px;height:32px;border:none"></div>`;
+          ${backgroundField('wBg', config.background)}`;
         break;
       case 'webpage':
         html += `
@@ -780,7 +781,7 @@ export async function render(container) {
           <div class="form-group"><label>${t('widget.cloud.refresh')}</label><input type="number" id="wCloudRefresh" class="input" min="0" max="1440" value="${escAttr(config.refresh_min ?? '')}" placeholder="${escAttr(t('widget.cloud.refresh_ph'))}">
             <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.cloud.refresh_hint')}</div></div>
           <div class="form-group"><label>${t('widget.field.zoom_pct')}</label><input type="number" id="wZoom" class="input" min="25" max="400" value="${escAttr(Number(config.zoom) || 100)}"></div>
-          <div class="form-group"><label>${t('widget.field.background')}</label><input type="color" id="wBg" value="${escAttr(config.background || '#000000')}" style="width:60px;height:32px;border:none"></div>`;
+          ${backgroundField('wBg', config.background)}`;
         break;
       case 'social':
         html += `<div id="wSocialEditor"></div>`;
@@ -1437,7 +1438,7 @@ export async function render(container) {
       case 'clock': {
         const fontSize = parseInt(val('wFontSize')) || 64;
         const dateFontSize = parseInt(val('wDateFontSize'));
-        Object.assign(config, { format: val('wFormat'), timezone: val('wTimezone'), font_size: fontSize, color: val('wColor'), background: val('wBg'),
+        Object.assign(config, { format: val('wFormat'), timezone: val('wTimezone'), font_size: fontSize, color: val('wColor'), background: readBackground('wBg'),
         // #323: seconds were always on with no way to turn them off, and the clock was formatted
         // in en-US regardless of the operator's language. Both are settings now.
         show_seconds: document.getElementById('wShowSeconds') ? document.getElementById('wShowSeconds').checked : true,
@@ -1458,8 +1459,8 @@ export async function render(container) {
         scroll_speed: parseInt(val('wScrollSpeed')) || 30,
         interval_sec: Math.min(300, Math.max(3, parseInt(val('wNewsInterval')) || 10)),
         show_images: document.getElementById('wNewsImages') ? document.getElementById('wNewsImages').checked : true,
-        max_items: parseInt(val('wMaxItems')) || 10, font_size: parseInt(val('wFontSize')) || 24, color: val('wColor'), background: val('wBg') }); break;
-      case 'text': Object.assign(config, { html: val('wHtml'), css: val('wCss'), background: val('wBg') }); break;
+        max_items: parseInt(val('wMaxItems')) || 10, font_size: parseInt(val('wFontSize')) || 24, color: val('wColor'), background: readBackground('wBg') }); break;
+      case 'text': Object.assign(config, { html: val('wHtml'), css: val('wCss'), background: readBackground('wBg') }); break;
       case 'webpage': {
         // Start from what the form was filled from: keys it has no field for are kept, not dropped.
         for (const [k, v] of Object.entries(formBaseConfig || {})) if (k !== '_name') config[k] = v;
@@ -1481,7 +1482,7 @@ export async function render(container) {
       }
       case 'cloud-doc': {
         const refresh = String(val('wCloudRefresh') || '').trim();
-        Object.assign(config, { url: val('wCloudUrl'), delay_sec: parseInt(val('wCloudDelay')) || 10, zoom: parseInt(val('wZoom')) || 100, background: val('wBg') || '#000000' });
+        Object.assign(config, { url: val('wCloudUrl'), delay_sec: parseInt(val('wCloudDelay')) || 10, zoom: parseInt(val('wZoom')) || 100, background: readBackground('wBg') });
         if (refresh !== '') config.refresh_min = Math.max(0, parseInt(refresh) || 0);
         break;
       }

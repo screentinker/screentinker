@@ -4408,6 +4408,17 @@ migrationStep('smart playlists', () => {
   try { db.prepare('ALTER TABLE playlist_items ADD COLUMN play_to_end INTEGER').run(); console.log('[migrate] playlist_items.play_to_end added'); } catch (_) { /* present */ }
 });
 
+migrationStep('#660 playlist and item backgrounds', () => {
+  // A playlist's own background colour, painted behind what it shows in place of the device's
+  // background_color (lib/backgrounds.js). Hex; NULL = the screen's colour, as before. Published
+  // like playback_order: screens get published_background_color.
+  try { db.prepare('ALTER TABLE playlists ADD COLUMN background_color TEXT').run(); console.log('[migrate] playlists.background_color added'); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE playlists ADD COLUMN published_background_color TEXT').run(); } catch (_) { /* present */ }
+  // "Transparent background" on one item: its widget, bundle or template is drawn see-through.
+  // 1 or NULL; NULL = as the content itself sets it.
+  try { db.prepare('ALTER TABLE playlist_items ADD COLUMN transparent_bg INTEGER').run(); console.log('[migrate] playlist_items.transparent_bg added'); } catch (_) { /* present */ }
+});
+
 migrationStep('SAML', () => {
   // SAML 2.0 org providers (lib/saml.js). A SAML row keeps the IdP's entityID in `issuer` and an empty
   // client_id (both NOT NULL in the original table), so no rebuild is needed.

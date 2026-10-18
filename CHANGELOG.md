@@ -10,6 +10,17 @@
   error. Likely causes turn amber or red. `sudo screentinker-pi status-display enable` prints the
   wiring and sets up the kernel's fbtft driver; `test` draws colour bands to check it. Any fbtft panel
   works. Suggested by ScallionShot3689 on r/digitalsignage.
+- **A background colour for a playlist** (#660). Set it next to the playback order. It's painted
+  behind everything the playlist shows and replaces each screen's own background colour while that
+  playlist plays. Leave **Screen's colour** ticked to keep each screen's own. Like the playback
+  order, it reaches screens when you publish. Additive columns `playlists.background_color` and
+  `published_background_color`.
+- **Transparent background on a playlist item** (#660): a tick on a widget or HTML bundle row draws
+  that item see-through, whatever colour the widget itself sets, so the playlist, screen or zone
+  colour shows behind it. Players ask for it with `transparent=1` on the render URL; a player too
+  old to send it shows the item as before. A web page inside a URL widget, YouTube, images and
+  videos draw their own background, so the tick isn't offered on them. Additive column
+  `playlist_items.transparent_bg`.
 - **RTSPS camera streams** (`rtsps://`, RTSP over TLS, e.g. UniFi Protect's default share link) on the
   Android and native Raspberry Pi / Windows / Mac players. The camera's certificate is checked (trusted
   authorities plus the host name) before the player sends it the login. A camera with a self-signed
@@ -30,6 +41,18 @@
   held to the Android and native maths by `shared/fisheye-vectors.json`.
 
 ### Fixed
+
+- **Android and Samsung Tizen now paint the device's background colour** (#325 parity). Only the web,
+  native and Roku players did; on these two it was saved and never shown.
+- **Web content is see-through unless you choose a background colour** (#660, reported by @djalfe).
+  The web player gave full-screen widgets and HTML bundles a black frame that it never removed, so a
+  transparent widget hid the screen's background colour behind black when it filled the screen (in a
+  zone it didn't). The YouTube
+  letterbox on the web, Android and native players was black too. A widget with no colour now shows
+  the zone, layer or screen background behind it.
+- **Widget backgrounds can be Transparent.** The colour pickers for the clock, RSS, text, cloud document
+  and BI dashboard widgets had no way to say "no colour", so saving a clock or text widget turned its
+  transparent default into black. Each now has a **Transparent** checkbox, ticked by default.
 
 - **Applying a layout to a screen didn't reach the screen** until it next reconnected: the dashboard
   said "Layout applied" and the old layout stayed up. The screen is now told at once.
@@ -69,6 +92,14 @@
   looks like one (16+ letters and digits, mixed case) is shown as `********` and kept on edit, by the
   same rules as a password.
 - The Android and native players no longer write a camera's password or share token to their logs.
+
+### Upgrade notes
+
+- **RSS, cloud document and BI dashboard widgets with no saved colour were black and are now
+  transparent.** Full screen they look the same, over the screen's background colour (black unless one
+  is set). In a layout zone over other content, that content now shows through the widget. To keep a
+  widget black, untick **Transparent** and pick black. A widget whose colour was already saved,
+  including the #000000 the old picker saved, keeps that colour.
 
 ## 3.0.1
 

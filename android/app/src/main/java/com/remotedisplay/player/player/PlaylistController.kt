@@ -48,6 +48,8 @@ data class PlaylistItem(
     val weight: Int = 1,
     // #624: YouTube only — move on when the video ends (PlayToEnd). The server sends it only when set.
     val playToEnd: Boolean = false,
+    // #660: draw this widget or bundle see-through (WidgetUrls.transparentParam). Sent only when set.
+    val transparentBg: Boolean = false,
     // 3.0 TV-safe video: the operator marked this file "already rotated for portrait screens", so a
     // portrait screen plays it as-is (MainActivity turns the video view back). Sent only when set.
     val videoPrerotated: Boolean = false,
@@ -469,6 +471,7 @@ class PlaylistController(
                     meta = obj.optJSONObject("meta"),
                     weight = obj.optInt("weight", 1).coerceAtLeast(1),
                     playToEnd = obj.optInt("play_to_end", 0) == 1,
+                    transparentBg = obj.optInt("transparent_bg", 0) == 1,
                     videoPrerotated = obj.optInt("video_prerotated", 0) == 1,
                     transition = Transitions.parse(obj.optJSONObject("transition")),
                     slideAudio = parseSlideAudio(obj.optJSONObject("audio")),
@@ -510,7 +513,8 @@ class PlaylistController(
             // flip must restart it; appended only when set, so no existing signature changes.
             (if (it.tlsSelfSigned) "|tls-self-signed" else "") +
             // A saved fisheye view or setting changed: appended only when set, like the flag above.
-            (it.fisheye?.let { f -> "|fisheye:$f" } ?: "")
+            (it.fisheye?.let { f -> "|fisheye:$f" } ?: "") +
+            (if (it.transparentBg) "|t" else "")
         // Compared BEFORE items is replaced: an alert raised or cleared skips the deferral below.
         val interruptChanged = Interrupt.changed(Interrupt.keys(items), Interrupt.keys(newItems))
         val oldContentIds = items.map(::sig)

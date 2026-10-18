@@ -764,6 +764,7 @@ export default {
   'widget.field.font_size_px': 'Schriftgröße (px)',
   'widget.field.color': 'Farbe',
   'widget.field.background': 'Hintergrund',
+  'widget.field.background_transparent': 'Transparent',
   'widget.field.location': 'Standort',
   'widget.field.location_placeholder': 'Stadt, Land',
   'widget.field.units': 'Einheiten',

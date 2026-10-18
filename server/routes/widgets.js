@@ -13,6 +13,7 @@ const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 const { denyReadOnly, resourceAccess } = require('../lib/tenancy');
 const { isRealTimezone } = require('../lib/device-timezone');
 const { escapeHtml, safeUrl, safeCss, safeNumber } = require('../lib/widget-sanitize');
+const backgrounds = require('../lib/backgrounds');
 const pluginRegistry = require('../lib/plugins/registry');
 const { BUILTIN_WIDGET_TYPES } = require('../lib/plugins/reserved');
 const { redactSecrets, mergeSecrets, fieldsForWidget, redactConfigJson } = require('../lib/plugins/secrets');
@@ -679,7 +680,7 @@ function cloudDocConfig(config) {
   try {
     const n = require('../lib/cloud-docs').normaliseCloudDoc(c.url, { delaySec: c.delay_sec, refreshMin: c.refresh_min });
     const zoom = Math.min(Math.max(Number(c.zoom) || 100, 25), 400);
-    const background = /^#[0-9a-f]{3,8}$/i.test(c.background || '') ? c.background : '#000000';
+    const background = require('../lib/safe-color').backgroundColor(c.background);
     return { config: { ...n, zoom, background } };
   } catch (e) {
     return { error: e.message };
@@ -786,6 +787,12 @@ router.get('/:id/render', (req, res) => {
   // widgets render blank in the web player. Drop it here; the sandbox - not
   // X-Frame-Options - is what isolates the widget (it can't read the dashboard JWT).
   res.removeHeader('X-Frame-Options');
+  // #660 "Transparent background" on a playlist item: the same page, drawn see-through. Every widget
+  // type below ends in its own res.send, so the page is changed here, once, on its way out.
+  if (backgrounds.wantsTransparent(req.query)) {
+    const send = res.send.bind(res);
+    res.send = (body) => send(typeof body === 'string' && res.statusCode < 300 ? backgrounds.forceTransparent(body) : body);
+  }
   // Caching is keyed on whether the caller pinned a revision.
   //
   // A URL carrying ?rev=<widget.updated_at> is content-addressed: those exact bytes cannot change
@@ -1265,7 +1272,7 @@ function renderRSS(c, opts = {}) {
   const fg = safeCss(c.color, '#FFF');
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:${safeCss(c.background, '#000')}; color:${fg}; height:100vh; overflow:hidden; font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  body { background:${safeCss(c.background, 'transparent')}; color:${fg}; height:100vh; overflow:hidden; font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
   .ticker { display:flex; align-items:center; height:100%; white-space:nowrap; position:relative; will-change:transform; }
   .item { display:inline-block; padding:0 40px; font-size:${r.fontSize}px; color:${fg}; }
   .item .title { font-weight:600; }

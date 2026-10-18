@@ -68,6 +68,12 @@ function forkInheritedPlaylist(deviceId, userId) {
                     published_layout_id = (SELECT published_layout_id FROM playlists WHERE id = ?) WHERE id = ?`)
         .run(resolved.playlist_id, resolved.playlist_id, newId);
     }
+    // #660: and its background colour, draft and published.
+    if (require('./corporate/schema-probe').hasColumn(db, 'playlists', 'published_background_color')) {
+      db.prepare(`UPDATE playlists SET background_color = (SELECT background_color FROM playlists WHERE id = ?),
+                    published_background_color = (SELECT published_background_color FROM playlists WHERE id = ?) WHERE id = ?`)
+        .run(resolved.playlist_id, resolved.playlist_id, newId);
+    }
 
     /*
      * ⚠️ A SMART source has no items to copy: its content comes from its rules. Copying nothing
@@ -110,6 +116,7 @@ function forkInheritedPlaylist(deviceId, userId) {
                      s.start_date, s.end_date, s.sort_order);
       }
     }
+    require('./backgrounds').copyTransparentBg(db, itemIdMap);   // #660
 
     db.prepare("UPDATE devices SET playlist_id = ?, playlist_source = 'device' WHERE id = ?")
       .run(newId, deviceId);

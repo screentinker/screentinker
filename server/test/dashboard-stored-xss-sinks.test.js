@@ -73,7 +73,9 @@ function interpolations(src) {
   return out;
 }
 
-const escaped = (expr) => /^(esc|escAttr)\(/.test(expr);
+// backgroundField (#660) writes a stored value out only once it is a hex colour, and esc()s it too;
+// transparent-web-content.test.js holds it to that with a break-out value.
+const escaped = (expr) => /^(esc|escAttr|backgroundField)\(/.test(expr);
 // A ternary (` ? `, with spaces — `el.data?.slice` is optional chaining, not a ternary) chooses
 // between literals for a `selected`/`checked` flag; an arithmetic expression yields a number or NaN.
 const isTernary = (expr) => / \? /.test(expr) || /&&/.test(expr);

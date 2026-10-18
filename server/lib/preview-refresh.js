@@ -100,7 +100,7 @@ function noteChange(deviceId, nowMs = Date.now()) {
  * time zone, local API, sync and wall clocks) changes nothing on the screen and is left out.
  */
 function itemFingerprint(a) {
-  return `${a.content_id || ''}|${a.widget_id || ''}|${a.widget_rev || ''}|${a.zone_id || ''}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}|${JSON.stringify(a.schedules || [])}|${a.play_from || ''}|${a.play_until || ''}|${a.enabled === 0 ? 0 : 1}|${a.log_play === 0 ? 0 : 1}|${a.fit_mode || ''}|${JSON.stringify(a.play_when || null)}|${JSON.stringify(a.tags || [])}|${JSON.stringify(a.meta || {})}|${JSON.stringify(a.transition || null)}`;
+  return `${a.content_id || ''}|${a.widget_id || ''}|${a.widget_rev || ''}|${a.zone_id || ''}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}|${JSON.stringify(a.schedules || [])}|${a.play_from || ''}|${a.play_until || ''}|${a.enabled === 0 ? 0 : 1}|${a.log_play === 0 ? 0 : 1}|${a.fit_mode || ''}|${JSON.stringify(a.play_when || null)}|${JSON.stringify(a.tags || [])}|${JSON.stringify(a.meta || {})}|${JSON.stringify(a.transition || null)}${a.transparent_bg ? '|t' : ''}`;
 }
 function signature(payload) {
   if (!payload || typeof payload !== 'object') return '';
