@@ -2,7 +2,24 @@
 
 ## 3.0.2
 
+### Added
+
+- **A background colour for a playlist** (#660). Set it next to the playback order. It's painted
+  behind everything the playlist shows and replaces each screen's own background colour while that
+  playlist plays. Leave **Screen's colour** ticked to keep each screen's own. Like the playback
+  order, it reaches screens when you publish. Additive columns `playlists.background_color` and
+  `published_background_color`.
+- **Transparent background on a playlist item** (#660): a tick on a widget or HTML bundle row draws
+  that item see-through, whatever colour the widget itself sets, so the playlist, screen or zone
+  colour shows behind it. Players ask for it with `transparent=1` on the render URL; a player too
+  old to send it shows the item as before. A web page inside a URL widget, YouTube, images and
+  videos draw their own background, so the tick isn't offered on them. Additive column
+  `playlist_items.transparent_bg`.
+
 ### Fixed
+
+- **Android and Samsung Tizen now paint the device's background colour** (#325 parity). Only the web,
+  native and Roku players did; on these two it was saved and never shown.
 
 - **Web content is see-through unless you choose a background colour** (#660, reported by @djalfe).
   The web player gave full-screen widgets and HTML bundles a black frame that it never removed, so a

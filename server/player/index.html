@@ -1045,7 +1045,7 @@
          */
         for (const it of all) {
           if (!it || it.mime_type !== BUNDLE_MIME || !it.content_id) continue;
-          fetch(`${config.serverUrl}/api/content/${it.content_id}/bundle?rev=${it.content_rev || 0}`,
+          fetch(`${config.serverUrl}/api/content/${it.content_id}/bundle?rev=${it.content_rev || 0}${it.transparent_bg ? '&transparent=1' : ''}`,
             { credentials: 'omit' }).catch(() => {});
         }
       } catch (e) { /* never let caching break playback */ }
@@ -6003,7 +6003,7 @@
       // widget_rev is in here for the same reason as schedules and transition: a widget's IDENTITY
       // does not change when it is EDITED, so a content edit produced an identical fingerprint, the
       // update was treated as "unchanged", and the screen kept the old render until a reload.
-      const fingerprint = (items) => items.map(a => `${a.content_id || ''}|${a.widget_id || ''}|${a.widget_rev || ''}|${a.zone_id || ''}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}|${JSON.stringify(a.schedules || [])}|${a.play_from || ''}|${a.play_until || ''}|${a.enabled === 0 ? 0 : 1}|${a.log_play === 0 ? 0 : 1}|${a.fit_mode || ''}|${JSON.stringify(a.play_when || null)}|${JSON.stringify(a.tags || [])}|${JSON.stringify(a.meta || {})}|${JSON.stringify(a.transition || null)}`).join(',');
+      const fingerprint = (items) => items.map(a => `${a.content_id || ''}|${a.widget_id || ''}|${a.widget_rev || ''}|${a.zone_id || ''}|${a.remote_url || ''}|${a.filepath || ''}|${a.filename || ''}|${JSON.stringify(a.schedules || [])}|${a.play_from || ''}|${a.play_until || ''}|${a.enabled === 0 ? 0 : 1}|${a.log_play === 0 ? 0 : 1}|${a.fit_mode || ''}|${JSON.stringify(a.play_when || null)}|${JSON.stringify(a.tags || [])}|${JSON.stringify(a.meta || {})}|${JSON.stringify(a.transition || null)}${a.transparent_bg ? '|t' : ''}`).join(',');
       const newFp = fingerprint(newItems);
       const oldFp = fingerprint(playlist);
 
@@ -6027,10 +6027,13 @@
       // #325: the letterbox colour behind content that does not fill the frame. Applied before
       // orientation so a rotation reflow does not flash the old colour. An absent value leaves the
       // stylesheet's black exactly as it was.
-      if (data.background_color && /^#[0-9a-fA-F]{3,8}$/.test(data.background_color)) {
+      // #660: it can now be a playlist's own colour, so an absent value also CLEARS a colour an
+      // earlier payload set: a screen that moves off that playlist goes back to its own colour.
+      {
+        const bg = data.background_color && /^#[0-9a-fA-F]{3,8}$/.test(data.background_color) ? data.background_color : '';
         const stage = document.getElementById('playerContainer');
-        if (stage) stage.style.background = data.background_color;
-        document.body.style.background = data.background_color;
+        if (stage) stage.style.background = bg;
+        document.body.style.background = bg;
       }
       // Device default/standby content (top-level, like background_color). If the currently-shown
       // idle default changed, drop the marker so the idle path re-mounts the new one.
@@ -6960,7 +6963,7 @@
       discardPendingSwap();
 
       const iframe = document.createElement('iframe');
-      iframe.src = `${config.serverUrl}/api/widgets/${item.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}&rev=${item.widget_rev||0}${item.widget_panel ? '#panel=' + encodeURIComponent(item.widget_panel) : ''}`;
+      iframe.src = `${config.serverUrl}/api/widgets/${item.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}&rev=${item.widget_rev||0}${item.transparent_bg ? '&transparent=1' : ''}${item.widget_panel ? '#panel=' + encodeURIComponent(item.widget_panel) : ''}`;
       // Positioned + sized by the `#playerContainer > iframe` CSS rule. Hidden while it loads, so
       // the outgoing content stays up until it is ready. No background of its own (#660): a
       // see-through widget shows the screen's background colour, the way it does in a zone.
@@ -7064,7 +7067,7 @@
        * why the dashboard's own preview navigates to an ephemeral URL instead of reusing this
        * trick, and why moving this mount to any page that has a CSP would break it invisibly.
        */
-      const url = `${config.serverUrl}/api/content/${item.content_id}/bundle?rev=${item.content_rev || 0}`;
+      const url = `${config.serverUrl}/api/content/${item.content_id}/bundle?rev=${item.content_rev || 0}${item.transparent_bg ? '&transparent=1' : ''}`;
       fetch(url, { credentials: 'omit' })
         .then((r) => (r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status))))
         .then((html) => { iframe.srcdoc = html; })
@@ -8046,7 +8049,7 @@
           if (!isFollower) scheduleAdvance(nextItem, (item.duration_sec || 10) * 1000);
         } else if (item.widget_id) {
           const iframe = document.createElement('iframe');
-          iframe.src = `${serverUrl}/api/widgets/${item.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}&rev=${item.widget_rev||0}${item.widget_panel ? '#panel=' + encodeURIComponent(item.widget_panel) : ''}`;
+          iframe.src = `${serverUrl}/api/widgets/${item.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}&rev=${item.widget_rev||0}${item.transparent_bg ? '&transparent=1' : ''}${item.widget_panel ? '#panel=' + encodeURIComponent(item.widget_panel) : ''}`;
           iframe.style.cssText = 'width:100%;height:100%;border:none;background:transparent';   // #336: a widget paints its own background
           iframe.allow = 'autoplay; fullscreen';
           // Sandbox into a unique origin so widget scripts can't read window.parent
@@ -8358,7 +8361,7 @@
         const iframe = document.createElement('iframe');
         iframe.setAttribute('sandbox', 'allow-scripts');   // never the widget same-origin opt-out
         iframe.allow = 'autoplay; fullscreen';
-        const bundleUrl = `${config.serverUrl}/api/content/${a.content_id}/bundle?rev=${a.content_rev || 0}`;
+        const bundleUrl = `${config.serverUrl}/api/content/${a.content_id}/bundle?rev=${a.content_rev || 0}${a.transparent_bg ? '&transparent=1' : ''}`;
         if (typeof registerBundleFrame === 'function' && typeof zoneBundleSkip === 'function') {
           div.__stBundleReg = registerBundleFrame(iframe,
             (reg, reason) => zoneBundleSkip(reg, { zone, div, items, index, item: a, advance }, reason));
@@ -8371,7 +8374,7 @@
         if (multi) timers[zone.id] = setTimeout(advance, dur);
       } else if (a.widget_id) {
         const iframe = document.createElement('iframe');
-        iframe.src = `${config.serverUrl}/api/widgets/${a.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}&rev=${a.widget_rev||0}${a.widget_panel ? '#panel=' + encodeURIComponent(a.widget_panel) : ''}`;
+        iframe.src = `${config.serverUrl}/api/widgets/${a.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}&rev=${a.widget_rev||0}${a.transparent_bg ? '&transparent=1' : ''}${a.widget_panel ? '#panel=' + encodeURIComponent(a.widget_panel) : ''}`;
         // Sandbox into a unique origin so widget scripts can't read window.parent
         // state (localStorage / JWT). allow-scripts keeps inline widget code running.
         iframe.setAttribute('sandbox', widgetSandboxAttr(a));
@@ -8877,7 +8880,7 @@
       const src = mediaUrl(a);
       if (a.widget_id) {
         const iframe = document.createElement('iframe');
-        iframe.src = `${config.serverUrl}/api/widgets/${a.widget_id}/render?device=${encodeURIComponent(config.deviceId || '')}&rev=${a.widget_rev || 0}${a.widget_panel ? '#panel=' + encodeURIComponent(a.widget_panel) : ''}`;
+        iframe.src = `${config.serverUrl}/api/widgets/${a.widget_id}/render?device=${encodeURIComponent(config.deviceId || '')}&rev=${a.widget_rev || 0}${a.transparent_bg ? '&transparent=1' : ''}${a.widget_panel ? '#panel=' + encodeURIComponent(a.widget_panel) : ''}`;
         iframe.setAttribute('sandbox', widgetSandboxAttr(a));
         return { el: iframe, video: null };
       }

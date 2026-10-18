@@ -454,6 +454,14 @@ components:
         paused_count:
           type: integer
           description: "Screens that would play this playlist but play head office's instead."
+        background_color:
+          type: [string, "null"]
+          description: >
+            Draft background colour (hex), painted behind everything the playlist shows in place of
+            each screen's own background colour. Null = each screen's own. Screens get it on publish.
+        published_background_color:
+          type: [string, "null"]
+          description: The colour screens are showing now, from the last publish.
 
     PlaylistItem:
       type: object
@@ -479,6 +487,11 @@ components:
             YouTube items only. 1 = move on when the video ends; duration_sec is then only the
             fallback for a screen that cannot read the video's length. Synced groups and video walls
             keep the fixed duration. Null = off.
+        transparent_bg:
+          type: [integer, "null"]
+          description: >
+            Widgets and HTML bundles only. 1 = draw the item see-through, whatever colour it sets,
+            so the playlist, screen or zone colour shows behind it. Null = as the content sets it.
         slot_id:
           type: [string, "null"]
           description: >
@@ -955,7 +968,7 @@ paths:
         '200': { description: Playlist with items. }
     put:
       tags: [playlists]
-      summary: Update playlist name/description
+      summary: Update a playlist's name, description, playback order or background colour
       description: 'Requires scope: write.'
       x-required-scope: write
       parameters:
@@ -968,6 +981,10 @@ paths:
               properties:
                 name: { type: string }
                 description: { type: string }
+                playback_order: { type: string, enum: [sequential, shuffle, weighted] }
+                background_color:
+                  type: [string, "null"]
+                  description: A hex colour, or "" / null for each screen's own. Takes effect on publish.
       responses:
         '200': { description: Updated playlist. }
     delete:
@@ -1122,6 +1139,9 @@ paths:
                 play_to_end:
                   type: boolean
                   description: YouTube items only (400 otherwise). Turning it off is always allowed.
+                transparent_bg:
+                  type: boolean
+                  description: Widgets and HTML bundles only (400 otherwise). Turning it off is always allowed.
       responses:
         '200': { description: Updated item. }
     delete:

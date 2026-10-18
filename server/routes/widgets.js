@@ -13,6 +13,7 @@ const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 const { denyReadOnly, resourceAccess } = require('../lib/tenancy');
 const { isRealTimezone } = require('../lib/device-timezone');
 const { escapeHtml, safeUrl, safeCss, safeNumber } = require('../lib/widget-sanitize');
+const backgrounds = require('../lib/backgrounds');
 const pluginRegistry = require('../lib/plugins/registry');
 const { BUILTIN_WIDGET_TYPES } = require('../lib/plugins/reserved');
 const { redactSecrets, mergeSecrets, fieldsForWidget, redactConfigJson } = require('../lib/plugins/secrets');
@@ -786,6 +787,12 @@ router.get('/:id/render', (req, res) => {
   // widgets render blank in the web player. Drop it here; the sandbox - not
   // X-Frame-Options - is what isolates the widget (it can't read the dashboard JWT).
   res.removeHeader('X-Frame-Options');
+  // #660 "Transparent background" on a playlist item: the same page, drawn see-through. Every widget
+  // type below ends in its own res.send, so the page is changed here, once, on its way out.
+  if (backgrounds.wantsTransparent(req.query)) {
+    const send = res.send.bind(res);
+    res.send = (body) => send(typeof body === 'string' && res.statusCode < 300 ? backgrounds.forceTransparent(body) : body);
+  }
   // Caching is keyed on whether the caller pinned a revision.
   //
   // A URL carrying ?rev=<widget.updated_at> is content-addressed: those exact bytes cannot change

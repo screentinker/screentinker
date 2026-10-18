@@ -565,6 +565,7 @@ class MainActivity : AppCompatActivity() {
                             applyOrientation(o)
                         }
                     }
+                    applyBackground(cached)
                     // #74/#75: restore the cached effective timezone too (offline schedules)
                     playlistController.setTimezone(if (cached.isNull("timezone")) null else cached.optString("timezone", "").ifEmpty { null })
                     // Standby content survives an offline cold-start too: the cached payload is the whole
@@ -1079,6 +1080,7 @@ class MainActivity : AppCompatActivity() {
                 TransitionGlsl.setUploadedShaders(map)
             }
             applyOrientation(data.optString("orientation", "landscape"))
+            applyBackground(data)
 
             // Check for multi-zone layout
             val layoutObj = if (data.isNull("layout")) null else data.optJSONObject("layout")
@@ -1614,6 +1616,7 @@ class MainActivity : AppCompatActivity() {
             val url = "${config.serverUrl}/api/widgets/${item.widgetId}/render" +
                 (if (config.deviceId.isNotEmpty()) "?device=" + android.net.Uri.encode(config.deviceId) else "?d=") +
                 "&rev=${item.widgetRev}" +
+                com.remotedisplay.player.util.WidgetUrls.transparentParam(item.transparentBg) +
                 com.remotedisplay.player.util.WidgetUrls.panelFragment(item.widgetPanel)
             Log.i("MainActivity", "Playing widget fullscreen: ${url.substringBefore('#')}")
             mediaPlayer.showWidget(url)
@@ -1693,11 +1696,14 @@ class MainActivity : AppCompatActivity() {
      * strictly better than a black screen on a player whose cache was evicted while online.
      */
     private fun playBundle(item: PlaylistItem) {
-        val key = "${item.contentId}@${item.contentRev}"
+        // #660: the cache holds the plain document; a see-through item gets the server's style added
+        // here, and its own key so the same bundle shown plain is not reused for it.
+        val key = "${item.contentId}@${item.contentRev}" + (if (item.transparentBg) ":t" else "")
+        val look = { html: String -> if (item.transparentBg) com.remotedisplay.player.util.WidgetUrls.forceTransparent(html) else html }
         val cached = bundleCache.cachedHtml(item.contentId, item.contentRev)
         if (cached != null) {
             Log.i("MainActivity", "Playing HTML bundle from cache: $key")
-            mediaPlayer.showBundle(cached, key)
+            mediaPlayer.showBundle(look(cached), key)
             wsService?.sendPlaybackState(item.contentId, 0f)
             return
         }
@@ -1709,10 +1715,11 @@ class MainActivity : AppCompatActivity() {
                 // whatever is now on screen. Only show it if this item is still the current one.
                 if (playlistController.currentItem?.contentId != item.contentId) return@post
                 if (html != null) {
-                    mediaPlayer.showBundle(html, key)
+                    mediaPlayer.showBundle(look(html), key)
                 } else {
                     Log.w("MainActivity", "Bundle fetch failed for $key — falling back to direct URL")
-                    mediaPlayer.showWidget("${config.serverUrl}/api/content/${item.contentId}/bundle?rev=${item.contentRev}")
+                    mediaPlayer.showWidget("${config.serverUrl}/api/content/${item.contentId}/bundle?rev=${item.contentRev}" +
+                        com.remotedisplay.player.util.WidgetUrls.transparentParam(item.transparentBg))
                 }
                 wsService?.sendPlaybackState(item.contentId, 0f)
             }
@@ -1769,10 +1776,24 @@ class MainActivity : AppCompatActivity() {
     // first (the single-zone playlistController path) and snapping into zones only once the server
     // reconnects. The signatures let a later identical server payload be recognised as unchanged.
 
+    /*
+     * #325/#660: the colour behind everything on screen, the payload's background_color: the
+     * playlist's own colour, else the device's (the server picks). Black when there is none, which
+     * is what the layout always painted, so a screen with neither looks as it did. Every payload
+     * sets it, so moving off a coloured playlist puts the screen's own colour back.
+     */
+    private fun applyBackground(p: JSONObject) {
+        val c = if (p.isNull("background_color")) null
+            else com.remotedisplay.player.player.WallZones.parseCssColor(p.optString("background_color", ""))
+        rootView.setBackgroundColor(c ?: android.graphics.Color.BLACK)
+    }
+
     private fun zoneAssignmentSig(assignments: org.json.JSONArray): String =
         (0 until assignments.length()).map { i ->
             val a = assignments.getJSONObject(i)
-            "${a.optString("content_id")}:${a.optString("zone_id")}:${a.optString("widget_id")}:${a.optLong("widget_rev", 0L)}"
+            // #660: a see-through tick changes the render URL, so it re-renders the zone.
+            "${a.optString("content_id")}:${a.optString("zone_id")}:${a.optString("widget_id")}:${a.optLong("widget_rev", 0L)}" +
+                (if (a.optInt("transparent_bg", 0) == 1) ":t" else "")
         }.sorted().joinToString("|")
 
     private fun zoneGeometrySig(layoutZones: org.json.JSONArray): String =

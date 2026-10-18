@@ -569,6 +569,11 @@ function renderDetailContent(container, playlist) {
         <option value="shuffle" ${playlist.playback_order === 'shuffle' ? 'selected' : ''}>${t('playlist.order.shuffle')}</option>
         <option value="weighted" ${playlist.playback_order === 'weighted' ? 'selected' : ''}>${t('playlist.order.weighted')}</option>
       </select>
+      ${/* #660: a slot plays inside head office's loop, on head office's colour, so a fill has none. */ ''}
+      <span style="width:12px"></span>
+      <span style="font-size:13px;color:var(--text-muted);${corpMode === 'fill' ? 'display:none' : ''}" title="${esc(t('playlist.bg_hint'))}">${t('playlist.bg_label')}</span>
+      <input type="color" id="playlistBg" value="${esc(/^#[0-9a-f]{6}$/i.test(playlist.background_color || '') ? playlist.background_color : '#000000')}" ${playlist.background_color ? '' : 'disabled'} title="${esc(t('playlist.bg_hint'))}" style="width:40px;height:28px;border:none;background:none;${corpMode === 'fill' ? 'display:none' : ''}">
+      <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-muted);white-space:nowrap;cursor:pointer;${corpMode === 'fill' ? 'display:none' : ''}" title="${esc(t('playlist.bg_hint'))}"><input type="checkbox" id="playlistBgScreen" ${playlist.background_color ? '' : 'checked'}>${t('playlist.bg_screen')}</label>
     </div>
     ${playlist.smart_rules ? `<div id="smartPanel" style="background:var(--bg-card);border:1px solid #4338ca;border-radius:var(--radius);padding:12px 16px;margin-bottom:10px"></div>` : ''}
     <div id="playlistSelectBar" style="display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius)">
@@ -695,6 +700,28 @@ function renderDetailContent(container, playlist) {
     }
   });
 
+  // #660: the playlist's own background colour. "Screen's colour" ticked = none (each screen's own).
+  {
+    const pick = document.getElementById('playlistBg');
+    const screen = document.getElementById('playlistBgScreen');
+    const save = async (value) => {
+      try {
+        pick.disabled = true; screen.disabled = true;
+        const out = await api.updatePlaylist(playlist.id, { background_color: value });
+        playlist.background_color = out && out.background_color != null ? out.background_color : (value || null);
+        refreshAfterMutation();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        screen.disabled = false;
+        screen.checked = !playlist.background_color;
+        pick.disabled = screen.checked;
+      }
+    };
+    pick?.addEventListener('change', () => { if (!screen.checked) save(pick.value); });
+    screen?.addEventListener('change', () => save(screen.checked ? '' : pick.value));
+  }
+
   document.getElementById('playlistOrder')?.addEventListener('change', async (e) => {
     const order = e.target.value;
     if (!order || order === (playlist.playback_order || 'sequential')) return;
@@ -795,6 +822,7 @@ function clipPayload(items) {
     weight: it.weight || 1,
     repeat_every_sec: it.repeat_every_sec || null,
     play_to_end: it.play_to_end ? 1 : null,
+    transparent_bg: it.transparent_bg ? 1 : null,
     schedules: it.schedules || [],
   }));
 }
@@ -1350,6 +1378,16 @@ function playToEndToggle(item) {
     <input type="checkbox" class="item-play-to-end" data-item-id="${item.id}" ${item.play_to_end ? 'checked' : ''}>${esc(t('playlist.play_to_end'))}</label>`;
 }
 
+// #660 "Transparent background": a widget or HTML bundle drawn see-through, whatever colour the
+// widget sets, so the playlist, screen or zone colour shows behind it. A web page inside a URL widget
+// draws its own background, which no setting of ours can change; the hint says so.
+const BUNDLE_MIME = 'application/vnd.screentinker.bundle+zip';
+function transparentToggle(item) {
+  if (!item.widget_id && item.mime_type !== BUNDLE_MIME) return '';
+  return `<label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);white-space:nowrap;cursor:pointer" title="${esc(t('playlist.transparent_bg_hint'))}">
+    <input type="checkbox" class="item-transparent-bg" data-item-id="${item.id}" ${item.transparent_bg ? 'checked' : ''}>${esc(t('playlist.transparent_bg'))}</label>`;
+}
+
 // 3.0 TV-safe video: the content's "already rotated for portrait screens" switch, on the row of an
 // uploaded video. It is the CONTENT's flag (server/lib/video-variants.js), so it changes this video
 // wherever it plays; the hint says so.
@@ -1420,7 +1458,7 @@ function renderItems(items) {
           ? `<label style="font-size:12px;color:var(--text-muted)" title="${esc(t('playlist.dwell_hint'))}">${t('playlist.dwell')}</label>
         <input type="number" class="input item-duration" data-item-id="${item.id}" data-live="1" value="${item.duration_sec || 0}" min="0" title="${esc(t('playlist.dwell_hint'))}" style="width:60px;padding:4px 8px;font-size:13px;text-align:center">
         <span style="font-size:12px;color:var(--text-muted)">${t('playlist.sec')}</span>`
-          : `${playToEndToggle(item)}${prerotatedToggle(item)}<label style="font-size:12px;color:var(--text-muted)"${item.play_to_end && item.mime_type === 'video/youtube' ? ` title="${esc(t('playlist.play_to_end_fallback_hint'))}">${t('playlist.play_to_end_fallback')}` : `>${t('playlist.duration')}`}</label>
+          : `${playToEndToggle(item)}${prerotatedToggle(item)}${transparentToggle(item)}<label style="font-size:12px;color:var(--text-muted)"${item.play_to_end && item.mime_type === 'video/youtube' ? ` title="${esc(t('playlist.play_to_end_fallback_hint'))}">${t('playlist.play_to_end_fallback')}` : `>${t('playlist.duration')}`}</label>
         <input type="number" class="input item-duration" data-item-id="${item.id}" value="${item.duration_sec}" min="1" style="width:60px;padding:4px 8px;font-size:13px;text-align:center">
         <span style="font-size:12px;color:var(--text-muted)">${t('playlist.sec')}</span>`}
         ${currentPlaybackOrder === 'weighted' && !item.child_playlist_id ? `<label style="font-size:12px;color:var(--text-muted)">${t('playlist.weight')}</label>
@@ -1488,6 +1526,18 @@ function renderItems(items) {
     box.addEventListener('change', async (e) => {
       try {
         await api.updatePlaylistItem(currentPlaylistId, e.target.dataset.itemId, { play_to_end: e.target.checked });
+        refreshAfterMutation();
+      } catch (err) {
+        showToast(err.message, 'error');
+        refreshAfterMutation();   // put the checkbox back to what is actually stored
+      }
+    });
+  });
+
+  itemsEl.querySelectorAll('.item-transparent-bg').forEach(box => {
+    box.addEventListener('change', async (e) => {
+      try {
+        await api.updatePlaylistItem(currentPlaylistId, e.target.dataset.itemId, { transparent_bg: e.target.checked });
         refreshAfterMutation();
       } catch (err) {
         showToast(err.message, 'error');

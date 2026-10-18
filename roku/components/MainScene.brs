@@ -379,7 +379,7 @@ function payloadSignature(p as object) as string
     if ST_IsArray(p.assignments) then
         for each a in p.assignments
             if ST_IsAA(a) then
-                parts.Push(ST_Str(a, "content_id") + "|" + ST_Str(a, "widget_id") + "|" + ST_Str(a, "widget_rev") + "|" + ST_Str(a, "zone_id") + "|" + ST_Str(a, "remote_url") + "|" + ST_Str(a, "filepath") + "|" + FormatJson(a.schedules) + "|" + ST_Str(a, "play_from") + "|" + ST_Str(a, "play_until") + "|" + FormatJson(a.enabled) + "|" + ST_Str(a, "fit_mode") + "|" + FormatJson(a.transition))
+                parts.Push(ST_Str(a, "content_id") + "|" + ST_Str(a, "widget_id") + "|" + ST_Str(a, "widget_rev") + "|" + ST_Str(a, "zone_id") + "|" + ST_Str(a, "remote_url") + "|" + ST_Str(a, "filepath") + "|" + FormatJson(a.schedules) + "|" + ST_Str(a, "play_from") + "|" + ST_Str(a, "play_until") + "|" + FormatJson(a.enabled) + "|" + ST_Str(a, "fit_mode") + "|" + FormatJson(a.transition) + ST_TransparentSig(a))
             end if
         end for
     end if
@@ -391,7 +391,17 @@ function payloadSignature(p as object) as string
     end if
     dc = ""
     if ST_IsAA(p.default_content) then dc = ST_Str(p.default_content, "content_id") + ST_Str(p.default_content, "content_rev")
+    ' #660: the colour is baked into every server-rendered frame (raster bg), so a new one rebuilds.
+    ' Appended only when set, so a screen with none keeps the signature it had.
+    bg = ST_Str(p, "background_color")
+    if bg <> "" then dc = dc + "#bg" + bg
     return parts.Join(",") + "#" + lay + "#" + ST_Str(p, "orientation") + "#" + ST_Str(p, "playback_order") + "#" + dc
+end function
+
+' #660 "Transparent background" on an item: part of its signature only when set.
+function ST_TransparentSig(a as object) as string
+    if ST_Str(a, "transparent_bg") = "1" then return "|t"
+    return ""
 end function
 
 sub clearStage()

@@ -85,7 +85,8 @@ test('#325: the player applies it, and only when it is a hex value', () => {
 test('#325: it travels in the socket payload like orientation does', () => {
   const ds = fs.readFileSync(path.join(__dirname, '..', 'ws', 'deviceSocket.js'), 'utf8');
   assert.match(ds, /background_color: background_color \|\| null/, 'included in the assembled payload');
-  assert.match(ds, /background_color: device\?\.background_color \|\| null/, 'read from the device row');
+  // #660: a playlist's own published colour comes first, then the device's.
+  assert.match(ds, /background_color: playlistBg \|\| device\?\.background_color \|\| null/, 'read from the device row, after the playlist\'s');
 });
 
 /*

@@ -162,6 +162,7 @@ function copyItems(db, srcId, dstId) {
     map.set(it.id, r.lastInsertRowid);
     for (const s of scheds.all(it.id)) insSched.run(uuidv4(), r.lastInsertRowid, s.active_days, s.start_time, s.end_time, s.start_date, s.end_date, s.sort_order);
   }
+  require('../backgrounds').copyTransparentBg(db, map);   // #660
   return map;
 }
 

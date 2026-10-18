@@ -113,7 +113,10 @@ function parseParams(q) {
   const bgRaw = q.bg === undefined || q.bg === '' ? '000000' : String(q.bg).replace(/^#/, '');
   if (!/^[0-9a-fA-F]{6}$/.test(bgRaw)) return { error: 'bg must be a 6-digit hex colour' };
   const background = bgRaw.toLowerCase();
-  return { widgetId, contentId, w, h, format, quality, background };
+  // #660 "Transparent background" on the playlist item: the page is drawn see-through, so `bg`
+  // (the zone, playlist or screen colour) is what shows behind it in the frame.
+  const transparent = q.transparent === '1';
+  return { widgetId, contentId, w, h, format, quality, background, transparent };
 }
 
 // ─── What this device may render ───────────────────────────────────────────────
@@ -326,7 +329,8 @@ router.get('/raster', deviceTokenAuth, async (req, res) => {
      */
     source = {
       path: `/api/widgets/${encodeURIComponent(row.id)}/render`
-        + (scoped ? `?device=${encodeURIComponent(device.id)}` : ''),
+        + (scoped ? `?device=${encodeURIComponent(device.id)}` : '')
+        + (p.transparent ? `${scoped ? '&' : '?'}transparent=1` : ''),
     };
     item.scoped = scoped;
   } else {
@@ -353,6 +357,7 @@ router.get('/raster', deviceTokenAuth, async (req, res) => {
     'player-raster-v2', kind, id, editRev, bucket,
     p.w, p.h, p.format, p.format === 'jpeg' ? p.quality : null,
     timezone, item.scoped ? device.id : null, p.background,
+    ...(p.transparent ? ['transparent'] : []),   // #660; absent when unset, so every other key is unchanged
   ])).digest('hex');
   const etag = toETag(key);
   /*
@@ -382,7 +387,9 @@ router.get('/raster', deviceTokenAuth, async (req, res) => {
     const renderWait = overBudget('render', device.id, RENDERS_PER_MIN);
     if (renderWait) { res.set('Retry-After', String(renderWait)); return send(res, 429, { error: 'rate_limited' }); }
     job = (async () => {
-      const frameSource = source.bundleRow ? { html: await bundleHtml(source.bundleRow) } : source;
+      const frameSource = source.bundleRow
+        ? { html: p.transparent ? require('../lib/backgrounds').forceTransparent(await bundleHtml(source.bundleRow)) : await bundleHtml(source.bundleRow) }
+        : source;
       const png = await renderer.frame(frameSource, { width: p.w, height: p.h }, { timezone, background: p.background });
       const out = await renderer.encode(png, { width: p.w, height: p.h, format: p.format, quality: p.quality });
       cache.set(key, out.buffer);

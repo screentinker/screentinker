@@ -781,6 +781,8 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
 
   let assignments = [];
   let playback_order = 'sequential';
+  // #660: the playlist whose own background colour (if any) this screen paints, in place of its own.
+  let bgPlaylistId = null;
   let campaignRaw = null;
   /*
    * ⚠️ CORPORATE: a head office mandate drives this screen (source 'corporate', with or without a
@@ -849,6 +851,7 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
     refreshContentRevs(assignments);
     assignments = dropLiveIfUnsupported(assignments);
     playback_order = (pl && pl.published_playback_order) || 'sequential';
+    bgPlaylistId = t.target_ref;
   } else if (capNow) {
     const feed = capNow.feed;
     const pl = feed.playlist_id
@@ -863,6 +866,7 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
       playback_order = 'sequential';
     } else {
       playback_order = (pl && pl.published_playback_order) || 'sequential';
+      bgPlaylistId = feed.playlist_id;
     }
     for (const a of items) if (a && typeof a === 'object') a.__origin_ws = feed.workspace_id;
     assignments = items;
@@ -873,10 +877,12 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
     assignments = hookNow.items;
     for (const a of assignments) if (a && typeof a === 'object') a.__origin_ws = hookNow.override.workspace_id;
     playback_order = hookNow.playback_order;
+    bgPlaylistId = hookNow.override.playlist_id;
     refreshWidgetRevs(assignments, deviceId);
     refreshContentRevs(assignments);
     assignments = dropLiveIfUnsupported(assignments);
   } else if (corporateSource && device?.playlist_id) {
+    bgPlaylistId = device.playlist_id;
     try {
       const c = require('../lib/corporate/composition').compositionFor(db, deviceId, device.playlist_id);
       assignments = c.items;
@@ -894,6 +900,7 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
     refreshContentRevs(assignments);   // re-stamps a.mime_type, so strip live AFTER it
     assignments = dropLiveIfUnsupported(assignments, baseSink);
   } else if (device?.playlist_id) {
+    bgPlaylistId = device.playlist_id;
     const playlist = db.prepare('SELECT published_snapshot, published_playback_order, workspace_id FROM playlists WHERE id = ?').get(device.playlist_id);
     // 3.0 campaigns (lib/campaign.js): the stored structure, read only for a player that can use it.
     if (playlist && capsLib.supports(device, 'layout.campaign')) {
@@ -1184,7 +1191,12 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
   // Weather and area conditions are decided here, for this screen (lib/local-conditions.js).
   if (trace) trace.before_local = assignments;
   assignments = require('../lib/local-conditions').filterItems(assignments, device, opts.weather || undefined);
-  const assembled = assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints: deviceEndpoints });
+  // #660: a playlist's published colour wins over the device's while that playlist plays.
+  let playlistBg = null;
+  if (bgPlaylistId && require('../lib/corporate/schema-probe').hasColumn(db, 'playlists', 'published_background_color')) {
+    playlistBg = (db.prepare('SELECT published_background_color FROM playlists WHERE id = ?').get(bgPlaylistId) || {}).published_background_color || null;
+  }
+  const assembled = assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: playlistBg || device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints: deviceEndpoints });
   /*
    * Audience counting (lib/audience.js). Top-level and outside the item list, so switching it on or
    * off never restarts playback (#234). Rides EVERY payload, and null means OFF — so a screen that

@@ -91,7 +91,7 @@ const TRIGGERS = {
    * (approvals publish, agency auto-publish, a future one) fails here. System republishes — ancestor
    * republish, smart refresh, content expiry, the mute-sync patch — run as system and pass. */
   corp_guard_pl_upd: `CREATE TEMP TRIGGER corp_guard_pl_upd
-    BEFORE UPDATE OF name, description, playback_order, smart_rules, corporate, workspace_id,
+    BEFORE UPDATE OF name, description, playback_order, background_color, smart_rules, corporate, workspace_id,
                      published_snapshot, published_composable, published_structure, status ON main.playlists
     WHEN ${gate(`(OLD.corporate = 1 OR NEW.corporate = 1 OR (${ANY_CORPORATE} AND ${governed('OLD.id')}))`,
     `(st_corp_can_author((SELECT w.organization_id FROM main.workspaces w WHERE w.id = OLD.workspace_id)) = 0
