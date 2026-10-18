@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Status screen on the Raspberry Pi player**: a small SPI panel (ILI9341 2.4", 240x320, e.g. the
+  HiLetgo module) next to the main display shows online, offline or pairing (with the pairing code),
+  what's playing, the server, IP and Wi-Fi signal, temperature, disk, RAM and the last warning or
+  error. Likely causes turn amber or red. `sudo screentinker-pi status-display enable` prints the
+  wiring and sets up the kernel's fbtft driver; `test` draws colour bands to check it. Any fbtft panel
+  works. Suggested by ScallionShot3689 on r/digitalsignage.
 - **RTSPS camera streams** (`rtsps://`, RTSP over TLS, e.g. UniFi Protect's default share link) on the
   Android and native Raspberry Pi / Windows / Mac players. The camera's certificate is checked (trusted
   authorities plus the host name) before the player sends it the login. A camera with a self-signed

@@ -54,6 +54,38 @@ sudo screentinker-pi setup https://your-server --mode desktop --user pi   # forc
 it is discarded at every boot and the panel re-pairs. Point `ST_STATE_DIR` at a persistent partition,
 or pair and then enable the overlay knowing a re-pair follows any wipe.
 
+### Status screen (optional): a small SPI panel next to the main display
+
+A 2.4" ILI9341 module (240x320, e.g. the HiLetgo one, about $10) on the GPIO header shows why the big
+screen might be unhappy: online/offline/pairing (with the pairing code, large), what's playing, server,
+IP and Wi-Fi signal, temperature, disk and RAM, uptime, and the last warning or error the player logged.
+Rows that point at a likely cause turn amber or red (no network, weak Wi-Fi, 70/80 °C, under 500 MB free).
+
+```sh
+sudo screentinker-pi status-display enable     # prints the wiring, writes config.txt; then reboot
+sudo screentinker-pi status-display test       # red/green/blue/white bands: checks wiring and colour order
+sudo screentinker-pi status-display disable
+```
+
+| Module | Pi pin | | Module | Pi pin |
+|---|---|---|---|---|
+| VCC | 1 (3.3V) | | SDI/MOSI | 19 (GPIO10) |
+| GND | 6 | | SCK | 23 (GPIO11) |
+| CS | 24 (GPIO8) | | LED | 12 (GPIO18) |
+| RESET | 22 (GPIO25) | | SDO/MISO | 21 (GPIO9), optional |
+| DC/RS | 18 (GPIO24) | | T_* (touch) | not connected |
+
+- Landscape (320x240) by default; `--rotate 0` for portrait. Red and blue swapped: `--rgb`. Garbled
+  picture on long wires: `--speed 16000000`.
+- It uses the kernel's `fbtft` driver, which makes the panel a plain framebuffer (`/dev/fbN`). ⚠️ Not
+  the newer DRM panel drivers (`mipi-dbi-spi`): those add a second display, and eglfs or the desktop
+  could put the player on the little panel. Any fbtft panel works the same way (found by its
+  `fb_<controller>` name); `status_display` in `/etc/screentinker-pi/config.json` (or
+  `ST_STATUS_DISPLAY`) is `auto` (default), `off`, or a device path.
+- The touch layer is left unconnected on purpose: as an input device, Qt would read its taps as taps
+  on the main screen.
+- It shares SPI0 CE0 with other SPI HATs; the command warns if config.txt already sets up an SPI display.
+
 ## Install — Windows
 
 Download `ScreenTinker-Setup-<version>.exe` from your server (`https://your-server/download/win`) and

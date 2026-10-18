@@ -42,6 +42,7 @@ from .player.engine import PlaybackEngine
 from .platform import audio, brightness, deviceinfo, display, ops, privileged, shell
 from .system.audience import AudienceController
 from .system.power_schedule import PowerSchedule
+from .system.status_display import LastProblem, StatusDisplay
 from .system.updater import Updater
 from .ui.extras import SlideAudio, TriggerOverlay, new_frame_key, rtc_page
 from .ui.kiosk import KioskSession
@@ -147,6 +148,12 @@ class App:
         self.screen_off_timeout_ms = self.config.get("screen_off_timeout_ms", 0)
         self.started_at = time.monotonic()
         logging.getLogger().addHandler(RemoteLogHandler(self))
+        # A small SPI status screen, when one is attached (system/status_display.py). Off without one.
+        self.last_problem = LastProblem()
+        logging.getLogger().addHandler(self.last_problem)
+        self.status_display = StatusDisplay(
+            self.status_panel_snapshot, self.config.state_dir,
+            setting=os.environ.get("ST_STATUS_DISPLAY") or self.config.system_value("status_display") or "auto")
 
     # ------------------------------------------------------------------ threads
     def on_ui(self, fn):
@@ -965,6 +972,30 @@ class App:
         c.stop("played once")
         c.promote()
 
+    def status_panel_snapshot(self):
+        """What the SPI status screen shows about the player (Qt thread; logic/status_panel.py)."""
+        what = (getattr(self, "_last_status", None) or (None, None))[0]
+        if not self.config.server_url:
+            state = "no_server"
+        elif what == "unpaired":
+            state = "unpaired"
+        elif self.link.connected:
+            state = "online" if self.config.is_paired else "pairing"
+        elif what in (None, "starting"):
+            state = "starting"
+        else:
+            state = "offline"
+        if self.engine.mode in ("zones", "wallzones"):
+            playing = "multi-zone layout"
+        else:
+            c = self.engine.controller
+            it = c.current_item if c.has_content_on_screen else None
+            playing = it.filename if it is not None else ""
+        return {"state": state, "pairing_code": self.config.get("pairing_code") or "",
+                "name": self.config.get("device_name") or "", "server": self.config.server_url,
+                "playing": playing, "blanked": self.blanked, "version": VERSION,
+                "last_error": self.last_problem.last}
+
     def local_status(self):
         return {"ok": True, "device_id": self.config.device_id, "name": self.config.get("device_name"),
                 "app_version": VERSION, "connected": self.link.connected,
@@ -1241,6 +1272,7 @@ class App:
         # Cold start from the cached playlist BEFORE the network: a site with its WAN down comes up
         # showing what it had.
         self.engine.restore_cached()
+        self.status_display.start()
         threading.Thread(target=self._net_main, name="net", daemon=True).start()
         rc = self.qt.exec()
         self.audience.shutdown()      # faces still in view leave now; the partial minute is queued
