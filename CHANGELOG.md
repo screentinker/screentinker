@@ -42,6 +42,14 @@
 
 ### Fixed
 
+- **Empty zones stay empty on the web player** (#666, reported by @djalfe). In a multi-zone layout, a
+  zone with nothing assigned to it showed a copy of whatever was playing, so the same content
+  appeared in zones it was never put in. This affected browsers, BrightSign and webOS, which use
+  the web player. Those zones now stay blank, as they already did on Android, Tizen, the native player and Roku. Items
+  without a zone still go to the first zone that has nothing of its own, so no existing screen moves
+  its content. If no zone has anything at all, the current item is still shown, so a layout never
+  blanks the whole screen.
+
 - **Android and Samsung Tizen now paint the device's background colour** (#325 parity). Only the web,
   native and Roku players did; on these two it was saved and never shown.
 - **Web content is see-through unless you choose a background colour** (#660, reported by @djalfe).
