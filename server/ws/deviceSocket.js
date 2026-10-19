@@ -3515,6 +3515,16 @@ module.exports = function setupDeviceSocket(io) {
 
     socket.on('device:http-result', (data) => dispatch('http-result', data));
 
+    /*
+     * The answer to an ONVIF relay request (lib/onvif/relay.js). Not through dispatch(): nothing is
+     * applied or forwarded, it resolves the request THIS process is waiting on, and handleResult
+     * ignores it unless it answers a request made to this very screen.
+     */
+    socket.on('device:onvif-result', (data) => {
+      if (!requireDeviceAuth()) return;
+      require('../lib/onvif/relay').handleResult(currentDeviceId, data);
+    });
+
     socket.on('device:shell-result', (data) => dispatch('shell-result', data));
 
     socket.on('device:content-ack', (data) => dispatch('content-ack', data));

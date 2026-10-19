@@ -98,6 +98,9 @@ const JWT_ONLY_ROUTERS = [
   // 3.0 Private AI (docs/private-ai.md): local provider, starter set, translations. Before /api/ai too.
   { path: '/api/ai/private',  mod: './routes/ai-private',   tenancy: true },
   { path: '/api/ai',          mod: './routes/ai',           tenancy: true },
+  // ONVIF cameras (routes/onvif.js): reaches into a customer's network through their screens, so
+  // signed-in people only, never an API token.
+  { path: '/api/onvif',       mod: './routes/onvif',        tenancy: true },
   { path: '/api/provision',   mod: './routes/provisioning', tenancy: true },
   { path: '/api/teams',       mod: './routes/teams',        tenancy: true },
   { path: '/api/white-label', mod: './routes/white-label',  tenancy: true },

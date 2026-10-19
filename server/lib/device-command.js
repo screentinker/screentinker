@@ -299,7 +299,8 @@ function deliverCommand(deviceNs, device, type, payload, opts = {}) {
   }
 
   // A camera view is live steering: stale the moment the screen is gone, so never queued.
-  if (type === 'camera_view') return { status: 'offline' };
+  // Nor is an ONVIF relay request: the server is waiting on the answer right now (lib/onvif/relay.js).
+  if (type === 'camera_view' || type === 'onvif_relay') return { status: 'offline' };
 
   /*
    * Offline: try to queue. Lazily required so that reverting the queue commit cannot break this

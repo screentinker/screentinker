@@ -683,6 +683,13 @@ const migrations = [
   // A fisheye (360°) camera shown as a normal 16:9 view: JSON settings (lib/fisheye.js), NULL = show
   // the picture as it comes.
   "ALTER TABLE content ADD COLUMN fisheye TEXT",
+  // An ONVIF camera (lib/onvif): JSON {xaddr, username, profile_token, profile_name, ptz, via,
+  // services} so the server can refresh its stream address, fetch a snapshot and steer it. `via` is
+  // 'server' or the id of the screen that bridges the camera's network. The password is NOT in it:
+  // onvif_secret holds it encrypted (lib/secretbox.js) and it is never sent back to a browser.
+  // NULL = an ordinary stream.
+  "ALTER TABLE content ADD COLUMN onvif TEXT",
+  "ALTER TABLE content ADD COLUMN onvif_secret TEXT",
   // #216: subtitle/caption support as a content property (applied automatically by the
   // player, no in-player controls). YouTube uses captions_enabled + captions_lang (via the
   // IFrame API); uploaded videos use subtitle_url (a .vtt filename in the content dir,
