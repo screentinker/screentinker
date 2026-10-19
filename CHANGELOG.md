@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Weather in your language** (#667, requested by @djalfe). A Weather data source's language now
+  translates the weather conditions ("Mainly clear") and the template's words ("Feels like",
+  "Humidity", "Today", "Updated", the chance of precipitation), not only the day names. Language
+  files on the server cover Danish, Dutch, English, French, German, Hindi, Italian, Japanese,
+  Portuguese, Simplified Chinese and Spanish. Any other language falls back to English, and a data
+  source with no language set looks exactly as before. The data source gains `label_*` fields and
+  `day0_precip_text`. The **Weather forecast** template 1.1.0 (needs server 3.0.2) and **Weather —
+  animated** 1.1.0 use them; the animated one falls back to English on an older server.
+
 - **Status screen on the Raspberry Pi player**: a small SPI panel (ILI9341 2.4", 240x320, e.g. the
   HiLetgo module) next to the main display shows online, offline or pairing (with the pairing code),
   what's playing, the server, IP and Wi-Fi signal, temperature, disk, RAM and the last warning or

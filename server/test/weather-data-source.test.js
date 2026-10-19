@@ -79,6 +79,9 @@ for (let d = 0; d < 6; d++) {
     CONTRACT_KEYS.push(`day${d}_${k}`);
   }
 }
+// #667: the words a template shows, in the data source's language.
+for (const k of ['feels_like', 'humidity', 'wind', 'rain', 'snow', 'today', 'updated']) CONTRACT_KEYS.push(`label_${k}`);
+CONTRACT_KEYS.push('day0_precip_text');
 
 // ─── Happy path ──────────────────────────────────────────────────────────────
 
@@ -457,4 +460,53 @@ test('weather: syncDataSource dispatches `weather` and records a sanitized error
 
 test.after(() => {
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (_) {}
+});
+
+// ─── #667: translations ──────────────────────────────────────────────────────
+
+test('weather i18n: every language file has every label and every WMO condition; English is WMO_CODES', () => {
+  const { WEATHER_TEXT } = require('../lib/data-sources/weather-resolver');
+  const en = WEATHER_TEXT.en;
+  for (const [code, [english]] of Object.entries(WMO_CODES)) assert.equal(en.conditions[code], english, `en ${code}`);
+  assert.ok(WEATHER_TEXT.da, 'Danish is included (#667)');
+  for (const [lang, t] of Object.entries(WEATHER_TEXT)) {
+    assert.deepEqual(Object.keys(t.labels).sort(), Object.keys(en.labels).sort(), `${lang} labels`);
+    assert.deepEqual(Object.keys(t.conditions).sort(), Object.keys(en.conditions).sort(), `${lang} conditions`);
+    assert.match(t.labels.precip_chance, /\{n\}/, `${lang} precip_chance keeps its {n}`);
+    for (const v of [...Object.values(t.labels), ...Object.values(t.conditions)]) assert.ok(typeof v === 'string' && v.trim(), `${lang}: no empty text`);
+  }
+});
+
+test('weather i18n: the default locale produces exactly the English it always did', async () => {
+  const data = await resolveWeatherData({ latitude: 1, longitude: 2 }, { fetch: fakeFetch(), now: NOW });
+  assert.equal(data.condition, 'Overcast');
+  assert.equal(data.day1_condition, 'Slight rain');
+  assert.equal(data.label_feels_like, 'Feels like');
+  assert.equal(data.label_today, 'Today');
+  assert.equal(data.label_updated, 'Updated');
+  assert.match(data.day0_precip_text, /^\d+% chance of precipitation$/);
+});
+
+test('weather i18n: a Danish data source gives Danish conditions, labels and day names', async () => {
+  const data = await resolveWeatherData({ latitude: 1, longitude: 2, locale: 'da-DK' }, { fetch: fakeFetch(), now: NOW });
+  assert.equal(data.condition, 'Overskyet');
+  assert.equal(data.day1_condition, 'Let regn');
+  assert.equal(data.day3_condition, 'Tordenvejr');
+  assert.equal(data.label_feels_like, 'Føles som');
+  assert.equal(data.label_humidity, 'Luftfugtighed');
+  assert.equal(data.label_today, 'I dag');
+  assert.equal(data.label_updated, 'Opdateret');
+  assert.match(data.day0_precip_text, /^\d+% risiko for nedbør$/);
+  assert.match(data.day1_name, /^[a-zæøå.]+$/i, 'day names come from the same locale');
+  assert.deepEqual(Object.keys(data).sort(), [...CONTRACT_KEYS].sort(), 'the same keys in every language');
+});
+
+test('weather i18n: a regional locale uses its language; a language without a file falls back to English', () => {
+  const { weatherText } = require('../lib/data-sources/weather-resolver');
+  assert.equal(weatherText('pt-BR').condition(3, 'Overcast'), 'Nublado');
+  assert.equal(weatherText('ja').label('precip_chance').replace('{n}', '40'), '降水確率 40%', 'the number goes where the language puts it');
+  assert.equal(weatherText('sv-SE').condition(3, 'Overcast'), 'Overcast');
+  assert.equal(weatherText('sv-SE').label('today'), 'Today');
+  assert.equal(weatherText('da').condition(1234, 'Unknown'), 'Ukendt', 'an unknown code is translated too');
+  assert.equal(weatherText('da').condition(null, ''), '', 'no code stays blank');
 });

@@ -230,10 +230,12 @@
       var b = document.createElement('b'); b.textContent = value; c.appendChild(b);
     }
     var wind = w.units === 'F' ? ' mph' : ' km/h';
-    chip('Feels like', has(w.apparent_temperature) ? w.apparent_temperature + '°' : '');
-    chip('Humidity', has(w.humidity) ? w.humidity + '%' : '');
-    chip('Wind', has(w.wind_speed) ? w.wind_speed + wind : '');
-    chip(kind === 'snow' ? 'Snow' : 'Rain', has(w.day0_precip_prob) ? w.day0_precip_prob + '%' : '');
+    // Labels in the data source's language (server 3.0.2+); English from an older server.
+    var label = function (k, en) { return has(w['label_' + k]) ? w['label_' + k] : en; };
+    chip(label('feels_like', 'Feels like'), has(w.apparent_temperature) ? w.apparent_temperature + '°' : '');
+    chip(label('humidity', 'Humidity'), has(w.humidity) ? w.humidity + '%' : '');
+    chip(label('wind', 'Wind'), has(w.wind_speed) ? w.wind_speed + wind : '');
+    chip(kind === 'snow' ? label('snow', 'Snow') : label('rain', 'Rain'), has(w.day0_precip_prob) ? w.day0_precip_prob + '%' : '');
 
     /* five days: day1..day5, each with a bar placed on the week's own temperature scale */
     var days = document.getElementById('days');

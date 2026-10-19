@@ -762,8 +762,8 @@
   "now_icon": "{{ds:{{param:weather}}.icon}}",
   "now_temp": "{{ds:{{param:weather}}.temperature}}{{param:units_label}}",
   "now_condition": "{{ds:{{param:weather}}.condition}}",
-  "now_detail": "Feels like {{ds:{{param:weather}}.apparent_temperature}}{{param:units_label}}   ·   Humidity {{ds:{{param:weather}}.humidity}}%",
-  "now_today": "Today {{ds:{{param:weather}}.day0_high}}{{param:units_label}} / {{ds:{{param:weather}}.day0_low}}{{param:units_label}}   ·   {{ds:{{param:weather}}.day0_precip_prob}}% chance of precipitation",
+  "now_detail": "{{ds:{{param:weather}}.label_feels_like}} {{ds:{{param:weather}}.apparent_temperature}}{{param:units_label}}   ·   {{ds:{{param:weather}}.label_humidity}} {{ds:{{param:weather}}.humidity}}%",
+  "now_today": "{{ds:{{param:weather}}.label_today}} {{ds:{{param:weather}}.day0_high}}{{param:units_label}} / {{ds:{{param:weather}}.day0_low}}{{param:units_label}}   ·   {{ds:{{param:weather}}.day0_precip_text}}",
   "day1_name": "{{ds:{{param:weather}}.day1_name}}",
   "day1_icon": "{{ds:{{param:weather}}.day1_icon}}",
   "day1_high": "{{ds:{{param:weather}}.day1_high}}{{param:units_label}}",
@@ -784,6 +784,6 @@
   "day5_icon": "{{ds:{{param:weather}}.day5_icon}}",
   "day5_high": "{{ds:{{param:weather}}.day5_high}}{{param:units_label}}",
   "day5_low": "{{ds:{{param:weather}}.day5_low}}{{param:units_label}}",
-  "updated": "Updated {{ds:{{param:weather}}.updated}}"
+  "updated": "{{ds:{{param:weather}}.label_updated}} {{ds:{{param:weather}}.updated}}"
  }
 }
