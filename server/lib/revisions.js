@@ -118,6 +118,7 @@ function capturePlaylist(db, row) {
   // pre-feature playlist captures the same state (and the same approval hash) as before.
   if (row.layout_id) state.layout_id = row.layout_id;
   if (row.background_color) state.background_color = row.background_color;   // #660, same rule
+  if (row.default_zone_id) state.default_zone_id = row.default_zone_id;   // the playlist's default zone, same rule
   if (row.smart_rules) {
     state.smart_rules = row.smart_rules;
     // ⚠️ A smart playlist's items are what its rules match NOW, not playlist_items (it has none).
@@ -607,6 +608,12 @@ function restoreToDraft(db, { type, id, revisionId, actor, materialized = null }
         const l = state.layout_id ? db.prepare('SELECT is_template, workspace_id FROM layouts WHERE id = ?').get(state.layout_id) : null;
         const ok = l && (l.is_template || l.workspace_id === row.workspace_id);
         db.prepare('UPDATE playlists SET layout_id = ? WHERE id = ?').run(ok ? state.layout_id : null, id);
+        // Its default zone too, while that zone is still in the restored layout.
+        if (require('./corporate/schema-probe').hasColumn(db, 'playlists', 'default_zone_id')) {
+          const dz = ok && state.default_zone_id
+            && db.prepare('SELECT 1 FROM layout_zones WHERE id = ? AND layout_id = ?').get(state.default_zone_id, state.layout_id);
+          db.prepare('UPDATE playlists SET default_zone_id = ? WHERE id = ?').run(dz ? state.default_zone_id : null, id);
+        }
       }
     });
     txn();

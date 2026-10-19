@@ -4419,6 +4419,14 @@ migrationStep('#660 playlist and item backgrounds', () => {
   try { db.prepare('ALTER TABLE playlist_items ADD COLUMN transparent_bg INTEGER').run(); console.log('[migrate] playlist_items.transparent_bg added'); } catch (_) { /* present */ }
 });
 
+migrationStep('playlist default zone', () => {
+  // The zone of the playlist's layout that items without a zone play in (lib/playlist-layout.js
+  // defaultZone), overriding the layout's own main zone for this playlist only. NULL = the layout's
+  // main zone, as before. Published like background_color: discard restores published_default_zone_id.
+  try { db.prepare('ALTER TABLE playlists ADD COLUMN default_zone_id TEXT').run(); console.log('[migrate] playlists.default_zone_id added'); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE playlists ADD COLUMN published_default_zone_id TEXT').run(); } catch (_) { /* present */ }
+});
+
 migrationStep('SAML', () => {
   // SAML 2.0 org providers (lib/saml.js). A SAML row keeps the IdP's entityID in `issuer` and an empty
   // client_id (both NOT NULL in the original table), so no rebuild is needed.

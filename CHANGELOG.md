@@ -4,6 +4,12 @@
 
 ### Added
 
+- **A default zone for a playlist.** Under the playlist's **Layout**, pick the zone that items
+  added without a zone (from the Manager app, the API, Make a sign, content requests...) play in. It
+  replaces the layout's main zone for that playlist only, so playlists sharing a layout can each send
+  new items to a different zone. The items are placed there when you publish, so changing the default
+  later moves them too. It's a draft like the layout, and **Layout's main zone** keeps the old
+  behaviour. Additive columns `playlists.default_zone_id` and `published_default_zone_id`.
 - **Status screen on the Raspberry Pi player**: a small SPI panel (ILI9341 2.4", 240x320, e.g. the
   HiLetgo module) next to the main display shows online, offline or pairing (with the pairing code),
   what's playing, the server, IP and Wi-Fi signal, temperature, disk, RAM and the last warning or

@@ -11,7 +11,8 @@
  *   head office mandate  >  active schedule's layout  >  the playlist's layout  >  the device's layout
  *
  * This module holds the small rules around it that more than one writer needs:
- *   - which zone is the MAIN zone (where items without a zone play);
+ *   - which zone is the MAIN zone, and the playlist's DEFAULT zone that overrides it (where items
+ *     without a zone play);
  *   - filling that zone into a snapshot's zone-less items, so every way of adding an item (the
  *     editor, the Simple view, Make a sign, content requests, experiments, the API) lands in the
  *     same place without each of them learning about layouts;
@@ -47,13 +48,25 @@ function mainZone(zones) {
 }
 
 /**
- * Give every zone-less item the layout's main zone. Only for a layout that really has zones (two or
- * more): below that the payload strips zone ids anyway (ws/deviceSocket.js assemblePayload), and
- * leaving the items alone keeps the snapshot what it was.
+ * The zone a PLAYLIST's zone-less items play in: the playlist's own default zone when it chose one
+ * and that zone is still in the layout, else the layout's main zone. A default zone that is no
+ * longer in the layout (the zone was deleted, or the layout changed) falls back quietly rather than
+ * sending items to a zone the screen will not draw.
  */
-function fillMainZone(items, layout) {
+function defaultZone(layout, defaultZoneId) {
+  if (!layout || !Array.isArray(layout.zones) || !layout.zones.length) return null;
+  const chosen = defaultZoneId ? layout.zones.find((z) => z.id === defaultZoneId) : null;
+  return chosen || mainZone(layout.zones);
+}
+
+/**
+ * Give every zone-less item the playlist's default zone (defaultZone above). Only for a layout that
+ * really has zones (two or more): below that the payload strips zone ids anyway
+ * (ws/deviceSocket.js assemblePayload), and leaving the items alone keeps the snapshot what it was.
+ */
+function fillMainZone(items, layout, defaultZoneId = null) {
   if (!Array.isArray(items) || !layout || !Array.isArray(layout.zones) || layout.zones.length < 2) return items;
-  const main = mainZone(layout.zones);
+  const main = defaultZone(layout, defaultZoneId);
   if (!main) return items;
   for (const it of items) {
     if (it && typeof it === 'object' && !it.zone_id && !it.__slot) it.zone_id = main.id;
@@ -139,4 +152,4 @@ function layoutForPayload(db, layoutId, variant = null) {
   return layout;
 }
 
-module.exports = { loadLayout, layoutForPayload, mainZone, fillMainZone, layoutRefusal, suggestZoneMap, overlap };
+module.exports = { loadLayout, layoutForPayload, mainZone, defaultZone, fillMainZone, layoutRefusal, suggestZoneMap, overlap };

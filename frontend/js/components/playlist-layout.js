@@ -36,11 +36,46 @@ export function layoutPickerHtml(playlist) {
         ${explicit ? `<option value="${esc(playlist.layout.id)}" selected>${esc(playlist.layout.name || '')}</option>` : ''}
       </select>
       <span style="font-size:12px;color:var(--text-muted)">${esc(explicit ? t('layoutpl.hint_set') : t('layoutpl.hint_unset'))}</span>
+      ${explicit ? defaultZonePickerHtml(playlist.layout) : ''}
     </div>`;
+}
+
+/**
+ * Where this playlist's zone-less items play: everything added without a zone (the Manager app,
+ * the API, Make a sign, content requests...) lands here on Publish. The empty value follows the
+ * layout's main zone. Only for a layout with two or more zones; one zone has nothing to choose.
+ */
+function defaultZonePickerHtml(layout) {
+  if (!layout || !Array.isArray(layout.zones) || layout.zones.length < 2) return '';
+  const main = layout.zones.find((z) => z.id === layout.layout_main_zone_id);
+  const chosen = layout.default_zone_id || '';
+  return `
+      <span style="display:flex;align-items:center;gap:8px;flex-basis:100%;flex-wrap:wrap">
+        <label for="playlistDefaultZoneSelect" style="color:var(--text-muted)">${esc(t('layoutpl.default_zone'))}</label>
+        <select id="playlistDefaultZoneSelect" class="input" style="width:auto;max-width:280px;background:var(--bg-input);font-size:13px;padding:4px 8px">
+          <option value="" ${chosen ? '' : 'selected'}>${esc(t('layoutpl.default_zone_layout_main', { name: main ? main.name : '' }))}</option>
+          ${layout.zones.map((z) => `<option value="${esc(z.id)}" ${z.id === chosen ? 'selected' : ''}>${esc(z.name)}</option>`).join('')}
+        </select>
+        <span style="font-size:12px;color:var(--text-muted)">${esc(t('layoutpl.default_zone_hint'))}</span>
+      </span>`;
 }
 
 /** Fill the select once the layouts arrive, and wire the change. */
 export async function mountLayoutPicker(playlist, onChanged) {
+  const dz = document.getElementById('playlistDefaultZoneSelect');
+  if (dz) {
+    const was = dz.value;
+    dz.addEventListener('change', async () => {
+      try {
+        await api.updatePlaylist(playlist.id, { default_zone_id: dz.value || null });
+        showToast(t('layoutpl.toast_default_zone'), 'info');
+        onChanged && onChanged();
+      } catch (err) {
+        showToast(err.message, 'error');
+        dz.value = was;
+      }
+    });
+  }
   const sel = document.getElementById('playlistLayoutSelect');
   if (!sel) return;
   let layouts = [];
@@ -131,8 +166,9 @@ function zoneMapDialog(plan) {
 }
 
 /**
- * The per-item zone picker, shown only on a playlist that chose a multi-zone layout. "Main zone" is
- * the empty value: the item has no zone of its own and plays where every zone-less item does.
+ * The per-item zone picker, shown only on a playlist that chose a multi-zone layout. "Main zone" (or
+ * "Default zone", when the playlist chose one) is the empty value: the item has no zone of its own
+ * and plays where every zone-less item does.
  */
 export function zoneSelectHtml(item, layout) {
   if (!layout || !layout.explicit || !Array.isArray(layout.zones) || layout.zones.length < 2) return '';
@@ -140,7 +176,7 @@ export function zoneSelectHtml(item, layout) {
   const known = layout.zones.some((z) => z.id === item.zone_id);
   const main = layout.zones.find((z) => z.id === layout.main_zone_id);
   return `<select class="input item-zone" data-item-id="${esc(String(item.id))}" aria-label="${esc(t('layoutpl.zone_for_item'))}" title="${esc(t('layoutpl.zone_for_item'))}" style="width:130px;padding:4px 6px;font-size:12px;background:var(--bg-input)${item.zone_id && !known ? ';border-color:var(--danger)' : ''}">
-    <option value="" ${!item.zone_id ? 'selected' : ''}>${esc(t('layoutpl.zone_main_auto', { name: main ? main.name : '' }))}</option>
+    <option value="" ${!item.zone_id ? 'selected' : ''}>${esc(t(layout.default_zone_id ? 'layoutpl.zone_default_auto' : 'layoutpl.zone_main_auto', { name: main ? main.name : '' }))}</option>
     ${layout.zones.map((z) => `<option value="${esc(z.id)}" ${z.id === item.zone_id ? 'selected' : ''}>${esc(z.name)}</option>`).join('')}
     ${item.zone_id && !known ? `<option value="${esc(item.zone_id)}" selected>${esc(t('layoutpl.zone_other_layout'))}</option>` : ''}
   </select>`;

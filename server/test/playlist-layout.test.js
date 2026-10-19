@@ -282,6 +282,16 @@ test('main zone: a marked zone wins, else the largest; one-zone layouts and no l
     [{ zone_id: 'm' }, { zone_id: 'x' }]);
 });
 
+test('default zone: the playlist\'s own pick wins over the main zone while it is still in the layout', () => {
+  const L = { zones: [{ id: 'm', width_percent: 60, height_percent: 100 }, { id: 'side', width_percent: 40, height_percent: 100 }] };
+  assert.equal(pl.defaultZone(L, 'side').id, 'side');
+  assert.equal(pl.defaultZone(L, null).id, 'm', 'no pick = the main zone');
+  assert.equal(pl.defaultZone(L, 'gone').id, 'm', 'a zone no longer in the layout falls back to the main zone');
+  assert.equal(pl.defaultZone(null, 'side'), null);
+  assert.deepEqual(pl.fillMainZone([{ zone_id: null }, { zone_id: 'm' }], L, 'side'), [{ zone_id: 'side' }, { zone_id: 'm' }]);
+  assert.deepEqual(pl.fillMainZone([{ zone_id: null }], { zones: [{ id: 'only' }] }, 'only'), [{ zone_id: null }], 'one zone: still untouched');
+});
+
 test('items added without a zone (Simple view, Make a sign, content requests, experiments) play in the main zone', () => {
   const LP = layout('Marked', [['Wide', 0, 0, 70, 100], ['Promo', 70, 0, 30, 100, true]]);
   const P = realPlaylist('simple adds', [], { layout_id: LP.id });

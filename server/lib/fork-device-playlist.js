@@ -68,6 +68,12 @@ function forkInheritedPlaylist(deviceId, userId) {
                     published_layout_id = (SELECT published_layout_id FROM playlists WHERE id = ?) WHERE id = ?`)
         .run(resolved.playlist_id, resolved.playlist_id, newId);
     }
+    // And its default zone, draft and published.
+    if (require('./corporate/schema-probe').hasColumn(db, 'playlists', 'published_default_zone_id')) {
+      db.prepare(`UPDATE playlists SET default_zone_id = (SELECT default_zone_id FROM playlists WHERE id = ?),
+                    published_default_zone_id = (SELECT published_default_zone_id FROM playlists WHERE id = ?) WHERE id = ?`)
+        .run(resolved.playlist_id, resolved.playlist_id, newId);
+    }
     // #660: and its background colour, draft and published.
     if (require('./corporate/schema-probe').hasColumn(db, 'playlists', 'published_background_color')) {
       db.prepare(`UPDATE playlists SET background_color = (SELECT background_color FROM playlists WHERE id = ?),
