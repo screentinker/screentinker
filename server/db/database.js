@@ -4420,11 +4420,10 @@ migrationStep('#660 playlist and item backgrounds', () => {
 });
 
 migrationStep('playlist default zone', () => {
-  // The zone of the playlist's layout that items without a zone play in (lib/playlist-layout.js
-  // defaultZone), overriding the layout's own main zone for this playlist only. NULL = the layout's
-  // main zone, as before. Published like background_color: discard restores published_default_zone_id.
+  // The zone of the playlist's layout that NEW items added without a zone are given
+  // (lib/playlist-layout.js zoneForNewItem). A setting, not published content: it is stored on each
+  // item as it is added, so existing items never move. NULL = no zone, as before.
   try { db.prepare('ALTER TABLE playlists ADD COLUMN default_zone_id TEXT').run(); console.log('[migrate] playlists.default_zone_id added'); } catch (_) { /* present */ }
-  try { db.prepare('ALTER TABLE playlists ADD COLUMN published_default_zone_id TEXT').run(); } catch (_) { /* present */ }
 });
 
 migrationStep('SAML', () => {

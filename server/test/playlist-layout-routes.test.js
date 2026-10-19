@@ -161,7 +161,7 @@ test('a layout save keeps its portrait version; the auto arrangement endpoint st
   assert.deepEqual((await get('/api/layouts')).body.find((l) => l.id === S.next.id).variants, []);
 });
 
-test('a playlist default zone: zone-less items play there instead of the layout\'s main zone, published like the layout, and it follows layout changes', async () => {
+test('a playlist default zone: NEW items added without a zone go there; items already in the playlist never move', async () => {
   // Its own layout, with the SMALLER zone marked main, so "main" and "largest" are different zones.
   const L = (await post('/api/layouts', { name: 'Marked', zones: [
     { name: 'Big', x_percent: 0, y_percent: 0, width_percent: 70, height_percent: 100 },
@@ -170,27 +170,22 @@ test('a playlist default zone: zone-less items play there instead of the layout\
   const big = L.zones.find((z) => z.name === 'Big').id;
   const side = L.zones.find((z) => z.name === 'Side').id;
   assert.equal((await put(`/api/layouts/${L.id}`, { zones: L.zones.map((z) => ({ ...z, is_main: z.id === side ? 1 : 0 })) })).status, 200);
-  assert.equal((await get(`/api/layouts/${L.id}`)).body.zones.find((z) => z.id === side).is_main, 1, 'the layout marks Side as main');
   const pl = (await post('/api/playlists', { name: 'Default zone' })).body.id;
-  const snapOf = () => {
-    const db = dbq();
-    try { return JSON.parse(db.prepare('SELECT published_snapshot FROM playlists WHERE id = ?').get(pl).published_snapshot).map((a) => a.zone_id); } finally { db.close(); }
-  };
-  const rowOf = () => {
-    const db = dbq();
-    try { return { ...db.prepare('SELECT default_zone_id, published_default_zone_id, status FROM playlists WHERE id = ?').get(pl) }; } finally { db.close(); }
-  };
+  const q = (sql) => { const db = dbq(); try { return db.prepare(sql).all(pl); } finally { db.close(); } };
+  const itemZones = () => q('SELECT zone_id FROM playlist_items WHERE playlist_id = ? ORDER BY sort_order, id').map((r) => r.zone_id);
+  const snapOf = () => JSON.parse(q('SELECT published_snapshot AS s FROM playlists WHERE id = ?')[0].s).map((a) => a.zone_id);
+  const rowOf = () => ({ ...q('SELECT default_zone_id, status FROM playlists WHERE id = ?')[0] });
+
   // Not without a layout to pick a zone from.
   let r = await put(`/api/playlists/${pl}`, { default_zone_id: big });
   assert.equal(r.status, 400);
   assert.equal(r.body.code, 'DEFAULT_ZONE_NO_LAYOUT');
   assert.equal((await put(`/api/playlists/${pl}`, { layout_id: L.id })).status, 200);
-  // Added the way the Manager app and the API add: no zone. And one placed in a zone on purpose.
+  // Existing content: one item with no zone of its own, one placed in a zone on purpose.
   assert.equal((await post(`/api/playlists/${pl}/items`, { widget_id: S.widget })).status, 201);
   assert.equal((await post(`/api/playlists/${pl}/items`, { widget_id: S.widget, zone_id: side })).status, 201);
   assert.equal((await post(`/api/playlists/${pl}/publish`, {})).status, 200);
-  // With no default, the layout's main zone.
-  assert.deepEqual(snapOf(), [side, side]);
+  assert.deepEqual(snapOf(), [side, side], 'the zone-less item plays in the layout\'s main zone');
 
   // Only a zone of this playlist's layout.
   assert.equal((await put(`/api/playlists/${pl}`, { default_zone_id: S.oldLeft })).status, 400);
@@ -198,35 +193,33 @@ test('a playlist default zone: zone-less items play there instead of the layout\
   assert.equal((await put(`/api/playlists/${pl}`, { default_zone_id: 42 })).status, 400);
   assert.equal(rowOf().default_zone_id, null);
 
-  // Choosing one is a draft: the editor shows it at once, screens get it on Publish.
+  // Choosing one is a setting: no draft, nothing to publish, and the existing items are untouched.
   r = await put(`/api/playlists/${pl}`, { default_zone_id: big });
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.deepEqual(rowOf(), { default_zone_id: big, published_default_zone_id: null, status: 'draft' });
+  assert.deepEqual(rowOf(), { default_zone_id: big, status: 'published' });
+  assert.deepEqual(itemZones(), [null, side], 'existing items keep their zone (none, and Side)');
   const g = await get(`/api/playlists/${pl}`);
-  assert.equal(g.body.layout.main_zone_id, big, 'the editor places zone-less items in the default zone');
   assert.equal(g.body.layout.default_zone_id, big);
-  assert.equal(g.body.layout.layout_main_zone_id, side);
-  assert.deepEqual(snapOf(), [side, side], 'screens unchanged before Publish');
+  assert.equal(g.body.layout.main_zone_id, side, 'zone-less items still play in the main zone');
 
-  // Discard puts back what screens have.
-  assert.equal((await post(`/api/playlists/${pl}/discard`, {})).status, 200);
-  assert.equal(rowOf().default_zone_id, null);
-
-  // Again, and publish: the zone-less item moves, the one placed on purpose stays.
-  assert.equal((await put(`/api/playlists/${pl}`, { default_zone_id: big })).status, 200);
-  assert.equal((await post(`/api/playlists/${pl}/publish`, {})).status, 200);
-  assert.deepEqual(snapOf(), [big, side]);
-  assert.deepEqual(rowOf(), { default_zone_id: big, published_default_zone_id: big, status: 'published' });
-  // Anything added later without a zone lands there too.
+  // New items: added without a zone they get the default, the way the Manager app and the API add.
   assert.equal((await post(`/api/playlists/${pl}/items`, { widget_id: S.widget })).status, 201);
+  // One given a zone keeps it.
+  assert.equal((await post(`/api/playlists/${pl}/items`, { widget_id: S.widget, zone_id: side })).status, 201);
+  assert.deepEqual(itemZones(), [null, side, big, side]);
   assert.equal((await post(`/api/playlists/${pl}/publish`, {})).status, 200);
-  assert.deepEqual(snapOf(), [big, side, big]);
+  assert.deepEqual(snapOf(), [side, side, big, side], 'the old zone-less item did not move; the new one is in Big');
+
+  // Changing the default later moves nothing already added.
+  assert.equal((await put(`/api/playlists/${pl}`, { default_zone_id: side })).status, 200);
+  assert.deepEqual(itemZones(), [null, side, big, side]);
+  assert.equal((await put(`/api/playlists/${pl}`, { default_zone_id: big })).status, 200);
 
   // A layout change carries it through the confirmed zone map...
   r = await put(`/api/playlists/${pl}`, { layout_id: S.old.id, zone_map: { [big]: S.oldTicker, [side]: S.oldLeft } });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(rowOf().default_zone_id, S.oldTicker);
-  // ...a layout without that zone drops it (back to the layout's main zone)...
+  // ...a layout without that zone drops it...
   assert.equal((await put(`/api/playlists/${pl}`, { layout_id: L.id })).status, 200);
   assert.equal(rowOf().default_zone_id, null);
   // ...and so does going back to each screen's own layout.

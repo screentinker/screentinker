@@ -27,10 +27,10 @@ Open a playlist. Under its name there is a **Layout** row:
   whether the playlist reached the screen through the screen itself, a group, or a schedule.
 
 When a playlist has a layout, every item row gets a **Zone** picker. **Main zone** means "no zone of
-its own": the item plays in the layout's main zone, or in the playlist's **default zone** when it has
-one (below). Items added from anywhere that does not ask for a zone — the Manager app, the Simple
-view's "Show on screen", **Make a sign**, approved content requests, an experiment's variants, the
-API — all land there automatically.
+its own": the item plays in the layout's main zone. Items added from anywhere that does not ask
+for a zone — the Simple view's "Show on screen", **Make a sign**, approved content requests, an
+experiment's variants, the API — all land in the main zone automatically, unless the playlist has a
+**default zone** (below).
 
 Changing a layout is a **draft** like any other playlist edit: screens keep what they have until
 you **Publish**, and then get the new layout and the moved items together. **Discard changes**
@@ -57,17 +57,21 @@ item whose zone it could not find, so old and new players agree.
 #### A playlist's default zone
 
 The main zone belongs to the layout, so every playlist using that layout shares it. To send one
-playlist's zone-less items somewhere else, pick a **Default zone** under its **Layout** (for a layout
-with two or more zones). **Layout's main zone** follows the layout's tick, as before.
+playlist's **new** items somewhere else, pick a **Default zone** under its **Layout** (for a layout
+with two or more zones).
 
-- Items aren't changed when they're added: they stay "no zone of their own" and are placed in the
-  default zone when the playlist is published. Change the default zone later and they all move
-  with it. An item given a zone on purpose stays where it is.
-- It's a **draft** like the layout itself: screens get it on **Publish**, and **Discard changes**
-  puts the published one back.
-- Changing the layout carries it along when the zone it's in is moved by the confirmed zone map.
-  Otherwise, it goes back to the new layout's main zone. Choosing **Each screen's own layout**
-  clears it, as does deleting the zone.
+- It only affects items added **after** you set it, from anywhere that doesn't pick a zone: the
+  editor, the Manager app, the API, the Simple view, **Make a sign**, approved content requests,
+  agency uploads, a synced cloud folder, a group's Add content. The zone is saved on each item as
+  it's added.
+- **Existing content never moves.** Items already in the playlist keep playing where they do, and
+  changing the default zone later moves nothing that was added before. To move old items, use each
+  item's **Zone** picker.
+- It's a setting, not a draft: there's nothing to publish until you add something.
+- Copying, duplicating, pasting, restoring a revision and importing keep each item's own zone.
+- Changing the layout carries it along when the confirmed zone map moves its zone. Otherwise it's
+  cleared, as it is when you choose **Each screen's own layout**. If the zone is later deleted from
+  the layout, new items get no zone (the main zone) again.
 
 ### Which layout does a screen draw? (precedence)
 
@@ -118,13 +122,14 @@ zone picker on the screen's page offers the zones of the layout actually on scre
 | `PUT /api/playlists/:id` `{ layout_id }` | Choose a layout (`null` = each screen's own). Draft until publish. |
 | `PUT /api/playlists/:id` `{ layout_id, zone_map: { oldZoneId: newZoneId } }` | Choose and move items in one transaction. |
 | `GET /api/playlists/:id/layout-zone-map?layout_id=` | The zones in use, item counts, and a suggested target for each. Read-only. |
-| `PUT /api/playlists/:id` `{ default_zone_id }` | The zone of the playlist's layout its zone-less items play in (`null` = the layout's main zone). `400` for a zone outside the layout, or with no layout (`code: DEFAULT_ZONE_NO_LAYOUT`). Draft until publish. |
-| `GET /api/playlists/:id` | `layout` is the chosen layout with `explicit: true`, `main_zone_id` (where zone-less items play), `layout_main_zone_id` and `default_zone_id`; else #104's derived one. |
+| `PUT /api/playlists/:id` `{ default_zone_id }` | The zone new items added without one are given (`null` = none, the main zone). `400` for a zone outside the playlist's layout, or with no layout (`code: DEFAULT_ZONE_NO_LAYOUT`). Changes no existing item. |
+| `POST /api/playlists/:id/items` (and `/items/bulk`) | With no `zone_id`, the new item is saved with the playlist's default zone. |
+| `GET /api/playlists/:id` | `layout` is the chosen layout with `explicit: true`, `main_zone_id` and `default_zone_id`, else #104's derived one. |
 | `PUT /api/layouts/:id` | Zones may carry `is_main: 1`. |
 
 Database: `playlists.layout_id` (draft) and `playlists.published_layout_id` (on screens), both
-`REFERENCES layouts ON DELETE SET NULL`; `layout_zones.is_main`; `playlists.default_zone_id` and
-`published_default_zone_id` (no FK: a zone that's gone falls back to the main zone). All NULL/0 = exactly the 2.x
+`REFERENCES layouts ON DELETE SET NULL`; `layout_zones.is_main`; `playlists.default_zone_id` (no FK: a
+zone that's no longer in the layout is ignored). All NULL/0 = exactly the 2.x
 behaviour — the test suite proves every existing screen's payload is byte-identical
 (`test/playlist-layout.test.js`).
 

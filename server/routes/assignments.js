@@ -211,7 +211,7 @@ router.post('/device/:deviceId', (req, res) => {
     const result = db.prepare(`
       INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_to_end)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(playlistId, content_id || null, widget_id || null, child_playlist_id || null, effZone, order, duration_sec, playToEndValue);
+    `).run(playlistId, content_id || null, widget_id || null, child_playlist_id || null, require('../lib/playlist-layout').zoneForNewItem(db, playlistId, effZone), order, duration_sec, playToEndValue);
 
     markDraft(playlistId);
 

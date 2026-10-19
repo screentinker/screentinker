@@ -347,13 +347,11 @@ function buildSnapshotItems(playlistId, _depth = 0, _ancestors = null, opts = {}
    * editor, the Simple view, Make a sign, content requests and experiments — none of which set a
    * zone — all land in the same place. A nested child's own layout is ignored: only the playlist a
    * screen actually resolved to decides the layout. No layout (every playlist until one is picked)
-   * leaves the list untouched. The playlist's own default zone, when it chose one, wins over the
-   * layout's main zone.
+   * leaves the list untouched.
    */
   if (_depth === 0 && schemaProbe.hasColumn(db, 'playlists', 'layout_id')) {
-    const hasDefault = schemaProbe.hasColumn(db, 'playlists', 'default_zone_id');
-    const row = db.prepare(`SELECT layout_id${hasDefault ? ', default_zone_id' : ''} FROM playlists WHERE id = ?`).get(playlistId);
-    if (row && row.layout_id) playlistLayout.fillMainZone(items, playlistLayout.loadLayout(db, row.layout_id), row.default_zone_id || null);
+    const row = db.prepare('SELECT layout_id FROM playlists WHERE id = ?').get(playlistId);
+    if (row && row.layout_id) playlistLayout.fillMainZone(items, playlistLayout.loadLayout(db, row.layout_id));
   }
   return items;
 }
@@ -623,17 +621,10 @@ function playlistPreviewLayout(playlist, items) {
     const l = playlistLayout.loadLayout(db, playlist.layout_id);
     if (l) {
       l.explicit = true;
-      /*
-       * main_zone_id is where this playlist's zone-less items play: its own default zone when it
-       * chose one that is still in the layout, else the layout's main zone. The editor draws and
-       * labels zone-less items with it. layout_main_zone_id and default_zone_id let the default
-       * zone picker say which is which.
-       */
       const main = playlistLayout.mainZone(l.zones);
-      const effective = playlistLayout.defaultZone(l, playlist.default_zone_id);
-      l.layout_main_zone_id = main ? main.id : null;
-      l.default_zone_id = effective && effective.id === playlist.default_zone_id ? effective.id : null;
-      l.main_zone_id = effective ? effective.id : null;
+      l.main_zone_id = main ? main.id : null;
+      // The zone new items added without one are given (zoneForNewItem), while it is in this layout.
+      l.default_zone_id = playlist.default_zone_id && l.zones.some((z) => z.id === playlist.default_zone_id) ? playlist.default_zone_id : null;
       return l;
     }
   }
@@ -801,10 +792,6 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
   const hasBg = schemaProbe.hasColumn(db, 'playlists', 'published_background_color');
   const prev = db.prepare(`SELECT status, published_snapshot, published_structure, playback_order, published_playback_order, smart_rules, published_smart_rules${hasComposable ? ', published_composable' : ''}${hasBg ? ', background_color, published_background_color' : ''} FROM playlists WHERE id = ?`).get(playlistId);
   const bgSame = !hasBg || !prev || (prev.published_background_color || null) === (prev.background_color || null);
-  // The default zone goes live the same way (discard restores published_default_zone_id).
-  const hasDz = schemaProbe.hasColumn(db, 'playlists', 'published_default_zone_id');
-  const dz = hasDz ? db.prepare('SELECT default_zone_id, published_default_zone_id FROM playlists WHERE id = ?').get(playlistId) : null;
-  const dzSame = !dz || (dz.published_default_zone_id || null) === (dz.default_zone_id || null);
   const order = normalizePlaybackOrder(prev && prev.playback_order) || 'sequential';
 
   // ⚠️ Structure is captured PRE-expansion so "discard" can restore the nesting the flat snapshot
@@ -839,7 +826,7 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
   const layoutSame = !layoutRow || (layoutRow.published_layout_id || null) === nextLayout;
   const campaignSame = !hasCampaignCol || ((db.prepare('SELECT published_campaign FROM playlists WHERE id = ?').get(playlistId) || {}).published_campaign || null) === nextCampaign;
   if (prev && prev.status === 'published' && prev.published_snapshot === next && (prev.published_playback_order || 'sequential') === order
-      && (!hasComposable || (prev.published_composable || null) === composable) && layoutSame && campaignSame && bgSame && dzSame) {
+      && (!hasComposable || (prev.published_composable || null) === composable) && layoutSame && campaignSame && bgSame) {
     /*
      * The resolved list is unchanged, so no device is touched and nothing restarts — that is the
      * point of this early exit. But STRUCTURE can differ while the flat output does not: replacing
@@ -867,7 +854,7 @@ function publishPlaylist(playlistId, reqOrIo, seen = new Set([playlistId])) {
   // The composable's pairing with this snapshot, so a snapshot some other version writes is noticed.
   const hasPair = hasComposable && schemaProbe.hasColumn(db, 'playlists', 'published_composable_of');
   const pair = composable ? require('../lib/corporate/digest').snapshotDigest(next) : null;
-  db.prepare(`UPDATE playlists SET status = 'published', published_snapshot = ?, published_structure = ?, published_playback_order = ?, published_smart_rules = smart_rules${hasComposable ? ', published_composable = ?' : ''}${hasPair ? ', published_composable_of = ?' : ''}${hasRev ? ', published_rev = published_rev + 1' : ''}${hasLayout ? ', published_layout_id = layout_id' : ''}${hasBg ? ', published_background_color = background_color' : ''}${hasDz ? ', published_default_zone_id = default_zone_id' : ''}${hasCampaignCol ? ', published_campaign = ?' : ''}, updated_at = strftime('%s','now') WHERE id = ?`)
+  db.prepare(`UPDATE playlists SET status = 'published', published_snapshot = ?, published_structure = ?, published_playback_order = ?, published_smart_rules = smart_rules${hasComposable ? ', published_composable = ?' : ''}${hasPair ? ', published_composable_of = ?' : ''}${hasRev ? ', published_rev = published_rev + 1' : ''}${hasLayout ? ', published_layout_id = layout_id' : ''}${hasBg ? ', published_background_color = background_color' : ''}${hasCampaignCol ? ', published_campaign = ?' : ''}, updated_at = strftime('%s','now') WHERE id = ?`)
     .run(...[next, structure, order, ...(hasComposable ? [composable] : []), ...(hasPair ? [pair] : []), ...(hasCampaignCol ? [nextCampaign] : []), playlistId]);
   pushToDevices(playlistId, reqOrIo, { skipCorporate: isCorporate });
   corpFanout.afterPublish(corpCtx, reqOrIo);
@@ -1356,10 +1343,11 @@ router.put('/:id', requirePlaylistWrite, (req, res) => {
   }
 
   /*
-   * The playlist's default zone: where its zone-less items play (lib/playlist-layout.js defaultZone),
-   * in place of the layout's main zone. It must be a zone of the layout the playlist has AFTER this
-   * request. A layout change carries it through the confirmed zone_map and drops it when the new
-   * layout has no such zone; clearing the layout clears it. A draft change like the layout itself.
+   * The playlist's default zone: the zone NEW items added without one are given
+   * (lib/playlist-layout.js zoneForNewItem). A setting, not a draft: it changes no item already in the
+   * playlist, so there is nothing to publish. It must be a zone of the layout the playlist has AFTER
+   * this request. A layout change carries it through the confirmed zone_map and drops it when the new
+   * layout has no such zone; clearing the layout clears it.
    */
   let defaultZoneChanged = false;
   if (schemaProbe.hasColumn(db, 'playlists', 'default_zone_id')) {
@@ -1408,7 +1396,6 @@ router.put('/:id', requirePlaylistWrite, (req, res) => {
     if (req.body.playback_order !== undefined) markDraft(req.params.id, req, 'Changed playback order');
     if (rulesChanged) markDraft(req.params.id, req, 'Changed smart rules');
     if (bgChanged) markDraft(req.params.id, req, 'Changed background colour');
-    if (defaultZoneChanged && !(layoutChanged || moving)) markDraft(req.params.id, req, 'Changed default zone');
     if (layoutChanged || moving) {
       markDraft(req.params.id, req, 'Changed layout');
       require('../lib/audit').auditFromReq(req, 'playlist.layout_changed', {
@@ -1560,10 +1547,6 @@ router.post('/:id/discard', requirePlaylistWrite, (req, res) => {
     // A layout change is part of the draft too: discarding it puts back the layout screens have.
     if (schemaProbe.hasColumn(db, 'playlists', 'published_layout_id')) {
       db.prepare('UPDATE playlists SET layout_id = published_layout_id WHERE id = ?').run(req.params.id);
-    }
-    // And its default zone.
-    if (schemaProbe.hasColumn(db, 'playlists', 'published_default_zone_id')) {
-      db.prepare('UPDATE playlists SET default_zone_id = published_default_zone_id WHERE id = ?').run(req.params.id);
     }
   });
   transaction();
@@ -1850,6 +1833,7 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
 
     // #public-api: optional multi-zone placement. Validate the zone belongs to a
     // template or a layout in this playlist's workspace (the agency portal needs this).
+    // Given none, a new item takes the playlist's default zone (lib/playlist-layout.js zoneForNewItem).
     if (zone_id) {
       const zone = db.prepare('SELECT lz.id FROM layout_zones lz JOIN layouts l ON l.id = lz.layout_id WHERE lz.id = ? AND (l.is_template = 1 OR l.workspace_id = ?)').get(zone_id, req.playlist.workspace_id);
       if (!zone) return res.status(400).json({ error: 'zone_id not found in this workspace' });
@@ -1871,7 +1855,7 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
       INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_to_end)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(req.params.id, content_id || null, widget_id || null, child_playlist_id || null,
-           zone_id || null, order, duration_sec, playToEndValue);
+           playlistLayout.zoneForNewItem(db, req.params.id, zone_id || null), order, duration_sec, playToEndValue);
 
     // Mark as draft (items changed since last publish)
     markDraft(req.params.id, req, 'Added item');
@@ -2587,6 +2571,7 @@ router.post('/:id/items/bulk', requirePlaylistWrite, async (req, res) => {
       const max = db.prepare('SELECT MAX(sort_order) as max_order FROM playlist_items WHERE playlist_id = ?')
         .get(req.params.id);
       let order = (max.max_order || 0) + 1;
+      const zid = playlistLayout.zoneForNewItem(db, req.params.id, zone_id || null);
       const ins = db.prepare(`
         INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_to_end)
         VALUES (?, ?, NULL, NULL, ?, ?, ?, ?)
@@ -2596,7 +2581,7 @@ router.post('/:id/items/bulk', requirePlaylistWrite, async (req, res) => {
       // failure halfway must not leave half a party in the playlist.
       db.transaction(() => {
         for (const r of ready) {
-          ids.push(ins.run(req.params.id, r.content_id, zone_id || null, order++, r.duration_sec, r.play_to_end || null).lastInsertRowid);
+          ids.push(ins.run(req.params.id, r.content_id, zid, order++, r.duration_sec, r.play_to_end || null).lastInsertRowid);
         }
       })();
 

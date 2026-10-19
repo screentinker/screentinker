@@ -149,8 +149,8 @@ router.post('/playlists/:playlistId/items', (req, res) => {
     throw e;
   }
   const order = db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 AS n FROM playlist_items WHERE playlist_id = ?').get(req.params.playlistId).n;
-  const itemId = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, sort_order, duration_sec) VALUES (?, ?, ?, ?)')
-    .run(req.params.playlistId, content_id, order, duration_sec).lastInsertRowid;
+  const itemId = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, zone_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?)')
+    .run(req.params.playlistId, content_id, require('../lib/playlist-layout').zoneForNewItem(db, req.params.playlistId), order, duration_sec).lastInsertRowid;
   db.prepare('INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?,?,?,?,?,?,?,0)')
     .run(uuidv4(), itemId, dys.join(','), st, en, sd, ed);
   // #73: draft vs live is decided by the TOKEN's auto_publish (admin-set, read from

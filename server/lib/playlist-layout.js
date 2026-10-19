@@ -11,11 +11,11 @@
  *   head office mandate  >  active schedule's layout  >  the playlist's layout  >  the device's layout
  *
  * This module holds the small rules around it that more than one writer needs:
- *   - which zone is the MAIN zone, and the playlist's DEFAULT zone that overrides it (where items
- *     without a zone play);
+ *   - which zone is the MAIN zone (where items without a zone play);
  *   - filling that zone into a snapshot's zone-less items, so every way of adding an item (the
  *     editor, the Simple view, Make a sign, content requests, experiments, the API) lands in the
  *     same place without each of them learning about layouts;
+ *   - the playlist's DEFAULT zone, given to new items added without one (zoneForNewItem);
  *   - suggesting how items move when a playlist changes layout.
  *
  * ⚠️ NULL LAYOUT = NOTHING HAPPENS HERE. Every function returns its input untouched when the
@@ -48,30 +48,38 @@ function mainZone(zones) {
 }
 
 /**
- * The zone a PLAYLIST's zone-less items play in: the playlist's own default zone when it chose one
- * and that zone is still in the layout, else the layout's main zone. A default zone that is no
- * longer in the layout (the zone was deleted, or the layout changed) falls back quietly rather than
- * sending items to a zone the screen will not draw.
+ * Give every zone-less item the layout's main zone. Only for a layout that really has zones (two or
+ * more): below that the payload strips zone ids anyway (ws/deviceSocket.js assemblePayload), and
+ * leaving the items alone keeps the snapshot what it was.
  */
-function defaultZone(layout, defaultZoneId) {
-  if (!layout || !Array.isArray(layout.zones) || !layout.zones.length) return null;
-  const chosen = defaultZoneId ? layout.zones.find((z) => z.id === defaultZoneId) : null;
-  return chosen || mainZone(layout.zones);
-}
-
-/**
- * Give every zone-less item the playlist's default zone (defaultZone above). Only for a layout that
- * really has zones (two or more): below that the payload strips zone ids anyway
- * (ws/deviceSocket.js assemblePayload), and leaving the items alone keeps the snapshot what it was.
- */
-function fillMainZone(items, layout, defaultZoneId = null) {
+function fillMainZone(items, layout) {
   if (!Array.isArray(items) || !layout || !Array.isArray(layout.zones) || layout.zones.length < 2) return items;
-  const main = defaultZone(layout, defaultZoneId);
+  const main = mainZone(layout.zones);
   if (!main) return items;
   for (const it of items) {
     if (it && typeof it === 'object' && !it.zone_id && !it.__slot) it.zone_id = main.id;
   }
   return items;
+}
+
+/**
+ * The zone a NEW item gets when whoever adds it gave none: the playlist's default zone
+ * (playlists.default_zone_id) while that zone is still in the playlist's layout, else null, and the
+ * item plays in the main zone as before. Stored on the item when it is added, never applied at
+ * publish: items already in the playlist keep playing where they do, and changing the default later
+ * moves nothing that was added before. Only the writers that add NEW content call this; copying,
+ * duplicating, restoring and importing keep each item's own zone.
+ */
+function zoneForNewItem(db, playlistId, zoneId = null) {
+  if (zoneId) return zoneId;
+  try {
+    const row = db.prepare(`SELECT p.default_zone_id AS zone_id FROM playlists p
+                              JOIN layout_zones lz ON lz.id = p.default_zone_id AND lz.layout_id = p.layout_id
+                             WHERE p.id = ?`).get(playlistId);
+    return row ? row.zone_id : null;
+  } catch (_) {
+    return null;   // a schema from before the column (a hand-built test database)
+  }
 }
 
 /**
@@ -152,4 +160,4 @@ function layoutForPayload(db, layoutId, variant = null) {
   return layout;
 }
 
-module.exports = { loadLayout, layoutForPayload, mainZone, defaultZone, fillMainZone, layoutRefusal, suggestZoneMap, overlap };
+module.exports = { loadLayout, layoutForPayload, mainZone, fillMainZone, zoneForNewItem, layoutRefusal, suggestZoneMap, overlap };

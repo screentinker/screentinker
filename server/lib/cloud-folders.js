@@ -128,12 +128,14 @@ function syncPlaylistItems(db, folder) {
     const have = new Map(left.filter((r) => r.content_id && allSynced.has(r.content_id)).map((r) => [r.content_id, r.id]));
     const manual = left.filter((r) => !(r.content_id && allSynced.has(r.content_id)));
     let order = 0;
-    const ins = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, sort_order, duration_sec) VALUES (?, ?, ?, ?)');
+    // A file new to the folder is a new item: it takes the playlist's default zone (zoneForNewItem).
+    const newZone = require('./playlist-layout').zoneForNewItem(db, pid);
+    const ins = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, zone_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?)');
     const setOrder = db.prepare('UPDATE playlist_items SET sort_order = ? WHERE id = ?');
     for (const s of synced) {
       const dur = s.mime_type && /^(video|audio)\//.test(s.mime_type) && s.duration_sec ? Math.max(1, Math.round(s.duration_sec)) : folder.default_duration_sec;
       if (have.has(s.content_id)) setOrder.run(order++, have.get(s.content_id));
-      else ins.run(pid, s.content_id, order++, dur);
+      else ins.run(pid, s.content_id, newZone, order++, dur);
     }
     for (const m of manual) setOrder.run(order++, m.id);
   })();

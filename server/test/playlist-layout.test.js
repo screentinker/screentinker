@@ -282,14 +282,18 @@ test('main zone: a marked zone wins, else the largest; one-zone layouts and no l
     [{ zone_id: 'm' }, { zone_id: 'x' }]);
 });
 
-test('default zone: the playlist\'s own pick wins over the main zone while it is still in the layout', () => {
-  const L = { zones: [{ id: 'm', width_percent: 60, height_percent: 100 }, { id: 'side', width_percent: 40, height_percent: 100 }] };
-  assert.equal(pl.defaultZone(L, 'side').id, 'side');
-  assert.equal(pl.defaultZone(L, null).id, 'm', 'no pick = the main zone');
-  assert.equal(pl.defaultZone(L, 'gone').id, 'm', 'a zone no longer in the layout falls back to the main zone');
-  assert.equal(pl.defaultZone(null, 'side'), null);
-  assert.deepEqual(pl.fillMainZone([{ zone_id: null }, { zone_id: 'm' }], L, 'side'), [{ zone_id: 'side' }, { zone_id: 'm' }]);
-  assert.deepEqual(pl.fillMainZone([{ zone_id: null }], { zones: [{ id: 'only' }] }, 'only'), [{ zone_id: null }], 'one zone: still untouched');
+test('default zone: a new item added without a zone gets it while it is in the playlist\'s layout; nothing else changes', () => {
+  const L = layout('Two', [['Big', 0, 0, 70, 100], ['Side', 70, 0, 30, 100]]);
+  const other = layout('Other', [['A', 0, 0, 50, 100], ['B', 50, 0, 50, 100]]);
+  const P = realPlaylist('default zone unit', [], { layout_id: L.id });
+  assert.equal(pl.zoneForNewItem(db, P), null, 'no default: no zone, as before');
+  db.prepare('UPDATE playlists SET default_zone_id = ? WHERE id = ?').run(L.zones.Side, P);
+  assert.equal(pl.zoneForNewItem(db, P), L.zones.Side);
+  assert.equal(pl.zoneForNewItem(db, P, L.zones.Big), L.zones.Big, 'a zone the adder chose wins');
+  // A default that is not in the playlist's layout (it changed) gives no zone, never a zone the screen won't draw.
+  db.prepare('UPDATE playlists SET default_zone_id = ? WHERE id = ?').run(other.zones.A, P);
+  assert.equal(pl.zoneForNewItem(db, P), null);
+  assert.equal(pl.zoneForNewItem(db, 'no-such-playlist'), null);
 });
 
 test('items added without a zone (Simple view, Make a sign, content requests, experiments) play in the main zone', () => {

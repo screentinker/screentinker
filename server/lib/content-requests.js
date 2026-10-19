@@ -988,7 +988,8 @@ async function publishRequest(req, id, { origin } = {}) {
       require('./corporate/guard').assertPlaylistWritable(req, { id: t.playlist_id }, 'items');
       itemId = db.transaction(() => {
         const order = db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 AS n FROM playlist_items WHERE playlist_id = ?').get(t.playlist_id).n;
-        const iid = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, sort_order, duration_sec) VALUES (?, ?, ?, ?)').run(t.playlist_id, r.content_id, order, dwell).lastInsertRowid;
+        const iid = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, zone_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?)')
+          .run(t.playlist_id, r.content_id, require('./playlist-layout').zoneForNewItem(db, t.playlist_id), order, dwell).lastInsertRowid;
         db.prepare("INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?, ?, '0,1,2,3,4,5,6', '00:00', '24:00', ?, ?, 0)")
           .run(crypto.randomUUID(), iid, r.start_date, r.end_date);
         db.prepare("UPDATE playlists SET status = 'draft', updated_at = strftime('%s','now') WHERE id = ?").run(t.playlist_id);

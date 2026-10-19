@@ -224,7 +224,7 @@ const REFS = {
   canva_links: { content_id: 'content', design_id: 'external' },
   content_requests: { form_id: 'request_forms', content_id: 'content', submission_id: 'submissions' },
   request_forms: { folder_id: 'content_folders' },
-  playlists: { default_zone_id: 'layout_zones', published_default_zone_id: 'layout_zones' },
+  playlists: { default_zone_id: 'layout_zones' },
   playlist_items: { experiment_id: 'experiments' },
   corporate_mandates: { target_id: '*' },
   corporate_slot_fills: { scope_id: '*' },
