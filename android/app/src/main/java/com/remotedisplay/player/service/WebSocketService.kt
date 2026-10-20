@@ -2140,6 +2140,20 @@ class WebSocketService : Service() {
         }
     }
 
+    /**
+     * Hold the Wi-Fi multicast lock for one WS-Discovery probe and return its release.
+     *
+     * Many Wi-Fi drivers drop multicast (and some the unicast replies that follow) while the
+     * screen is "idle" to save power; the lock keeps the filter open for the few seconds a probe
+     * listens. Not reference-counted, so concurrent probes each own their own lock. On a wired
+     * panel there is no Wi-Fi to lock and the probe simply runs without one.
+     */
+    private fun acquireMulticastLock(): () -> Unit {
+        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return {}
+        val lock = wm.createMulticastLock("st-onvif-probe").apply { setReferenceCounted(false); acquire() }
+        return { try { if (lock.isHeld) lock.release() } catch (_: Throwable) {} }
+    }
+
     private fun dispatchCommand(type: String, payload: org.json.JSONObject?) {
         when (type) {
             "launch" -> {
@@ -2218,6 +2232,31 @@ class WebSocketService : Service() {
                 } catch (e: Throwable) {
                     Log.e("WebSocketService", "http_request: ${e.message}")
                 }
+            }.apply { isDaemon = true }.start()
+            /*
+             * This screen as the ONVIF bridge for cameras on its LAN (net/OnvifRelay.kt). Worker
+             * thread for the same reason as http_request: a probe listens for seconds and a SOAP
+             * call to a dead camera blocks for its whole timeout.
+             *
+             * ⚠️ EXACTLY ONE REPLY PER REQUEST, even on a refusal or a crash: the server is
+             * holding a promise for this id and otherwise reports "the screen did not answer"
+             * after its own timeout, which tells the installer nothing. OnvifRelay.perform never
+             * throws; the catch here only covers building the reply itself.
+             */
+            "onvif_relay" -> Thread {
+                val id = payload?.optString("id", "") ?: ""
+                val out = try {
+                    com.remotedisplay.player.net.OnvifRelay.perform(payload) { acquireMulticastLock() }
+                } catch (e: Throwable) {
+                    Log.e("WebSocketService", "onvif_relay: ${e.message}")
+                    com.remotedisplay.player.net.OnvifRelay.error(id, "failed")
+                }
+                try { out.put("device_id", config.deviceId) } catch (_: Throwable) {}
+                handler.post {
+                    try { socket?.emit("device:onvif-result", out) }
+                    catch (e: Throwable) { Log.w("WebSocketService", "onvif-result emit: ${e.message}") }
+                }
+                Log.i("WebSocketService", "onvif_relay ${payload?.optString("op")} ok=${out.optBoolean("ok")} ${out.optString("error", "")}")
             }.apply { isDaemon = true }.start()
             // Was a no-op because `input keyevent 224` is denied to an app UID — but a
             // wake LOCK is a different mechanism needing only WAKE_LOCK, which we hold.

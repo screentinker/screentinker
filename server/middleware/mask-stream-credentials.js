@@ -17,12 +17,17 @@
  * password can hold a quote or a space, and in JSON text those are escaped apart from the URL. A
  * string that is itself JSON (an MCP tool result) is parsed and walked the same way.
  *
+ * An ONVIF camera's password (content.onvif_secret, encrypted) is DROPPED from every response,
+ * device-token ones included: nothing outside the server needs it, not even the screen.
+ *
  * Cheap when there is nothing to do: the body is serialized once (as res.json would) and only
- * walked when it contains "rtsp".
+ * walked when it contains "rtsp" or an onvif_secret key.
  */
 const { maskStreamCredentials } = require('../lib/remote-url');
 
 const HAS_RTSP = /rtsps?:\/\//i;
+const SECRET_KEYS = new Set(['onvif_secret']);
+const HAS_SECRET_KEY = /"onvif_secret"/;
 
 function maskString(s) {
   if (!HAS_RTSP.test(s)) return s;
@@ -41,7 +46,17 @@ function maskDeep(v) {
   if (Array.isArray(v)) return v.map(maskDeep);
   if (v && typeof v === 'object') {
     const out = {};
-    for (const k of Object.keys(v)) out[k] = maskDeep(v[k]);
+    for (const k of Object.keys(v)) if (!SECRET_KEYS.has(k)) out[k] = maskDeep(v[k]);
+    return out;
+  }
+  return v;
+}
+
+function dropSecrets(v) {
+  if (Array.isArray(v)) return v.map(dropSecrets);
+  if (v && typeof v === 'object') {
+    const out = {};
+    for (const k of Object.keys(v)) if (!SECRET_KEYS.has(k)) out[k] = dropSecrets(v[k]);
     return out;
   }
   return v;
@@ -50,15 +65,18 @@ function maskDeep(v) {
 function maskStreamCredentialsMiddleware(req, res, next) {
   const json = res.json;
   res.json = function maskedJson(body) {
-    if (req.device) return json.call(this, body);
     const app = req.app;
     const replacer = app ? app.get('json replacer') : undefined;
     const spaces = app ? app.get('json spaces') : undefined;
     let text;
     try { text = JSON.stringify(body, replacer, spaces); } catch (_) { return json.call(this, body); }
-    if (text === undefined || !HAS_RTSP.test(text)) return json.call(this, body);
+    if (text === undefined) return json.call(this, body);
+    const secret = HAS_SECRET_KEY.test(text);
+    if (req.device ? !secret : (!secret && !HAS_RTSP.test(text))) return json.call(this, body);
     if (!this.get('Content-Type')) this.set('Content-Type', 'application/json; charset=utf-8');
-    return this.send(JSON.stringify(maskDeep(JSON.parse(text)), null, spaces));
+    // A screen gets its real camera URLs; only the ONVIF secret is taken out of what it receives.
+    const out = req.device ? dropSecrets(JSON.parse(text)) : maskDeep(JSON.parse(text));
+    return this.send(JSON.stringify(out, null, spaces));
   };
   next();
 }

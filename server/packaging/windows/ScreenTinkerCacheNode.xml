@@ -1,0 +1,31 @@
+<!--
+  WinSW service definition for the ScreenTinker studio cache node (WinSW 2.12, MIT).
+  build.ps1 copies this beside WinSW-x64.exe as ScreenTinkerCacheNode.xml; WinSW reads the
+  file with its own name. %BASE% is the folder the service executable is in.
+
+  The settings live in %ProgramData%\ScreenTinker\screentinker.env, written by the installer
+  and readable only by Administrators and SYSTEM (it holds JWT_SECRET). Node 22 reads it with its
+  env-file option (see arguments), so no launcher script sits between the service and server.js.
+-->
+<service>
+  <id>ScreenTinkerCacheNode</id>
+  <name>ScreenTinker Cache Node</name>
+  <description>Keeps a live copy of a ScreenTinker server's workspaces and media on this PC, so screens here keep playing when the internet does not.</description>
+  <executable>%BASE%\node\node.exe</executable>
+  <arguments>--env-file="%ProgramData%\ScreenTinker\screentinker.env" "%BASE%\app\server\server.js"</arguments>
+  <workingdirectory>%BASE%\app\server</workingdirectory>
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+  <!-- Ctrl+C first, so server.js runs its graceful shutdown (it handles SIGINT) and the WAL is
+       checkpointed; killed only if it has not exited in 20 s. -->
+  <stoptimeout>20 sec</stoptimeout>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <onfailure action="restart" delay="60 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <logpath>%ProgramData%\ScreenTinker\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+</service>

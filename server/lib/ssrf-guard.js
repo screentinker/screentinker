@@ -222,6 +222,17 @@ function allowedByPolicy(ip, hostname) {
   return false;
 }
 
+/**
+ * Has the operator opened private networks to this server at all? true with OUTBOUND_ALLOW_PRIVATE;
+ * 'some' with an OUTBOUND_ALLOW_HOSTS list (only those hosts); false otherwise. For features that
+ * offer to reach the LAN (ONVIF camera search) before a specific address is known.
+ */
+function privateNetworkAccess() {
+  const p = outboundPolicy();
+  if (p.allowPrivate) return true;
+  return p.names.size || p.suffixes.length || p.v4.length || p.v6.length ? 'some' : false;
+}
+
 /** The guard's verdict for one address on the way to `hostname`: blocked unless public or opened. */
 function isBlockedFor(ip, hostname) {
   return isBlockedIp(ip) && !allowedByPolicy(ip, hostname);
@@ -510,5 +521,6 @@ function guardedRequest(urlString, options = {}) {
 module.exports = {
   parseSafeUrl, assertSafeUrl, isBlockedIp, isBlockedV4, isBlockedV6, pinnedLookup, SsrfError, GuardedRequestError,
   guardedRequest, stripSensitiveHeaders, isBlockedFor, isMetadataIp, isPrivateNetworkIp, privateAddressHint,
+  privateNetworkAccess,
 };
 

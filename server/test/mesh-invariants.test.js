@@ -474,8 +474,13 @@ test('every existing install becomes a node with zero edges (migration is a no-o
        *   mesh_content_cache — which copied content rows have their bytes on this disk
        *     (lib/mesh/content-cache.js). Never a content row; only a note that the file is here.
        */
+      /*
+       * Dial-out added one, PRIMARY-side, empty until an operator mints an invite:
+       *   mesh_invites — invites for a replica that connects out to this server
+       *     (lib/mesh/dial-out.js). Burned, never deleted, like mesh_pairing_codes.
+       */
       'mesh_change_log', 'mesh_client_access', 'mesh_clients', 'mesh_content_cache', 'mesh_content_provenance',
-      'mesh_edges', 'mesh_mirror_alerts', 'mesh_mirror_devices', 'mesh_mirror_nodes', 'mesh_mirror_play_logs',
+      'mesh_edges', 'mesh_invites', 'mesh_mirror_alerts', 'mesh_mirror_devices', 'mesh_mirror_nodes', 'mesh_mirror_play_logs',
       'mesh_mirror_workspaces', 'mesh_node', 'mesh_node_paths', 'mesh_pairing_codes',
       'mesh_player_events', 'mesh_player_verdicts', 'mesh_pull_tickets', 'mesh_tombstones', 'mesh_write_ops',
     ]);

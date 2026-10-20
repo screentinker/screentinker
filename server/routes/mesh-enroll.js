@@ -21,8 +21,6 @@
 
 const express = require('express');
 const crypto = require('crypto');
-const http = require('http');
-const https = require('https');
 
 const pairing = require('../lib/mesh/pairing');
 const capabilities = require('../lib/mesh/capabilities');
@@ -30,6 +28,7 @@ const grants = require('../lib/mesh/grants');
 const identity = require('../lib/mesh/node-identity');
 const store = require('../lib/mesh/store');
 const edgeStatus = require('../lib/mesh/edge-status');
+const dialOut = require('../lib/mesh/dial-out');
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 const uid = () => crypto.randomUUID();
@@ -101,46 +100,8 @@ function normalizeParentUrl(raw) {
   return { ok: true, url: `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}` };
 }
 
-/**
- * POST some JSON to the other node.
- *
- * ⚠️ node:https RATHER THAN fetch(), for one reason: the per-edge TLS opt-out has to apply to THIS
- * request too. global fetch() offers no way to relax certificate checking without an undici
- * dispatcher, so enrolling into a self-signed on-prem hub failed at the very first call — while the
- * schema, the UI and the socket all promised the opt-out was available. An option that exists
- * everywhere except the one call that has to happen first is not an option.
- *
- * ⚠️ tlsVerify defaults to TRUE and the caller must ask to turn it off. Nothing here infers it from
- * the failure — retrying insecurely after a certificate error is how an opt-out becomes the default.
- */
-function postJson(urlStr, body, { tlsVerify = true, timeoutMs = 15_000 } = {}) {
-  return new Promise((resolve, reject) => {
-    let u;
-    try { u = new URL(urlStr); } catch (e) { return reject(new Error('bad url')); }
-    const payload = Buffer.from(JSON.stringify(body));
-    const mod = u.protocol === 'https:' ? https : http;
-    const req = mod.request({
-      protocol: u.protocol, hostname: u.hostname, port: u.port, path: u.pathname + u.search,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length },
-      rejectUnauthorized: tlsVerify,
-    }, (res) => {
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => {
-        const text = Buffer.concat(chunks).toString('utf8');
-        let json = {};
-        try { json = JSON.parse(text); } catch (e) { json = {}; }
-        resolve({ status: res.statusCode, ok: res.statusCode >= 200 && res.statusCode < 300, json });
-      });
-    });
-    // Bounded: an enrollment that hangs must not hold an operator's request open until a proxy
-    // times out and shows them a page with no explanation on it.
-    req.setTimeout(timeoutMs, () => req.destroy(new Error('timed out')));
-    req.on('error', reject);
-    req.end(payload);
-  });
-}
+// postJson lives in lib/post-json.js: the replica's dial-out join (lib/mesh/dial-out.js) needs it too.
+const { postJson } = require('../lib/post-json');
 
 module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkChanged }) {
   const router = express.Router();
@@ -156,6 +117,69 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
     const ups = db.prepare(
       "SELECT peer_node_id FROM mesh_edges WHERE direction = 'up' AND revoked_at IS NULL").all();
     return [me, ...ups.map((u) => u.peer_node_id)];
+  }
+
+  /**
+   * Which of this server's workspaces a new edge may carry, decided from what THIS user administers.
+   * Shared by the two ways of pairing upward: entering another server's code (POST /uplink) and
+   * minting an invite for a replica that dials in (POST /uplink/invite).
+   */
+  function resolveShareScope(req) {
+    /*
+     * ⚠️ THE SCOPE IS VALIDATED HERE, AGAINST WHAT THIS USER ADMINISTERS. Sending a list from the
+     * browser is a request, not a decision — a non-owner naming a workspace they do not administer
+     * must be refused rather than trimmed, because silently narrowing means the operator believes
+     * they shared something they did not, and finds out when a report is empty.
+     */
+    const isOwner = req.user.role === 'platform_admin';
+    const shareAll = req.body.shareAllWorkspaces === true;
+    if (shareAll && !isOwner) {
+      return { ok: false, status: 403,
+        error: 'Only the instance owner can share every workspace on this server. Choose the ' +
+               'workspaces you administer instead.' };
+    }
+    let sharedWorkspaces = null;   // ⚠️ null means ALL — see the column comment.
+    if (!shareAll) {
+      const asked = Array.isArray(req.body.workspaceIds) ? req.body.workspaceIds.map(String) : [];
+      if (!asked.length) {
+        return { ok: false, status: 400, error: 'Choose at least one workspace to share, or share all of them.' };
+      }
+      let allowed = [];
+      try {
+        allowed = isOwner
+          ? db.prepare('SELECT id FROM workspaces').all().map((w) => w.id)
+          : db.prepare(`SELECT w.id FROM workspaces w
+                          JOIN workspace_members m ON m.workspace_id = w.id
+                         WHERE m.user_id = ? AND m.role IN ('owner','admin')`)
+              .all(req.user.id).map((w) => w.id);
+      } catch (e) { allowed = []; }
+      const refused = asked.filter((id) => !allowed.includes(id));
+      if (refused.length) {
+        return { ok: false, status: 403,
+          error: `You do not administer ${refused.length} of the workspaces you selected, so they ` +
+                 `cannot be shared. Ask their owner to pair, or select only your own.` };
+      }
+      sharedWorkspaces = asked;
+    }
+    return { ok: true, sharedWorkspaces };
+  }
+
+  /*
+   * ⚠️ CORPORATE (critique R10, risk R8): corporate state — mandates, slots, slot content — is not
+   * replicated in v1, so a replica of a store would not know head office's playlist plays there,
+   * and a replicated head office workspace carries slot references the replica cannot resolve.
+   * Replicating such a workspace is refused, before the edge exists.
+   */
+  function corporateReplicationRefusal(sharedWorkspaces) {
+    const corpGuard = require('../lib/corporate/guard');
+    const wsIds = sharedWorkspaces || db.prepare('SELECT id FROM workspaces').all().map((w) => w.id);
+    for (const wid of wsIds) {
+      if (corpGuard.workspaceHasCorporateState(db, wid)) {
+        const ws = db.prepare('SELECT name FROM workspaces WHERE id = ?').get(wid);
+        return corpGuard.err('CORPORATE_MESH_UNSUPPORTED', { workspace: `"${(ws && ws.name) || wid}"` });
+      }
+    }
+    return null;
   }
 
   /* ======================= hub side: hand out a code ======================= */
@@ -302,6 +326,24 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
         capabilities: check.capabilities,
         depth: check.resultingDepth,
       });
+    });
+
+    /*
+     * Join a primary by DIALLING OUT to it (lib/mesh/dial-out.js) — for a replica behind NAT, which
+     * the primary could never reach. The primary minted the invite and chose the workspaces; this
+     * server's operator chooses only the roles this server takes on (keep media copies, accept
+     * screens). Instance-owner only, like minting a pairing code: it makes this server a replica.
+     */
+    router.post('/pair/join', requireAuth, requireInstanceOwner, async (req, res) => {
+      const body = req.body || {};
+      const r = await dialOut.joinPrimary(db, {
+        primaryUrl: body.primaryUrl, code: body.code, roles: body.roles,
+        tlsVerify: body.tlsVerify !== false, config,
+      });
+      if (!r.ok) return res.status(400).json({ error: r.reason });
+      // The dialler picks the new edge up now rather than at its next sweep.
+      try { if (global.__meshDialer) global.__meshDialer.refresh(); } catch (e) { /* the sweep covers it */ }
+      res.json(r);
     });
   }
 
@@ -667,46 +709,9 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
       const version = require('../package.json').version;
       const tlsVerify = req.body.tlsVerify !== false;
 
-      /*
-       * ⚠️ THE SCOPE IS VALIDATED HERE, AGAINST WHAT THIS USER ADMINISTERS. Sending a list from the
-       * browser is a request, not a decision — a non-owner naming a workspace they do not administer
-       * must be refused rather than trimmed, because silently narrowing means the operator believes
-       * they shared something they did not, and finds out when a report is empty.
-       */
-      const isOwner = req.user.role === 'platform_admin';
-      const shareAll = req.body.shareAllWorkspaces === true;
-      if (shareAll && !isOwner) {
-        return res.status(403).json({
-          error: 'Only the instance owner can share every workspace on this server. Choose the ' +
-                 'workspaces you administer instead.',
-        });
-      }
-      let sharedWorkspaces = null;   // ⚠️ null means ALL — see the column comment.
-      if (!shareAll) {
-        const asked = Array.isArray(req.body.workspaceIds) ? req.body.workspaceIds.map(String) : [];
-        if (!asked.length) {
-          return res.status(400).json({
-            error: 'Choose at least one workspace to share, or share all of them.',
-          });
-        }
-        let allowed = [];
-        try {
-          allowed = isOwner
-            ? db.prepare('SELECT id FROM workspaces').all().map((w) => w.id)
-            : db.prepare(`SELECT w.id FROM workspaces w
-                            JOIN workspace_members m ON m.workspace_id = w.id
-                           WHERE m.user_id = ? AND m.role IN ('owner','admin')`)
-                .all(req.user.id).map((w) => w.id);
-        } catch (e) { allowed = []; }
-        const refused = asked.filter((id) => !allowed.includes(id));
-        if (refused.length) {
-          return res.status(403).json({
-            error: `You do not administer ${refused.length} of the workspaces you selected, so they ` +
-                   `cannot be shared. Ask their owner to pair, or select only your own.`,
-          });
-        }
-        sharedWorkspaces = asked;
-      }
+      const scope = resolveShareScope(req);
+      if (!scope.ok) return res.status(scope.status).json({ error: scope.error });
+      const sharedWorkspaces = scope.sharedWorkspaces;
 
       let answer;
       try {
@@ -753,15 +758,8 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
        * Replicating such a workspace is refused, before the edge exists.
        */
       if (readOnlyGrant.includes('workspace-replication')) {
-        const corpGuard = require('../lib/corporate/guard');
-        const wsIds = sharedWorkspaces || db.prepare('SELECT id FROM workspaces').all().map((w) => w.id);
-        for (const wid of wsIds) {
-          if (corpGuard.workspaceHasCorporateState(db, wid)) {
-            const ws = db.prepare('SELECT name FROM workspaces WHERE id = ?').get(wid);
-            const e = corpGuard.err('CORPORATE_MESH_UNSUPPORTED', { workspace: `"${(ws && ws.name) || wid}"` });
-            return res.status(409).json({ error: e.message, code: e.code });
-          }
-        }
+        const e = corporateReplicationRefusal(sharedWorkspaces);
+        if (e) return res.status(409).json({ error: e.message, code: e.code });
       }
 
       db.prepare(`INSERT INTO mesh_edges
@@ -776,6 +774,11 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
             up_token         = excluded.up_token,
             peer_url         = excluded.peer_url,
             tls_verify       = excluded.tls_verify,
+            -- an edge that was an invite edge (lib/mesh/dial-out.js) becomes an ordinary one: we dial,
+            -- with the token above, and the old dial-in token stops working. A no-op on a we-dial row.
+            transport_direction = 'we-dial',
+            token_hash       = NULL,
+            token_expires_at = NULL,
             revoked_at       = NULL`).run(
         /*
          * ⚠️ write_grant and write_scope are absent from BOTH the column list and the DO UPDATE
@@ -804,6 +807,218 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
             'you, not by the server asking for it. The connection was made read-only. You can grant ' +
             'write access afterwards from this page if you decide to.',
         } : {}),
+      });
+    });
+
+    /* ============ invite a replica that dials in (lib/mesh/dial-out.js) ============ */
+
+    /*
+     * Mint an invite for a replica that will connect TO this server — for a replica behind NAT,
+     * which this server could never dial. ⚠️ The scope is chosen HERE, by the side giving the data,
+     * through the same checks as pairing with a code (resolveShareScope); the replica can only take
+     * it or leave it.
+     */
+    router.post('/uplink/invite', requireAuth, requireCanShareSomething(db), (req, res) => {
+      const scope = resolveShareScope(req);
+      if (!scope.ok) return res.status(scope.status).json({ error: scope.error });
+      const corp = corporateReplicationRefusal(scope.sharedWorkspaces);
+      if (corp) return res.status(409).json({ error: corp.message, code: corp.code });
+
+      const code = pairing.mintPairingCode();
+      const expires = nowSec() + dialOut.INVITE_TTL_S;
+      db.prepare(`INSERT INTO mesh_invites (id, code, shared_workspaces, grant_categories, created_by, created_at, expires_at)
+                  VALUES (?,?,?,?,?,?,?)`).run(
+        uid(), pairing.normalizeCode(code),
+        scope.sharedWorkspaces ? JSON.stringify(scope.sharedWorkspaces) : null,
+        JSON.stringify(['workspace-replication']), req.user.id, nowSec(), expires);
+      res.json({
+        code,
+        expiresAt: expires,
+        nodeId: thisNode(),
+        nodeName: store.nodeName(db),
+        workspaces: scope.sharedWorkspaces ? scope.sharedWorkspaces.length : null,
+        grantDescription: grants.describeGrant(['workspace-replication']),
+      });
+    });
+
+    /** The live, unburned invite for a code, or null. Same quiet-refusal rules as a pairing code. */
+    function liveInvite(raw) {
+      const code = pairing.normalizeCode(raw);
+      if (!code) return null;
+      const row = db.prepare('SELECT * FROM mesh_invites WHERE code = ?').get(code);
+      if (!row || !pairing.codesMatch(code, row.code) || row.burned_at || row.expires_at <= nowSec()) return null;
+      return row;
+    }
+    const INVITE_REFUSAL = 'That invite is not valid. Invites expire, and each one may be used once — ' +
+                           'mint a new one on the primary and try again.';
+
+    /*
+     * ⚠️ RE-CHECKED AT REDEEM, not only at mint: an invite lives for days, and an admin removed from
+     * a workspace (or no longer the owner, for an all-workspaces invite) in the meantime must not
+     * still be handing out copies of it. Same rule as resolveShareScope, against the minter as they
+     * are NOW. A minter who no longer exists refuses everything.
+     */
+    function minterStillMayShare(inv) {
+      let user;
+      try { user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(inv.created_by); } catch (e) { user = null; }
+      if (!user) return false;
+      if (user.role === 'platform_admin') return true;
+      if (!inv.shared_workspaces) return false;   // every workspace: owner only
+      const wanted = store.safeParseArray(inv.shared_workspaces).map(String);
+      let allowed = [];
+      try {
+        allowed = db.prepare(`SELECT w.id FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id
+                               WHERE m.user_id = ? AND m.role IN ('owner','admin')`).all(user.id).map((w) => w.id);
+      } catch (e) { allowed = []; }
+      return wanted.length > 0 && wanted.every((id) => allowed.includes(id));
+    }
+
+    /*
+     * The invites this user minted (every one, for the instance owner) that can still be redeemed,
+     * so one handed to the wrong person — or no longer wanted — can be cancelled before it is used.
+     */
+    router.get('/uplink/invites', requireAuth, requireCanShareSomething(db), (req, res) => {
+      const owner = req.user.role === 'platform_admin';
+      const rows = db.prepare(`SELECT i.id, i.code, i.shared_workspaces, i.created_at, i.expires_at, i.created_by, u.email AS created_by_email
+                                 FROM mesh_invites i LEFT JOIN users u ON u.id = i.created_by
+                                WHERE i.burned_at IS NULL AND i.expires_at > ? ${owner ? '' : 'AND i.created_by = ?'}
+                                ORDER BY i.created_at DESC`).all(...(owner ? [nowSec()] : [nowSec(), req.user.id]));
+      res.json({ invites: rows.map((r) => ({
+        id: r.id,
+        // only the end of the code: enough to tell invites apart, not enough to redeem one
+        codeHint: String(r.code).slice(-4),
+        workspaces: r.shared_workspaces ? store.safeParseArray(r.shared_workspaces).length : null,
+        createdAt: r.created_at,
+        expiresAt: r.expires_at,
+        createdBy: r.created_by_email || null,
+      })) });
+    });
+
+    // Cancel: burned with no node, so it is refused exactly like a used one.
+    router.delete('/uplink/invites/:id', requireAuth, requireCanShareSomething(db), (req, res) => {
+      const inv = db.prepare('SELECT id, created_by, burned_at FROM mesh_invites WHERE id = ?').get(req.params.id);
+      if (!inv || inv.burned_at) return res.status(404).json({ error: 'That invite has already been used, cancelled or has expired.' });
+      if (inv.created_by !== req.user.id && req.user.role !== 'platform_admin') {
+        return res.status(403).json({ error: 'Only the person who created an invite, or the instance owner, can cancel it.' });
+      }
+      db.prepare('UPDATE mesh_invites SET burned_at = ?, burned_by_node = NULL WHERE id = ? AND burned_at IS NULL').run(nowSec(), inv.id);
+      res.json({ ok: true });
+    });
+
+    /*
+     * ⚠️ UNAUTHENTICATED, like /pair/redeem: the invite IS the credential (CSPRNG, single-use,
+     * expiring). Preview burns nothing; it tells the replica who it is about to copy so the replica
+     * can run its own enrollment checks before anything is created on either side.
+     */
+    router.post('/invite/preview', (req, res) => {
+      const inv = liveInvite(req.body && req.body.code);
+      if (!inv || !minterStillMayShare(inv)) return res.status(400).json({ error: INVITE_REFUSAL });
+      const shared = store.safeParseArray(inv.shared_workspaces);
+      res.json({
+        nodeId: thisNode(),
+        nodeName: store.nodeName(db),
+        version: require('../package.json').version,
+        ancestry: thisAncestry(),
+        grant: store.safeParseArray(inv.grant_categories),
+        workspaces: inv.shared_workspaces ? shared.length : null,
+        expiresAt: inv.expires_at,
+      });
+    });
+
+    router.post('/invite/redeem', (req, res) => {
+      const body = req.body || {};
+      const inv = liveInvite(body.code);
+      if (!inv || !minterStillMayShare(inv)) return res.status(400).json({ error: INVITE_REFUSAL });
+
+      const me = thisNode();
+      const peerId = typeof body.nodeId === 'string' ? body.nodeId : '';
+      const peerName = String(body.nodeName || '').trim().slice(0, 60) || null;
+      if (!peerId) return res.status(400).json({ error: 'The replica did not identify itself.' });
+      if (peerId === me) return res.status(400).json({ error: 'A server cannot be its own replica.' });
+      if (!identity.versionAcceptable(body.version, config.meshMinNodeVersion || undefined)) {
+        return res.status(400).json({ error: identity.versionRefusalReason(body.version, config.meshMinNodeVersion || undefined) });
+      }
+      // Cycles, from this side: the replica must not already be above us, and we must not be in its chain.
+      if (thisAncestry().includes(peerId) || (Array.isArray(body.ancestry) && body.ancestry.includes(me))) {
+        return res.status(400).json({ error: 'That server is already connected to this one in the other direction, so ' +
+                                             'this would make a loop. Disconnect the existing link first.' });
+      }
+      // The replica's roles are its own decision; here they are only checked to be a replica's roles.
+      const caps = capabilities.validateCapabilities(body.capabilities, { acceptEnrollment: true });
+      if (!caps.ok) return res.status(400).json({ error: caps.reason });
+      if (!caps.capabilities.includes('serves-dashboard')) {
+        return res.status(400).json({ error: 'An invite is for a replica; the joining server must take the serves-dashboard role.' });
+      }
+      const grant = grants.validateGrant(store.safeParseArray(inv.grant_categories));
+      if (!grant.ok) return res.status(400).json({ error: grant.reason });
+      const shared = inv.shared_workspaces ? store.safeParseArray(inv.shared_workspaces) : null;
+      // Re-checked at redeem: a workspace can have gained corporate state since the invite was minted.
+      const corp = corporateReplicationRefusal(shared);
+      if (corp) return res.status(409).json({ error: corp.message, code: corp.code });
+
+      const { token, tokenHash } = pairing.mintEdgeToken();
+      const now = nowSec();
+      /*
+       * ⚠️ BURN AND EDGE IN ONE TRANSACTION, as with /pair/redeem. A revoked edge to the same replica
+       * is reused (re-joining after a disconnect); a LIVE one refuses — the operator disconnects first.
+       * write_grant / write_scope are untouched, so re-joining can never widen a write grant.
+       */
+      const commit = db.transaction(() => {
+        const burn = db.prepare('UPDATE mesh_invites SET burned_at = ?, burned_by_node = ? WHERE id = ? AND burned_at IS NULL')
+          .run(now, peerId, inv.id);
+        if (burn.changes !== 1) throw new Error('invite-burned');
+        const r = db.prepare(`INSERT INTO mesh_edges
+            (id, peer_node_id, direction, role_capabilities, grant_categories, transport_direction, tls_verify,
+             peer_version, token_hash, token_expires_at, up_token, created_at, peer_url, peer_name, shared_workspaces)
+            VALUES (?,?,'up',?,?,'they-dial',1,?,?,?,NULL,?,NULL,?,?)
+            ON CONFLICT(peer_node_id, direction) DO UPDATE SET
+              role_capabilities   = excluded.role_capabilities,
+              grant_categories    = excluded.grant_categories,
+              transport_direction = 'they-dial',
+              peer_version        = excluded.peer_version,
+              token_hash          = excluded.token_hash,
+              token_expires_at    = excluded.token_expires_at,
+              up_token            = NULL,
+              peer_url            = NULL,
+              peer_name           = excluded.peer_name,
+              shared_workspaces   = excluded.shared_workspaces,
+              -- ⚠️ A revoked row is reused, but nothing it agreed to before is: the redeemer chose
+              -- this nodeId, so an old share_upward consent or change-log position must not carry
+              -- over to whoever holds the invite now.
+              share_upward        = 0,
+              auto_forward        = 0,
+              acked_rev           = NULL,
+              retention_days      = NULL,
+              tombstone_purge_days = NULL,
+              client_id           = NULL,
+              last_sync_at        = NULL,
+              revoked_at          = NULL
+            WHERE mesh_edges.revoked_at IS NOT NULL`).run(
+          uid(), peerId, JSON.stringify(caps.capabilities), JSON.stringify(grant.categories),
+          String(body.version || ''), tokenHash, now + dialOut.EDGE_TOKEN_TTL_S, now, peerName,
+          shared ? JSON.stringify(shared) : null);
+        if (r.changes !== 1) throw new Error('already-connected');
+      });
+      try {
+        commit();
+      } catch (e) {
+        if (e && e.message === 'invite-burned') return res.status(400).json({ error: INVITE_REFUSAL });
+        if (e && e.message === 'already-connected') {
+          return res.status(400).json({ error: 'That server is already connected to this one. Disconnect it here first, then join again.' });
+        }
+        throw e;
+      }
+      // Creates the change-log triggers (the grant, not the flag) and the link that waits for the replica.
+      if (typeof onUplinkChanged === 'function') onUplinkChanged();
+      res.json({
+        ok: true,
+        // The one and only time the plaintext token leaves this server.
+        edgeToken: token,
+        primaryNodeId: me,
+        primaryName: store.nodeName(db),
+        grant: grant.categories,
+        capabilities: caps.capabilities,
+        workspaces: shared ? shared.length : null,
       });
     });
   }
@@ -1108,7 +1323,9 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
      * write_bytes_used is deliberately left alone — it is a record of what is still stored here,
      * not a permission, and zeroing it would lose track of bytes that are still on the disk.
      */
-    db.prepare(`UPDATE mesh_edges SET revoked_at = ?, up_token = NULL,
+    // token_hash is set only on a 'they-dial' edge (a replica that dials in): clearing it shuts
+    // that door at the handshake as well as on the live socket.
+    db.prepare(`UPDATE mesh_edges SET revoked_at = ?, up_token = NULL, token_hash = NULL,
                 write_grant = NULL, write_scope = NULL, write_bytes_budget = NULL
                 WHERE id = ?`).run(nowSec(), edge.id);
     if (typeof onUplinkChanged === 'function') onUplinkChanged();

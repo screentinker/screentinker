@@ -64,6 +64,9 @@ const BLOCKLIST = Object.freeze({
     'local_api_secret',
   ],
   triggers: ['match_token', 'clear_token'],
+  // An ONVIF camera's password (routes/onvif.js). ONVIF calls are made by the primary the dashboard
+  // talks to; a replica only serves the stream URL to screens, which it already has.
+  content: ['onvif_secret'],
   /*
    * ⚠️ Not a secret — a BELT. A slot placement references corporate_slots, which is not replicated
    * (corporate state does not travel in v1), so a copied row carrying one would violate the foreign

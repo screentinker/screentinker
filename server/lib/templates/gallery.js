@@ -196,6 +196,11 @@ function demoWeather(now = new Date()) {
       [`day${i}_code`]: code, [`day${i}_precip_prob`]: pp,
     });
   });
+  // #667: the translated words the resolver adds, in English like the rest of the demo.
+  const { weatherText } = require('../data-sources/weather-resolver');
+  const text = weatherText('en');
+  for (const k of ['feels_like', 'humidity', 'wind', 'rain', 'snow', 'today', 'updated']) out[`label_${k}`] = text.label(k);
+  out.day0_precip_text = text.label('precip_chance').replace('{n}', String(out.day0_precip_prob));
   return out;
 }
 

@@ -1,0 +1,43 @@
+{
+  "labels": {
+    "feels_like": "Percepita",
+    "humidity": "Umidità",
+    "wind": "Vento",
+    "rain": "Pioggia",
+    "snow": "Neve",
+    "today": "Oggi",
+    "updated": "Aggiornato",
+    "precip_chance": "{n}% di probabilità di precipitazioni"
+  },
+  "conditions": {
+    "0": "Cielo sereno",
+    "1": "Prevalentemente sereno",
+    "2": "Parzialmente nuvoloso",
+    "3": "Coperto",
+    "45": "Nebbia",
+    "48": "Nebbia con brina",
+    "51": "Pioviggine leggera",
+    "53": "Pioviggine moderata",
+    "55": "Pioviggine intensa",
+    "56": "Pioviggine gelata leggera",
+    "57": "Pioviggine gelata intensa",
+    "61": "Pioggia debole",
+    "63": "Pioggia moderata",
+    "65": "Pioggia forte",
+    "66": "Pioggia gelata debole",
+    "67": "Pioggia gelata forte",
+    "71": "Nevicata debole",
+    "73": "Nevicata moderata",
+    "75": "Nevicata forte",
+    "77": "Neve granulosa",
+    "80": "Rovesci deboli",
+    "81": "Rovesci moderati",
+    "82": "Rovesci violenti",
+    "85": "Rovesci di neve deboli",
+    "86": "Rovesci di neve forti",
+    "95": "Temporale",
+    "96": "Temporale con grandine leggera",
+    "99": "Temporale con grandine forte",
+    "unknown": "Sconosciuto"
+  }
+}

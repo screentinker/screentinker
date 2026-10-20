@@ -81,12 +81,13 @@ const FILES = {
   'lib/ghcr-check.js': 'updates',
   'routes/templates.js': 'template_catalog', 'routes/templates-gallery.js': 'template_catalog',
   'routes/mcp.js': 'mcp',
-  'services/mesh-uplink.js': 'mesh', 'routes/mesh-enroll.js': 'mesh', 'routes/mesh.js': 'mesh',
+  'services/mesh-uplink.js': 'mesh', 'routes/mesh-enroll.js': 'mesh',
+  'lib/post-json.js': 'mesh', 'services/mesh-dialer.js': 'mesh', 'routes/mesh.js': 'mesh',
   'routes/storage-profiles.js': 'storage',
   plugins: 'plugins',
 };
 const PREFIXES = [
-  ['lib/data-sources/', 'data_sources'], ['lib/plugins/', 'plugins'], ['lib/social/', 'social'], ['lib/news-feed/', 'news_feeds'],
+  ['lib/onvif/', 'live_video'], ['lib/data-sources/', 'data_sources'], ['lib/plugins/', 'plugins'], ['lib/social/', 'social'], ['lib/news-feed/', 'news_feeds'],
   ['lib/rooms/', 'rooms'], ['lib/cap/', 'cap_feeds'], ['lib/bi/', 'bi'], ['lib/alerts/', 'alert_channels'],
   ['lib/screen-verify/', 'alert_channels'], ['lib/automation/', 'automation'], ['lib/templates/', 'template_catalog'],
   ['lib/mesh/', 'mesh'], ['lib/site-cache/', 'site_cache'], ['lib/migrate/', 'migrate'], ['lib/storage/', 'storage'], ['lib/mcp/', 'mcp'],

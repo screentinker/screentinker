@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache node status</title>
+<!-- Shipped only in the Windows cache-node package (server/packaging/windows/build.ps1 copies it into
+     the staged frontend). It reads this server's own /api/status; the script is a separate file
+     because the CSP refuses inline script. -->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1d2330; --muted:#667085; --ok:#0f7b3f; --bad:#b42318; --warn:#9a6700; --line:#e4e7ec; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111418; --card:#1a1f26; --text:#e6e9ef; --muted:#98a2b3; --ok:#4ade80; --bad:#f87171; --warn:#facc15; --line:#2b323c; } }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, "Segoe UI", sans-serif; }
+  main { max-width:720px; margin:0 auto; padding:24px 16px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 20px; font-size:13px; }
+  .banner { padding:14px 16px; border-radius:10px; background:var(--card); border:1px solid var(--line); font-weight:600; margin-bottom:16px; }
+  .banner.ok { border-left:6px solid var(--ok); } .banner.bad { border-left:6px solid var(--bad); } .banner.warn { border-left:6px solid var(--warn); }
+  dl { display:grid; grid-template-columns:minmax(120px, 34%) 1fr; gap:8px 16px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin:0 0 16px; }
+  dt { color:var(--muted); } dd { margin:0; overflow-wrap:anywhere; }
+  .bar { height:8px; background:var(--line); border-radius:4px; margin-top:6px; overflow:hidden; } .bar > span { display:block; height:100%; background:var(--ok); }
+  .err { color:var(--bad); }
+  footer { color:var(--muted); font-size:12px; }
+  a { color:inherit; }
+</style>
+</head>
+<body>
+<main>
+  <h1>ScreenTinker cache node</h1>
+  <p class="sub">This PC keeps a copy of the main server's workspaces and media. Updates every 5 seconds.</p>
+  <div id="banner" class="banner">Loading…</div>
+  <dl id="facts"></dl>
+  <footer>Logs: <code>C:\ProgramData\ScreenTinker\logs</code> · Settings: <code>C:\ProgramData\ScreenTinker\screentinker.env</code> · <a href="/">Open the dashboard</a></footer>
+</main>
+<script src="/js/cache-node-status.js"></script>
+</body>
+</html>

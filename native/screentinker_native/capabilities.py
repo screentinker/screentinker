@@ -27,6 +27,9 @@ CAPABILITIES_ALWAYS = [
     "remote.screen_share",
     "system.restart_player", "system.self_update", "system.shell", "system.pty", "system.kiosk",
     "net.http_request", "sync.clock", "offline.cache",
+    # The server's ONVIF bridge: WS-Discovery + SOAP + snapshot GET to private addresses on this
+    # network only: net/onvif_relay.py, server/lib/onvif/relay.js.
+    "onvif.bridge",
     # A meeting-room display's buttons work here: the engine passes #panel (player/engine.py) and the
     # screen is a touch panel. The server's no-show release waits for a screen that declares it.
     "room.panel",

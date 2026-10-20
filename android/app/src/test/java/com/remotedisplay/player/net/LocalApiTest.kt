@@ -121,7 +121,7 @@ class LocalApiTest {
          * it. 400 and 403 send someone to two different places, and only one of them is the right one.
          */
         for (t in listOf("reboot", "shell", "install_apk", "set_server_url", "http_request", "launch",
-                         "kiosk_unlock", "settings", "set_power_schedule", "update")) {
+                         "kiosk_unlock", "settings", "set_power_schedule", "update", "onvif_relay")) {
             val r = post("/api/command", """{"type":"$t"}""")
             assertEquals("$t must be refused", 403, r.status)
             assertNull("$t must not be handed to the dispatcher", r.command)

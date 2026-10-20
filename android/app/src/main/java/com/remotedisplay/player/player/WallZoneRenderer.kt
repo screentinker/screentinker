@@ -3,6 +3,7 @@ package com.remotedisplay.player.player
 import android.content.Context
 import android.net.Uri
 import android.os.Handler
+import android.os.SystemClock
 import android.os.Looper
 import android.util.Log
 import android.view.View
@@ -68,6 +69,9 @@ class WallZoneRenderer(
         var alignable = false
         // Whether this clip loops (decided once its length is known — WallZones.shouldLoop).
         var looping = false
+        // A live stream's watchdog (StreamHealth): reconnects it in place on an error or a stall.
+        // Clips need none: the wall clock moves them on at their boundary.
+        var health: StreamHealth? = null
         fun pause() { try { player?.playWhenReady = false } catch (_: Throwable) {} }
         fun release(holder: ViewGroup) {
             if (released) return
@@ -254,8 +258,25 @@ class WallZoneRenderer(
         a.optString("content_id") + "|" + a.optString("widget_id") + "|" + a.optLong("widget_rev", 0L) + "|" +
             a.optLong("content_rev", 0L) + "|" + mimeOf(a) + "|" + (remoteOf(a) ?: "")
 
+    private var healthEvery = 0
+
     private fun doTick() {
         if (stage == null) return
+        // A live stream's stall raises no event: look at each one every HEALTH_TICKS ticks (~2 s).
+        if (++healthEvery >= HEALTH_TICKS) {
+            healthEvery = 0
+            val mono = SystemClock.elapsedRealtime()
+            for (zs in zones) {
+                val m = zs.current ?: continue
+                val h = m.health ?: continue
+                val p = m.player ?: continue
+                if (m.released) continue
+                try {
+                    val frames = p.videoDecoderCounters?.let { it.ensureUpdated(); it.renderedOutputBufferCount.toLong() }
+                    h.observe(mono, p.playbackState, p.playWhenReady, frames, p.currentPosition)
+                } catch (_: Throwable) { /* released between the check and the read */ }
+            }
+        }
         val now = syncedNow()
         for (zs in zones) {
             val list = (buckets[zs.z.geom.id] ?: emptyList()).mapNotNull { items.getOrNull(it) }
@@ -469,9 +490,26 @@ class WallZoneRenderer(
         val live = isLive(mime)
         m.alignable = !live && !frozenAtEnd
         val mountedAt = syncedNow()
-        if (mime == "video/rtsp") {
-            p.setMediaSource(RtspSources.create(src, a.optInt("tls_self_signed", 0) == 1))   // TLS for rtsps
-        } else p.setMediaItem(MediaItem.fromUri(src))
+        val setSource = {
+            if (mime == "video/rtsp") {
+                p.setMediaSource(RtspSources.create(src, a.optInt("tls_self_signed", 0) == 1))   // TLS for rtsps
+            } else p.setMediaItem(MediaItem.fromUri(src))
+        }
+        setSource()
+        /*
+         * ⚠️ A LIVE stream in a wall zone used to show the zone's background after an error until the
+         * next boundary, and a camera with no end has none; a silent stall froze it. It now reconnects
+         * in place (the same player and view, so the wall's other zones never notice) after
+         * FaultBackoff's 2/4/8/15/30 s.
+         */
+        if (live) m.health = StreamHealth({ delayMs, reason ->
+            DebugLog.w(TAG, "'${zs.z.name}': live video $reason, reconnecting in ${delayMs / 1000}s")
+            handler.postDelayed({
+                if (m.released) return@postDelayed
+                try { setSource(); p.prepare(); p.playWhenReady = true } catch (e: Throwable) { DebugLog.w(TAG, "'${zs.z.name}': reconnect failed: ${e.message}") }
+                m.health?.reconnected()
+            }, delayMs)
+        })
         p.volume = if (audible) 1f else 0f
         p.repeatMode = Player.REPEAT_MODE_OFF
         p.addListener(object : Player.Listener {
@@ -507,6 +545,7 @@ class WallZoneRenderer(
                 // The clock moves the zone on at its boundary; until then it shows its background.
                 DebugLog.w(TAG, "'${zs.z.name}': video error ${error.errorCodeName}")
                 revealNow(m)
+                m.health?.error(SystemClock.elapsedRealtime())
             }
         })
         pv.player = p
@@ -518,6 +557,7 @@ class WallZoneRenderer(
 
     private companion object {
         const val TICK_MS = 250L
+        const val HEALTH_TICKS = 8        // × TICK_MS = a stall check every 2 s
         const val REVEAL_TIMEOUT_MS = 1500L
     }
 }

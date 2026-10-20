@@ -210,7 +210,13 @@ test('⚠️ mesh writes address LOCAL administration only (I2)', () => {
    * ends this node's copy and stops this node pulling; it changes nothing on the other server,
    * which learns only that a door is shut at its next connection.
    */
-  const LOCAL = ['/mesh/pair/code', '/mesh/uplink', '/mesh/clients', '/mesh/identity', '/mesh/links'];
+  /*
+   * ⚠️ /mesh/pair/join is /mesh/uplink turned round (lib/mesh/dial-out.js): THIS server's operator
+   * joins a primary that minted an invite, creating this node's own edge. Like /mesh/uplink it calls
+   * the other server once, to redeem what that server's operator handed over; it writes nothing
+   * there that the invite did not already authorise, and changes nothing on any node below.
+   */
+  const LOCAL = ['/mesh/pair/code', '/mesh/pair/join', '/mesh/uplink', '/mesh/clients', '/mesh/identity', '/mesh/links'];
 
   /*
    * ⚠️ AND ONE THAT DELIBERATELY IS NOT LOCAL. /mesh/content asks a customer's server to accept

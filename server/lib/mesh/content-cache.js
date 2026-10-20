@@ -273,7 +273,13 @@ function status(db, config) {
   return cachingEdges(db).map((e) => {
     let files = 0, bytes = 0;
     try { const r = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS b FROM mesh_content_cache WHERE edge_id = ?').get(e.id); files = r.n; bytes = r.b; } catch (err) { /* */ }
-    return { node_id: e.peer_node_id, files, bytes, pinned_bytes: pinnedBytes(db, e.id), cap_bytes: config.replicaCacheBytes,
+    // How many of those are videos — what a studio's status page asks first (packaging/windows).
+    let videos = 0;
+    try {
+      videos = db.prepare(`SELECT COUNT(*) AS n FROM mesh_content_cache m JOIN content c ON c.id = m.content_id
+                            WHERE m.edge_id = ? AND c.mime_type LIKE 'video/%'`).get(e.id).n;
+    } catch (err) { /* */ }
+    return { node_id: e.peer_node_id, files, videos, bytes, pinned_bytes: pinnedBytes(db, e.id), cap_bytes: config.replicaCacheBytes,
              last_error: lastError.get(e.id) || null, prefetch_pending: queue.length, stored: storesByEdge.get(e.id) || 0 };
   });
 }

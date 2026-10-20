@@ -11,6 +11,7 @@ import { openDialog, confirmDialog } from '../components/library/dialog.js';
 import { openMenu, closeMenu } from '../components/library/menu.js';
 import { openAddContent, treeOrder } from '../components/library/add-content.js';
 import { fisheyeSection, wireFisheyePanel } from '../components/library/fisheye-panel.js';
+import { onvifSection, wireOnvifPanel } from '../components/library/onvif-panel.js';
 import { createInspector } from '../components/library/inspector.js';
 import * as uploads from '../components/library/upload-queue.js';
 import {
@@ -1302,6 +1303,7 @@ function showEditModal(contentItem, onSave, { focus = null } = {}) {
           <p style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('content.stream_password_hidden_hint')}</p>
         </div>
         ` : ''}
+        ${onvifSection(contentItem)}
         ${fisheyeSection(contentItem)}
         ${isYoutube ? `
         <div class="form-group">
@@ -1370,6 +1372,8 @@ function showEditModal(contentItem, onSave, { focus = null } = {}) {
 
   document.body.appendChild(overlay);
   const fisheyePanel = wireFisheyePanel(overlay, contentItem);
+  // An ONVIF camera acts at once (snapshot, stream address, PTZ); the library just shows the result.
+  wireOnvifPanel(overlay, contentItem, () => loadContent());
   // Escape closes, focus starts inside (on the field asked for) and goes back to the opener.
   const modalEl = overlay.querySelector('.modal');
   modalEl.setAttribute('role', 'dialog');

@@ -34,7 +34,7 @@ from .config import Config
 from .logic import screen_share
 from .logic.kiosk import SessionQueue
 from .logic.offline_play_queue import OfflinePlayQueue, make_play, new_id
-from .net import device_http
+from .net import device_http, onvif_relay
 from .net.link import DeviceLink
 from .net.triggers import TriggerManager
 from .player.cache import ContentCache, DownloadCoordinator, trigger_content_ids
@@ -814,6 +814,15 @@ class App:
             res = await device_http.perform(p)
             res["device_id"] = self.config.device_id
             await self.link.aemit("device:http-result", res)
+        self.on_net(go())
+
+    def _cmd_onvif_relay(self, p):
+        # The server's ONVIF bridge (server/lib/onvif/relay.js): probe / soap / get on THIS network,
+        # every limit enforced in net/onvif_relay.py. Exactly one device:onvif-result per request.
+        async def go():
+            res = await onvif_relay.perform(p)
+            res["device_id"] = self.config.device_id
+            await self.link.aemit("device:onvif-result", res)
         self.on_net(go())
 
     def _cmd_set_debug(self, p):

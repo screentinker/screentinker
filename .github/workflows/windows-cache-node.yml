@@ -1,0 +1,174 @@
+name: Windows cache node
+
+# Builds the studio cache-node installer (server/packaging/windows) on real Windows and proves it
+# end to end: a primary runs from this checkout, mints an invite, the installer is run SILENTLY with
+# it, and the installed service must join (dialling out), copy the workspace, survive a restart and
+# uninstall cleanly. Only runs when the package or the dial-out path changes, or by hand.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'server/packaging/windows/**'
+      - 'server/lib/mesh/dial-out.js'
+      - 'server/services/mesh-dialer.js'
+      - 'server/ws/meshDialIn.js'
+      - '.github/workflows/windows-cache-node.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'server/packaging/windows/**'
+      - 'server/lib/mesh/dial-out.js'
+      - 'server/services/mesh-dialer.js'
+      - 'server/ws/meshDialIn.js'
+      - '.github/workflows/windows-cache-node.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-cache-node-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-install:
+    name: Build, install, join, uninstall
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      JWT: ci-shared-secret-0123456789abcdef0123456789abcdef
+      PRIMARY_PORT: '3200'
+      NODE_PORT: '3201'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: NSIS
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) { choco install nsis -y --no-progress }
+
+      - name: Build the installer
+        shell: pwsh
+        run: server\packaging\windows\build.ps1
+
+      # ONE step on purpose: the runner stops processes a step started when that step ends, so a
+      # primary started in its own step was gone before the cache node tried to join it.
+      - name: Primary, silent install, join, restart
+        shell: pwsh
+        run: |
+          # ---- a primary from this checkout ----
+          Push-Location server
+          npm ci --no-audit --no-fund
+          # npm ci on Windows skips the optional better-sqlite3 (see build.ps1); install it by name.
+          node -e "require('better-sqlite3')" 2>$null
+          if ($LASTEXITCODE) { npm install --no-save --no-audit --no-fund "better-sqlite3@$((Get-Content package.json -Raw | ConvertFrom-Json).optionalDependencies.'better-sqlite3')" }
+          Pop-Location
+          $env:PORT = $env:PRIMARY_PORT; $env:MESH_ALLOW_UPLINK = 'true'; $env:JWT_SECRET = $env:JWT
+          $env:DATA_DIR = "$env:RUNNER_TEMP\primary"; $env:NODE_ENV = 'test'
+          Start-Process -FilePath node -ArgumentList 'server.js' -WorkingDirectory server `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\primary.log" -RedirectStandardError "$env:RUNNER_TEMP\primary.err.log"
+          $base = "http://127.0.0.1:$env:PRIMARY_PORT"
+          $up = $false
+          for ($i = 0; $i -lt 120; $i++) { try { Invoke-RestMethod "$base/api/status" | Out-Null; $up = $true; break } catch { Start-Sleep 1 } }
+          if (-not $up) { Get-Content "$env:RUNNER_TEMP\primary.err.log", "$env:RUNNER_TEMP\primary.log" -ErrorAction SilentlyContinue; throw 'the primary did not start' }
+          $reg = Invoke-RestMethod "$base/api/auth/register" -Method Post -ContentType 'application/json' -Body (@{ email = 'admin@primary.local'; password = 'Passw0rd123' } | ConvertTo-Json)
+          $h = @{ Authorization = "Bearer $($reg.token)" }
+          $me = Invoke-RestMethod "$base/api/auth/me" -Headers $h
+          Invoke-RestMethod "$base/api/devices/web-player" -Method Post -Headers ($h + @{ 'x-workspace-id' = $me.current_workspace_id }) -ContentType 'application/json' -Body '{"name":"Studio TV"}' | Out-Null
+          $inv = Invoke-RestMethod "$base/api/mesh/uplink/invite" -Method Post -Headers $h -ContentType 'application/json' -Body (@{ workspaceIds = @($me.current_workspace_id) } | ConvertTo-Json)
+          $env:INVITE = $inv.code
+
+          # ---- install silently with the invite ----
+          $exe = Get-ChildItem server\packaging\windows\dist\ScreenTinker-CacheNode-Setup-*.exe | Select-Object -First 1
+          # A ProgramData\ScreenTinker this installer did not leave (any user could plant one) is refused.
+          New-Item -ItemType Directory -Force "$env:ProgramData\ScreenTinker" | Out-Null
+          Set-Content "$env:ProgramData\ScreenTinker\screentinker.env" 'NODE_OPTIONS=--require C:\planted.js'
+          $p = Start-Process $exe.FullName -Wait -PassThru -ArgumentList @('/S', "/PRIMARY_URL=http://127.0.0.1:$env:PRIMARY_PORT",
+            "/JOIN_CODE=$env:INVITE", "/JWT_SECRET=$env:JWT", "/PORT=$env:NODE_PORT")
+          if ($p.ExitCode -ne 2) { throw "a planted ProgramData folder was not refused (exit $($p.ExitCode))" }
+          Get-Content "$env:TEMP\ScreenTinker-CacheNode-setup.txt"
+          if (Get-Service ScreenTinkerCacheNode -ErrorAction SilentlyContinue) { throw 'refused, but a service was installed' }
+          Remove-Item -Recurse -Force "$env:ProgramData\ScreenTinker"
+          $p = Start-Process $exe.FullName -Wait -PassThru -ArgumentList @('/S',
+            "/PRIMARY_URL=http://127.0.0.1:$env:PRIMARY_PORT", "/JOIN_CODE=$env:INVITE",
+            "/JWT_SECRET=$env:JWT", '/CACHE_GB=2', "/PORT=$env:NODE_PORT")
+          if ($p.ExitCode -ne 0) { Get-Content "$env:TEMP\ScreenTinker-CacheNode-setup.txt" -ErrorAction SilentlyContinue; throw "installer exit $($p.ExitCode)" }
+          (Get-Service ScreenTinkerCacheNode).Status
+          # Not LocalSystem.
+          $acct = (Get-CimInstance Win32_Service -Filter "Name='ScreenTinkerCacheNode'").StartName
+          "service account: $acct"
+          if ($acct -notmatch 'LocalService') { throw "the service runs as $acct, not LocalService" }
+          # Screens were not enabled, so no firewall rule.
+          if (Get-NetFirewallRule -DisplayName 'ScreenTinker Cache Node' -ErrorAction SilentlyContinue) { throw 'firewall rule added without /PLAYERS' }
+
+          # ---- the node joins by dialling out and copies the workspace ----
+          $base = "http://127.0.0.1:$env:NODE_PORT"
+          function Wait-Joined {
+            $s = $null
+            $until = (Get-Date).AddMinutes(3)
+            while ((Get-Date) -lt $until) {
+              try {
+                $s = Invoke-RestMethod "$base/api/status" -TimeoutSec 5
+                $r = $s.scale_out.replica_of | Select-Object -First 1
+                if ($r -and $r.dial.connected -and $r.workspaces -gt 0 -and $r.phase -ne 'snapshot') { return $r }
+              } catch { }
+              Start-Sleep 1
+            }
+            if ($s) { $s.scale_out | ConvertTo-Json -Depth 6 }
+            throw 'the cache node did not join and copy within 3 minutes'
+          }
+          $r = Wait-Joined
+          $r | ConvertTo-Json -Depth 5
+          if (-not $r.cache) { throw 'caches-content was not taken on' }
+          if ((Invoke-WebRequest "$base/cache-node.html" -UseBasicParsing).StatusCode -ne 200) { throw 'status page missing' }
+          if ((Invoke-WebRequest "$base/js/cache-node-status.js" -UseBasicParsing).StatusCode -ne 200) { throw 'status script missing' }
+          # The settings file (JWT_SECRET) and the data (database, certs): no access for ordinary users.
+          foreach ($f in @("$env:ProgramData\ScreenTinker\screentinker.env", "$env:ProgramData\ScreenTinker\data",
+                           "$env:ProgramData\ScreenTinker\data\db", "$env:ProgramData\ScreenTinker")) {
+            $acl = (Get-Acl $f).Access | ForEach-Object { $_.IdentityReference.Value }
+            "$f -> $($acl -join ', ')"
+            if ($acl -match 'Users|Everyone|Authenticated') { throw "$f is open to ordinary users: $($acl -join ', ')" }
+          }
+          # A restart (graceful stop, then start) comes back joined, from the stored edge.
+          Restart-Service ScreenTinkerCacheNode
+          $r = Wait-Joined
+          "rejoined after restart: dial.connected=$($r.dial.connected)"
+          # An upgrade over the top: no values given, nothing asked, settings kept, still joined.
+          $before = Get-FileHash "$env:ProgramData\ScreenTinker\screentinker.env"
+          $p = Start-Process $exe.FullName -Wait -PassThru -ArgumentList '/S'
+          if ($p.ExitCode -ne 0) { Get-Content "$env:TEMP\ScreenTinker-CacheNode-setup.txt" -ErrorAction SilentlyContinue; throw "upgrade exit $($p.ExitCode)" }
+          if ((Get-FileHash "$env:ProgramData\ScreenTinker\screentinker.env").Hash -ne $before.Hash) { throw 'the upgrade changed the settings' }
+          $r = Wait-Joined
+          "joined after upgrade: dial.connected=$($r.dial.connected)"
+
+      - name: Uninstall
+        shell: pwsh
+        run: |
+          $dir = "$env:ProgramFiles\ScreenTinker Cache Node"
+          # _?= runs the uninstaller in place, so -Wait waits for the real work (NSIS otherwise
+          # copies itself to %TEMP% and returns at once).
+          $p = Start-Process "$dir\uninstall.exe" -Wait -PassThru -ArgumentList '/S', "_?=$dir"
+          if ($p.ExitCode -ne 0) { throw "uninstaller exit $($p.ExitCode)" }
+          for ($i = 0; $i -lt 30 -and (Get-Service ScreenTinkerCacheNode -ErrorAction SilentlyContinue); $i++) { Start-Sleep 1 }
+          if (Get-Service ScreenTinkerCacheNode -ErrorAction SilentlyContinue) { throw 'service still registered after uninstall' }
+          if (-not (Test-Path "$env:ProgramData\ScreenTinker\screentinker.env")) { throw 'uninstall removed the settings; they are meant to be kept' }
+
+      - name: Logs
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force logs | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\*.log" logs -ErrorAction SilentlyContinue
+          Copy-Item "$env:ProgramData\ScreenTinker\logs\*" logs -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: cache-node-logs
+          path: logs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cache-node-installer
+          path: server/packaging/windows/dist/*.exe

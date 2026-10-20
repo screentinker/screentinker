@@ -10,6 +10,48 @@
   when the last presenter leaves. It declares `remote.screen_share_tiles`, so the server now gives
   Android screens more than one presenter when **several presenters** is on. Each share decodes
   separately, so four at once needs a player with four hardware video decoders.
+- **A replica can connect out to its primary** (docs/scale-out.md, "A replica behind NAT"). Until
+  now the primary had to reach the replica, so a replica behind a router needed port forwarding or
+  a VPN. Now the primary mints an invite (**Servers → Create a replica invite**, with the
+  workspaces chosen there) and the replica joins with it (**Copy a server this one can reach**, or
+  `REPLICA_JOIN_CODE` at boot). The replica then keeps the connection open itself, and replication,
+  the media cache and screens on the replica work over it unchanged. It's off unless the primary
+  has `MESH_ALLOW_UPLINK` and the replica has `MESH_ACCEPT_ENROLLMENT`; the existing pairing is
+  unchanged. Additive column `mesh_edges.dial_token` and table `mesh_invites`. `/api/status`
+  `replica_of[]` gains `dial` (connected, last error) and `cache.videos`, and `scale_out.join`
+  while `REPLICA_JOIN_CODE` is still joining (it retries until the primary answers). Open invites
+  are listed under the button and can be cancelled; an invite stops working if the person who
+  created it loses the right to share those workspaces.
+- **Windows cache node** (server/packaging/windows). An installer that runs a replica as a Windows
+  service on a studio PC, so its screens keep playing when the internet drops. Node is bundled.
+  The installer asks for the main server's address, an invite, the shared secret, the cache size
+  and the port; the PC then joins by itself. A status page shows whether it's connected, the last
+  sync, cache use and the number of videos. Logs are kept in `C:\ProgramData\ScreenTinker\logs`.
+  It can also be installed silently with switches. The service runs as LocalService, and its
+  folders are open only to that account and to administrators. Built with NSIS (zlib licence).
+- **ONVIF cameras** (docs/onvif-cameras.md). **Add content → ONVIF camera**:
+  - Find cameras on the network, or type an address. Sign in, pick a stream, and add it as a live
+    stream every RTSP-capable screen already plays.
+  - The camera's snapshot becomes the thumbnail.
+  - The item's Edit dialog can ask for a new snapshot or a new stream address, change the stored
+    password and, on a PTZ camera, pan, tilt, zoom, go home and go to presets. A held arrow
+    moves; the camera stops by itself if a stop is lost.
+  - A hosted server reaches the cameras through a **screen on their network**: Android and the
+    Raspberry Pi / Windows player relay three narrow operations (discovery, a SOAP request, a
+    snapshot), private addresses only, size-capped. A self-hosted server can talk to them itself
+    when `OUTBOUND_ALLOW_PRIVATE` / `OUTBOUND_ALLOW_HOSTS` opens the LAN.
+  - The camera password is stored encrypted and never sent back to a browser.
+  - Works with WS-Security and HTTP Digest, Media and Media2, and cameras with the wrong clock.
+  - Additive columns `content.onvif` and `content.onvif_secret`. New player capability
+    `onvif.bridge`.
+- **Weather in your language** (#667, requested by @djalfe). A Weather data source's language now
+  translates the weather conditions ("Mainly clear") and the template's words ("Feels like",
+  "Humidity", "Today", "Updated", the chance of precipitation), not only the day names. Language
+  files on the server cover Danish, Dutch, English, French, German, Hindi, Italian, Japanese,
+  Portuguese, Simplified Chinese and Spanish. Any other language falls back to English, and a data
+  source with no language set looks exactly as before. The data source gains `label_*` fields and
+  `day0_precip_text`. The **Weather forecast** template 1.1.0 (needs server 3.0.2) and **Weather —
+  animated** 1.1.0 use them; the animated one falls back to English on an older server.
 
 - **A default zone for a playlist.** Under the playlist's **Layout**, pick the zone that **new** items
   go to when they're added without one (from the Manager app, the API, Make a sign, content requests,
@@ -54,6 +96,25 @@
   held to the Android and native maths by `shared/fisheye-vectors.json`.
 
 ### Fixed
+
+- **The web player uses the instance's branding** (#674). On a white-labelled instance, `/player`
+  still said "ScreenTinker" on the tap-to-start screen, the status and setup screens, the info
+  overlay and the tab title. It now shows the brand name instead: the one for the hostname before a
+  screen is paired, then the brand of the workspace it's paired to (`device:paired` carries it, and
+  the player remembers it across reboots). With **Hide platform branding** on and no brand name of
+  its own, a screen shows no product name at all. This covers every screen that opens the `/player`
+  address (a browser, a kiosk, a panel's URL launcher). The installed apps (Android, Fire TV, Tizen, webOS, Roku, the
+  native players) are unchanged: their names and icons are part of the published build.
+- **A camera in a layout zone reconnects by itself (Android).** A zone with one item had no error
+  handling at all, and no zone had a stall watchdog. A camera whose connection dropped (the NVR
+  restarted, the Wi-Fi roamed, the camera rebooted) froze on its last frame until the app was
+  restarted. Zone and video-wall videos are now watched like full-screen video:
+  - Watched: the frames actually drawn, so a picture that stops changing counts as a fault.
+  - An error, or 10 s with no new frame (30 s buffering), is a fault.
+  - On a fault, a zone of one item reconnects in place after 2, 4, 8, 15, then every 30 s. A
+    rotating zone moves on as before.
+  - A live stream in a wall zone reconnects instead of showing the zone background until a
+    boundary it never reaches.
 
 - **Empty zones stay empty on the web player** (#666, reported by @djalfe). In a multi-zone layout, a
   zone with nothing assigned to it showed a copy of whatever was playing, so the same content

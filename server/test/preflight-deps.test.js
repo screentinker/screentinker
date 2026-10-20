@@ -227,3 +227,17 @@ test('this checkout declares the Node floor the release needs', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
   assert.equal(pkg.engines && pkg.engines.node, '>=22.14.0', 'better-sqlite3 13 (Node-API 10) is the floor-setter');
 });
+
+test('npm is started as plain `npm` off Windows, and without npm.cmd-by-name on Windows', () => {
+  /*
+   * The first Windows boot died "spawnSync npm ENOENT": on Windows npm is npm.cmd. Off Windows the
+   * command must stay exactly what it always was (prod runs this).
+   */
+  const args = ['rebuild', 'better-sqlite3'];
+  assert.deepEqual(preflight.npmCommand(args, 'linux', '/usr/bin/node', () => true), { file: 'npm', args, shell: false });
+  const exe = path.join('C:', 'ST', 'node', 'node.exe');
+  const cli = path.join(path.dirname(exe), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  assert.deepEqual(preflight.npmCommand(args, 'win32', exe, (p) => p === cli),
+    { file: exe, args: [cli, ...args], shell: false }, 'the npm next to node.exe, run by that node');
+  assert.deepEqual(preflight.npmCommand(args, 'win32', exe, () => false), { file: 'npm.cmd', args, shell: true });
+});

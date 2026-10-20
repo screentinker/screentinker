@@ -233,9 +233,24 @@ function canRebuildNative() {
   return true;
 }
 
+/*
+ * How to start npm. Everywhere but Windows, `npm` on PATH, exactly as before. On Windows `npm` is
+ * npm.cmd, which execFileSync cannot find by that name (seen: "spawnSync npm ENOENT" on the first
+ * Windows boot) and which Node refuses to start without a shell. So prefer the npm that ships next
+ * to this node.exe (the official Windows zip and installer both carry it), run by this Node; fall
+ * back to npm.cmd through the shell. Every argument here is a fixed string, never input.
+ */
+function npmCommand(args, platform = process.platform, execPath = process.execPath, exists = fs.existsSync) {
+  if (platform !== 'win32') return { file: 'npm', args, shell: false };
+  const cli = path.join(path.dirname(execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  if (exists(cli)) return { file: execPath, args: [cli, ...args], shell: false };
+  return { file: 'npm.cmd', args, shell: true };
+}
+
 function run(args, label) {
   console.log(`[preflight] ${label}: npm ${args.join(' ')}`);
-  execFileSync('npm', args, { cwd: SERVER_DIR, stdio: 'inherit', timeout: INSTALL_TIMEOUT_MS, env: npmEnv() });
+  const cmd = npmCommand(args);
+  execFileSync(cmd.file, cmd.args, { cwd: SERVER_DIR, stdio: 'inherit', timeout: INSTALL_TIMEOUT_MS, env: npmEnv(), shell: cmd.shell });
 }
 
 /**
@@ -436,4 +451,4 @@ function preflight() {
   }
 }
 
-module.exports = { preflight, upgradeInProgress, waitForUpgrade, missingDeps, nativeModuleBroken, requiredDeps, nodeBelowFloor, staleDeps, productionTree, npmEnv, reconcileArgs };
+module.exports = { preflight, upgradeInProgress, waitForUpgrade, missingDeps, nativeModuleBroken, requiredDeps, nodeBelowFloor, staleDeps, productionTree, npmEnv, reconcileArgs, npmCommand };

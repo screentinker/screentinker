@@ -266,6 +266,7 @@ const EXCLUDED = {
   mesh_node: 'this server\'s mesh identity',
   mesh_node_paths: 'mesh topology',
   mesh_pairing_codes: 'mesh pairing codes (secret)',
+  mesh_invites: 'mesh replica invites (secret)',
   mesh_player_events: 'mesh delivery queue, transient',
   mesh_player_verdicts: 'mesh verification cache',
   mesh_pull_tickets: 'mesh download tickets (secret)',

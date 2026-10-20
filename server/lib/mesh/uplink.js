@@ -55,11 +55,22 @@ class Uplink extends EventEmitter {
    */
   constructor({ parentUrl, edgeToken, nodeId, connect, tlsVerify = true,
                 bufferMax = DEFAULT_BUFFER_MAX, rand = Math.random, logger = console,
-                onRead = null, onWrite = null, onContentOffer = null, onContentPurge = null }) {
+                onRead = null, onWrite = null, onContentOffer = null, onContentPurge = null,
+                inbound = false }) {
     super();
-    if (!parentUrl) throw new Error('An uplink needs a parent URL. There is no default address.');
-    if (!edgeToken) throw new Error('An uplink needs an edge token.');
-    if (typeof connect !== 'function') throw new Error('An uplink needs a socket.io client factory.');
+    /*
+     * ⚠️ INBOUND: the parent dials US (a replica behind NAT — lib/mesh/dial-out.js). This node then
+     * has no address to dial and no token to present: it is handed each socket the parent opens,
+     * through attach(), after the namespace verified the parent's token. Everything else — the four
+     * inbound handlers, the bounded buffer, batching, status — is the same object doing the same
+     * job, so who opened the TCP connection changes nothing about what may flow over it.
+     */
+    this.inbound = !!inbound;
+    if (!this.inbound) {
+      if (!parentUrl) throw new Error('An uplink needs a parent URL. There is no default address.');
+      if (!edgeToken) throw new Error('An uplink needs an edge token.');
+      if (typeof connect !== 'function') throw new Error('An uplink needs a socket.io client factory.');
+    }
 
     this.parentUrl = parentUrl;
     this.edgeToken = edgeToken;
@@ -106,6 +117,11 @@ class Uplink extends EventEmitter {
   }
 
   start() {
+    if (this.inbound) {
+      // Nothing to dial. Says what it is waiting for, so the connection view is never blank.
+      this.lastError = 'waiting for the other server to connect';
+      return this;
+    }
     /*
      * ⚠️ socket.io's own reconnection is turned OFF in favour of ours. Its built-in backoff is
      * per-socket and has no idea about the herd; ours is jittered and reports its state into the
@@ -131,14 +147,53 @@ class Uplink extends EventEmitter {
       // buried — an operator who turned this off should be able to see that they did.
       rejectUnauthorized: this.tlsVerify,
     });
+    this._wire(this.socket);
 
+    this.socket.on('connect', () => {
+      this.connected = true;
+      this.attempt = 0;
+      this.lastError = null;
+      this.emit('connected');
+      this._flush();
+    });
+
+    this.socket.on('connect_error', (err) => {
+      // ⚠️ The message is KEPT, not just counted. "connection refused" and "no longer authorised" need
+      // completely different actions from an operator, and a bare failure count tells them neither.
+      this.lastError = (err && err.message) || 'connection failed';
+      this._scheduleRetry();
+    });
+    return this;
+  }
+
+  /**
+   * Inbound mode: adopt a socket the parent opened to us. The caller has already authenticated it
+   * against this edge's token hash. A newer socket for the same edge replaces the older one — the
+   * parent redialled — and the old one is closed rather than left half-open until its ping timeout.
+   */
+  attach(socket) {
+    if (!this.inbound) throw new Error('attach() is for an inbound uplink; an outbound one dials.');
+    const old = this.socket;
+    this.socket = socket;
+    if (old && old !== socket) { try { old.disconnect(true); } catch (e) { /* already gone */ } }
+    this._wire(socket);
+    this.connected = true;
+    this.attempt = 0;
+    this.lastError = null;
+    this.emit('connected');
+    this._flush();
+    return this;
+  }
+
+  /** The handlers both modes share: what the parent may ask of us, and what it tells us it can do. */
+  _wire(socket) {
     /*
      * ⚠️ THE PARENT MAY ASK; IT MAY NOT TELL. This is the only inbound handler on the child, and the
      * decision about what it will answer is made by the owner of the data (services/mesh-uplink.js
      * via lib/mesh/read-proxy.js), not here. Keeping the transport ignorant of the policy is what
      * stops a future "just add this one endpoint" from quietly widening it.
      */
-    this.socket.on('mesh:read', (req, ack) => {
+    socket.on('mesh:read', (req, ack) => {
       if (typeof ack !== 'function') return;
       if (!this.onRead) return ack({ ok: false, reason: 'This node does not answer reads.' });
       try {
@@ -161,7 +216,7 @@ class Uplink extends EventEmitter {
      * configured to accept writes must say so, because "no response" and "applied" are
      * indistinguishable to a parent holding a timeout.
      */
-    this.socket.on('mesh:write', (req, ack) => {
+    socket.on('mesh:write', (req, ack) => {
       if (typeof ack !== 'function') return;
       if (!this.onWrite) {
         return ack({ ok: false, reason: 'This server does not accept changes from another server.' });
@@ -184,7 +239,7 @@ class Uplink extends EventEmitter {
      * mesh:write — "no response" and "stored it" are indistinguishable to a parent holding a
      * timeout, and here the parent would go on to add those files to a playlist.
      */
-    this.socket.on('mesh:content-offer', (req, ack) => {
+    socket.on('mesh:content-offer', (req, ack) => {
       if (typeof ack !== 'function') return;
       if (!this.onContentOffer) {
         return ack({ ok: false, reason: 'This server does not accept content from another server.' });
@@ -203,7 +258,7 @@ class Uplink extends EventEmitter {
      * the others: this file does not know what content is or what "still in use" means. It hands
      * the request to the owner of the disk and returns whatever that decides.
      */
-    this.socket.on('mesh:content-purge', (req, ack) => {
+    socket.on('mesh:content-purge', (req, ack) => {
       if (typeof ack !== 'function') return;
       if (!this.onContentPurge) {
         return ack({ ok: false, reason: 'This server does not accept content changes from another server.' });
@@ -221,27 +276,14 @@ class Uplink extends EventEmitter {
      * The parent announces what it can unpack, and its limits are authoritative: a sender's own
      * defaults are a guess about somebody else's box.
      */
-    this.socket.on('mesh:hello', (hello) => {
+    socket.on('mesh:hello', (hello) => {
       this.parentCapabilities = hello && typeof hello === 'object' ? hello : null;
       this.emit('parent-hello', this.parentCapabilities);
     });
 
-    this.socket.on('connect', () => {
-      this.connected = true;
-      this.attempt = 0;
-      this.lastError = null;
-      this.emit('connected');
-      this._flush();
-    });
-
-    this.socket.on('connect_error', (err) => {
-      // ⚠️ The message is KEPT, not just counted. "connection refused" and "no longer authorised" need
-      // completely different actions from an operator, and a bare failure count tells them neither.
-      this.lastError = (err && err.message) || 'connection failed';
-      this._scheduleRetry();
-    });
-
-    this.socket.on('disconnect', (reason) => {
+    socket.on('disconnect', (reason) => {
+      // A socket this link has already replaced says nothing about the link.
+      if (socket !== this.socket) return;
       this.connected = false;
       /*
        * ⚠️ FORGOTTEN ON DISCONNECT. The next connection may be to a different parent, or to the same
@@ -254,9 +296,9 @@ class Uplink extends EventEmitter {
       // drop of a working link was retried as "unknown" — and why it dropped was the one thing wanted.
       this.lastError = reason || 'disconnected';
       this.emit('disconnected', reason);
-      this._scheduleRetry();
+      // Inbound: redialling is the parent's job; this side waits to be handed the next socket.
+      if (!this.inbound) this._scheduleRetry();
     });
-    return this;
   }
 
   _scheduleRetry() {
@@ -460,13 +502,17 @@ class Uplink extends EventEmitter {
       lastRejection: this.lastRejection,
       batching: !!this.batchLimits(),
       tlsVerify: this.tlsVerify,
+      inbound: this.inbound,
     };
   }
 
   stop() {
     if (this._timer) clearTimeout(this._timer);
     this._timer = null;
-    try { if (this.socket) this.socket.close(); } catch (e) { /* closing is best-effort */ }
+    try {
+      // A client socket closes; a server-side one (inbound) disconnects.
+      if (this.socket) { if (typeof this.socket.close === 'function') this.socket.close(); else this.socket.disconnect(true); }
+    } catch (e) { /* closing is best-effort */ }
     this.connected = false;
   }
 }

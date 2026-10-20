@@ -50,6 +50,11 @@ const CAPABILITIES = [
    * without it shows the fisheye circle as it comes. Android (a media3 video effect) and the native
    * player (a Qt shader) declare it. In no baseline. */
   'playback.fisheye',
+  /* The screen relays ONVIF camera traffic on its own network for the server (lib/onvif/relay.js):
+   * the WS-Discovery Probe, a SOAP POST and a snapshot GET, to private addresses only, size-capped.
+   * How a hosted server finds and steers cameras it cannot reach itself. Android and the native
+   * player declare it. In no baseline. */
+  'onvif.bridge',
   /* The screen's own HDMI INPUT played as an item (mime video/hdmi-in, remote_url hdmi://<port>):
    * a cable box or console plugged into a Fire TV Cube / Android TV box with HDMI in. Declared by
    * the native Android player ONLY when it found an HDMI passthrough input on this device at
@@ -806,6 +811,8 @@ const COMMAND_CAPABILITY = {
   set_volume: 'audio.volume',
   // Steer a fisheye camera's view live (lib/fisheye.js).
   camera_view: 'playback.fisheye',
+  // ONVIF camera traffic relayed for the server (lib/onvif/relay.js). Internal: not in ALLOWED_COMMANDS.
+  onvif_relay: 'onvif.bridge',
 
   // system control (#160 Track-A)
   set_brightness: 'display.brightness',       // per-window overlay dim (Tier 0)

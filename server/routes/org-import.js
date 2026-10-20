@@ -290,7 +290,7 @@ router.post('/jobs/:id/screens/:deviceId/pair', (req, res) => {
   }
   pairLockout.reset(ip);
   const deviceNs = req.app.get('io') && req.app.get('io').of('/device');
-  if (deviceNs) deviceNs.to(r.device.id).emit('device:paired', { device_id: r.device.id, name: r.device.name, settings_pin: r.device.settings_pin || undefined });
+  if (deviceNs) deviceNs.to(r.device.id).emit('device:paired', { device_id: r.device.id, name: r.device.name, settings_pin: r.device.settings_pin || undefined, brand: require('../lib/branding').playerBrandForDevice(db, r.device.id) });
   auditFromReq(req, 'trust.import_screen_paired', { import_id: job.id, device_id: r.device.id, previous_id: r.previous_id });
   res.json({ id: r.device.id, name: r.device.name, previous_id: r.previous_id });
 });

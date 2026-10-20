@@ -277,7 +277,7 @@
 <body>
   <!-- Setup Screen -->
   <div id="setupScreen">
-    <h1>ScreenTinker</h1>
+    <h1 data-brand>ScreenTinker</h1>
     <div class="subtitle">Web Player</div>
     <div class="form" id="urlForm">
       <label>Server URL</label>
@@ -312,7 +312,7 @@
   <!-- Status Overlay -->
   <div id="statusOverlay" style="display:none">
     <div class="spinner"></div>
-    <h2>ScreenTinker</h2>
+    <h2 data-brand>ScreenTinker</h2>
     <p id="statusText" data-i18n="connecting">Connecting...</p>
   </div>
 
@@ -726,6 +726,49 @@ function linkStorageSuffix(k) {
   return "::" + h(2166136261) + h(2538058380);
 }
 const LINK_SUFFIX = VIEWER_MODE ? "" : linkStorageSuffix(urlEnrolKey());
+const BRAND_KEY = "st_brand" + LINK_SUFFIX;
+function servedBrand() {
+  const b = window.__playerConfig && window.__playerConfig.brand;
+  return b && typeof b.name === "string" ? { name: b.name, hidden: !!b.hidden } : { name: "ScreenTinker", hidden: false };
+}
+let playerBrand = (() => {
+  try {
+    const c = JSON.parse(localStorage.getItem(BRAND_KEY) || "null");
+    if (c && typeof c.name === "string") return { name: c.name, hidden: !!c.hidden };
+  } catch (e) {
+  }
+  return servedBrand();
+})();
+function brandTitle() {
+  if (playerBrand.hidden || !playerBrand.name) return _t("web_player");
+  return _t("info_title").replace("ScreenTinker", playerBrand.name);
+}
+function applyBrand(b) {
+  if (b && typeof b.name === "string") {
+    playerBrand = { name: b.name, hidden: !!b.hidden };
+    try {
+      localStorage.setItem(BRAND_KEY, JSON.stringify(playerBrand));
+    } catch (e) {
+    }
+  }
+  document.title = playerBrand.name ? playerBrand.name + " Player" : "Player";
+  document.querySelectorAll("[data-brand]").forEach((el) => {
+    el.textContent = playerBrand.name;
+    el.style.display = playerBrand.name ? "" : "none";
+  });
+  document.querySelectorAll("[data-brand-title]").forEach((el) => {
+    el.textContent = brandTitle();
+  });
+}
+function forgetBrand() {
+  try {
+    localStorage.removeItem(BRAND_KEY);
+  } catch (e) {
+  }
+  playerBrand = servedBrand();
+  applyBrand();
+}
+applyBrand();
 const SCREEN_SUFFIX = VIEWER_MODE ? "__view" : (() => {
   try {
     return BS ? BS.storageSuffix() || "" : "";
@@ -2523,7 +2566,7 @@ if (VIEWER_MODE) {
     {
       const tapOverlay = document.createElement("div");
       tapOverlay.style.cssText = "position:fixed;top:0;right:0;bottom:0;left:0;background:#111827;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer";
-      tapOverlay.innerHTML = '\n          <h1 style="color:#3b82f6;font-size:3.6rem;font-family:sans-serif;margin-bottom:1.2rem">ScreenTinker</h1>\n          <p style="color:#94a3b8;font-size:1.8rem;font-family:sans-serif">Tap anywhere to start</p>\n          <p style="color:#64748b;font-size:1.3rem;font-family:sans-serif;margin-top:2.4rem">Audio requires user interaction</p>\n        ';
+      tapOverlay.innerHTML = '\n          <h1 data-brand style="color:#3b82f6;font-size:3.6rem;font-family:sans-serif;margin-bottom:1.2rem"></h1>\n          <p style="color:#94a3b8;font-size:1.8rem;font-family:sans-serif">Tap anywhere to start</p>\n          <p style="color:#64748b;font-size:1.3rem;font-family:sans-serif;margin-top:2.4rem">Audio requires user interaction</p>\n        ';
       tapOverlay.onclick = () => {
         unlockAudio();
         tapOverlay.remove();
@@ -2531,6 +2574,7 @@ if (VIEWER_MODE) {
         connect(config.serverUrl);
       };
       document.body.appendChild(tapOverlay);
+      applyBrand();
       setTimeout(() => {
         if (tapOverlay.parentNode) {
           tapOverlay.remove();
@@ -3107,6 +3151,7 @@ function connect(serverUrl) {
     config.paired = true;
     config.deviceName = data.name;
     if (data && data.settings_pin) config.settingsPin = String(data.settings_pin);
+    if (data && data.brand) applyBrand(data.brand);
     saveConfig(config);
     console.log("Paired as:", data.name);
     document.getElementById("setupScreen").style.display = "none";
@@ -3125,6 +3170,7 @@ function connect(serverUrl) {
   }
   function enterRepairMode(message) {
     clearShareForUnpaired();
+    forgetBrand();
     delete config.deviceId;
     delete config.deviceToken;
     config.paired = false;
@@ -7903,7 +7949,7 @@ function renderCaptureCanvas() {
       ctx.fillStyle = "#3b82f6";
       ctx.font = "bold 28px sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText("ScreenTinker Web Player", W / 2, H / 2 - 40);
+      ctx.fillText(brandTitle(), W / 2, H / 2 - 40);
       ctx.fillStyle = "#94a3b8";
       ctx.font = "16px sans-serif";
       const item = playlist[currentIndex];
@@ -8141,11 +8187,12 @@ function toggleScreenOff() {
 const infoDiv = document.createElement("div");
 infoDiv.id = "infoOverlay";
 infoDiv.style.cssText = "position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,0.85);z-index:800;display:none;flex-direction:column;align-items:center;justify-content:center;color:#f1f5f9;font-family:-apple-system,sans-serif";
-infoDiv.innerHTML = '\n      <h2 style="color:#3b82f6;margin-bottom:16px">'.concat(_t("info_title"), '</h2>\n      <div style="font-size:14px;line-height:2;text-align:center;color:#94a3b8" id="infoContent"></div>\n      <p style="margin-top:24px;font-size:12px;color:#64748b">').concat(_t("info_close_hint"), "</p>\n    ");
+infoDiv.innerHTML = '\n      <h2 data-brand-title style="color:#3b82f6;margin-bottom:16px"></h2>\n      <div style="font-size:14px;line-height:2;text-align:center;color:#94a3b8" id="infoContent"></div>\n      <p style="margin-top:24px;font-size:12px;color:#64748b">'.concat(_t("info_close_hint"), "</p>\n    ");
 infoDiv.onclick = () => {
   infoDiv.style.display = "none";
 };
 document.body.appendChild(infoDiv);
+applyBrand();
 const escHtml = (s) => s == null ? "" : String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 setInterval(() => {
   var _a, _b;

@@ -1,0 +1,43 @@
+{
+  "labels": {
+    "feels_like": "Føles som",
+    "humidity": "Luftfugtighed",
+    "wind": "Vind",
+    "rain": "Regn",
+    "snow": "Sne",
+    "today": "I dag",
+    "updated": "Opdateret",
+    "precip_chance": "{n}% risiko for nedbør"
+  },
+  "conditions": {
+    "0": "Klar himmel",
+    "1": "Overvejende klart",
+    "2": "Delvis skyet",
+    "3": "Overskyet",
+    "45": "Tåge",
+    "48": "Rimtåge",
+    "51": "Let støvregn",
+    "53": "Moderat støvregn",
+    "55": "Tæt støvregn",
+    "56": "Let underkølet støvregn",
+    "57": "Tæt underkølet støvregn",
+    "61": "Let regn",
+    "63": "Moderat regn",
+    "65": "Kraftig regn",
+    "66": "Let underkølet regn",
+    "67": "Kraftig underkølet regn",
+    "71": "Let snefald",
+    "73": "Moderat snefald",
+    "75": "Kraftigt snefald",
+    "77": "Snekorn",
+    "80": "Lette regnbyger",
+    "81": "Moderate regnbyger",
+    "82": "Voldsomme regnbyger",
+    "85": "Lette snebyger",
+    "86": "Kraftige snebyger",
+    "95": "Tordenvejr",
+    "96": "Tordenvejr med let hagl",
+    "99": "Tordenvejr med kraftig hagl",
+    "unknown": "Ukendt"
+  }
+}

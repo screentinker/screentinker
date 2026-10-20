@@ -36,7 +36,7 @@ function freshDb() {
       transport_direction TEXT, retention_days INTEGER, tombstone_purge_days INTEGER,
       tls_verify INTEGER DEFAULT 1, peer_version TEXT, peer_min_version TEXT, token_hash TEXT,
       token_expires_at INTEGER, client_id TEXT, created_at INTEGER, last_sync_at INTEGER,
-      revoked_at INTEGER, peer_url TEXT, up_token TEXT, peer_name TEXT,
+      revoked_at INTEGER, peer_url TEXT, up_token TEXT, dial_token TEXT, peer_name TEXT,
       shared_workspaces TEXT,
       -- ⚠️ The write-consent columns. Absent from this fixture, severing an uplink threw (it clears
       -- the grant so a later re-pair cannot resurrect it) and the route answered the SPA's HTML

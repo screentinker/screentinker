@@ -19,6 +19,8 @@
  * request to a host outside the allowlist, which the guard would permit if it were public).
  */
 
+const fs = require('fs');
+const path = require('path');
 const { guardedRequest, GuardedRequestError } = require('../ssrf-guard');
 const { isAllowed } = require('../plugins/egress');
 
@@ -83,6 +85,36 @@ const UNKNOWN_CONDITION = ['Unknown', '🌡️'];
 function describeWmo(code) {
   if (code === null || code === undefined) return ['', ''];
   return WMO_CODES[code] || UNKNOWN_CONDITION;
+}
+
+/*
+ * #667: the words a weather template shows, in the data source's language. One file per language in
+ * ./weather-i18n (labels + a condition per WMO code), read once. The language is the locale's first
+ * part (da-DK -> da, pt-BR -> pt); anything missing, a language without a file included, falls back
+ * to English, so the default locale ('en') produces exactly the text it always did. en.json's
+ * conditions are the WMO_CODES English (test/weather-data-source.test.js keeps them equal).
+ */
+const WEATHER_TEXT = (() => {
+  const dir = path.join(__dirname, 'weather-i18n');
+  const out = {};
+  for (const f of fs.readdirSync(dir)) {
+    if (/^[a-z]{2,3}\.json$/.test(f)) out[f.slice(0, -5)] = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+  }
+  return Object.freeze(out);
+})();
+
+function weatherText(locale) {
+  const lang = String(locale || 'en').split('-')[0].toLowerCase();
+  const en = WEATHER_TEXT.en;
+  const own = WEATHER_TEXT[lang] || en;
+  return {
+    label: (k) => (own.labels && own.labels[k]) || en.labels[k],
+    condition: (code, english) => {
+      if (code === null || code === undefined) return english;
+      const k = WMO_CODES[code] ? String(code) : 'unknown';
+      return (own.conditions && own.conditions[k]) || english;
+    },
+  };
 }
 
 class WeatherParseError extends Error {
@@ -329,7 +361,9 @@ function buildOutput(body, { label, units, locale, now }) {
   if (!daily || typeof daily !== 'object' || Array.isArray(daily)) throw new WeatherParseError('daily block');
 
   const code = wmo(current.weather_code, 'current.weather_code');
-  const [condition, icon] = describeWmo(code);
+  const [englishCondition, icon] = describeWmo(code);
+  const text = weatherText(locale);
+  const condition = text.condition(code, englishCondition);
 
   const out = {
     location: label,
@@ -368,11 +402,19 @@ function buildOutput(body, { label, units, locale, now }) {
     out[`day${d}_date`] = date;
     out[`day${d}_high`] = roundOrBlank(num(highs[d], `daily.temperature_2m_max[${d}]`));
     out[`day${d}_low`] = roundOrBlank(num(lows[d], `daily.temperature_2m_min[${d}]`));
-    out[`day${d}_condition`] = dCond;
+    out[`day${d}_condition`] = text.condition(dCode, dCond);
     out[`day${d}_icon`] = dIcon;
     out[`day${d}_code`] = dCode === null ? '' : dCode;
     out[`day${d}_precip_prob`] = pp === null ? '' : Math.max(0, Math.min(100, roundOrBlank(pp)));
   }
+
+  /*
+   * #667: the template's own words, in the same language, so a template needs no text of its own.
+   * day0_precip_text is a whole phrase ("40% chance of precipitation") because the number's place
+   * in it differs between languages.
+   */
+  for (const k of ['feels_like', 'humidity', 'wind', 'rain', 'snow', 'today', 'updated']) out[`label_${k}`] = text.label(k);
+  out.day0_precip_text = out.day0_precip_prob === '' ? '' : text.label('precip_chance').replace('{n}', String(out.day0_precip_prob));
 
   return out;
 }
@@ -425,6 +467,8 @@ module.exports = {
   weatherIntervalMin,
   weatherFetch,
   describeWmo,
+  weatherText,
+  WEATHER_TEXT,
   clearGeocodeCache,
   WMO_CODES,
   WEATHER_HOSTS,

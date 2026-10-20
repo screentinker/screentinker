@@ -43,8 +43,12 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 function activeUpEdges(db) {
   try {
     return db.prepare(
-      "SELECT * FROM mesh_edges WHERE direction = 'up' AND revoked_at IS NULL AND up_token IS NOT NULL")
-      .all();
+      // A 'they-dial' edge has no token of ours to present — the replica dials in with its own
+      // (lib/mesh/dial-out.js) — but it is just as live, and its link waits to be attached.
+      `SELECT * FROM mesh_edges WHERE direction = 'up' AND revoked_at IS NULL
+          AND (up_token IS NOT NULL OR (transport_direction = 'they-dial' AND token_hash IS NOT NULL
+               AND (token_expires_at IS NULL OR token_expires_at > ?)))`)
+      .all(Math.floor(Date.now() / 1000));
   } catch (e) {
     return [];
   }
@@ -78,7 +82,7 @@ function meshPrincipalId(db) {
 }
 
 function startMeshUplinks(db, { config, connect, logger = console } = {}) {
-  if (!config || !config.meshAllowUplink) return { stop() {}, links: new Map(), refresh() {}, sendTo: () => false };
+  if (!config || !config.meshAllowUplink) return { stop() {}, links: new Map(), refresh() {}, sendTo: () => false, attachInbound: () => false };
 
   const io = connect || require('socket.io-client').io;
   const links = new Map();
@@ -87,7 +91,7 @@ function startMeshUplinks(db, { config, connect, logger = console } = {}) {
   const me = store.ensureNodeIdentity(db);
   if (!me) {
     logger.warn('[mesh] MESH_ALLOW_UPLINK is set but this node has no identity — not reporting upward.');
-    return { stop() {}, links, refresh() {}, sendTo: () => false };
+    return { stop() {}, links, refresh() {}, sendTo: () => false, attachInbound: () => false };
   }
 
   /*
@@ -322,6 +326,7 @@ function startMeshUplinks(db, { config, connect, logger = console } = {}) {
           nodeId: me,
           connect: io,
           tlsVerify: edge.tls_verify !== 0,
+          inbound: edge.transport_direction === 'they-dial',
           logger,
           // ⚠️ Re-read per request, so narrowing a grant or a workspace scope takes effect on the
           // NEXT read rather than at the next restart.
@@ -486,7 +491,9 @@ function startMeshUplinks(db, { config, connect, logger = console } = {}) {
           }
         });
         links.set(edge.id, link);
-        logger.log(`[mesh] reporting upward to ${edge.peer_node_id} at ${edge.peer_url}`);
+        logger.log(link.inbound
+          ? `[mesh] reporting upward to ${edge.peer_node_id} once it connects here (it dials in)`
+          : `[mesh] reporting upward to ${edge.peer_node_id} at ${edge.peer_url}`);
       } catch (e) {
         /*
          * A bad row must not stop the others, and must not stop the node (I6).
@@ -535,10 +542,24 @@ function startMeshUplinks(db, { config, connect, logger = console } = {}) {
     return false;
   }
 
+  /*
+   * A replica that dials in (ws/meshDialIn.js) hands its authenticated socket here. The link is
+   * created first if the edge is newer than the last refresh — a replica that redeems an invite
+   * connects within the same second.
+   */
+  function attachInbound(edgeId, socket) {
+    let link = links.get(edgeId);
+    if (!link) { refresh(); link = links.get(edgeId); }
+    if (!link || !link.inbound) return false;
+    link.attach(socket);
+    return true;
+  }
+
   return {
     links,
     refresh,
     sendTo,
+    attachInbound,
     status: () => [...links.entries()].map(([id, l]) => ({ edgeId: id, ...l.status() })),
     readMode: () => reads.mode,
     stop() {

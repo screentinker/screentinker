@@ -60,3 +60,4 @@ loopback ports. That is fine for a single-household install and not for a shared
 
 - Every outbound request is also counted, host only, in the outbound connections ledger: see
   [trust.md](trust.md) (Platform → Data & privacy).
+- ONVIF cameras ([onvif-cameras.md](onvif-cameras.md)): with `OUTBOUND_ALLOW_PRIVATE` the server can search the LAN for cameras and talk to them itself; with an `OUTBOUND_ALLOW_HOSTS` list it can reach those cameras by address but won't search. Without either, cameras are reached through a screen on their network.

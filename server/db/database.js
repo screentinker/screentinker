@@ -683,6 +683,13 @@ const migrations = [
   // A fisheye (360°) camera shown as a normal 16:9 view: JSON settings (lib/fisheye.js), NULL = show
   // the picture as it comes.
   "ALTER TABLE content ADD COLUMN fisheye TEXT",
+  // An ONVIF camera (lib/onvif): JSON {xaddr, username, profile_token, profile_name, ptz, via,
+  // services} so the server can refresh its stream address, fetch a snapshot and steer it. `via` is
+  // 'server' or the id of the screen that bridges the camera's network. The password is NOT in it:
+  // onvif_secret holds it encrypted (lib/secretbox.js) and it is never sent back to a browser.
+  // NULL = an ordinary stream.
+  "ALTER TABLE content ADD COLUMN onvif TEXT",
+  "ALTER TABLE content ADD COLUMN onvif_secret TEXT",
   // #216: subtitle/caption support as a content property (applied automatically by the
   // player, no in-player controls). YouTube uses captions_enabled + captions_lang (via the
   // IFrame API); uploaded videos use subtitle_url (a .vtt filename in the content dir,
@@ -3426,6 +3433,32 @@ const migrations = [
    * screen_share_max_presenters, 1-4).
    */
   'ALTER TABLE devices ADD COLUMN screen_share_multi INTEGER NOT NULL DEFAULT 0',
+  /*
+   * Scale-out: a replica that DIALS OUT to its primary (lib/mesh/dial-out.js, docs/scale-out.md
+   * "A replica behind NAT"). The primary mints an invite; the replica redeems it and keeps the
+   * connection open itself, so the primary never needs a route to the replica.
+   *
+   * mesh_edges.dial_token — the replica's plaintext edge token, ONLY on a `down` edge whose
+   *   transport_direction is 'we-dial'. Its own column for the same reason up_token is: a column
+   *   that is sometimes a secret and sometimes a hash is how one gets logged. The primary keeps
+   *   only the hash, in token_hash on its 'they-dial' `up` edge.
+   * mesh_invites — on the primary. The workspace scope is chosen at MINT time by the side giving
+   *   the data, exactly like a pairing code's grant; the redeemer cannot widen it. Burned in the
+   *   transaction that creates the edge, kept as the audit trail (never deleted).
+   */
+  'ALTER TABLE mesh_edges ADD COLUMN dial_token TEXT',
+  `CREATE TABLE IF NOT EXISTS mesh_invites (
+     id                TEXT PRIMARY KEY,
+     code              TEXT NOT NULL,
+     shared_workspaces TEXT,
+     grant_categories  TEXT NOT NULL DEFAULT '["workspace-replication"]',
+     created_by        TEXT,
+     created_at        INTEGER NOT NULL,
+     expires_at        INTEGER NOT NULL,
+     burned_at         INTEGER,
+     burned_by_node    TEXT
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_mesh_invites_code ON mesh_invites (code)',
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.
