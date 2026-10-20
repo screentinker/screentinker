@@ -91,6 +91,10 @@
 
 ### Fixed
 
+- **`/guides/` has a page** listing every guide by device, plus self-hosting and building content.
+  It was a 404 (and `/guides` redirected into it), and every guide's "Guides" breadcrumb went to the
+  home page instead. A guide, integration or solution address typed without `.html` now redirects to
+  the page rather than answering 404. The hub is in the sitemap and `llms.txt`.
 - **The web player uses the instance's branding** (#674). On a white-labelled instance, `/player`
   still said "ScreenTinker" on the tap-to-start screen, the status and setup screens, the info
   overlay and the tab title. It now shows the brand name instead: the one for the hostname before a

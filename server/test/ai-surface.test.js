@@ -427,9 +427,11 @@ test('llms.txt names the guides that exist and no others', () => {
     assert.ok(fs.existsSync(path.join(FRONTEND, 'guides', g)), `llms.txt links a guide that does not exist: ${g}`);
   }
   // And the reverse: a guide nobody links from here is a guide an agent will not find.
-  for (const f of fs.readdirSync(path.join(FRONTEND, 'guides')).filter((f) => f.endsWith('.html'))) {
+  // index.html is the hub, published as /guides/ (its canonical URL), not as a guide of its own.
+  for (const f of fs.readdirSync(path.join(FRONTEND, 'guides')).filter((f) => f.endsWith('.html') && f !== 'index.html')) {
     assert.ok(guides.includes(f), `llms.txt does not mention guides/${f}`);
   }
+  assert.ok(llms.includes('https://screentinker.com/guides/)'), 'llms.txt links the guides hub');
   assert.match(llms, /append `\.md`/, 'it should say how to get the plain-text form');
   // ⚠️ and must not promise Accept negotiation: page URLs answer HTML only (cdn-cache-poisoning.test.js).
   assert.doesNotMatch(llms, /send\s+`Accept: text\/markdown`/, 'Accept negotiation was removed; do not advertise it');
