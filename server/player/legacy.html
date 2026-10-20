@@ -6790,14 +6790,18 @@ function renderZones(container, defaultItem) {
     renderPreviewBanner();
   }
   let unassignedUsed = false;
-  layout.zones.forEach((zone) => {
+  const zoneItems = layout.zones.map((zone) => {
     let items = byZone[zone.id];
     if ((!items || !items.length) && !unassignedUsed && byZone["__none__"]) {
       unassignedUsed = true;
       items = byZone["__none__"];
     }
-    if ((!items || !items.length) && defaultItem) items = [defaultItem];
-    if (!items || !items.length) return;
+    return items && items.length ? items : null;
+  });
+  if (!zoneItems.some(Boolean) && defaultItem && zoneItems.length) zoneItems[0] = [defaultItem];
+  layout.zones.forEach((zone, i) => {
+    const items = zoneItems[i];
+    if (!items) return;
     const div = document.createElement("div");
     div.className = "zone";
     div.style.cssText = "left:".concat(zone.x_percent, "%;top:").concat(zone.y_percent, "%;width:").concat(zone.width_percent, "%;height:").concat(zone.height_percent, "%;z-index:").concat(zone.z_index || 0);

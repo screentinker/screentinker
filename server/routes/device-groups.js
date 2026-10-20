@@ -523,8 +523,8 @@ router.post('/:id/assign-content', requireGroupWrite, (req, res) => {
       const smartErr = require('../lib/smart-playlist').smartAddError(db, playlistId);
       if (smartErr) { const e = new Error(smartErr); e.smartRefusal = true; throw e; }
       const max = db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 as next FROM playlist_items WHERE playlist_id = ?').get(playlistId);
-      db.prepare('INSERT INTO playlist_items (playlist_id, content_id, sort_order, duration_sec) VALUES (?, ?, ?, ?)')
-        .run(playlistId, content_id, max.next, itemDuration);
+      db.prepare('INSERT INTO playlist_items (playlist_id, content_id, zone_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?)')
+        .run(playlistId, content_id, require('../lib/playlist-layout').zoneForNewItem(db, playlistId), max.next, itemDuration);
       markDraft(playlistId);
     }
   });
