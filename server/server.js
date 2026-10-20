@@ -705,6 +705,11 @@ app.get(['/integrations', '/integrations/'], (req, res) => {
   if (req.path === '/integrations') return res.redirect(301, '/integrations/');
   res.sendFile(path.join(config.frontendDir, 'integrations', 'index.html'));
 });
+// The guides hub: same shape. Without it /guides/ was a 404 and /guides redirected into it.
+app.get(['/guides', '/guides/'], (req, res) => {
+  if (req.path === '/guides') return res.redirect(301, '/guides/');
+  res.sendFile(path.join(config.frontendDir, 'guides', 'index.html'));
+});
 // The solutions hub (use cases: emergency alerts, meeting rooms, menu boards...) is served the same
 // way, for the same reason: static runs with index:false.
 app.get(['/solutions', '/solutions/'], (req, res) => {
@@ -3513,6 +3518,18 @@ app.get(['/tizen', '/tizen/'], (req, res) => {
  */
 const CONTENT_PREFIXES = ['/guides/', '/integrations/', '/solutions/'];
 
+// "/guides/roku-digital-signage" -> "/guides/roku-digital-signage.html", for every page under those
+// prefixes. Built once from the directory listings, so a request path is only ever a map key.
+const EXTENSIONLESS_PAGES = new Map();
+for (const prefix of CONTENT_PREFIXES) {
+  try {
+    for (const f of fs.readdirSync(path.join(config.frontendDir, prefix))) {
+      const m = /^([a-z0-9-]+)\.html$/.exec(f);
+      if (m && m[1] !== 'index') EXTENSIONLESS_PAGES.set(prefix + m[1], prefix + f);
+    }
+  } catch (e) { /* a missing folder has no pages */ }
+}
+
 /*
  * ⚠️ A MISSING ASSET IS A 404, NEVER THE APP SHELL. Every app route is `/#/…`, so a path ending in a
  * file extension that reached the catch-all names a file we do not have. Answering it with
@@ -3536,7 +3553,7 @@ const NOT_FOUND_PAGE = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-
   + 'a:hover{text-decoration:underline}</style></head><body><div>'
   + '<h1>Page not found</h1>'
   + '<p>That page does not exist. Try the <a href="/">home page</a>, or the '
-  + '<a href="/guides/what-is-digital-signage.html">guides</a>.</p>'
+  + '<a href="/guides/">guides</a>.</p>'
   + '</div></body></html>';
 
 // SPA fallback for app routes. Unmatched /api/ paths return 404 so misrouted
@@ -3581,6 +3598,11 @@ app.get('/{*splat}', (req, res) => {
     return res.status(404).json({ error: 'Not found' });
   }
   if (CONTENT_PREFIXES.some((prefix) => req.path.startsWith(prefix))) {
+    // A page typed or linked without its .html (/guides/roku-digital-signage) is the page, not a miss.
+    // Only a plain lower-case slug is tried, so nothing outside these folders can be reached this way.
+    // Matched against the pages listed at boot, never by touching the disk with the request path.
+    const page = EXTENSIONLESS_PAGES.get(req.path);
+    if (page) return res.redirect(301, page);
     return res.status(404).type('html').send(NOT_FOUND_PAGE);
   }
   if (ASSET_EXTENSION.test(req.path)) {

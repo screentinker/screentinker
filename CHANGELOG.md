@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Several presenters at once on Android screens.** The Android player shows up to four screen
+  shares tiled, like the web player. It follows the room's spotlight (one presenter full screen,
+  the others kept connected) and plays only the chosen presenter's sound. The playlist comes back
+  when the last presenter leaves. It declares `remote.screen_share_tiles`, so the server now gives
+  Android screens more than one presenter when **several presenters** is on. Each share decodes
+  separately, so four at once needs a player with four hardware video decoders.
 - **A replica can connect out to its primary** (docs/scale-out.md, "A replica behind NAT"). Until
   now the primary had to reach the replica, so a replica behind a router needed port forwarding or
   a VPN. Now the primary mints an invite (**Servers → Create a replica invite**, with the
@@ -103,6 +109,10 @@
     organization and personal exports too.
   - An export a restart interrupted is marked failed, never queued again, and its leftover files are
     removed when the server starts.
+- **`/guides/` has a page** listing every guide by device, plus self-hosting and building content.
+  It was a 404 (and `/guides` redirected into it), and every guide's "Guides" breadcrumb went to the
+  home page instead. A guide, integration or solution address typed without `.html` now redirects to
+  the page rather than answering 404. The hub is in the sitemap and `llms.txt`.
 - **The web player uses the instance's branding** (#674). On a white-labelled instance, `/player`
   still said "ScreenTinker" on the tap-to-start screen, the status and setup screens, the info
   overlay and the tab title. It now shows the brand name instead: the one for the hostname before a

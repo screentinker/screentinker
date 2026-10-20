@@ -16,6 +16,10 @@ import org.json.JSONObject
 object ScreenShareProtocol {
     /** Nothing playing this long after start: give up rather than hold a black screen (web: 45 s). */
     const val CONNECT_TIMEOUT_MS = 45_000L
+    /** Presenters on one screen at once (remote.screen_share_tiles; web: MAX_TILES). */
+    const val MAX_TILES = 4
+    /** The black frame round each tile when more than one is visible (web: border 2px solid #000). */
+    const val TILE_BORDER_PX = 2
     private const val MAX_NAME = 40
     private val SESSION_ID = Regex("^[A-Za-z0-9_-]{1,128}$")
     private val QR_DATA_URL = Regex("^data:image/png;base64,([A-Za-z0-9+/=]+)$")
@@ -29,6 +33,8 @@ object ScreenShareProtocol {
         val guest: Boolean,
         val maxSeconds: Int,
         val iceServers: JSONArray,
+        /** The presenter shares sound. Informational: the layout event says whose sound plays. */
+        val audio: Boolean = false,
     )
 
     fun parseStart(o: JSONObject?): Start? {
@@ -42,6 +48,7 @@ object ScreenShareProtocol {
             guest = o.optBoolean("guest", false),
             maxSeconds = o.optInt("max_seconds", 3600),
             iceServers = o.optJSONArray("ice_servers") ?: JSONArray(),
+            audio = o.opt("audio") == true,
         )
     }
 
@@ -111,6 +118,65 @@ object ScreenShareProtocol {
     /** A stop for session [stopId] ends [currentId]; no id means "whatever is on screen". */
     fun stopApplies(currentId: String?, stopId: String?): Boolean =
         currentId != null && (stopId.isNullOrEmpty() || stopId == currentId)
+
+    /*
+     * ------------------------------------------------------------ several presenters at once
+     *
+     * The same rules as the web receiver's rects() / visibleIds() / audioId(), on plain session-id
+     * lists (oldest first), so the controller (sound), the overlay (tiles) and the capture agree.
+     */
+
+    /**
+     * device:screenshare-layout {spotlight, audio, count}, in THIS screen's session ids: [spotlight]
+     * fills the screen (null: tiles; the others stay connected, hidden), [audio] is the one session
+     * whose sound plays. Anything malformed is "no preference" — the same as the web's typeof checks.
+     */
+    data class Layout(val spotlight: String?, val audio: String?, val count: Int) {
+        companion object { val NONE = Layout(null, null, 0) }
+    }
+
+    fun parseLayout(o: JSONObject?): Layout {
+        if (o == null) return Layout.NONE
+        fun id(key: String) = (o.opt(key) as? String)?.takeIf { SESSION_ID.matches(it) }
+        val count = (o.opt("count") as? Number)?.toInt()?.coerceAtLeast(0) ?: 0
+        return Layout(id("spotlight"), id("audio"), count)
+    }
+
+    /** A tile, in fractions of the overlay: left, top, width, height. */
+    data class Rect(val x: Float, val y: Float, val w: Float, val h: Float)
+
+    /**
+     * Tile rectangles for [n] visible tiles: 1 full; 2 side by side, or stacked when the screen is
+     * taller than wide ([portrait]); 3-4 a 2x2 grid (three: the third centred underneath).
+     */
+    fun rects(n: Int, portrait: Boolean): List<Rect> = when {
+        n <= 1 -> listOf(Rect(0f, 0f, 1f, 1f))
+        n == 2 -> if (portrait) listOf(Rect(0f, 0f, 1f, 0.5f), Rect(0f, 0.5f, 1f, 0.5f))
+                  else listOf(Rect(0f, 0f, 0.5f, 1f), Rect(0.5f, 0f, 0.5f, 1f))
+        n == 3 -> listOf(Rect(0f, 0f, 0.5f, 0.5f), Rect(0.5f, 0f, 0.5f, 0.5f), Rect(0.25f, 0.5f, 0.5f, 0.5f))
+        else -> listOf(Rect(0f, 0f, 0.5f, 0.5f), Rect(0.5f, 0f, 0.5f, 0.5f), Rect(0f, 0.5f, 0.5f, 0.5f), Rect(0.5f, 0.5f, 0.5f, 0.5f))
+    }
+
+    /** What is on screen: only the spotlighted session when it is one of ours, else the oldest MAX_TILES. */
+    fun visibleIds(order: List<String>, layout: Layout): List<String> {
+        val spot = layout.spotlight
+        return if (spot != null && spot in order) listOf(spot) else order.take(MAX_TILES)
+    }
+
+    /** Whose sound plays: the server's choice when it names one of ours, else the newest session. */
+    fun audioId(order: List<String>, layout: Layout): String? {
+        val a = layout.audio
+        return if (a != null && a in order) a else order.lastOrNull()
+    }
+
+    /**
+     * The sessions to end (reason "replaced") so one more fits: the OLDEST, never more than MAX_TILES
+     * on screen. The server never sends a fifth; this is the backstop, as in the web receiver.
+     */
+    fun toReplace(order: List<String>): List<String> = order.take(maxOf(0, order.size - MAX_TILES + 1))
+
+    /** The frame round each tile: none for a lone tile (exactly as a single share always looked). */
+    fun tileBorderPx(visible: Int): Int = if (visible > 1) TILE_BORDER_PX else 0
 
     /** "{name}" substitution, the same as the web receiver's fmt(). */
     fun fmt(template: String, name: String): String = template.replace("{name}", name)

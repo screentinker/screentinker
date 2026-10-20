@@ -127,6 +127,10 @@ object PlayerCapabilities {
                 // (remote/ScreenShareReceiver + ScreenShareOverlay). The same bundled libwebrtc as
                 // Talk, receive-only (no permission at all), so it holds on every panel this APK runs on.
                 "remote.screen_share",
+                // ...and several presenters at once: up to 4 tiled (2x2), one spotlighted full screen
+                // with the others connected but hidden, and only one presenter's sound playing. Without
+                // this the server never sends a second session to this screen.
+                "remote.screen_share_tiles",
                 // #312 follow-up: accept a server-URL rewrite from the dashboard, VERIFYING the new
                 // address is reachable before committing and rolling back if not (see
                 // WebSocketService's set_server_url handler). Declared because we do that
