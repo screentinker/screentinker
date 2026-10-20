@@ -67,19 +67,25 @@ Copy-Item (Join-Path $here "ScreenTinkerCacheNode.xml") (Join-Path $stage "Scree
 Write-Host "==> staging the server"
 $app = Join-Path $stage "app"
 New-Item -ItemType Directory -Force $app | Out-Null
+# ⚠️ Never shipped, from ANY tree, at any depth: the same list scripts/finalize-release.sh keeps out of
+# the release tarball. A build on a developer's PC would otherwise pick up their .env, a database
+# backup or a key; CI never sees one because it builds from a clean checkout.
+$neverDirs = @("node_modules", ".git", ".claude", ".cc-writes")
+$neverFiles = @("*.db", "*.db-wal", "*.db-shm", "*.db.*", ".env*", ".mcp.json", "*.jks", "*.keystore",
+                "*.pem", "*.key", ".jwt_secret")
 function Copy-Tree([string]$name, [string[]]$excludeDirs = @(), [string[]]$excludeFiles = @()) {
     $src = Join-Path $repo $name
     $dst = Join-Path $app $name
     $rc = @($src, $dst, "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP")
-    if ($excludeDirs.Count) { $rc += "/XD"; $rc += $excludeDirs }
-    if ($excludeFiles.Count) { $rc += "/XF"; $rc += $excludeFiles }
+    $rc += "/XD"; $rc += $neverDirs + $excludeDirs
+    $rc += "/XF"; $rc += $neverFiles + $excludeFiles
     & robocopy @rc | Out-Null
     # robocopy: 0-7 are success codes, 8+ are failures.
     if ($LASTEXITCODE -ge 8) { throw "robocopy $name failed ($LASTEXITCODE)" }
     $global:LASTEXITCODE = 0
 }
-# State never ships: no database, uploads, certificates (JWT secret) or plugins installed at run time.
-Copy-Tree "server" @("node_modules", "test", "packaging", "uploads", "certs") @("*.db", "*.db-wal", "*.db-shm", ".jwt_secret")
+# State never ships: no uploads, certificates, run-time data or tests (plus everything in $neverFiles).
+Copy-Tree "server" @("test", "packaging", "uploads", "certs", "data")
 # The same set the Docker image ships (Dockerfile COPY lines); server.js reads shared/ at boot.
 Copy-Tree "frontend"
 Copy-Tree "shared"
@@ -90,6 +96,13 @@ Copy-Tree "scripts"
 Copy-Tree "docs"
 foreach ($f in @("VERSION", "LICENSE", "certified-hardware.json", "release-notes.json")) { Copy-Item (Join-Path $repo $f) (Join-Path $app $f) }
 Set-Content -Path (Join-Path $app "VERSION") -Value $Version -NoNewline
+
+# Belt and braces: fail the build if anything secret-shaped made it into the stage anyway.
+$leaked = Get-ChildItem -Recurse -File -Force $app | Where-Object {
+    $n = $_.Name
+    ($neverFiles | Where-Object { $n -like $_ }).Count -gt 0
+}
+if ($leaked) { throw ("refusing to package: " + (($leaked | Select-Object -First 5 | ForEach-Object FullName) -join ", ")) }
 
 # The status page belongs to this package only; a stock server never serves it.
 Copy-Item (Join-Path $here "status\cache-node.html") (Join-Path $app "frontend\cache-node.html")

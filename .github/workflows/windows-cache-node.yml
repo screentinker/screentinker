@@ -83,11 +83,26 @@ jobs:
 
           # ---- install silently with the invite ----
           $exe = Get-ChildItem server\packaging\windows\dist\ScreenTinker-CacheNode-Setup-*.exe | Select-Object -First 1
+          # A ProgramData\ScreenTinker this installer did not leave (any user could plant one) is refused.
+          New-Item -ItemType Directory -Force "$env:ProgramData\ScreenTinker" | Out-Null
+          Set-Content "$env:ProgramData\ScreenTinker\screentinker.env" 'NODE_OPTIONS=--require C:\planted.js'
+          $p = Start-Process $exe.FullName -Wait -PassThru -ArgumentList @('/S', "/PRIMARY_URL=http://127.0.0.1:$env:PRIMARY_PORT",
+            "/JOIN_CODE=$env:INVITE", "/JWT_SECRET=$env:JWT", "/PORT=$env:NODE_PORT")
+          if ($p.ExitCode -ne 2) { throw "a planted ProgramData folder was not refused (exit $($p.ExitCode))" }
+          Get-Content "$env:TEMP\ScreenTinker-CacheNode-setup.txt"
+          if (Get-Service ScreenTinkerCacheNode -ErrorAction SilentlyContinue) { throw 'refused, but a service was installed' }
+          Remove-Item -Recurse -Force "$env:ProgramData\ScreenTinker"
           $p = Start-Process $exe.FullName -Wait -PassThru -ArgumentList @('/S',
             "/PRIMARY_URL=http://127.0.0.1:$env:PRIMARY_PORT", "/JOIN_CODE=$env:INVITE",
             "/JWT_SECRET=$env:JWT", '/CACHE_GB=2', "/PORT=$env:NODE_PORT")
-          if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
+          if ($p.ExitCode -ne 0) { Get-Content "$env:TEMP\ScreenTinker-CacheNode-setup.txt" -ErrorAction SilentlyContinue; throw "installer exit $($p.ExitCode)" }
           (Get-Service ScreenTinkerCacheNode).Status
+          # Not LocalSystem.
+          $acct = (Get-CimInstance Win32_Service -Filter "Name='ScreenTinkerCacheNode'").StartName
+          "service account: $acct"
+          if ($acct -notmatch 'LocalService') { throw "the service runs as $acct, not LocalService" }
+          # Screens were not enabled, so no firewall rule.
+          if (Get-NetFirewallRule -DisplayName 'ScreenTinker Cache Node' -ErrorAction SilentlyContinue) { throw 'firewall rule added without /PLAYERS' }
 
           # ---- the node joins by dialling out and copies the workspace ----
           $base = "http://127.0.0.1:$env:NODE_PORT"
@@ -110,13 +125,24 @@ jobs:
           if (-not $r.cache) { throw 'caches-content was not taken on' }
           if ((Invoke-WebRequest "$base/cache-node.html" -UseBasicParsing).StatusCode -ne 200) { throw 'status page missing' }
           if ((Invoke-WebRequest "$base/js/cache-node-status.js" -UseBasicParsing).StatusCode -ne 200) { throw 'status script missing' }
-          # The settings file holds JWT_SECRET: no access for ordinary users.
-          $acl = (Get-Acl "$env:ProgramData\ScreenTinker\screentinker.env").Access | ForEach-Object { $_.IdentityReference.Value }
-          if ($acl -match 'Users') { throw "settings file is readable by users: $($acl -join ', ')" }
+          # The settings file (JWT_SECRET) and the data (database, certs): no access for ordinary users.
+          foreach ($f in @("$env:ProgramData\ScreenTinker\screentinker.env", "$env:ProgramData\ScreenTinker\data",
+                           "$env:ProgramData\ScreenTinker\data\db", "$env:ProgramData\ScreenTinker")) {
+            $acl = (Get-Acl $f).Access | ForEach-Object { $_.IdentityReference.Value }
+            "$f -> $($acl -join ', ')"
+            if ($acl -match 'Users|Everyone|Authenticated') { throw "$f is open to ordinary users: $($acl -join ', ')" }
+          }
           # A restart (graceful stop, then start) comes back joined, from the stored edge.
           Restart-Service ScreenTinkerCacheNode
           $r = Wait-Joined
           "rejoined after restart: dial.connected=$($r.dial.connected)"
+          # An upgrade over the top: no values given, nothing asked, settings kept, still joined.
+          $before = Get-FileHash "$env:ProgramData\ScreenTinker\screentinker.env"
+          $p = Start-Process $exe.FullName -Wait -PassThru -ArgumentList '/S'
+          if ($p.ExitCode -ne 0) { Get-Content "$env:TEMP\ScreenTinker-CacheNode-setup.txt" -ErrorAction SilentlyContinue; throw "upgrade exit $($p.ExitCode)" }
+          if ((Get-FileHash "$env:ProgramData\ScreenTinker\screentinker.env").Hash -ne $before.Hash) { throw 'the upgrade changed the settings' }
+          $r = Wait-Joined
+          "joined after upgrade: dial.connected=$($r.dial.connected)"
 
       - name: Uninstall
         shell: pwsh
