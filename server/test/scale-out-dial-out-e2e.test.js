@@ -109,10 +109,14 @@ test('the replica joins by dialling out; the primary holds a they-dial edge with
   assert.equal(up.uplinks.length, 1);
   assert.equal(up.uplinks[0].parentUrl, null, 'the primary was never given an address for the replica');
 
+  /*
+   * The replica is LISTED the moment the invite is redeemed; its socket arrives a little later, from
+   * the replica's dialer. Wait for the link itself (a busy CI runner saw the listing 30 ms before it).
+   */
   const so = await waitFor(async () => {
     const s = await status(primary);
-    return s.scale_out && s.scale_out.replicas.length ? s.scale_out : null;
-  }, { what: 'primary to see its replica' });
+    return s.scale_out && s.scale_out.replicas.length && s.scale_out.replicas[0].link.connected ? s.scale_out : null;
+  }, { what: 'the replica\'s inbound link to attach on the primary' });
   assert.deepEqual(so.role, ['primary']);
   assert.equal(so.replicas[0].link.connected, true, 'the inbound link is attached');
 
