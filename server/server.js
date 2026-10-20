@@ -3518,6 +3518,18 @@ app.get(['/tizen', '/tizen/'], (req, res) => {
  */
 const CONTENT_PREFIXES = ['/guides/', '/integrations/', '/solutions/'];
 
+// "/guides/roku-digital-signage" -> "/guides/roku-digital-signage.html", for every page under those
+// prefixes. Built once from the directory listings, so a request path is only ever a map key.
+const EXTENSIONLESS_PAGES = new Map();
+for (const prefix of CONTENT_PREFIXES) {
+  try {
+    for (const f of fs.readdirSync(path.join(config.frontendDir, prefix))) {
+      const m = /^([a-z0-9-]+)\.html$/.exec(f);
+      if (m && m[1] !== 'index') EXTENSIONLESS_PAGES.set(prefix + m[1], prefix + f);
+    }
+  } catch (e) { /* a missing folder has no pages */ }
+}
+
 /*
  * ⚠️ A MISSING ASSET IS A 404, NEVER THE APP SHELL. Every app route is `/#/…`, so a path ending in a
  * file extension that reached the catch-all names a file we do not have. Answering it with
@@ -3588,10 +3600,9 @@ app.get('/{*splat}', (req, res) => {
   if (CONTENT_PREFIXES.some((prefix) => req.path.startsWith(prefix))) {
     // A page typed or linked without its .html (/guides/roku-digital-signage) is the page, not a miss.
     // Only a plain lower-case slug is tried, so nothing outside these folders can be reached this way.
-    if (/^\/(guides|integrations|solutions)\/[a-z0-9-]+$/.test(req.path)
-        && fs.existsSync(path.join(config.frontendDir, req.path.slice(1) + '.html'))) {
-      return res.redirect(301, req.path + '.html');
-    }
+    // Matched against the pages listed at boot, never by touching the disk with the request path.
+    const page = EXTENSIONLESS_PAGES.get(req.path);
+    if (page) return res.redirect(301, page);
     return res.status(404).type('html').send(NOT_FOUND_PAGE);
   }
   if (ASSET_EXTENSION.test(req.path)) {
