@@ -46,8 +46,9 @@ function activeUpEdges(db) {
       // A 'they-dial' edge has no token of ours to present — the replica dials in with its own
       // (lib/mesh/dial-out.js) — but it is just as live, and its link waits to be attached.
       `SELECT * FROM mesh_edges WHERE direction = 'up' AND revoked_at IS NULL
-          AND (up_token IS NOT NULL OR (transport_direction = 'they-dial' AND token_hash IS NOT NULL))`)
-      .all();
+          AND (up_token IS NOT NULL OR (transport_direction = 'they-dial' AND token_hash IS NOT NULL
+               AND (token_expires_at IS NULL OR token_expires_at > ?)))`)
+      .all(Math.floor(Date.now() / 1000));
   } catch (e) {
     return [];
   }

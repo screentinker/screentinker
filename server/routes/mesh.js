@@ -660,7 +660,7 @@ module.exports = function meshRoutes(db, { requireAuth }) {
     const now = Math.floor(Date.now() / 1000);
     const d = edgeStatus.disenroll(edge, { by: 'parent', now, reason: (req.body && req.body.reason) || null });
     if (!d.ok) return res.status(edge ? 409 : 404).json({ error: d.reason });
-    db.prepare('UPDATE mesh_edges SET revoked_at = ?, token_hash = NULL WHERE id = ?').run(now, edge.id);
+    db.prepare('UPDATE mesh_edges SET revoked_at = ?, token_hash = NULL, dial_token = NULL WHERE id = ?').run(now, edge.id);
     // The child's live socket, if any: dropped now, so its next connection is refused at the door.
     try { if (global.__meshDropChild) global.__meshDropChild(edge.peer_node_id); } catch (e) { /* the next envelope is refused anyway */ }
     let filesDropped = 0;

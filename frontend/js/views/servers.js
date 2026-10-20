@@ -1291,6 +1291,7 @@ async function renderConnect(panel, caps) {
           the connection open itself. The invite works once and lasts 7 days.</p>
         <button class="btn btn-secondary btn-sm" id="inviteBtn">Create a replica invite</button>
         <div id="inviteOut" style="margin-top:8px"></div>
+        <div id="inviteList" style="margin-top:8px"></div>
       </div>
     </div>` : ''}
 
@@ -1350,6 +1351,27 @@ async function renderConnect(panel, caps) {
     }
   });
 
+  // Invites still open: one handed to the wrong person, or no longer wanted, is cancelled here.
+  async function loadInvites() {
+    const box = panel.querySelector('#inviteList');
+    if (!box) return;
+    let invites = [];
+    try { invites = (await api.get('/mesh/uplink/invites')).invites || []; } catch (e) { box.textContent = ''; return; }
+    if (!invites.length) { box.textContent = ''; return; }
+    box.innerHTML = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Open invites</div>` +
+      invites.map((i) => `<div style="display:flex;gap:8px;align-items:center;font-size:12px;margin:2px 0">
+        <span style="font-family:monospace">…${esc(i.codeHint)}</span>
+        <span style="color:var(--text-muted)">${i.workspaces === null ? 'every workspace' : `${esc(String(i.workspaces))} workspace(s)`},
+          until ${esc(new Date(i.expiresAt * 1000).toLocaleString())}${i.createdBy ? `, by ${esc(i.createdBy)}` : ''}</span>
+        <button class="btn btn-secondary btn-sm" data-cancel-invite="${esc(i.id)}">Cancel</button>
+      </div>`).join('');
+    box.querySelectorAll('[data-cancel-invite]').forEach((b) => b.addEventListener('click', async () => {
+      try { await api.delete(`/mesh/uplink/invites/${encodeURIComponent(b.dataset.cancelInvite)}`); } catch (e) { /* already gone */ }
+      loadInvites();
+    }));
+  }
+  loadInvites();
+
   panel.querySelector('#inviteBtn')?.addEventListener('click', async () => {
     const out = panel.querySelector('#inviteOut');
     try {
@@ -1367,6 +1389,7 @@ async function renderConnect(panel, caps) {
           ${esc(new Date(r.expiresAt * 1000).toLocaleString())}. It will copy
           ${r.workspaces === null ? '<strong>every workspace, including ones created later</strong>' : `${esc(String(r.workspaces))} workspace(s)`}.
         </div>`;
+      loadInvites();
     } catch (e) {
       out.innerHTML = `<span style="color:var(--text-muted)">${esc(e.message)}</span>`;
     }

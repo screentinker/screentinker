@@ -774,6 +774,11 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
             up_token         = excluded.up_token,
             peer_url         = excluded.peer_url,
             tls_verify       = excluded.tls_verify,
+            -- an edge that was an invite edge (lib/mesh/dial-out.js) becomes an ordinary one: we dial,
+            -- with the token above, and the old dial-in token stops working. A no-op on a we-dial row.
+            transport_direction = 'we-dial',
+            token_hash       = NULL,
+            token_expires_at = NULL,
             revoked_at       = NULL`).run(
         /*
          * ⚠️ write_grant and write_scope are absent from BOTH the column list and the DO UPDATE
@@ -848,13 +853,66 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
                            'mint a new one on the primary and try again.';
 
     /*
+     * ⚠️ RE-CHECKED AT REDEEM, not only at mint: an invite lives for days, and an admin removed from
+     * a workspace (or no longer the owner, for an all-workspaces invite) in the meantime must not
+     * still be handing out copies of it. Same rule as resolveShareScope, against the minter as they
+     * are NOW. A minter who no longer exists refuses everything.
+     */
+    function minterStillMayShare(inv) {
+      let user;
+      try { user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(inv.created_by); } catch (e) { user = null; }
+      if (!user) return false;
+      if (user.role === 'platform_admin') return true;
+      if (!inv.shared_workspaces) return false;   // every workspace: owner only
+      const wanted = store.safeParseArray(inv.shared_workspaces).map(String);
+      let allowed = [];
+      try {
+        allowed = db.prepare(`SELECT w.id FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id
+                               WHERE m.user_id = ? AND m.role IN ('owner','admin')`).all(user.id).map((w) => w.id);
+      } catch (e) { allowed = []; }
+      return wanted.length > 0 && wanted.every((id) => allowed.includes(id));
+    }
+
+    /*
+     * The invites this user minted (every one, for the instance owner) that can still be redeemed,
+     * so one handed to the wrong person — or no longer wanted — can be cancelled before it is used.
+     */
+    router.get('/uplink/invites', requireAuth, requireCanShareSomething(db), (req, res) => {
+      const owner = req.user.role === 'platform_admin';
+      const rows = db.prepare(`SELECT i.id, i.code, i.shared_workspaces, i.created_at, i.expires_at, i.created_by, u.email AS created_by_email
+                                 FROM mesh_invites i LEFT JOIN users u ON u.id = i.created_by
+                                WHERE i.burned_at IS NULL AND i.expires_at > ? ${owner ? '' : 'AND i.created_by = ?'}
+                                ORDER BY i.created_at DESC`).all(...(owner ? [nowSec()] : [nowSec(), req.user.id]));
+      res.json({ invites: rows.map((r) => ({
+        id: r.id,
+        // only the end of the code: enough to tell invites apart, not enough to redeem one
+        codeHint: String(r.code).slice(-4),
+        workspaces: r.shared_workspaces ? store.safeParseArray(r.shared_workspaces).length : null,
+        createdAt: r.created_at,
+        expiresAt: r.expires_at,
+        createdBy: r.created_by_email || null,
+      })) });
+    });
+
+    // Cancel: burned with no node, so it is refused exactly like a used one.
+    router.delete('/uplink/invites/:id', requireAuth, requireCanShareSomething(db), (req, res) => {
+      const inv = db.prepare('SELECT id, created_by, burned_at FROM mesh_invites WHERE id = ?').get(req.params.id);
+      if (!inv || inv.burned_at) return res.status(404).json({ error: 'That invite has already been used, cancelled or has expired.' });
+      if (inv.created_by !== req.user.id && req.user.role !== 'platform_admin') {
+        return res.status(403).json({ error: 'Only the person who created an invite, or the instance owner, can cancel it.' });
+      }
+      db.prepare('UPDATE mesh_invites SET burned_at = ?, burned_by_node = NULL WHERE id = ? AND burned_at IS NULL').run(nowSec(), inv.id);
+      res.json({ ok: true });
+    });
+
+    /*
      * ⚠️ UNAUTHENTICATED, like /pair/redeem: the invite IS the credential (CSPRNG, single-use,
      * expiring). Preview burns nothing; it tells the replica who it is about to copy so the replica
      * can run its own enrollment checks before anything is created on either side.
      */
     router.post('/invite/preview', (req, res) => {
       const inv = liveInvite(req.body && req.body.code);
-      if (!inv) return res.status(400).json({ error: INVITE_REFUSAL });
+      if (!inv || !minterStillMayShare(inv)) return res.status(400).json({ error: INVITE_REFUSAL });
       const shared = store.safeParseArray(inv.shared_workspaces);
       res.json({
         nodeId: thisNode(),
@@ -870,7 +928,7 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
     router.post('/invite/redeem', (req, res) => {
       const body = req.body || {};
       const inv = liveInvite(body.code);
-      if (!inv) return res.status(400).json({ error: INVITE_REFUSAL });
+      if (!inv || !minterStillMayShare(inv)) return res.status(400).json({ error: INVITE_REFUSAL });
 
       const me = thisNode();
       const peerId = typeof body.nodeId === 'string' ? body.nodeId : '';
@@ -924,6 +982,16 @@ module.exports = function meshEnrollRoutes(db, { requireAuth, config, onUplinkCh
               peer_url            = NULL,
               peer_name           = excluded.peer_name,
               shared_workspaces   = excluded.shared_workspaces,
+              -- ⚠️ A revoked row is reused, but nothing it agreed to before is: the redeemer chose
+              -- this nodeId, so an old share_upward consent or change-log position must not carry
+              -- over to whoever holds the invite now.
+              share_upward        = 0,
+              auto_forward        = 0,
+              acked_rev           = NULL,
+              retention_days      = NULL,
+              tombstone_purge_days = NULL,
+              client_id           = NULL,
+              last_sync_at        = NULL,
               revoked_at          = NULL
             WHERE mesh_edges.revoked_at IS NOT NULL`).run(
           uid(), peerId, JSON.stringify(caps.capabilities), JSON.stringify(grant.categories),

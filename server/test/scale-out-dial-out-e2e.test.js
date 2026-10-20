@@ -201,3 +201,81 @@ test('severing on the primary closes the replica\'s socket, and the replica says
   }, { tries: 160, what: 'replica to report the refusal' });
   assert.equal(st.dial.connected, false);
 });
+
+/* ---- review follow-ups: an invite can be cancelled, its minter is re-checked, a re-join starts clean ---- */
+
+// The servers' own database files, for setting up a state no route can reach (a demoted minter).
+const { Database } = require('../db/sqlite-driver');
+function withDb(s, fn) {
+  const db = new Database(path.join(s.dataDir, 'db', 'remote_display.db'));
+  try { return fn(db); } finally { db.close(); }
+}
+const preview = (code) => fetch(primary.base + '/api/mesh/invite/preview', jsonPost({ code }));
+
+test('open invites are listed without their code, and a cancelled one is refused', async () => {
+  const inv = await mintInvite();
+  const list = await (await fetch(primary.base + '/api/mesh/uplink/invites', auth(primaryAdmin))).json();
+  const row = list.invites.find((i) => inv.code.replace(/-/g, '').endsWith(i.codeHint));
+  assert.ok(row, JSON.stringify(list));
+  assert.ok(!JSON.stringify(list).includes(inv.code.replace(/-/g, '')), 'the list never carries a redeemable code');
+  assert.equal((await preview(inv.code)).status, 200);
+
+  const del = await fetch(`${primary.base}/api/mesh/uplink/invites/${encodeURIComponent(row.id)}`, auth(primaryAdmin, 'DELETE'));
+  assert.ok(del.ok, await del.text());
+  assert.equal((await preview(inv.code)).status, 400, 'a cancelled invite is refused like a used one');
+  const after = await (await fetch(primary.base + '/api/mesh/uplink/invites', auth(primaryAdmin))).json();
+  assert.ok(!after.invites.some((i) => i.id === row.id));
+});
+
+test('⚠️ an invite stops working when its minter loses the right to share what it shares', async () => {
+  const r = await (await fetch(primary.base + '/api/mesh/uplink/invite', auth(primaryAdmin, 'POST', { shareAllWorkspaces: true }))).json();
+  assert.ok(r.code, JSON.stringify(r));
+  assert.equal((await preview(r.code)).status, 200);
+  const email = 'admin@primary.local';
+  const role = withDb(primary, (db) => db.prepare('SELECT role FROM users WHERE email = ?').get(email).role);
+  assert.equal(role, 'platform_admin');
+  try {
+    // No longer the instance owner: an every-workspace invite is not theirs to give any more.
+    withDb(primary, (db) => db.prepare("UPDATE users SET role = 'user' WHERE email = ?").run(email));
+    assert.equal((await preview(r.code)).status, 400);
+    assert.equal((await fetch(primary.base + '/api/mesh/invite/redeem', jsonPost({ code: r.code, nodeId: 'x' }))).status, 400);
+  } finally {
+    withDb(primary, (db) => db.prepare('UPDATE users SET role = ? WHERE email = ?').run(role, email));
+  }
+  assert.equal((await preview(r.code)).status, 200, 'restored, and never burned by the refusals');
+});
+
+test('⚠️ re-joining after a disconnect starts clean on both sides, and only our own old link is reused', async () => {
+  const replicaId = (await (await fetch(replica.base + '/api/mesh/capabilities', auth(replicaAdmin))).json()).nodeId;
+  const primaryId = (await (await fetch(primary.base + '/api/mesh/capabilities', auth(primaryAdmin))).json()).nodeId;
+  // The previous test severed it on the primary. Disconnect on the replica too, as an operator would.
+  const d = await fetch(`${replica.base}/api/mesh/links/${encodeURIComponent(primaryId)}`, auth(replicaAdmin, 'DELETE'));
+  assert.ok(d.ok, await d.text());
+  withDb(replica, (db) => {
+    const e = db.prepare("SELECT revoked_at, dial_token FROM mesh_edges WHERE peer_node_id = ? AND direction = 'down'").get(primaryId);
+    assert.ok(e.revoked_at);
+    assert.equal(e.dial_token, null, 'a revoked link keeps no plaintext token');
+  });
+  // Consent and position the old link had, which a new invite holder must not inherit.
+  withDb(primary, (db) => db.prepare("UPDATE mesh_edges SET share_upward = 1, acked_rev = 7 WHERE peer_node_id = ? AND direction = 'up'").run(replicaId));
+
+  // A different address for the same identity: refused, and the invite is NOT spent by the refusal.
+  const inv = await mintInvite();
+  withDb(replica, (db) => db.prepare("UPDATE mesh_edges SET peer_url = 'http://elsewhere.invalid' WHERE peer_node_id = ? AND direction = 'down'").run(primaryId));
+  const refused = await (await fetch(replica.base + '/api/mesh/pair/join', auth(replicaAdmin, 'POST', { primaryUrl: primary.base, code: inv.code }))).json();
+  assert.match(refused.error || '', /different connection/, JSON.stringify(refused));
+  assert.equal((await preview(inv.code)).status, 200, 'the refusal burned nothing on the primary');
+  withDb(replica, (db) => db.prepare("UPDATE mesh_edges SET peer_url = ? WHERE peer_node_id = ? AND direction = 'down'").run(primary.base, primaryId));
+
+  const j = await (await fetch(replica.base + '/api/mesh/pair/join', auth(replicaAdmin, 'POST', { primaryUrl: primary.base, code: inv.code }))).json();
+  assert.ok(j.ok, JSON.stringify(j));
+  withDb(primary, (db) => {
+    const e = db.prepare("SELECT revoked_at, share_upward, acked_rev, transport_direction FROM mesh_edges WHERE peer_node_id = ? AND direction = 'up'").get(replicaId);
+    assert.deepEqual({ ...e }, { revoked_at: null, share_upward: 0, acked_rev: null, transport_direction: 'they-dial' });
+  });
+  await waitFor(async () => {
+    const s = await status(replica);
+    const x = s.scale_out && s.scale_out.replica_of && s.scale_out.replica_of.find((r) => r.node_id === primaryId);
+    return x && x.dial && x.dial.connected ? x : null;
+  }, { tries: 160, what: 'the re-joined link to connect' });
+});

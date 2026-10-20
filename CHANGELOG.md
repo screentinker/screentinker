@@ -12,13 +12,17 @@
   the media cache and screens on the replica work over it unchanged. It's off unless the primary
   has `MESH_ALLOW_UPLINK` and the replica has `MESH_ACCEPT_ENROLLMENT`; the existing pairing is
   unchanged. Additive column `mesh_edges.dial_token` and table `mesh_invites`. `/api/status`
-  `replica_of[]` gains `dial` (connected, last error) and `cache.videos`.
+  `replica_of[]` gains `dial` (connected, last error) and `cache.videos`, and `scale_out.join`
+  while `REPLICA_JOIN_CODE` is still joining (it retries until the primary answers). Open invites
+  are listed under the button and can be cancelled; an invite stops working if the person who
+  created it loses the right to share those workspaces.
 - **Windows cache node** (server/packaging/windows). An installer that runs a replica as a Windows
   service on a studio PC, so its screens keep playing when the internet drops. Node is bundled.
   The installer asks for the main server's address, an invite, the shared secret, the cache size
   and the port; the PC then joins by itself. A status page shows whether it's connected, the last
   sync, cache use and the number of videos. Logs are kept in `C:\ProgramData\ScreenTinker\logs`.
-  It can also be installed silently with switches.
+  It can also be installed silently with switches. The service runs as LocalService, and its
+  folders are open only to that account and to administrators. Built with NSIS (zlib licence).
 - **ONVIF cameras** (docs/onvif-cameras.md). **Add content → ONVIF camera**:
   - Find cameras on the network, or type an address. Sign in, pick a stream, and add it as a live
     stream every RTSP-capable screen already plays.

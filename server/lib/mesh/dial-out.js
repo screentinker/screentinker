@@ -34,7 +34,8 @@ const { postJson } = require('../post-json');
 /*
  * An invite outlives a pairing code (15 min) on purpose: it is typed into an installer on a PC that
  * may be set up days later by someone else. Still single-use, still burned in the transaction that
- * creates the edge, and revocable by simply not being redeemed — the primary lists what it minted.
+ * creates the edge; the primary lists the invites still open and can cancel one
+ * (GET/DELETE /api/mesh/uplink/invites), and re-checks its minter's rights when it is redeemed.
  */
 const INVITE_TTL_S = 7 * 86400;
 const EDGE_TOKEN_TTL_S = 365 * 86400;
@@ -140,6 +141,20 @@ async function joinPrimary(db, { primaryUrl, code, roles = [], tlsVerify = true,
     return { ok: false, reason: 'That invite is not a replica invite. Ask for one from "Let a replica connect to this server".' };
   }
 
+  /*
+   * ⚠️ ONLY OUR OWN OLD LINK TO THIS SAME ADDRESS MAY BE REUSED. The primary's node id is what it
+   * says it is; a server claiming the id of a child this node once had (a revoked 'they-dial' down
+   * edge, or a link to another address) must not inherit that row's forwarding or grouping. A live
+   * edge was already refused by validateEnrollment above. Checked BEFORE redeeming, so a refusal
+   * here burns nothing on the primary.
+   */
+  const prior = db.prepare("SELECT transport_direction, peer_url FROM mesh_edges WHERE peer_node_id = ? AND direction = 'down'")
+    .get(primary.nodeId);
+  if (prior && (prior.transport_direction !== 'we-dial' || prior.peer_url !== base.url)) {
+    return { ok: false, reason: 'This server already has a different connection to a server with that identity. ' +
+                                'Remove it under Servers before joining this address.' };
+  }
+
   // 3. Redeem. The primary burns the invite and creates its edge in one transaction.
   const rd = await call('/api/mesh/invite/redeem', {
     code: invite, nodeId: me, version, nodeName: store.nodeName(db), ancestry: mine, capabilities: check.capabilities,
@@ -152,7 +167,7 @@ async function joinPrimary(db, { primaryUrl, code, roles = [], tlsVerify = true,
 
   const edgeId = require('crypto').randomUUID();
   const now = nowSec();
-  db.prepare(`INSERT INTO mesh_edges
+  const stored = db.prepare(`INSERT INTO mesh_edges
       (id, peer_node_id, direction, role_capabilities, grant_categories, transport_direction,
        tls_verify, peer_version, token_hash, token_expires_at, dial_token, created_at, peer_url, peer_name)
       VALUES (?,?,'down',?,?,'we-dial',?,?,NULL,?,?,?,?,?)
@@ -167,10 +182,15 @@ async function joinPrimary(db, { primaryUrl, code, roles = [], tlsVerify = true,
         dial_token          = excluded.dial_token,
         peer_url            = excluded.peer_url,
         peer_name           = excluded.peer_name,
-        revoked_at          = NULL`).run(
+        auto_forward        = 0,
+        client_id           = NULL,
+        revoked_at          = NULL
+      WHERE mesh_edges.revoked_at IS NOT NULL`).run(
     edgeId, primary.nodeId, JSON.stringify(check.capabilities), JSON.stringify(check.grant),
     tlsVerify ? 1 : 0, String(primary.version || ''), now + EDGE_TOKEN_TTL_S, answer.edgeToken, now,
     base.url, answer.primaryName || primary.nodeName || null);
+  // Only a link that went live between the check above and here; the primary's side then waits unused.
+  if (stored.changes !== 1) return { ok: false, reason: 'This server is already connected to that one.' };
   const row = db.prepare("SELECT id FROM mesh_edges WHERE peer_node_id = ? AND direction = 'down'").get(primary.nodeId);
 
   // Writes and media fetches go to PRIMARY_URL, which is configuration, not an edge field (I9).
