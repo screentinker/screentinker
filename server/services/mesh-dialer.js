@@ -167,4 +167,43 @@ async function autoJoin(db, config, { logger = console, onJoined } = {}) {
   return r;
 }
 
-module.exports = { startMeshDialer, autoJoin, dialEdges };
+/*
+ * REPLICA_JOIN_CODE at boot, retried until it is ANSWERED. A Windows service starts before the network
+ * is up, and a studio PC may boot while the main server is down: one attempt and give up would leave
+ * a cache node that never joins until someone restarts it (seen on the first Windows CI run that got
+ * this far). Unreachable, 5xx and 429 retry with the dialer's backoff; a refusal (bad, used or expired
+ * invite, a failed enrollment check) is final and stays in status() for the status page.
+ */
+function startAutoJoin(db, config, { logger = console, onJoined, schedule = setTimeout, rand = Math.random, join = autoJoin } = {}) {
+  const st = { pending: true, attempt: 0, last_error: null, next_at: null };
+  let timer = null;
+  let stopped = false;
+  const tick = async () => {
+    timer = null;
+    if (stopped) return;
+    let r;
+    try { r = await join(db, config, { logger, onJoined }); } catch (e) { r = { ok: false, retryable: true, reason: e && e.message }; }
+    if (stopped) return;
+    if (r && r.retryable) {
+      st.attempt += 1;
+      st.last_error = r.reason || 'unknown error';
+      const delay = backoffFor(st.attempt, rand);
+      st.next_at = Date.now() + delay;
+      logger.warn(`[mesh] REPLICA_JOIN_CODE: retrying in ${Math.round(delay / 1000)}s`);
+      timer = schedule(tick, delay);
+      if (timer && typeof timer.unref === 'function') timer.unref();
+      return;
+    }
+    st.pending = false;
+    st.next_at = null;
+    st.last_error = r && !r.ok && !r.skipped ? (r.reason || 'refused') : null;
+  };
+  timer = schedule(tick, 1000);
+  if (timer && typeof timer.unref === 'function') timer.unref();
+  return {
+    status: () => ({ ...st }),
+    stop: () => { stopped = true; if (timer) clearTimeout(timer); timer = null; },
+  };
+}
+
+module.exports = { startMeshDialer, autoJoin, startAutoJoin, dialEdges };

@@ -58,7 +58,13 @@ function scaleOutStatus() {
     if (d) r.dial = { connected: d.connected, last_error: d.last_error, attempt: d.attempt };
     if (c) r.cache = { files: c.files, videos: c.videos, bytes: c.bytes, pinned_bytes: c.pinned_bytes, cap_bytes: c.cap_bytes, last_error: c.last_error, prefetch_pending: c.prefetch_pending, stored: c.stored };
   }
-  return { role, head_rev: head, replicas, replica_of: replicaOf };
+  const out = { role, head_rev: head, replicas, replica_of: replicaOf };
+  // REPLICA_JOIN_CODE still joining, or refused: the only place a cache node with no edge yet says why.
+  try {
+    const j = global.__meshAutoJoin ? global.__meshAutoJoin.status() : null;
+    if (j && (j.pending || j.last_error)) out.join = { pending: j.pending, attempt: j.attempt, last_error: j.last_error };
+  } catch (_) { /* absent */ }
+  return out;
 }
 
 // The JWT's current_workspace_id is a stored claim. Import and export resolve the session themselves

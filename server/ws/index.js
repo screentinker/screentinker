@@ -172,17 +172,15 @@ module.exports = function setupWebSockets(io) {
           /*
            * Scale-out dial-out (lib/mesh/dial-out.js): primaries this replica JOINED are dialled from
            * here, and each socket is adopted by attachDialed — handled exactly like one a primary opened
-           * to us. A node with no 'we-dial' edge opens nothing. REPLICA_JOIN_CODE joins once at boot.
+           * to us. A node with no 'we-dial' edge opens nothing. REPLICA_JOIN_CODE joins at boot, retried
+           * while the primary is unreachable (services/mesh-dialer.js startAutoJoin).
            */
           try {
-            const { startMeshDialer, autoJoin } = require('../services/mesh-dialer');
+            const { startMeshDialer, startAutoJoin } = require('../services/mesh-dialer');
             const dialer = startMeshDialer(db, { attachDialed: meshNs.attachDialed, logger: console });
             global.__meshDialer = dialer;
             if (config.replicaJoinCode) {
-              setTimeout(() => {
-                autoJoin(db, config, { logger: console, onJoined: () => dialer.refresh() })
-                  .catch((e) => console.warn(`[mesh] REPLICA_JOIN_CODE: ${e && e.message}`));
-              }, 1000);
+              global.__meshAutoJoin = startAutoJoin(db, config, { logger: console, onJoined: () => dialer.refresh() });
             }
           } catch (e) { console.warn(`[mesh] dial-out not started: ${e && e.message}`); }
         }

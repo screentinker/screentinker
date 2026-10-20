@@ -54,9 +54,12 @@ jobs:
         shell: pwsh
         run: server\packaging\windows\build.ps1
 
-      - name: Start a primary from this checkout
+      # ONE step on purpose: the runner stops processes a step started when that step ends, so a
+      # primary started in its own step was gone before the cache node tried to join it.
+      - name: Primary, silent install, join, restart
         shell: pwsh
         run: |
+          # ---- a primary from this checkout ----
           Push-Location server
           npm ci --no-audit --no-fund
           # npm ci on Windows skips the optional better-sqlite3 (see build.ps1); install it by name.
@@ -76,11 +79,9 @@ jobs:
           $me = Invoke-RestMethod "$base/api/auth/me" -Headers $h
           Invoke-RestMethod "$base/api/devices/web-player" -Method Post -Headers ($h + @{ 'x-workspace-id' = $me.current_workspace_id }) -ContentType 'application/json' -Body '{"name":"Studio TV"}' | Out-Null
           $inv = Invoke-RestMethod "$base/api/mesh/uplink/invite" -Method Post -Headers $h -ContentType 'application/json' -Body (@{ workspaceIds = @($me.current_workspace_id) } | ConvertTo-Json)
-          "INVITE=$($inv.code)" | Out-File -Append $env:GITHUB_ENV
+          $env:INVITE = $inv.code
 
-      - name: Install silently with the invite
-        shell: pwsh
-        run: |
+          # ---- install silently with the invite ----
           $exe = Get-ChildItem server\packaging\windows\dist\ScreenTinker-CacheNode-Setup-*.exe | Select-Object -First 1
           $p = Start-Process $exe.FullName -Wait -PassThru -ArgumentList @('/S',
             "/PRIMARY_URL=http://127.0.0.1:$env:PRIMARY_PORT", "/JOIN_CODE=$env:INVITE",
@@ -88,19 +89,20 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
           (Get-Service ScreenTinkerCacheNode).Status
 
-      - name: The node joins by dialling out and copies the workspace
-        shell: pwsh
-        run: |
+          # ---- the node joins by dialling out and copies the workspace ----
           $base = "http://127.0.0.1:$env:NODE_PORT"
           function Wait-Joined {
-            for ($i = 0; $i -lt 180; $i++) {
+            $s = $null
+            $until = (Get-Date).AddMinutes(3)
+            while ((Get-Date) -lt $until) {
               try {
-                $s = Invoke-RestMethod "$base/api/status"
+                $s = Invoke-RestMethod "$base/api/status" -TimeoutSec 5
                 $r = $s.scale_out.replica_of | Select-Object -First 1
                 if ($r -and $r.dial.connected -and $r.workspaces -gt 0 -and $r.phase -ne 'snapshot') { return $r }
               } catch { }
               Start-Sleep 1
             }
+            if ($s) { $s.scale_out | ConvertTo-Json -Depth 6 }
             throw 'the cache node did not join and copy within 3 minutes'
           }
           $r = Wait-Joined

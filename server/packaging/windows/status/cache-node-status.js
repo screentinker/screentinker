@@ -26,8 +26,17 @@
     let tone = 'ok';
     let headline;
     if (!rep) {
+      const join = s.scale_out && s.scale_out.join;
       tone = 'warn';
-      headline = 'Not joined to a server yet. If the installer was given an invite, check the logs folder for the reason.';
+      if (join && join.pending) {
+        headline = join.attempt ? 'Joining the main server… it could not be reached yet; trying again.' : 'Joining the main server…';
+      } else if (join && join.last_error) {
+        tone = 'bad';
+        headline = 'The main server refused the invite. Ask for a new one and enter it on this server\'s dashboard under Servers.';
+      } else {
+        headline = 'Not joined to a server yet. If the installer was given an invite, check the logs folder for the reason.';
+      }
+      if (join && join.last_error) rows.push(['Why not', `<span class="err">${esc(join.last_error)}</span>`]);
     } else {
       const connected = rep.dial ? rep.dial.connected : rep.edge === 'up';
       if (!connected) { tone = 'bad'; headline = 'Not connected to the main server. Screens keep playing what is cached here.'; }

@@ -90,11 +90,16 @@ async function joinPrimary(db, { primaryUrl, code, roles = [], tlsVerify = true,
   const call = async (path, body) => {
     try {
       const r = await post(`${base.url}${path}`, body, { tlsVerify });
-      if (!r.ok) return { ok: false, reason: (r.json && r.json.error) || `The primary refused (${r.status}).` };
+      // retryable: the primary was busy or down, not refusing. A 4xx is an answer and is final.
+      if (!r.ok) {
+        return { ok: false, reason: (r.json && r.json.error) || `The primary refused (${r.status}).`,
+                 retryable: r.status >= 500 || r.status === 429 };
+      }
       return { ok: true, json: r.json || {} };
     } catch (e) {
-      return { ok: false, reason: `Could not reach ${base.url}: ${e && e.message}. Check the address, and that this ` +
-                                  'server can open a connection to it (no inbound route to this server is needed).' };
+      return { ok: false, retryable: true,
+               reason: `Could not reach ${base.url}: ${e && e.message}. Check the address, and that this ` +
+                       'server can open a connection to it (no inbound route to this server is needed).' };
     }
   };
 
