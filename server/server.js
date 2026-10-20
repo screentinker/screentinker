@@ -745,6 +745,9 @@ const VIEWER_STORAGE_SHIM = ' (function(){try{var m={};var s={getItem:function(k
   + 'setItem:function(k,v){m[k]=String(v);},removeItem:function(k){delete m[k];},clear:function(){m={};},'
   + 'key:function(i){return Object.keys(m)[i]||null;}};Object.defineProperty(s,"length",{get:function(){return Object.keys(m).length;}});'
   + 'Object.defineProperty(window,"localStorage",{value:s,configurable:true});Object.defineProperty(window,"sessionStorage",{value:s,configurable:true});}catch(e){}})();';
+function escapeHtmlText(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 function sendPlayer(res, file, opts) {
   const playerHtmlPath = path.join(__dirname, 'player', file);
   fs.readFile(playerHtmlPath, 'utf8', (err, html) => {
@@ -752,9 +755,18 @@ function sendPlayer(res, file, opts) {
     // View-only viewers (routes/view.js) never report: there is no device to attribute it to.
     const viewer = opts && opts.viewer;
     const reportingEnabled = !viewer && String(process.env.PLAYER_DEBUG_REPORTING || 'on').toLowerCase() !== 'off';
+    // #674: the brand this hostname resolves to (custom domain, then the platform default). A screen
+    // that is not paired yet has no workspace, so this is what the setup screen shows; once paired,
+    // device:paired carries the workspace's own brand and the page switches to it.
+    let brand = { name: 'ScreenTinker', hidden: false };
+    try {
+      const { resolveBranding, playerBrand } = require('./lib/branding');
+      brand = playerBrand(resolveBranding(require('./db/database').db, { domain: ((res.req && res.req.hostname) || '').toString() }));
+    } catch (e) { /* branding is best-effort; the player matters more */ }
     const inject =
       '  <script>window.__playerConfig = window.__playerConfig || {}; ' +
       'window.__playerConfig.debugReporting = ' + JSON.stringify(reportingEnabled) + ';' +
+      ' window.__playerConfig.brand = ' + JSON.stringify(brand).replace(/</g, '\\u003c') + ';' +
       // `<` escaped so nothing in the object can close the script element.
       (viewer ? ' window.__playerConfig.viewer = ' + JSON.stringify(viewer).replace(/</g, '\\u003c') + ';' + VIEWER_STORAGE_SHIM : '') +
       '</script>\n';
@@ -781,6 +793,13 @@ function sendPlayer(res, file, opts) {
       console.warn('[player] ST_PLAYER_VERSION marker not found — page will report a stale client_version');
     }
     modified = stamped;
+    // #674: brand the markup itself, so the first paint is already right (the script re-applies it
+    // when a paired screen's workspace brand differs). Hidden = the heading is left empty.
+    const brandHtml = escapeHtmlText(brand.name);
+    modified = modified
+      .replace('<title>ScreenTinker Player</title>', '<title>' + (brand.name ? brandHtml + ' Player' : 'Player') + '</title>')
+      .replace('<h1 data-brand>ScreenTinker</h1>', '<h1 data-brand>' + brandHtml + '</h1>')
+      .replace('<h2 data-brand>ScreenTinker</h2>', '<h2 data-brand>' + brandHtml + '</h2>');
     // A viewer page carries its access token in the URL: never stored by a cache on the way.
     res.type('html').setHeader('Cache-Control', viewer ? 'no-store' : 'no-cache');
     res.send(modified);
@@ -3240,7 +3259,8 @@ app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (
   require('./lib/device-group-rules').reconcileDeviceAsSystem(db, null, device.id);
 
   // Notify the device via WebSocket — or, scale-out C2, through the replica it is attached to.
-  const pairedMsg = { device_id: device.id, name: pairedName, settings_pin: settingsPin };
+  const pairedMsg = { device_id: device.id, name: pairedName, settings_pin: settingsPin,
+    brand: require('./lib/branding').playerBrandForDevice(require('./db/database').db, device.id) };   // #674
   const pairedRoom = deviceNs.adapter.rooms.get(device.id);
   if (pairedRoom && pairedRoom.size > 0) {
     deviceNs.to(device.id).emit('device:paired', pairedMsg);

@@ -60,4 +60,27 @@ function publicBranding(row) {
   return out;
 }
 
-module.exports = { resolveBranding, platformDefaultRow, publicBranding, HARDCODED_BRANDING, PLATFORM_DEFAULT_ID };
+// #674: the name a SCREEN shows (web player: setup, status and tap-to-start screens, tab title).
+// A custom brand_name is always shown. "Hide platform branding" only ever hides the upstream name,
+// so an instance that hides branding but never renamed itself shows no product name at all. The
+// result is plain text: the caller escapes it for wherever it lands.
+function playerBrand(row) {
+  const r = row || HARDCODED_BRANDING;
+  const name = String(r.brand_name || '').trim().slice(0, 80);
+  const upstream = !name || name === HARDCODED_BRANDING.brand_name;
+  if (upstream && r.hide_branding) return { name: '', hidden: true };
+  return { name: name || HARDCODED_BRANDING.brand_name, hidden: false };
+}
+
+// The brand of the workspace a display belongs to. Workspace row, then the platform default, as for
+// the dashboard. Never throws: a screen's pairing must not depend on branding.
+function playerBrandForDevice(db, deviceId) {
+  try {
+    const d = db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(deviceId);
+    return playerBrand(resolveBranding(db, { workspaceId: (d && d.workspace_id) || null }));
+  } catch (e) {
+    return undefined;
+  }
+}
+
+module.exports = { resolveBranding, platformDefaultRow, publicBranding, playerBrand, playerBrandForDevice, HARDCODED_BRANDING, PLATFORM_DEFAULT_ID };

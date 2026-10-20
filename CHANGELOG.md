@@ -91,6 +91,14 @@
 
 ### Fixed
 
+- **The web player uses the instance's branding** (#674). On a white-labelled instance, `/player`
+  still said "ScreenTinker" on the tap-to-start screen, the status and setup screens, the info
+  overlay and the tab title. It now shows the brand name instead: the one for the hostname before a
+  screen is paired, then the brand of the workspace it's paired to (`device:paired` carries it, and
+  the player remembers it across reboots). With **Hide platform branding** on and no brand name of
+  its own, a screen shows no product name at all. This covers every screen that opens the `/player`
+  address (a browser, a kiosk, a panel's URL launcher). The installed apps (Android, Fire TV, Tizen, webOS, Roku, the
+  native players) are unchanged: their names and icons are part of the published build.
 - **A camera in a layout zone reconnects by itself (Android).** A zone with one item had no error
   handling at all, and no zone had a stall watchdog. A camera whose connection dropped (the NVR
   restarted, the Wi-Fi roamed, the camera rebooted) froze on its last frame until the app was

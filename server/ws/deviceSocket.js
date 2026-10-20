@@ -38,6 +38,7 @@ const logCoalescer = require('../lib/log-coalescer');
 const loopLag = require('../services/loop-lag');
 const incidentClassify = require('../lib/incident-classify'); // offline-cause log: disconnect-reason + connectivity classification
 const pluginHooks = require('../lib/plugins/hooks');
+const { playerBrandForDevice } = require('../lib/branding'); // #674: device:paired carries the workspace brand
 const playerTermination = require('../lib/mesh/player-termination'); // scale-out C2: players on a replica
 
 // Debounce window for marking a device offline on socket disconnect. Brief
@@ -3032,7 +3033,8 @@ module.exports = function setupDeviceSocket(io) {
                   socket.emit('device:paired', {
                     device_id: oldDevice.id,
                     name: oldDevice.name || 'Display',
-                    settings_pin: oldDevice.settings_pin || undefined
+                    settings_pin: oldDevice.settings_pin || undefined,
+                    brand: playerBrandForDevice(db, oldDevice.id)   // #674
                   });
                 }
                 currentDeviceId = existing.device_id;
@@ -3260,7 +3262,7 @@ module.exports = function setupDeviceSocket(io) {
           // — never received it and sat on the Connect page forever showing the URL (Bold #143).
           // Re-send the exact event the client already listens for; no client change needed.
           if (device.user_id) {
-            socket.emit('device:paired', { device_id, name: device.name || 'Display', settings_pin: device.settings_pin || undefined });
+            socket.emit('device:paired', { device_id, name: device.name || 'Display', settings_pin: device.settings_pin || undefined, brand: playerBrandForDevice(db, device_id) });
           }
           logDeviceStatus(device_id, 'online');
           // Flush any commands/playlist-updates queued while this device was offline.
