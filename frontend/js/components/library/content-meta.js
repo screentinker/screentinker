@@ -97,6 +97,8 @@ export function usageText(c) {
 export function thumbOf(c) {
   const ty = typeOf(c).key;
   if (ty === 'youtube') return c.thumbnail_path ? { src: c.thumbnail_path, auth: false } : null;
+  // An ONVIF camera has a snapshot from the camera itself (routes/onvif.js); other live streams have none.
+  if (ty === 'live' && c.onvif && c.thumbnail_path) return { src: `/api/content/${c.id}/thumbnail`, auth: true };
   if (['hold', 'hdmi', 'live', 'bundle'].includes(ty)) return null;
   if (c.remote_url) return ty === 'image' && /^https:/i.test(c.remote_url) ? { src: c.remote_url, auth: false } : null;
   if (c.thumbnail_path) return { src: `/api/content/${c.id}/thumbnail`, auth: true };

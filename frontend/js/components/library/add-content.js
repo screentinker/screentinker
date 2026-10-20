@@ -20,7 +20,7 @@
 import { api } from '../../api.js';
 import { plansVisible } from '../plan-nudges.js';
 import { esc } from '../../utils.js';
-import { t } from '../../i18n.js';
+import { t, tn } from '../../i18n.js';
 import { showToast } from '../toast.js';
 import { openDialog, confirmDialog } from './dialog.js';
 import { mountStockPicker, stockStatus } from '../stock-picker.js';
@@ -31,6 +31,7 @@ const ICONS = {
   youtube: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="3"/><polygon points="10 9 15 12 10 15 10 9"/></svg>',
   doc: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
   stream: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>',
+  onvif: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7h13l5-3v12l-5-3H3z"/><circle cx="9" cy="10" r="2"/><path d="M8 13v5M5 21h8"/></svg>',
   hdmi: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>',
   stock: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
   canva: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="8" cy="10" r="1.2"/><circle cx="12" cy="7.5" r="1.2"/><circle cx="16" cy="10" r="1.2"/><path d="M12 22a3 3 0 0 1 0-6h2"/></svg>',
@@ -53,6 +54,7 @@ const MEDIA_TYPES = [
 const EXT_TYPE = { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/mp4', webm: 'video/webm', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', mp3: 'audio/mpeg', wav: 'audio/wav' };
 
 function parseUrl(raw) { try { return new URL(String(raw || '').trim()); } catch { return null; } }
+function hostOf(raw) { const u = parseUrl(raw); return u ? u.host : String(raw || ''); }
 function lastSegment(u) {
   try { return decodeURIComponent(u.pathname.split('/').filter(Boolean).pop() || ''); } catch { return ''; }
 }
@@ -119,7 +121,7 @@ export function openAddContent(opts) {
   const state = {
     view: 'home',
     dest: { ...opts.destination },
-    forms: { url: {}, youtube: {}, doc: { mode: 'doc' }, stream: {}, hdmi: { port: '' } },
+    forms: { url: {}, youtube: {}, doc: { mode: 'doc' }, stream: {}, onvif: {}, hdmi: { port: '' } },
     submitting: false,
     canva: null,
     stock: null,
@@ -185,6 +187,7 @@ export function openAddContent(opts) {
       { key: 'youtube', icon: ICONS.youtube, title: t('library.add.src_youtube'), desc: t('library.add.src_youtube_desc') },
       { key: 'doc', icon: ICONS.doc, title: t('library.add.src_doc'), desc: t('library.add.src_doc_desc') },
       { key: 'stream', icon: ICONS.stream, title: t('library.add.src_stream'), desc: t('library.add.src_stream_desc') },
+      { key: 'onvif', icon: ICONS.onvif, title: t('onvif.src_title'), desc: t('onvif.src_desc') },
       { key: 'hdmi', icon: ICONS.hdmi, title: t('library.add.src_hdmi'), desc: t('library.add.src_hdmi_desc') },
     ];
     const st = state.stock;
@@ -261,7 +264,7 @@ export function openAddContent(opts) {
       return;
     }
     if (state.view === 'dest') { renderDest(); return; }
-    const renderers = { url: renderUrl, youtube: renderYoutube, doc: renderDoc, stream: renderStream, hdmi: renderHdmi, canva: renderCanva, stock: renderStock };
+    const renderers = { url: renderUrl, youtube: renderYoutube, doc: renderDoc, stream: renderStream, onvif: renderOnvif, hdmi: renderHdmi, canva: renderCanva, stock: renderStock };
     renderers[state.view]();
   }
 
@@ -524,6 +527,129 @@ export function openAddContent(opts) {
         const rtsps = /^rtsps:/i.test(f.url.trim());
         const item = await api.addHlsContent(f.url.trim(), (f.name || '').trim(), state.dest.folderId, { tls_self_signed: rtsps && !!f.selfSigned });
         done(item, 'stream', t('content.toast.hls_added'));
+      });
+    });
+  }
+
+  /* ---------------- ONVIF camera ---------------- */
+  /*
+   * Three steps on one form: choose how the cameras are reached (this server, or a screen on their
+   * network: routes/onvif.js `via`), find one (search, or type its address), then sign in and pick a
+   * stream. The result is an ordinary live stream item; the password is stored encrypted on the
+   * server and never shown again. Transient results live in `_` keys so they don't count as typing.
+   */
+  function renderOnvif() {
+    const f = state.forms.onvif;
+    if (!f._bridges) {
+      dlg.body.innerHTML = `${formHead(t('onvif.src_title'))}<p class="lib-field-help" role="status">${esc(t('onvif.loading'))}</p>`;
+      api.get('/onvif/bridges').then((r) => { f._bridges = r; }).catch((e) => { f._bridges = { server: 'none', screens: [], error: e.message }; })
+        .then(() => { if (state.view === 'onvif') renderOnvif(); });
+      return;
+    }
+    const br = f._bridges;
+    const options = [
+      ...(br.server !== 'none' ? [{ value: 'server', label: t('onvif.via_server'), disabled: false }] : []),
+      ...br.screens.map((s) => ({ value: s.id, label: s.online ? s.name : t('onvif.via_screen_offline', { name: s.name }), disabled: !s.online })),
+    ];
+    if (!f.via || !options.some((o) => o.value === f.via && !o.disabled)) f.via = (options.find((o) => !o.disabled) || {}).value || '';
+    const found = f._found || null;
+    const insp = f._inspect || null;
+    const profileOpt = (p) => `<option value="${esc(p.token)}" ${p.token === f.profile ? 'selected' : ''}>${esc(p.name)}${p.width ? ` · ${p.width}×${p.height}` : ''}${p.encoding ? ` · ${esc(p.encoding)}` : ''}${p.ptz ? ` · ${esc(t('onvif.ptz_badge'))}` : ''}</option>`;
+    dlg.body.innerHTML = `
+      ${formHead(t('onvif.src_title'))}
+      <form novalidate aria-labelledby="libFormTitle">
+        ${options.length ? `
+        <div class="lib-field">
+          <label for="onvifVia">${esc(t('onvif.via_label'))}</label>
+          <select id="onvifVia" class="input" aria-describedby="onvifVia-help">
+            ${options.map((o) => `<option value="${esc(o.value)}" ${o.value === f.via ? 'selected' : ''} ${o.disabled ? 'disabled' : ''}>${esc(o.label)}</option>`).join('')}
+          </select>
+          <div class="lib-field-help" id="onvifVia-help">${esc(t('onvif.via_help'))}</div>
+        </div>
+        <div class="lib-field">
+          <button type="button" class="btn btn-secondary" data-act="onvif-search">${esc(t('onvif.search'))}</button>
+          <span class="lib-field-help" role="status" data-onvif-search-status>${esc(f._searchStatus || '')}</span>
+          ${found && found.length ? `<ul class="lib-dest-list" style="margin-top:8px">${found.map((c, i) => `
+            <li><label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+              <input type="radio" name="onvifFound" value="${i}" ${c.xaddr === f.xaddr ? 'checked' : ''} style="width:auto;margin:0">
+              <span><strong>${esc(c.name || c.hardware || t('onvif.unnamed'))}</strong> <span class="lib-field-help">${esc(hostOf(c.xaddr))}${c.hardware && c.name ? ' · ' + esc(c.hardware) : ''}</span></span>
+            </label></li>`).join('')}</ul>` : ''}
+        </div>
+        ${field('onvifHost', t('onvif.address_label'), f.host, { placeholder: '192.168.1.20', required: true, help: esc(t('onvif.address_help')) })}
+        ${field('onvifUser', t('onvif.username_label'), f.username, { autocomplete: 'off' })}
+        ${field('onvifPass', t('onvif.password_label'), f.password, { type: 'password', autocomplete: 'new-password', help: esc(t('onvif.password_help')) })}
+        <div class="lib-field">
+          <button type="button" class="btn btn-secondary" data-act="onvif-connect">${esc(t('onvif.connect'))}</button>
+          <span class="lib-field-err" role="alert" data-onvif-connect-err></span>
+        </div>
+        ${insp ? `
+        <p class="lib-field-help">${esc(t('onvif.connected_as', { name: [insp.manufacturer, insp.model].filter(Boolean).join(' ') || hostOf(insp.xaddr) }))}${insp.ptz ? ' · ' + esc(t('onvif.can_ptz')) : ''}</p>
+        <div class="lib-field">
+          <label for="onvifProfile">${esc(t('onvif.stream_label'))}</label>
+          <select id="onvifProfile" class="input" aria-describedby="onvifProfile-help">${insp.profiles.map(profileOpt).join('')}</select>
+          <div class="lib-field-help" id="onvifProfile-help">${esc(t('onvif.stream_help'))}</div>
+        </div>
+        ${field('onvifName', t('library.add.name_label'), f.name, { placeholder: [insp.manufacturer, insp.model].filter(Boolean).join(' ') })}` : ''}
+        ` : `<p class="lib-requirement">${esc(br.error || t('onvif.no_bridge'))}</p>`}
+        ${destFooter()}
+        ${submitRow(t('onvif.add'))}
+      </form>`;
+    const b = dlg.body;
+    const submitBtn = b.querySelector('[data-submit]');
+    if (!insp) submitBtn.disabled = true;
+    const on = (sel, ev, fn) => { const el = b.querySelector(sel); if (el) el.addEventListener(ev, fn); };
+    on('#onvifVia', 'change', (e) => { f.via = e.target.value; f._found = null; f._inspect = null; f._searchStatus = ''; renderOnvif(); });
+    on('#onvifHost', 'input', (e) => { f.host = e.target.value; f.xaddr = ''; setErr('onvifHost', ''); });
+    on('#onvifUser', 'input', (e) => { f.username = e.target.value; });
+    on('#onvifPass', 'input', (e) => { f.password = e.target.value; });
+    on('#onvifProfile', 'change', (e) => { f.profile = e.target.value; });
+    on('#onvifName', 'input', (e) => { f.name = e.target.value; });
+    b.querySelectorAll('input[name="onvifFound"]').forEach((r) => r.addEventListener('change', () => {
+      const c = found[Number(r.value)];
+      f.xaddr = c.xaddr; f.host = c.xaddr; f._inspect = null;
+      if (!f.name && c.name) f.name = c.name;
+      renderOnvif();
+      const pass = dlg.body.querySelector('#onvifUser'); if (pass) pass.focus();
+    }));
+    on('[data-act="onvif-search"]', 'click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+      f._searchStatus = t('onvif.searching');
+      b.querySelector('[data-onvif-search-status]').textContent = f._searchStatus;
+      try {
+        const r = await api.post('/onvif/discover', { via: f.via });
+        f._found = r.cameras;
+        f._searchStatus = r.cameras.length ? tn('onvif.found_n', r.cameras.length) : t('onvif.found_none');
+      } catch (err) { f._found = null; f._searchStatus = err.message; }
+      if (state.view === 'onvif') renderOnvif();
+    });
+    on('[data-act="onvif-connect"]', 'click', async (e) => {
+      if (!f.host || !f.host.trim()) return setErr('onvifHost', t('onvif.err_address'));
+      const btn = e.currentTarget;
+      const errEl = b.querySelector('[data-onvif-connect-err]');
+      btn.disabled = true; btn.setAttribute('aria-busy', 'true'); errEl.textContent = '';
+      try {
+        const r = await api.post('/onvif/inspect', { via: f.via, ...(f.xaddr ? { xaddr: f.xaddr } : { host: f.host.trim() }), username: f.username || '', password: f.password || '' });
+        f._inspect = r;
+        f.xaddr = r.xaddr;
+        // The first profile is the camera's main stream on almost every camera.
+        if (!r.profiles.some((p) => p.token === f.profile)) f.profile = r.profiles[0].token;
+        if (state.view === 'onvif') renderOnvif();
+        const sel = dlg.body.querySelector('#onvifProfile'); if (sel) sel.focus();
+      } catch (err) {
+        errEl.textContent = err.message;
+        btn.disabled = false; btn.removeAttribute('aria-busy');
+        if (err.code === 'not-authorized') { const p = b.querySelector('#onvifPass'); if (p) p.focus(); }
+      }
+    });
+    wireForm((form) => {
+      if (!insp) return;
+      return submitting(form, async () => {
+        const item = await api.post('/onvif/cameras', {
+          via: f.via, xaddr: insp.xaddr, username: f.username || '', password: f.password || '',
+          profile_token: f.profile, name: (f.name || '').trim(), folder_id: state.dest.folderId || null,
+        });
+        done(item, 'onvif', t('onvif.toast_added'));
       });
     });
   }

@@ -191,10 +191,10 @@ test('Canva appears only where it can work, and Connect only where the OAuth flo
 test('no invented sources: every tile posts to a route the server has', () => {
   const a = read('components/library/add-content.js');
   const tiles = [...a.slice(a.indexOf('function sources()'), a.indexOf('function destFooter()')).matchAll(/key: '(\w+)'/g)].map((m) => m[1]);
-  assert.deepEqual(tiles, ['url', 'youtube', 'doc', 'stream', 'hdmi', 'stock', 'canva', 'migrate']);
+  assert.deepEqual(tiles, ['url', 'youtube', 'doc', 'stream', 'onvif', 'hdmi', 'stock', 'canva', 'migrate']);
   // 3.0 switch to ScreenTinker: the tile leaves for its own wizard (routes/migrate.js) instead of a form.
   assert.ok(a.includes("window.location.hash = '#/migrate'"));
-  for (const call of ['api.addRemoteContent(', 'api.addYoutubeContent(', "api.post('/widgets'", 'api.addHlsContent(', 'opts.onOpenCanva(', 'opts.onOpenCloudFolders(', 'mountStockPicker(']) {
+  for (const call of ['api.addRemoteContent(', 'api.addYoutubeContent(', "api.post('/widgets'", "api.post('/onvif/cameras'", 'api.addHlsContent(', 'opts.onOpenCanva(', 'opts.onOpenCloudFolders(', 'mountStockPicker(']) {
     assert.ok(a.includes(call), call);
   }
   assert.doesNotMatch(a, /drive\.google|dropbox|vimeo/i);

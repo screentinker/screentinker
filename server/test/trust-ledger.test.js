@@ -219,6 +219,8 @@ const ALLOWED = {
   'lib/canva.js': 'feature',
   'lib/ghcr-check.js': 'feature',
   'lib/go2rtc.js': 'feature',
+  // ONVIF: HTTP goes through lib/ssrf-guard; the WS-Discovery Probe is UDP multicast it can't carry.
+  'lib/onvif/transport.js': 'feature',
   'lib/live-publish-ws.js': 'feature',
   'lib/m365.js': 'feature',
   'lib/mesh/content-cache.js': 'feature',

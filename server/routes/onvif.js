@@ -36,10 +36,13 @@ const { OnvifError } = require('../lib/onvif/soap');
 const router = express.Router();
 const RTSP_MIME = 'video/rtsp';
 
-/** An OnvifError as a response a person can act on. */
+/**
+ * An OnvifError as a response a person can act on. ⚠️ The CAMERA refusing the password is 422,
+ * never 401: the dashboard treats any 401 as the person's own session ending and signs them out.
+ */
 function sendError(res, e) {
   if (e instanceof OnvifError) {
-    const status = e.code === 'not-authorized' ? 401
+    const status = e.code === 'not-authorized' ? 422
       : e.code === 'server-blocked' ? 403
         : /^screen-(offline|timeout|elsewhere)$/.test(e.code) ? 503
           : e.code === 'screen-unsupported' || e.code === 'no-ptz' ? 409

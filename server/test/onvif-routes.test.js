@@ -119,9 +119,9 @@ test('API tokens cannot reach the ONVIF routes (JWT-only)', async () => {
   assert.equal(r.status, 401);
 });
 
-test('inspect: a wrong password is a 401 with code not-authorized; the right one lists profiles with PTZ', async () => {
+test('inspect: a wrong camera password is a 422 (never 401: that signs the person out) with code not-authorized; the right one lists profiles with PTZ', async () => {
   const bad = await post('/api/onvif/inspect', { via: 'server', xaddr: cam.xaddr, username: 'admin', password: 'nope' });
-  assert.equal(bad.status, 401);
+  assert.equal(bad.status, 422);
   assert.equal(bad.body.code, 'not-authorized');
   const ok = await post('/api/onvif/inspect', { via: 'server', host: `127.0.0.1:${cam.port}`, username: 'admin', password: 'secret' });
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
@@ -171,7 +171,7 @@ test('refresh: re-asks the stream address with the stored password, or a new one
   const r = await post(`/api/onvif/cameras/${S.camId}/refresh`, {});
   assert.equal(r.status, 200, JSON.stringify(r.body));
   const bad = await post(`/api/onvif/cameras/${S.camId}/refresh`, { password: 'wrong' });
-  assert.equal(bad.status, 401);
+  assert.equal(bad.status, 422);
   assert.equal(db.prepare('SELECT remote_url FROM content WHERE id = ?').get(S.camId).remote_url, 'rtsp://admin:secret@127.0.0.1:554/main', 'a failed refresh changes nothing');
   const snap = await post(`/api/onvif/cameras/${S.camId}/snapshot`, {});
   assert.equal(snap.status, 200);
