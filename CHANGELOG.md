@@ -91,6 +91,18 @@
 
 ### Fixed
 
+- **A whole-server export can no longer fill the disk** (Platform → Data & privacy). One did on our
+  own server: it needed about twice the export's size, never checked free space, and when the disk
+  filled it hung with its files left behind. Every 15 minutes a sweep also put the hung export back in
+  the queue, so the next restart would have started it again. Now:
+  - It's refused up front (HTTP 507, with the sizes) when it won't fit and still leave 5% of the
+    disk, or at least 1 GB, free. Free space is checked again before each organization.
+  - Each organization's zip is deleted as soon as it has been copied into the bundle, so the export
+    needs about its own size plus the largest organization, not twice its size.
+  - A write error (a full disk) ends the export as failed, and its files are removed. This applies to
+    organization and personal exports too.
+  - An export a restart interrupted is marked failed, never queued again, and its leftover files are
+    removed when the server starts.
 - **The web player uses the instance's branding** (#674). On a white-labelled instance, `/player`
   still said "ScreenTinker" on the tap-to-start screen, the status and setup screens, the info
   overlay and the tab title. It now shows the brand name instead: the one for the hostname before a
