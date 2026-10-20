@@ -9,6 +9,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.webrtc.AudioTrack
 import org.webrtc.DataChannel
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.EglBase
@@ -48,6 +49,13 @@ import java.util.concurrent.TimeUnit
  * on the single [ctl] thread, never on a WebRTC callback thread, and the window detaches its renderer
  * BEFORE the PeerConnection is disposed. Unlike Talk there are no retries: a share that fails ends,
  * the sharer is told why, and the playlist — which never stopped underneath — is simply visible again.
+ *
+ * Several presenters at once: ScreenShareController holds up to four of these, one per session.
+ * Each keeps its OWN factory, audio device module and EGL context, exactly as a lone share did —
+ * the least invasive way to run several (nothing shared to reference-count, and one session's
+ * teardown can never pull a native object out from under another). The cost is up to four decoders,
+ * EGL contexts and AudioTracks at once. Only one is heard: [setAudioEnabled] disables the others'
+ * remote audio track (libwebrtc then plays it at volume 0).
  */
 class ScreenShareReceiver(
     private val appContext: Context,
@@ -69,6 +77,10 @@ class ScreenShareReceiver(
     private var pc: PeerConnection? = null
     private var ws: WebSocket? = null
     private var videoTrack: VideoTrack? = null
+    private var audioTrack: AudioTrack? = null   // ctl only
+    // Whether this presenter's sound may play. Off until the controller decides (it does on every
+    // start, end and layout), so a newcomer is never briefly heard over the one that should be.
+    @Volatile private var audioWanted = false
     private val pendingLocal = ArrayList<String>()
     @Volatile private var wsReady = false
     @Volatile private var ended = false
@@ -94,6 +106,20 @@ class ScreenShareReceiver(
     }
 
     val sessionId: String get() = start.sessionId
+
+    /**
+     * Play (true) or silence (false) this presenter's sound. Any thread, any time: before the track
+     * has arrived it is remembered and applied when it does (onTrack); after stop() the ctl executor
+     * is shut down, so nothing can touch a disposed track.
+     */
+    fun setAudioEnabled(on: Boolean) {
+        if (audioWanted == on) return
+        audioWanted = on
+        submit {
+            if (ended) return@submit
+            try { audioTrack?.setEnabled(audioWanted) } catch (_: Throwable) {}
+        }
+    }
 
     fun begin() {
         ScreenShareBus.start(start)
@@ -199,6 +225,7 @@ class ScreenShareReceiver(
             try { ws?.close(1000, "stop") } catch (_: Throwable) {}
             // 3. Native objects, in the order AudioTalker uses.
             try { videoTrack?.removeSink(firstFrame) } catch (_: Throwable) {}
+            audioTrack = null   // owned by the PeerConnection: disposed with it below
             try { pc?.close(); pc?.dispose() } catch (_: Throwable) {}
             try { factory?.dispose() } catch (_: Throwable) {}
             try { adm?.release() } catch (_: Throwable) {}
@@ -233,7 +260,15 @@ class ScreenShareReceiver(
                     eglBase?.eglBaseContext?.let { ScreenShareBus.track(start.sessionId, t, it) }
                 }
             }
-            // Audio: the JavaAudioDeviceModule plays a received track by itself.
+            // Audio: the JavaAudioDeviceModule plays a received track by itself — unless it is
+            // disabled, which is how every presenter but the one whose sound plays is kept silent.
+            if (t is AudioTrack && !ended) {
+                submit {
+                    if (ended) return@submit
+                    audioTrack = t
+                    try { t.setEnabled(audioWanted) } catch (_: Throwable) {}
+                }
+            }
         }
         override fun onIceConnectionChange(p0: PeerConnection.IceConnectionState?) {}
         override fun onIceGatheringChange(p0: PeerConnection.IceGatheringState?) {}

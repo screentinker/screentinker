@@ -708,6 +708,9 @@ class WebSocketService : Service() {
                 safeOn("device:screenshare-start") { args -> screenShare.onStart(args.firstOrNull() as? JSONObject) }
                 safeOn("device:screenshare-stop") { args -> screenShare.onStop(args.firstOrNull() as? JSONObject) }
                 safeOn("device:screenshare-code") { args -> screenShare.onCode(args.firstOrNull() as? JSONObject) }
+                // Several presenters at once (remote.screen_share_tiles): which one fills the screen
+                // (spotlight, null = tiles) and whose sound plays — {spotlight, audio, count}.
+                safeOn("device:screenshare-layout") { args -> screenShare.onLayout(args.firstOrNull() as? JSONObject) }
 
                 safeOn("device:remote-touch") { args ->
                     if (privacyOn()) { Log.i("WebSocketService", "remote touch refused: interactive session in progress"); return@safeOn }

@@ -4,6 +4,13 @@
 
 ### Added
 
+- **Several presenters at once on Android screens.** The Android player shows up to four screen
+  shares tiled, like the web player. It follows the room's spotlight (one presenter full screen,
+  the others kept connected) and plays only the chosen presenter's sound. The playlist comes back
+  when the last presenter leaves. It declares `remote.screen_share_tiles`, so the server now gives
+  Android screens more than one presenter when **several presenters** is on. Each share decodes
+  separately, so four at once needs a player with four hardware video decoders.
+
 - **A default zone for a playlist.** Under the playlist's **Layout**, pick the zone that **new** items
   go to when they're added without one (from the Manager app, the API, Make a sign, content requests,
   agency uploads, cloud folders...). It replaces the layout's main zone for that playlist's new items
