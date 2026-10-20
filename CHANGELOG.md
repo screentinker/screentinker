@@ -48,6 +48,17 @@
 
 ### Fixed
 
+- **A camera in a layout zone reconnects by itself (Android).** A zone with one item had no error
+  handling at all, and no zone had a stall watchdog. A camera whose connection dropped (the NVR
+  restarted, the Wi-Fi roamed, the camera rebooted) froze on its last frame until the app was
+  restarted. Zone and video-wall videos are now watched like full-screen video:
+  - Watched: the frames actually drawn, so a picture that stops changing counts as a fault.
+  - An error, or 10 s with no new frame (30 s buffering), is a fault.
+  - On a fault, a zone of one item reconnects in place after 2, 4, 8, 15, then every 30 s. A
+    rotating zone moves on as before.
+  - A live stream in a wall zone reconnects instead of showing the zone background until a
+    boundary it never reaches.
+
 - **Empty zones stay empty on the web player** (#666, reported by @djalfe). In a multi-zone layout, a
   zone with nothing assigned to it showed a copy of whatever was playing, so the same content
   appeared in zones it was never put in. This affected browsers, BrightSign and webOS, which use

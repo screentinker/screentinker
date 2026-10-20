@@ -6,6 +6,7 @@ import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.TextureView
 import android.view.View
@@ -40,9 +41,33 @@ class ZoneManager(
     private val onAllVideosComplete: () -> Unit
 ) {
     private val TAG = "ZoneManager"
+    /** How often zone videos are checked for a stall (PlaybackStall needs 10 s of no progress to call it). */
+    private val HEALTH_TICK_MS = 2_000L
     private val handler = Handler(Looper.getMainLooper())
     private val zoneViews = mutableMapOf<String, View>()
     private val zoneExoPlayers = mutableMapOf<String, ExoPlayer>()
+    /*
+     * Each zone video's watchdog (StreamHealth) and its pending reconnect, if one is scheduled.
+     * Ticked every HEALTH_TICK_MS while any zone shows video: a stalled stream raises no event.
+     */
+    private val zoneHealth = mutableMapOf<String, StreamHealth>()
+    private val zoneReconnect = mutableMapOf<String, Runnable>()
+    private var healthTicking = false
+    private val healthTick = object : Runnable {
+        override fun run() {
+            val now = SystemClock.elapsedRealtime()
+            for ((id, h) in zoneHealth.toMap()) {
+                val p = zoneExoPlayers[id] ?: continue
+                try {
+                    // Frames actually drawn: for a live camera, the picture changing. ensureUpdated()
+                    // because the counters are written on the playback thread.
+                    val frames = p.videoDecoderCounters?.let { it.ensureUpdated(); it.renderedOutputBufferCount.toLong() }
+                    h.observe(now, p.playbackState, p.playWhenReady, frames, p.currentPosition)
+                } catch (_: Throwable) { /* a player released under us: the next mount replaces it */ }
+            }
+            if (zoneHealth.isNotEmpty()) handler.postDelayed(this, HEALTH_TICK_MS) else healthTicking = false
+        }
+    }
     // A zone showing a fisheye camera as a normal view: its GL view and the view it is pointed at.
     // Live only while that GL view is still the zone's view (zoneViews), see fisheyeViews().
     private val zoneFisheye = mutableMapOf<String, Pair<FisheyeGlView, Fisheye.View>>()
@@ -299,6 +324,7 @@ class ZoneManager(
      */
     private fun mountZoneItem(zone: Zone, assignments: List<JSONObject>, activeIdx: Int, params: FrameLayout.LayoutParams, gen: Int, preDecoded: Bitmap?, txStartedAt: Long = 0L) {
         zoneViews.remove(zone.id)?.let { container.removeView(it) }
+        forgetZoneHealth(zone.id)
         zoneExoPlayers.remove(zone.id)?.release()
         zoneLiveInputs.remove(zone.id)?.release()
         zoneFaces[zone.id] = ZoneFace.NONE
@@ -415,30 +441,35 @@ class ZoneManager(
                     useController = false
                     layoutParams = params
                 }
-                val exoPlayer = ExoPlayer.Builder(context).build().apply {
+                val setSource: (ExoPlayer) -> Unit = { p ->
                     if (mimeType == "video/rtsp") {
                         // RTSP/RTSPS camera in a zone: TCP-interleaved, TLS for rtsps (RtspSources).
-                        setMediaSource(RtspSources.create(src, a.optInt("tls_self_signed", 0) == 1))
+                        p.setMediaSource(RtspSources.create(src, a.optInt("tls_self_signed", 0) == 1))
                     } else {
-                        setMediaItem(MediaItem.fromUri(src))   // ExoPlayer infers HLS from the .m3u8 (media3-exoplayer-hls)
+                        p.setMediaItem(MediaItem.fromUri(src))   // ExoPlayer infers HLS from the .m3u8 (media3-exoplayer-hls)
                     }
+                }
+                val exoPlayer = ExoPlayer.Builder(context).build().apply {
+                    setSource(this)
                     // A live stream never ends, so REPEAT is moot; a normal clip in a lone zone loops.
                     repeatMode = if (multi && !isLive) Player.REPEAT_MODE_OFF else Player.REPEAT_MODE_ALL
                     volume = if (isMuted) 0f else 1f
-                    if (multi) addListener(object : Player.Listener {
+                    addListener(object : Player.Listener {
                         override fun onPlaybackStateChanged(state: Int) {
                             // A live stream never reaches STATE_ENDED (it advances on its dwell timer
                             // below); a normal clip advances when it finishes.
-                            if (!isLive && state == Player.STATE_ENDED) handler.post { advance() }
+                            if (multi && !isLive && state == Player.STATE_ENDED) handler.post { advance() }
                         }
                         // Same reason MediaPlayerManager treats a playback error as a completion
                         // ("Root-2: a corrupt/undecodable video used to freeze the playlist
                         // forever"): an error lands in STATE_IDLE, never STATE_ENDED, so without
                         // this the zone stops rotating and goes black until the layout changes or
                         // the app restarts — while every other zone keeps going. Covers a dead
-                        // stream URL too, so a live zone skips instead of sitting black.
+                        // stream URL too, so a live zone skips instead of sitting black. A zone of ONE
+                        // item had no listener at all; it now reconnects (watchZoneVideo below).
                         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                            handler.post { advance() }
+                            com.remotedisplay.player.util.DebugLog.w("Zone", "'${zone.name}': video error ${error.errorCodeName}")
+                            handler.post { zoneHealth[zone.id]?.error(SystemClock.elapsedRealtime()) }
                         }
                     })
                     // A transition that wiped INTO this clip holds its last frame (= this clip's first)
@@ -465,6 +496,7 @@ class ZoneManager(
                     addZoneView(zone, playerView); zoneExoPlayers[zone.id] = exoPlayer
                 }
                 zoneFaces[zone.id] = ZoneFace.VIDEO
+                watchZoneVideo(zone, exoPlayer, gen, multi, advance) { p -> setSource(p); p.prepare(); p.playWhenReady = true }
                 // DWELL for a live stream in a rotating zone: it never fires STATE_ENDED, so advance on
                 // the dwell timer (duration_sec > 0). A dwell-0 stream stays until it is no longer the
                 // active pick (windows still re-evaluate on the slow cadence, without remounting).
@@ -859,7 +891,54 @@ class ZoneManager(
         }?.value?.let { it.second to it.first }
     }
 
+    /*
+     * The zone video's watchdog (StreamHealth): on an error or a stall, a zone of several items
+     * moves on at once (as an error always did), and a zone of ONE item reconnects the same player in
+     * place after FaultBackoff's 2/4/8/15/30 s, keeping its view, fisheye surface and position in
+     * the layout. Both guarded by the zone's generation and player: a stale timer from an item
+     * already replaced does nothing.
+     */
+    private fun watchZoneVideo(zone: Zone, player: ExoPlayer, gen: Int, multi: Boolean, advance: () -> Unit, reconnect: (ExoPlayer) -> Unit) {
+        val current = { zoneGeneration[zone.id] == gen && zoneExoPlayers[zone.id] === player }
+        val health = StreamHealth({ delayMs, reason ->
+            if (!current()) return@StreamHealth
+            if (multi) {
+                com.remotedisplay.player.util.DebugLog.w("Zone", "'${zone.name}': video $reason, moving on")
+                handler.post { advance() }
+                return@StreamHealth
+            }
+            com.remotedisplay.player.util.DebugLog.w("Zone", "'${zone.name}': video $reason, reconnecting in ${delayMs / 1000}s")
+            zoneReconnect.remove(zone.id)?.let { handler.removeCallbacks(it) }
+            val r = Runnable {
+                zoneReconnect.remove(zone.id)
+                if (!current()) return@Runnable
+                try {
+                    reconnect(player)
+                    com.remotedisplay.player.util.DebugLog.i("Zone", "'${zone.name}': reconnected")
+                } catch (e: Throwable) {
+                    Log.w(TAG, "zone reconnect failed: ${e.message}")
+                }
+                zoneHealth[zone.id]?.reconnected()
+            }
+            zoneReconnect[zone.id] = r
+            handler.postDelayed(r, delayMs)
+        })
+        zoneHealth[zone.id] = health
+        if (!healthTicking) { healthTicking = true; handler.postDelayed(healthTick, HEALTH_TICK_MS) }
+    }
+
+    private fun forgetZoneHealth(zoneId: String) {
+        zoneHealth.remove(zoneId)?.reset()
+        zoneReconnect.remove(zoneId)?.let { handler.removeCallbacks(it) }
+    }
+
     private fun releaseExoPlayers() {
+        zoneHealth.values.forEach { it.reset() }
+        zoneHealth.clear()
+        zoneReconnect.values.forEach { handler.removeCallbacks(it) }
+        zoneReconnect.clear()
+        handler.removeCallbacks(healthTick)
+        healthTicking = false
         zoneExoPlayers.values.forEach { it.release() }
         zoneExoPlayers.clear()
         zoneFisheye.clear()
