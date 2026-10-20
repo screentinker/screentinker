@@ -218,14 +218,14 @@ begin
     '# ScreenTinker cache node settings, written by the installer.' + #13#10 +
     '# Edit, then restart the "ScreenTinker Cache Node" service (services.msc).' + #13#10 +
     '# Holds JWT_SECRET: readable only by Administrators and SYSTEM. Keep it that way.' + #13#10 +
-    #13#10 +
+    '' + #13#10 +
     'NODE_ENV=production' + #13#10 +
     '# Screens on this network connect to http://<this PC>:PORT' + #13#10 +
     'PORT=' + Trim(CachePage.Values[1]) + #13#10 +
     '# The copy (database) and the media cache live here.' + #13#10 +
     'DATA_DIR=' + DataPage.Values[0] + #13#10 +
     'SELF_HOSTED=true' + #13#10 +
-    #13#10 +
+    '' + #13#10 +
     '# This PC is a replica of the main server below. It connects OUT to it; nothing needs to reach this PC.' + #13#10 +
     'MESH_ACCEPT_ENROLLMENT=true' + #13#10 +
     'PRIMARY_URL=' + Url + #13#10 +
