@@ -169,6 +169,22 @@ module.exports = function setupWebSockets(io) {
           // child that dialled out and may have no inbound route of its own.
           global.__meshContentOfferTo = meshNs.contentOfferTo;
           global.__meshContentPurgeTo = meshNs.contentPurgeTo;
+          /*
+           * Scale-out dial-out (lib/mesh/dial-out.js): primaries this replica JOINED are dialled from
+           * here, and each socket is adopted by attachDialed — handled exactly like one a primary opened
+           * to us. A node with no 'we-dial' edge opens nothing. REPLICA_JOIN_CODE joins once at boot.
+           */
+          try {
+            const { startMeshDialer, autoJoin } = require('../services/mesh-dialer');
+            const dialer = startMeshDialer(db, { attachDialed: meshNs.attachDialed, logger: console });
+            global.__meshDialer = dialer;
+            if (config.replicaJoinCode) {
+              setTimeout(() => {
+                autoJoin(db, config, { logger: console, onJoined: () => dialer.refresh() })
+                  .catch((e) => console.warn(`[mesh] REPLICA_JOIN_CODE: ${e && e.message}`));
+              }, 1000);
+            }
+          } catch (e) { console.warn(`[mesh] dial-out not started: ${e && e.message}`); }
         }
         console.log(`[mesh] listening for child nodes as ${thisNodeId}`);
       }
@@ -180,6 +196,23 @@ module.exports = function setupWebSockets(io) {
        */
       console.warn(`[mesh] listener not started: ${e && e.message}`);
     }
+  }
+
+  /*
+   * Scale-out dial-out, PRIMARY side: the door a replica behind NAT dials (ws/meshDialIn.js). Only
+   * with MESH_ALLOW_UPLINK — the flag that lets this server have a parent at all — and only for the
+   * 'they-dial' edges an invite created. Nothing is registered otherwise.
+   */
+  if (config.meshAllowUplink) {
+    try {
+      const { db } = require('../db/database');
+      require('./meshDialIn')(io, {
+        findInboundEdge: (hash) => db.prepare(
+          "SELECT * FROM mesh_edges WHERE token_hash = ? AND direction = 'up' AND transport_direction = 'they-dial'").get(hash),
+        // The uplink service starts after the sockets; it is looked up per connection, not captured.
+        attach: (edgeId, socket) => !!(global.__meshUplinks && global.__meshUplinks.attachInbound(edgeId, socket)),
+      });
+    } catch (e) { console.warn(`[mesh] dial-in door not opened: ${e && e.message}`); }
   }
 
   return { deviceNs, dashboardNs, meshNs };

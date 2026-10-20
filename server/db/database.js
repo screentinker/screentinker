@@ -3433,6 +3433,32 @@ const migrations = [
    * screen_share_max_presenters, 1-4).
    */
   'ALTER TABLE devices ADD COLUMN screen_share_multi INTEGER NOT NULL DEFAULT 0',
+  /*
+   * Scale-out: a replica that DIALS OUT to its primary (lib/mesh/dial-out.js, docs/scale-out.md
+   * "A replica behind NAT"). The primary mints an invite; the replica redeems it and keeps the
+   * connection open itself, so the primary never needs a route to the replica.
+   *
+   * mesh_edges.dial_token — the replica's plaintext edge token, ONLY on a `down` edge whose
+   *   transport_direction is 'we-dial'. Its own column for the same reason up_token is: a column
+   *   that is sometimes a secret and sometimes a hash is how one gets logged. The primary keeps
+   *   only the hash, in token_hash on its 'they-dial' `up` edge.
+   * mesh_invites — on the primary. The workspace scope is chosen at MINT time by the side giving
+   *   the data, exactly like a pairing code's grant; the redeemer cannot widen it. Burned in the
+   *   transaction that creates the edge, kept as the audit trail (never deleted).
+   */
+  'ALTER TABLE mesh_edges ADD COLUMN dial_token TEXT',
+  `CREATE TABLE IF NOT EXISTS mesh_invites (
+     id                TEXT PRIMARY KEY,
+     code              TEXT NOT NULL,
+     shared_workspaces TEXT,
+     grant_categories  TEXT NOT NULL DEFAULT '["workspace-replication"]',
+     created_by        TEXT,
+     created_at        INTEGER NOT NULL,
+     expires_at        INTEGER NOT NULL,
+     burned_at         INTEGER,
+     burned_by_node    TEXT
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_mesh_invites_code ON mesh_invites (code)',
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.

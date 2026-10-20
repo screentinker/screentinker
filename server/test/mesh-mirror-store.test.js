@@ -36,7 +36,7 @@ function freshDb() {
       transport_direction TEXT NOT NULL, retention_days INTEGER, tombstone_purge_days INTEGER,
       tls_verify INTEGER NOT NULL DEFAULT 1, peer_version TEXT, peer_min_version TEXT,
       token_hash TEXT, token_expires_at INTEGER, client_id TEXT, created_at INTEGER,
-      last_sync_at INTEGER, revoked_at INTEGER, peer_url TEXT, up_token TEXT, peer_name TEXT,
+      last_sync_at INTEGER, revoked_at INTEGER, peer_url TEXT, up_token TEXT, dial_token TEXT, peer_name TEXT,
       shared_workspaces TEXT,
       -- Phase 5 write consent. ⚠️ Set ONLY by the child's own operator; the wire may never write
       -- these, which is why they are absent from the enrollment INSERT and its ON CONFLICT clause.

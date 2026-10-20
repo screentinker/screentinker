@@ -81,7 +81,8 @@ const FILES = {
   'lib/ghcr-check.js': 'updates',
   'routes/templates.js': 'template_catalog', 'routes/templates-gallery.js': 'template_catalog',
   'routes/mcp.js': 'mcp',
-  'services/mesh-uplink.js': 'mesh', 'routes/mesh-enroll.js': 'mesh', 'routes/mesh.js': 'mesh',
+  'services/mesh-uplink.js': 'mesh', 'routes/mesh-enroll.js': 'mesh',
+  'lib/post-json.js': 'mesh', 'services/mesh-dialer.js': 'mesh', 'routes/mesh.js': 'mesh',
   'routes/storage-profiles.js': 'storage',
   plugins: 'plugins',
 };

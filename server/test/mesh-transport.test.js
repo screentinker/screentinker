@@ -620,7 +620,10 @@ test('⚠️ capabilities are FORGOTTEN on disconnect', () => {
    */
   const fs = require('node:fs');
   const src = fs.readFileSync(require.resolve('../lib/mesh/uplink.js'), 'utf8');
-  const onDisconnect = src.slice(src.indexOf("this.socket.on('disconnect'"));
+  // Registered in _wire(socket), shared by the dialling and the inbound (dial-out) mode.
+  const at = src.indexOf("socket.on('disconnect'");
+  assert.ok(at > 0, 'the uplink handles disconnect');
+  const onDisconnect = src.slice(at);
   assert.match(onDisconnect.slice(0, 800), /this\.parentCapabilities = null/);
 });
 

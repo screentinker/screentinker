@@ -237,10 +237,12 @@ const ALLOWED = {
   'routes/bi-connections.js': 'feature',
   'routes/content.js': 'feature',
   'routes/mcp.js': 'feature',
-  'routes/mesh-enroll.js': 'feature',
   'server.js': 'feature',
   'services/email.js': 'feature',
   'services/mesh-uplink.js': 'feature',
+  // Scale-out dial-out: a replica joins (post-json) and connects out (mesh-dialer) to the PRIMARY_URL its operator typed.
+  'lib/post-json.js': 'feature',
+  'services/mesh-dialer.js': 'feature',
   'lib/live-publish.js': 'browser',
   'lib/rooms/render.js': 'browser',
   'lib/screen-share-player.js': 'browser',

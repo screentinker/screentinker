@@ -46,12 +46,17 @@ function scaleOutStatus() {
   try { const ob = require('../lib/mesh/player-termination').getOutbox(); players = ob ? ob.status() : []; } catch (_) { players = []; }
   let caches = [];
   try { caches = require('../lib/mesh/content-cache').status(db, config); } catch (_) { caches = []; }
+  // Scale-out dial-out: for a primary this replica dials, whether that socket is up and why not.
+  let dials = [];
+  try { dials = global.__meshDialer ? global.__meshDialer.status() : []; } catch (_) { dials = []; }
   for (const r of replicaOf) {
     const p = players.find((x) => x.node_id === r.node_id);
     if (p) r.players = { pending: p.pending, oldest_age_s: p.oldest_age_s, last_error: p.last_error, refused_at_cap: p.refused_at_cap, expired: p.expired, sent: p.sent };
     // Scale-out C3: present only when this node caches media for that primary.
     const c = caches.find((x) => x.node_id === r.node_id);
-    if (c) r.cache = { files: c.files, bytes: c.bytes, pinned_bytes: c.pinned_bytes, cap_bytes: c.cap_bytes, last_error: c.last_error, prefetch_pending: c.prefetch_pending, stored: c.stored };
+    const d = dials.find((x) => x.node_id === r.node_id);
+    if (d) r.dial = { connected: d.connected, last_error: d.last_error, attempt: d.attempt };
+    if (c) r.cache = { files: c.files, videos: c.videos, bytes: c.bytes, pinned_bytes: c.pinned_bytes, cap_bytes: c.cap_bytes, last_error: c.last_error, prefetch_pending: c.prefetch_pending, stored: c.stored };
   }
   return { role, head_rev: head, replicas, replica_of: replicaOf };
 }

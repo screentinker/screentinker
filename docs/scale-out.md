@@ -104,6 +104,54 @@ backlog.
 
 ---
 
+## A replica behind NAT: the replica dials out
+
+The pairing above has the **primary** open the connection to the replica, so the primary needs a
+route to it. A replica on a PC in a studio, behind an ordinary router, has none. For that case the
+roles stay exactly as they are and only the connection is turned round: **the replica connects to
+the primary and keeps the connection open**. Nothing is needed on the studio's network, no port
+forward and no VPN, only that the replica can reach the primary, which it already must for
+`PRIMARY_URL`.
+
+| | Primary | Replica |
+|---|---|---|
+| `MESH_ALLOW_UPLINK` | `true` | — |
+| `MESH_ACCEPT_ENROLLMENT` | — | `true` |
+| `PRIMARY_URL` | — | the primary's address |
+| `JWT_SECRET` | **the same value** | **the same value** |
+| `REPLICA_JOIN_CODE` | — | optional: an invite to redeem at boot (below) |
+| `REPLICA_JOIN_ROLES` | — | optional: `caches-content` (default), `terminates-players`, comma-separated; empty for neither |
+
+1. **On the primary**: **Servers → Report this server to another one**, choose the workspaces to
+   share, then **Create a replica invite**. Over the API: `POST /api/mesh/uplink/invite
+   {"workspaceIds": [...]}` (or `"shareAllWorkspaces": true`, instance owner only). The invite is
+   single-use and lasts **7 days**, longer than a pairing code because it is often typed into an
+   installer on a PC set up later by someone else.
+2. **On the replica**: **Servers → Copy a server this one can reach**, enter the primary's address
+   and the invite, and tick what this server takes on (keep media copies, accept screens). Over the
+   API: `POST /api/mesh/pair/join {"primaryUrl": "...", "code": "...", "roles": ["caches-content"]}`.
+   **Or** put `PRIMARY_URL` and `REPLICA_JOIN_CODE` in the replica's environment: it joins at boot
+   without anyone opening its dashboard, and skips the join on every later boot once the link exists.
+
+What happens: the replica asks the primary who it is (`/api/mesh/invite/preview`, burns nothing),
+runs the same enrollment checks a code redemption runs (loops, depth, duplicate identity, version
+floor) from its own side, then redeems the invite (`/api/mesh/invite/redeem`). The primary burns the
+invite and creates its edge in one transaction, keeping only the token's **hash**. The replica keeps
+the token and connects to the primary's `/mesh-in` socket with it. From then on everything in this
+document applies unchanged: the replica pulls the copy over that socket, writes go to `PRIMARY_URL`,
+media is cached as configured.
+
+- **The primary chooses what is shared; the replica chooses only its own roles.** The replica
+  cannot widen the scope, and re-joining after a disconnect never touches a write grant.
+- **`/mesh-in` exists only with `MESH_ALLOW_UPLINK`**, and the two invite routes are only mounted
+  then. Neither is rate-sensitive (the invite is a 50-bit single-use code), but both are limited per
+  address anyway.
+- **Disconnecting**: either side's ordinary disconnect works. From the primary (**Stop reporting**)
+  the replica's socket is closed and refused at the next attempt, and `/api/status` on the replica
+  shows `replica_of[].dial.last_error` saying so. Join again with a new invite to restore it.
+- **Status**: `scale_out.replica_of[].dial` on the replica shows `connected`, `last_error` and the
+  retry `attempt` (jittered backoff, up to a minute).
+
 ## What an operator sees on a replica
 
 - Every dashboard page for a copied workspace, from the copy. GETs are answered locally and never

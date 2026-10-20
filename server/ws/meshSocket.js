@@ -85,16 +85,38 @@ function setupMeshSocket(io, deps) {
     return next();
   });
 
-  meshNs.on('connection', (socket) => {
+  /*
+   * Sockets THIS node dialled to a child (a primary behind its own public address, while this
+   * replica sits behind NAT — lib/mesh/dial-out.js, services/mesh-dialer.js). Once connected they
+   * are handled exactly like an accepted one: same handlers, same re-check per envelope, same
+   * readFrom/writeTo. Who opened the TCP connection is a reachability fact, never a permission.
+   */
+  const dialed = new Set();
+  const liveSockets = () => [...meshNs.sockets.values(), ...dialed];
+
+  meshNs.on('connection', (socket) => handleChild(socket));
+
+  /**
+   * Adopt a socket this node dialled out on a `we-dial` down edge. The far side authenticated us by
+   * the edge token we presented; the edge here is our own row, so nothing about it came off the wire.
+   */
+  function attachDialed(socket, edge) {
+    socket.data = { edge, childNodeId: edge.peer_node_id, dialed: true };
+    dialed.add(socket);
+    socket.on('disconnect', () => dialed.delete(socket));
+    handleChild(socket);
+  }
+
+  function handleChild(socket) {
     // ⚠️ `let`, because the edge is re-read per envelope below and the fresh row is what the rest of
     // the handler must use — a grant narrowed while the socket was open has to take effect on the
     // NEXT payload, not at the next reconnect.
     let edge = socket.data.edge;
     const childId = socket.data.childNodeId;
-    log.log(`[mesh] node ${childId} connected on edge ${edge.id}`);
+    log.log(`[mesh] node ${childId} connected on edge ${edge.id}${socket.data.dialed ? ' (we dialled it)' : ''}`);
     // A redial supersedes the socket it replaces. Left alone, the old one lingers half-open until its
     // ping timeout and logs a "disconnect" for a child that never went away.
-    for (const old of meshNs.sockets.values()) {
+    for (const old of liveSockets()) {
       if (old !== socket && old.data && old.data.edge && old.data.edge.id === edge.id) {
         old.data.superseded = true;
         try { old.disconnect(true); } catch (e) { /* already gone */ }
@@ -321,7 +343,7 @@ function setupMeshSocket(io, deps) {
       if (socket.data.superseded) log.log(`[mesh] node ${childId}: older connection closed, replaced by a new one`);
       else log.log(`[mesh] node ${childId} disconnected (${reason})`);
     });
-  });
+  }
 
   /*
    * ⚠️ THE NEWEST LIVE SOCKET, not the first one found. A child that drops and redials within a
@@ -331,7 +353,7 @@ function setupMeshSocket(io, deps) {
    */
   function socketOf(childNodeId) {
     let found = null;
-    for (const sock of meshNs.sockets.values()) {
+    for (const sock of liveSockets()) {
       if (sock.data && sock.data.childNodeId === childNodeId && sock.connected) found = sock;
     }
     return found;
@@ -470,7 +492,7 @@ function setupMeshSocket(io, deps) {
   /** Is one child's socket live right now? The NOC and the replica loop ask this instead of waiting
    *  for their next read to fail — a killed primary showed "connected" for up to 30 s otherwise. */
   function isConnected(childNodeId) {
-    for (const sock of meshNs.sockets.values()) {
+    for (const sock of liveSockets()) {
       if (sock.data && sock.data.childNodeId === childNodeId && sock.connected) return true;
     }
     return false;
@@ -479,13 +501,13 @@ function setupMeshSocket(io, deps) {
   /** Disconnect every live socket of one child: the parent ended the edge, and the door is now shut. */
   function dropChild(childNodeId) {
     let n = 0;
-    for (const sock of meshNs.sockets.values()) {
+    for (const sock of liveSockets()) {
       if (sock.data && sock.data.childNodeId === childNodeId) { try { sock.disconnect(true); n++; } catch (e) { /* */ } }
     }
     return n;
   }
 
-  return { meshNs, backpressure, readFrom, writeTo, contentOfferTo, contentPurgeTo, dropChild, isConnected };
+  return { meshNs, backpressure, readFrom, writeTo, contentOfferTo, contentPurgeTo, dropChild, isConnected, attachDialed };
 }
 
 module.exports = setupMeshSocket;

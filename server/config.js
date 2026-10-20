@@ -145,6 +145,14 @@ module.exports = {
   // Scale-out C3: disk a replica may spend on cached media, PER primary (edge). 10 GiB unless set.
   replicaCacheBytes: (() => { const n = Number(process.env.REPLICA_CACHE_BYTES); return Number.isFinite(n) && n > 0 ? Math.floor(n) : 10 * 1024 * 1024 * 1024; })(),
   primaryRedirect: ['1', 'true', 'yes'].includes(String(process.env.PRIMARY_REDIRECT || '').toLowerCase()),
+  /*
+   * Scale-out dial-out (lib/mesh/dial-out.js): join PRIMARY_URL at boot with an invite minted there,
+   * so an installed replica pairs itself. Ignored once an edge to that primary exists. ROLES are the
+   * extras this server takes on besides the copy (caches-content, terminates-players).
+   */
+  replicaJoinCode: String(process.env.REPLICA_JOIN_CODE || '').trim() || null,
+  replicaJoinRoles: String(process.env.REPLICA_JOIN_ROLES ?? 'caches-content').split(',').map((r) => r.trim()).filter(Boolean),
+  replicaJoinTlsVerify: !['0', 'false', 'no'].includes(String(process.env.REPLICA_JOIN_TLS_VERIFY || '').toLowerCase()),
   // Browser origins allowed to call /mcp cross-origin (comma-separated, exact match). Empty = none:
   // MCP clients are native or server-side and need no CORS. See the note on mcpCors in server.js.
   mcpCorsOrigins: String(process.env.MCP_CORS_ORIGINS || '').split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean),

@@ -1391,6 +1391,9 @@ function rateLimit(windowMs, maxRequests, onReject) {
 // Auth routes (public, rate limited)
 app.use('/api/auth/login', rateLimit(60000, 10)); // 10 attempts per minute
 app.use('/api/auth/register', rateLimit(60000, 5)); // 5 registrations per minute
+// Scale-out dial-out (lib/mesh/dial-out.js): the two unauthenticated invite routes. The invite is a
+// 50-bit single-use code, so this is hygiene rather than the defence; only mounted with MESH_ALLOW_UPLINK.
+app.use('/api/mesh/invite', rateLimit(60000, 20));
 // Support-token redemption (lib/support-access) is unauthenticated by nature: the token IS the
 // credential. Guessing one means forging an Ed25519 signature, so this limiter is about noise,
 // not brute force — but it is the one auth surface a stranger can hit without an account, so it

@@ -981,7 +981,55 @@ function renderMintPanel(host, caps) {
       </div>
       <button class="btn btn-primary btn-sm" id="mintBtn">Generate a pairing code</button>
       <div id="mintOut" style="margin-top:12px"></div>
+    </div>
+    <!-- Scale-out dial-out: the other way round. THIS server connects out to the primary, so the
+         primary never needs a route here — for a replica behind a router. The primary minted the
+         invite and chose the workspaces; only this server's own roles are chosen here. -->
+    <div class="settings-section" style="margin-bottom:16px">
+      <h3 style="margin-top:0">Copy a server this one can reach</h3>
+      <p style="color:var(--text-muted);font-size:12px">This server connects to the other one and keeps
+        a live copy of the workspaces it shares. Get an invite on that server under
+        <em>Let a replica connect to this server</em>.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input id="joinUrl" class="input" placeholder="https://signage.example.com" style="max-width:280px">
+        <input id="joinCode" class="input" placeholder="invite code" style="max-width:180px">
+      </div>
+      <label style="display:block;margin:10px 0 0;font-size:13px">
+        <input type="checkbox" id="joinCache" checked>
+        <strong>Keep copies of the media files here</strong>
+        <div style="margin-left:22px;color:var(--text-muted);font-size:11px">Up to REPLICA_CACHE_BYTES (10 GB unless set), so screens here keep getting files while the other server is unreachable.</div>
+      </label>
+      <label style="display:block;margin:6px 0 0;font-size:13px">
+        <input type="checkbox" id="joinPlayers">
+        <strong>Also let screens connect to this server</strong>
+        <div style="margin-left:22px;color:var(--text-muted);font-size:11px">The other server's operator must then allow it under "What this server may change" on their side.</div>
+      </label>
+      <button class="btn btn-secondary btn-sm" id="joinBtn" style="margin-top:12px">Join</button>
+      <div id="joinOut" style="margin-top:8px"></div>
     </div>`;
+
+  host.querySelector('#joinBtn').addEventListener('click', async () => {
+    const out = host.querySelector('#joinOut');
+    out.textContent = 'Connecting…';
+    try {
+      const roles = [
+        ...(host.querySelector('#joinCache').checked ? ['caches-content'] : []),
+        ...(host.querySelector('#joinPlayers').checked ? ['terminates-players'] : []),
+      ];
+      const r = await api.post('/mesh/pair/join', {
+        primaryUrl: host.querySelector('#joinUrl').value,
+        code: host.querySelector('#joinCode').value,
+        roles,
+      });
+      out.innerHTML = `<span style="color:var(--text-muted)">Joined
+        <strong>${esc(r.primaryName || r.primaryNodeId)}</strong>. The copy starts as soon as the
+        connection is up.${(r.warnings || []).map((w) => `<br>⚠️ ${esc(w)}`).join('')}</span>`;
+    } catch (e) {
+      // The primary's refusal text is shown verbatim, as for a pairing code.
+      out.innerHTML = `<span style="color:var(--text-muted)">${esc(e.message)}</span>`;
+    }
+  });
+
 
   // The role tick follows the copy tick: no copy, nothing to terminate players from.
   const replBox = host.querySelector('#grantList input[value="workspace-replication"]');
@@ -1233,6 +1281,17 @@ async function renderConnect(panel, caps) {
       <div id="scopeBox" style="margin-top:12px"></div>
       <button class="btn btn-secondary btn-sm" id="enrollBtn" style="margin-top:12px">Connect</button>
       <div id="enrollOut" style="margin-top:8px"></div>
+      <!-- Scale-out dial-out: for a replica this server cannot reach (a studio PC behind a router).
+           The replica connects here instead, so only THIS server needs to be reachable. Same
+           workspace picker, same rule: what is shared is chosen here. -->
+      <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:13px"><strong>Or let a replica connect to this server</strong></div>
+        <p style="color:var(--text-muted);font-size:12px;margin:4px 0 8px">For a replica this server
+          cannot reach, such as a PC behind a router. It copies the workspaces chosen above and keeps
+          the connection open itself. The invite works once and lasts 7 days.</p>
+        <button class="btn btn-secondary btn-sm" id="inviteBtn">Create a replica invite</button>
+        <div id="inviteOut" style="margin-top:8px"></div>
+      </div>
     </div>` : ''}
 
     ${uplinks.length ? `
@@ -1287,6 +1346,28 @@ async function renderConnect(panel, caps) {
       // ⚠️ The other server's refusal text is shown VERBATIM. It is written to be actionable
       // ("codes expire and may be used once"), and replacing it with a generic failure would
       // discard the only explanation the operator is going to get.
+      out.innerHTML = `<span style="color:var(--text-muted)">${esc(e.message)}</span>`;
+    }
+  });
+
+  panel.querySelector('#inviteBtn')?.addEventListener('click', async () => {
+    const out = panel.querySelector('#inviteOut');
+    try {
+      const shareAll = !!panel.querySelector('#shareAll')?.checked;
+      const r = await api.post('/mesh/uplink/invite', {
+        shareAllWorkspaces: shareAll,
+        workspaceIds: shareAll ? []
+          : [...panel.querySelectorAll('#scopeBox input[data-ws]:checked')].map((c) => c.dataset.ws),
+      });
+      out.innerHTML = `
+        <div style="font-size:28px;letter-spacing:4px;font-family:monospace">${esc(r.code)}</div>
+        <div style="color:var(--text-muted);font-size:12px">
+          On the replica, enter <strong>${esc(window.location.origin)}</strong> and this code
+          (or put them in its installer as PRIMARY_URL and REPLICA_JOIN_CODE). Valid once, until
+          ${esc(new Date(r.expiresAt * 1000).toLocaleString())}. It will copy
+          ${r.workspaces === null ? '<strong>every workspace, including ones created later</strong>' : `${esc(String(r.workspaces))} workspace(s)`}.
+        </div>`;
+    } catch (e) {
       out.innerHTML = `<span style="color:var(--text-muted)">${esc(e.message)}</span>`;
     }
   });

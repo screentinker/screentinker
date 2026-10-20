@@ -4,6 +4,21 @@
 
 ### Added
 
+- **A replica can connect out to its primary** (docs/scale-out.md, "A replica behind NAT"). Until
+  now the primary had to reach the replica, so a replica behind a router needed port forwarding or
+  a VPN. Now the primary mints an invite (**Servers → Create a replica invite**, with the
+  workspaces chosen there) and the replica joins with it (**Copy a server this one can reach**, or
+  `REPLICA_JOIN_CODE` at boot). The replica then keeps the connection open itself, and replication,
+  the media cache and screens on the replica work over it unchanged. It's off unless the primary
+  has `MESH_ALLOW_UPLINK` and the replica has `MESH_ACCEPT_ENROLLMENT`; the existing pairing is
+  unchanged. Additive column `mesh_edges.dial_token` and table `mesh_invites`. `/api/status`
+  `replica_of[]` gains `dial` (connected, last error) and `cache.videos`.
+- **Windows cache node** (server/packaging/windows). An installer that runs a replica as a Windows
+  service on a studio PC, so its screens keep playing when the internet drops. Node is bundled.
+  The installer asks for the main server's address, an invite, the shared secret, the cache size
+  and the port; the PC then joins by itself. A status page shows whether it's connected, the last
+  sync, cache use and the number of videos. Logs are kept in `C:\ProgramData\ScreenTinker\logs`.
+  It can also be installed silently with switches.
 - **ONVIF cameras** (docs/onvif-cameras.md). **Add content → ONVIF camera**:
   - Find cameras on the network, or type an address. Sign in, pick a stream, and add it as a live
     stream every RTSP-capable screen already plays.
