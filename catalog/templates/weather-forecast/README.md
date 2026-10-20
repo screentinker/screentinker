@@ -12,7 +12,10 @@ needed) and the template only arranges it.
 
 Create a data source of type **Weather** (Data Sources → New → Weather) with your location, units
 and language. Then pick it in this template's **Weather data source** setting. Units (°C/°F) and
-day names follow the data source's settings.
+all the words follow the data source's language: day names, the weather conditions and the labels
+("Feels like", "Today", "Updated"…). The server has those words in Danish, Dutch, English, French,
+German, Hindi, Italian, Japanese, Portuguese, Simplified Chinese and Spanish; any other language
+gets English. Needs ScreenTinker 3.0.2 or later.
 
 ## Settings
 
@@ -28,8 +31,9 @@ day names follow the data source's settings.
 
 Every value is a `{{ds:<source>.<key>}}` reference, built from the chosen source as
 `{{ds:{{param:weather}}.temperature}}`. It uses `icon`, `temperature`, `condition`,
-`apparent_temperature`, `humidity`, `day0_high/low/precip_prob` (today) and `day1…day5`
-`_name/_icon/_high/_low`, plus `updated`. The icons are the data source's emoji, drawn by the
+`apparent_temperature`, `humidity`, `day0_high/low/precip_text` (today) and `day1…day5`
+`_name/_icon/_high/_low`, plus `updated` and the `label_feels_like`, `label_humidity`, `label_today`
+and `label_updated` words. The icons are the data source's emoji, drawn by the
 player's own emoji font.
 
 Licence: MIT (see `LICENSE`).

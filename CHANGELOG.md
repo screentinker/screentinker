@@ -19,6 +19,14 @@
   - Works with WS-Security and HTTP Digest, Media and Media2, and cameras with the wrong clock.
   - Additive columns `content.onvif` and `content.onvif_secret`. New player capability
     `onvif.bridge`.
+- **Weather in your language** (#667, requested by @djalfe). A Weather data source's language now
+  translates the weather conditions ("Mainly clear") and the template's words ("Feels like",
+  "Humidity", "Today", "Updated", the chance of precipitation), not only the day names. Language
+  files on the server cover Danish, Dutch, English, French, German, Hindi, Italian, Japanese,
+  Portuguese, Simplified Chinese and Spanish. Any other language falls back to English, and a data
+  source with no language set looks exactly as before. The data source gains `label_*` fields and
+  `day0_precip_text`. The **Weather forecast** template 1.1.0 (needs server 3.0.2) and **Weather —
+  animated** 1.1.0 use them; the animated one falls back to English on an older server.
 
 - **A default zone for a playlist.** Under the playlist's **Layout**, pick the zone that **new** items
   go to when they're added without one (from the Manager app, the API, Make a sign, content requests,
