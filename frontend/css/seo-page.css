@@ -70,6 +70,13 @@ nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; background: rgba
 .article figure img { max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
 .article figure.narrow img { max-width: 420px; width: 100%; }
 .article figure figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; text-align: left; }
+/* User guides: a boxed aside. .callout.self-hosted for "On a self-hosted server", .callout.warn for traps. */
+.article .callout { border: 1px solid var(--border); border-left: 3px solid var(--accent); background: var(--card); padding: 14px 18px; border-radius: 8px; margin: 20px 0; }
+.article .callout > :last-child { margin-bottom: 0; }
+.article .callout .callout-title { display: block; font-weight: 700; margin-bottom: 6px; }
+.article .callout.self-hosted { border-left-color: #10b981; }
+.article .callout.warn { border-left-color: #f59e0b; }
+.article .steps > li { margin-bottom: 12px; }
 
 /* Related links / internal linking block */
 .related { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 32px 0; }

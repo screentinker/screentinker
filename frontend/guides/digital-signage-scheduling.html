@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scheduling content on your screens | ScreenTinker</title>
+  <meta name="description" content="Show a different playlist at different times: a lunch menu on weekdays, brunch at weekends. How schedules work in ScreenTinker, which one wins, and how to check before it happens.">
+  <meta name="keywords" content="digital signage scheduling, dayparting, schedule playlist, signage schedule, screentinker schedule, digital signage calendar">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/digital-signage-scheduling.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/digital-signage-scheduling.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/digital-signage-scheduling.html">
+  <meta property="og:title" content="Scheduling content on your screens">
+  <meta property="og:description" content="Show a different playlist at different times: a lunch menu on weekdays, brunch at weekends. How schedules work in ScreenTinker, which one wins, and how to check before it happens.">
+  <meta property="og:image" content="https://screentinker.com/assets/guides/scheduling/calendar.webp">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Scheduling content on your screens">
+  <meta name="twitter:description" content="Show a different playlist at different times: a lunch menu on weekdays, brunch at weekends. How schedules work in ScreenTinker, which one wins, and how to check before it happens.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/guides/scheduling/calendar.webp">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/guides/">Guides</a>
+      <span>/</span>
+      <span>Scheduling</span>
+    </nav>
+
+    <h1>Scheduling content on your screens</h1>
+    <p class="lead">Every screen has a playlist it normally plays. A schedule swaps in a different playlist for a while: the lunch menu from 11 to 2 on weekdays, brunch at the weekend, a holiday promotion for one week. When the schedule ends, the screen goes back to its normal playlist by itself.</p>
+
+    <p>This guide covers the Schedule calendar, how to make a schedule repeat, what happens when two schedules overlap, and how to check what a screen will show before it happens. It also covers the smaller tool: limiting one item inside a playlist to certain days and hours.</p>
+
+    <h2 id="before">Before you start</h2>
+    <ul>
+      <li><strong>You need a playlist to schedule.</strong> Make it and press <strong>Publish</strong> first. A schedule can point at a draft playlist (the list marks it "(draft)"), but a screen shows only what has been published.</li>
+      <li><strong>The calendar is in Advanced view.</strong> New accounts start in Simple view. Switch with the <strong>Simple / Advanced</strong> buttons at the top of the menu.</li>
+    </ul>
+
+    <h2 id="calendar">The Schedule calendar</h2>
+    <p>Choose <strong>Schedule</strong> in the sidebar. You get a week calendar, with buttons for <strong>Day</strong>, <strong>Work week</strong>, <strong>Week</strong> and <strong>Month</strong>. On the left, <strong>Calendars</strong> lists your screens, groups and video walls. Untick one to hide its schedules, or type in <strong>Find a screen or group</strong> to narrow the list.</p>
+    <figure>
+      <img src="/assets/guides/scheduling/calendar.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The ScreenTinker Schedule calendar in Week view. A schedule called Lunch for the screen Counter screen runs from 11 am to 2 pm Monday to Friday, and a Weekend brunch schedule for the group Front of house starts at 9 am on Saturday. The Calendars list on the left shows Counter screen under Screens and Front of house under Groups.">
+      <figcaption>A week with two schedules: Lunch on one screen on weekdays, and Weekend brunch on a whole group.</figcaption>
+    </figure>
+    <p>You can work the calendar with the keyboard too: <kbd>T</kbd> jumps to today, <kbd>←</kbd> and <kbd>→</kbd> move a week, <kbd>N</kbd> starts a new schedule and <kbd>Esc</kbd> closes what is open.</p>
+
+    <h2 id="create">Create a schedule</h2>
+    <ol class="steps">
+      <li><strong>Drag across the time it should run</strong> on the calendar, on the day it should start. A short form opens. Pick the screen or group and the playlist, then <strong>Save</strong>, or choose <strong>More details</strong> for every option. You can also press <strong>New schedule</strong> at the top right.</li>
+      <li><strong>Apply to</strong>: choose <strong>Device</strong> for one screen or <strong>Group</strong> for every screen in a group, then pick it from the list. If you have video walls, <strong>Video wall</strong> appears here too.</li>
+      <li><strong>Playlist override</strong>: the playlist to show while the schedule runs. <strong>Layout override</strong> can also switch the screen to a different layout for that time. Leave it on "No layout override" to keep the screen's own.</li>
+      <li><strong>Start Time</strong> and <strong>End Time</strong>.</li>
+      <li><strong>Repeat</strong>: <strong>No repeat</strong>, <strong>Daily</strong>, <strong>Weekly</strong>, <strong>Weekdays</strong>, <strong>Weekends</strong>, <strong>Monthly, on the same date</strong> or <strong>Custom days…</strong> (then tick the days under <strong>Repeat on</strong>). <strong>Repeat until</strong> stops it on a date; leave it empty to repeat for good.</li>
+      <li><strong>Priority</strong> (0 to 100) and <strong>Color</strong>. Priority only matters when schedules overlap; see <a href="#what-wins">which schedule wins</a>.</li>
+      <li>Press <strong>Save</strong>.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/scheduling/editor.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Add Schedule form: Apply to with Device selected and Counter screen chosen, Playlist override, Layout override, Content (single item, optional), Title (optional), Start Time 9:00 AM, End Time 5:00 PM, a note that times are in America/Chicago, and Repeat set to No repeat, with Cancel and Save buttons.">
+      <figcaption>The full form. The note under the times says which time zone they are in.</figcaption>
+    </figure>
+    <p>To change a schedule, drag its block to a new time, drag its lower edge to change when it ends, or click it to open the form. Right-click a block for <strong>Edit…</strong>, <strong>Duplicate</strong> and <strong>Delete</strong>. When you edit a repeating schedule, you are asked whether the change is for <strong>This occurrence</strong> or the <strong>Entire series</strong>.</p>
+
+    <div class="callout">
+      <span class="callout-title">Changes take up to a minute</span>
+      <p>The server checks schedules once a minute, so a schedule that starts now can take up to a minute to appear on the screen. A screen that is offline picks it up as soon as it reconnects.</p>
+    </div>
+
+    <h2 id="time-zones">Time zones</h2>
+    <p>A schedule runs in <strong>each screen's own time zone</strong>, not yours. A group schedule for 9 am starts at 9 am local time on every screen in the group, even when they are in different time zones. The form tells you which zone the times are in, for example "Times are in America/Chicago."</p>
+    <p>A screen reports its time zone when it connects, from the device's own settings. If a screen's schedules start at the wrong hour, check the time zone on the device itself (the TV, player or computer). A video wall runs on one clock for all its panels.</p>
+    <div class="callout self-hosted">
+      <span class="callout-title">On a self-hosted server</span>
+      <p>Until a screen has reported a time zone, its schedules use the server's clock. If that is not the time zone your screens are in, set each screen's time zone, or set the server's.</p>
+    </div>
+
+    <h2 id="what-wins">When schedules overlap: which one wins</h2>
+    <p>A screen shows one playlist at a time. When two schedules cover the same moment, ScreenTinker picks one, in this order:</p>
+    <ol>
+      <li><strong>A schedule for the screen itself beats a schedule for its group.</strong></li>
+      <li>Then the <strong>higher Priority</strong> wins.</li>
+      <li>If they are still tied, the <strong>older</strong> schedule wins.</li>
+    </ol>
+    <p>So to make a special event win over the everyday schedule, give it a higher Priority. Schedules are never mixed together: the winner's playlist plays on its own, and the screen's normal playlist comes back when no schedule is running.</p>
+    <div class="callout warn">
+      <span class="callout-title">One thing outranks every schedule</span>
+      <p>If your organization uses head office (corporate) playlists, a playlist set by head office wins over all schedules on the screens it covers. The calendar shows those schedules as paused.</p>
+    </div>
+
+    <h2 id="check">Check what a screen will show</h2>
+    <p>Open the screen (from <strong>Screens</strong>) and choose the <strong>Preview at…</strong> tab. Pick a date and time, or use <strong>Now</strong>, <strong>Tomorrow 9:00</strong> or <strong>Next Monday 9:00</strong>. You see a timeline of the day (or of <strong>7 days</strong>), a preview of what plays at that moment, and under <strong>Why</strong>, every schedule that applies and why it did or did not win.</p>
+    <figure>
+      <img src="/assets/guides/scheduling/preview-at.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Preview at tab of the screen Counter screen. A timeline for Tuesday shows Morning menu until noon, Lunch menu from 11 am to 2 pm and Morning menu again after. The preview shows the Morning menu slide. Under Why: schedule Lunch is outside its hours at this time, schedule Weekend brunch does not run on this day, and no schedule is running so the screen plays its own playlist, Morning menu.">
+      <figcaption>At 2:58 pm on a Tuesday the lunch schedule has ended, so the screen is back on its own playlist. The Why list says so.</figcaption>
+    </figure>
+    <p>The preview uses exactly the same rules as the screen, so if it says Lunch menu at 12:30 on Thursday, that is what the screen will show.</p>
+
+    <h2 id="item-schedules">Limit one item to certain times</h2>
+    <p>Sometimes you don't need a whole second playlist, just one slide that should only appear at certain times: a breakfast special that stops at 11, or a weekend offer. Do that inside the playlist:</p>
+    <ol class="steps">
+      <li>Open the playlist in <strong>Playlists</strong>.</li>
+      <li>On the item's row, click the clock icon (<strong>Schedule</strong>).</li>
+      <li>Press <strong>+ Add schedule block</strong>, tick the days, and set <strong>From</strong> and <strong>To</strong> (choose "end of day" to run until midnight). <strong>Starts</strong> and <strong>Ends</strong> dates are optional.</li>
+      <li>Add more blocks if the item should play at several times; it plays during any of them.</li>
+      <li>Press <strong>Save schedule</strong>, then <strong>Publish</strong> the playlist.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/scheduling/item-schedule.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Schedule window for the playlist item cinnamon-buns.png, with one schedule block, a note that items without a schedule always play, and a warning that the schedule is saved as a draft until the playlist is published.">
+      <figcaption>An item's schedule. Items without one always play.</figcaption>
+    </figure>
+    <div class="callout warn">
+      <span class="callout-title">Remember to Publish</span>
+      <p>An item schedule is saved as a draft. Screens keep showing the published playlist until you press <strong>Publish</strong>. If every item in a playlist is outside its hours, the screen shows "Nothing scheduled" until one comes back.</p>
+    </div>
+
+    <h2 id="related-features">Related features</h2>
+    <ul>
+      <li><strong>Turning screens on and off</strong> at set times is a power schedule, not a content schedule. It's set separately for each screen or group.</li>
+      <li><strong>Interrupting a screen right now</strong>, for an announcement or an emergency, is done with <strong>Triggers</strong>, <strong>Emergency feeds</strong> and <strong>Alerts</strong>. These take over whatever is scheduled.</li>
+    </ul>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>My schedule started but the screen still shows the old playlist.</h3>
+    <p>Wait a minute: schedules are checked once a minute. Then check that the scheduled playlist has been published, and open <strong>Preview at…</strong> on the screen: the <strong>Why</strong> list says whether another schedule won.</p>
+    <h3>Can a schedule run overnight?</h3>
+    <p>Yes. Set an end time that is earlier than the start time, for example 10 pm to 6 am. The calendar draws it as two blocks, one on each day.</p>
+    <h3>Does a group schedule override a screen's own schedule?</h3>
+    <p>No. A schedule for the screen itself always wins over a group schedule, whatever their priorities.</p>
+
+    <div class="cta">
+      <h2>Try it on your own screens</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/digital-signage-widgets-layouts-transitions.html">Widgets, layouts and transitions</a></li>
+        <li><a href="/guides/">All guides</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="/guides/">Guides</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Guides",
+      "item": "https://screentinker.com/guides/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Scheduling",
+      "item": "https://screentinker.com/guides/digital-signage-scheduling.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Scheduling content on your screens",
+  "description": "Show a different playlist at different times: a lunch menu on weekdays, brunch at weekends. How schedules work in ScreenTinker, which one wins, and how to check before it happens.",
+  "image": "https://screentinker.com/assets/guides/scheduling/calendar.webp",
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Open the Schedule calendar",
+      "text": "Switch to Advanced view and choose Schedule in the sidebar.",
+      "url": "https://screentinker.com/guides/digital-signage-scheduling.html#calendar"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Create a schedule",
+      "text": "Drag across the times on the calendar, or choose New schedule. Pick the screen or group, the playlist, the times and how it repeats, then Save.",
+      "url": "https://screentinker.com/guides/digital-signage-scheduling.html#create"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Set its priority",
+      "text": "Give a schedule a higher Priority (0 to 100) when it must win over another one at the same time.",
+      "url": "https://screentinker.com/guides/digital-signage-scheduling.html#what-wins"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 4,
+      "name": "Check it",
+      "text": "On the screen's page, open the Preview at… tab and pick a time to see what it will show and why.",
+      "url": "https://screentinker.com/guides/digital-signage-scheduling.html#check"
+    }
+  ]
+}
+  </script>
+</body>
+</html>

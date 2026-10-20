@@ -17,6 +17,7 @@ The whole project is MIT licensed and self-hosting is free. A paid hosted versio
 ## Using ScreenTinker
 
 - [Widgets, layouts and transitions](https://screentinker.com/guides/digital-signage-widgets-layouts-transitions.html): split a screen into zones, make clock, weather and news ticker widgets, place them in zones through a playlist, and put a Transition widget in the zone it should affect ("every item" in its zone, or "only the next item"). Shader transitions run inside layout zones on the Raspberry Pi/Windows/Mac native player and on Android (from 3.0.1); Roku cross-fades; the web player, Tizen, webOS, BrightSign and Vega draw them full screen only and cut inside zones.
+- [Scheduling](https://screentinker.com/guides/digital-signage-scheduling.html): the Schedule calendar (dayparting by screen, group or video wall), repeat rules, priority and which schedule wins (a screen's own beats its group's, then higher priority, then the older one), screen-local time zones, per-item schedule blocks inside a playlist (drafts until Publish), and the Preview at… tab that explains what a screen will show at any moment.
 
 ## Solutions by use case
 
