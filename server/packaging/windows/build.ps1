@@ -100,9 +100,17 @@ try {
     & $npm ci --omit=dev --no-audit --no-fund
     if ($LASTEXITCODE) { throw "npm ci failed" }
     # better-sqlite3 is optional (node:sqlite is the fallback), but a cache node should not run on the
-    # experimental driver because a prebuilt binary failed to download. Fail the build instead.
-    & $node -e "const D=require('better-sqlite3'); const d=new D(':memory:'); d.prepare('select 1').get(); console.log('better-sqlite3 ok')"
-    if ($LASTEXITCODE) { throw "better-sqlite3 did not load with the bundled Node" }
+    # experimental driver because a prebuilt binary failed to download. npm ci skips a failed optional
+    # install without a word, so retry that one package with its install output shown, then fail.
+    $probe = "const D=require('better-sqlite3'); const d=new D(':memory:'); d.prepare('select 1').get(); console.log('better-sqlite3 ok')"
+    & $node -e $probe
+    if ($LASTEXITCODE) {
+        $bsVersion = (Get-Content "package.json" -Raw | ConvertFrom-Json).optionalDependencies.'better-sqlite3'
+        Write-Host "==> better-sqlite3 was skipped by npm ci; installing $bsVersion on its own"
+        & $npm install --no-save --omit=dev --no-audit --no-fund --foreground-scripts "better-sqlite3@$bsVersion"
+        & $node -e $probe
+        if ($LASTEXITCODE) { throw "better-sqlite3 did not load with the bundled Node" }
+    }
 } finally { Pop-Location }
 
 # ---- installer ----
