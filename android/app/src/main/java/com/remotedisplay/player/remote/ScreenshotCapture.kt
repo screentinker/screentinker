@@ -228,8 +228,11 @@ class ScreenshotCapture {
     /*
      * 3.0 screen share: while a share is up the screen IS the share (ScreenShareOverlay), the same
      * rule as the web player's drawScreenShare. The TextureView pass above pasted the PAUSED content
-     * video over the overlay's black, and the share's own frame over its badge, so draw the overlay
-     * again on top: its black + "Connecting to …"/badge, the shared frame, then the views above it.
+     * video over the overlay's black, and the shares' own frames over their badges, so draw the
+     * overlay again on top: its black + every visible tile's "Connecting to …"/badge, then each
+     * visible tile's shared frame where it sits (several presenters: up to a 2x2 grid) with that
+     * tile's badge back over it, then the views above the overlay (the compact meeting-room code).
+     * Hidden tiles (another share spotlighted) are INVISIBLE, so neither pass draws them.
      */
     private fun drawScreenShare(root: View, canvas: Canvas) {
         val overlay = root.findViewWithTag<View>(ScreenShareOverlay.TAG) ?: return
@@ -238,15 +241,29 @@ class ScreenshotCapture {
         canvas.concat(matrixTo(overlay, root))
         overlay.draw(canvas)
         canvas.restore()
-        val sv = (0 until ((overlay as? ViewGroup)?.childCount ?: 0)).map { (overlay as ViewGroup).getChildAt(it) }
-            .firstOrNull { it is ShareVideoView } as? ShareVideoView ?: return
-        if (!sv.isAvailable || sv.visibility != View.VISIBLE) return
-        val bmp = sv.bitmap ?: return
-        val m = matrixTo(sv, root)
-        if (bmp.width > 0 && bmp.height > 0) m.preScale(sv.width.toFloat() / bmp.width, sv.height.toFloat() / bmp.height)
-        canvas.drawBitmap(bmp, m, null)
-        bmp.recycle()
-        redrawAbove(sv, root, canvas)   // the badge, and anything layered above the overlay
+        val group = overlay as? ViewGroup
+        for (i in 0 until (group?.childCount ?: 0)) {
+            val tile = group!!.getChildAt(i) as? ViewGroup ?: continue
+            if (tile.visibility != View.VISIBLE || tile.width <= 0 || tile.height <= 0) continue
+            val idx = (0 until tile.childCount).firstOrNull { tile.getChildAt(it) is ShareVideoView } ?: continue
+            val sv = tile.getChildAt(idx) as ShareVideoView
+            if (!sv.isAvailable || sv.visibility != View.VISIBLE) continue
+            val bmp = sv.bitmap ?: continue
+            val m = matrixTo(sv, root)
+            if (bmp.width > 0 && bmp.height > 0) m.preScale(sv.width.toFloat() / bmp.width, sv.height.toFloat() / bmp.height)
+            canvas.drawBitmap(bmp, m, null)
+            bmp.recycle()
+            // This tile's badge (and anything else layered above its video) back over the frame.
+            for (k in idx + 1 until tile.childCount) {
+                val c = tile.getChildAt(k)
+                if (c.visibility != View.VISIBLE || c.width <= 0 || c.height <= 0) continue
+                canvas.save()
+                canvas.concat(matrixTo(c, root))
+                c.draw(canvas)
+                canvas.restore()
+            }
+        }
+        redrawAbove(overlay, root, canvas)   // anything layered above the overlay
     }
 
     private fun findAllTextureViews(view: View, result: MutableList<TextureView>) {

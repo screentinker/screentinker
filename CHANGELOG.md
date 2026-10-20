@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Several presenters at once on Android screens.** The Android player shows up to four screen
+  shares tiled, like the web player. It follows the room's spotlight (one presenter full screen,
+  the others kept connected) and plays only the chosen presenter's sound. The playlist comes back
+  when the last presenter leaves. It declares `remote.screen_share_tiles`, so the server now gives
+  Android screens more than one presenter when **several presenters** is on. Each share decodes
+  separately, so four at once needs a player with four hardware video decoders.
 - **A replica can connect out to its primary** (docs/scale-out.md, "A replica behind NAT"). Until
   now the primary had to reach the replica, so a replica behind a router needed port forwarding or
   a VPN. Now the primary mints an invite (**Servers → Create a replica invite**, with the

@@ -74,7 +74,7 @@ the first — and the server tells the others *"This screen shows one presenter 
 | iPad / iPhone app | **Yes** | The web player in WKWebView. Not run on an iPad here. |
 | Samsung Tizen 10+ | No (one at a time) | Same receiver file (it could tile), not claimed: several WebRTC `<video>` decoders at once on a TV are unverified. |
 | Native Raspberry Pi / Windows / macOS | No (one at a time) | The QtWebEngine page loads the same receiver, but the QML code badge has no compact mode and a Pi decodes VP8/VP9 in software — four at once is not something to promise untested. |
-| Native Android player | No (one at a time) | One `ScreenShareReceiver`; a new start replaces the old one, which is exactly the fallback. |
+| Native Android player | **Yes**, up to 4 | One `ScreenShareReceiver` per presenter (`ScreenShareSessions`, oldest replaced by a 5th), tiled by `ScreenShareProtocol.rects` exactly as the web player (2 side by side or stacked in portrait, 3 with the third centred below, 2x2); `device:screenshare-layout` spotlights one (the others stay connected, hidden) and enables only the chosen presenter's audio track; the playlist resumes when the last presenter leaves. Each receiver keeps its own PeerConnectionFactory and hardware decoder: four shares need four decoders, which a low-end TV SoC may not have. JVM tests for the layout rules (`ScreenShareProtocolTest`, `ScreenShareSessionsTest`); not yet run with four presenters on a device. |
 | webOS, BrightSign, Vega, Roku, tvOS, e-ink | — | No screen share at all (above). |
 
 The **display** must tile for its switch to mean anything: a display that cannot shows one presenter

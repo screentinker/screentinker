@@ -147,4 +147,79 @@ class ScreenShareProtocolTest {
         assertEquals(Pair(1080, 607), ScreenShareProtocol.fit(1080, 1920, 1920, 1080))   // portrait panel
         assertEquals(Pair(100, 50), ScreenShareProtocol.fit(100, 50, 0, 0))
     }
+
+    // ------------------------------------------------------------ several presenters at once
+
+    @Test fun startCarriesWhetherThePresenterSharesSound() {
+        assertTrue(ScreenShareProtocol.parseStart(startJson())!!.audio)
+        assertFalse(ScreenShareProtocol.parseStart(startJson().put("audio", false))!!.audio)
+        assertFalse(ScreenShareProtocol.parseStart(startJson().apply { remove("audio") })!!.audio)
+        assertFalse(ScreenShareProtocol.parseStart(startJson().put("audio", "yes"))!!.audio)
+    }
+
+    private fun r(x: Float, y: Float, w: Float, h: Float) = ScreenShareProtocol.Rect(x, y, w, h)
+
+    @Test fun rectsAreTheWebReceiversExactly() {
+        // server/lib/screen-share-player.js rects(n, portrait)
+        val full = listOf(r(0f, 0f, 1f, 1f))
+        assertEquals(full, ScreenShareProtocol.rects(0, false))
+        assertEquals(full, ScreenShareProtocol.rects(1, false))
+        assertEquals(full, ScreenShareProtocol.rects(1, true))
+        assertEquals(listOf(r(0f, 0f, .5f, 1f), r(.5f, 0f, .5f, 1f)), ScreenShareProtocol.rects(2, false))
+        assertEquals(listOf(r(0f, 0f, 1f, .5f), r(0f, .5f, 1f, .5f)), ScreenShareProtocol.rects(2, true))
+        val three = listOf(r(0f, 0f, .5f, .5f), r(.5f, 0f, .5f, .5f), r(.25f, .5f, .5f, .5f))   // third centred underneath
+        assertEquals(three, ScreenShareProtocol.rects(3, false))
+        assertEquals(three, ScreenShareProtocol.rects(3, true))
+        val four = listOf(r(0f, 0f, .5f, .5f), r(.5f, 0f, .5f, .5f), r(0f, .5f, .5f, .5f), r(.5f, .5f, .5f, .5f))
+        assertEquals(four, ScreenShareProtocol.rects(4, false))
+        assertEquals(four, ScreenShareProtocol.rects(4, true))
+    }
+
+    @Test fun aFrameOnlyWhenSeveralTilesShow() {
+        assertEquals(0, ScreenShareProtocol.tileBorderPx(1))
+        assertEquals(2, ScreenShareProtocol.tileBorderPx(2))
+        assertEquals(2, ScreenShareProtocol.tileBorderPx(4))
+    }
+
+    private fun layout(spot: String?, audio: String?) = ScreenShareProtocol.Layout(spot, audio, 0)
+
+    @Test fun visibleIdsFollowTheSpotlightOnlyWhenItIsLive() {
+        val order = listOf("a", "b", "c")
+        assertEquals(order, ScreenShareProtocol.visibleIds(order, ScreenShareProtocol.Layout.NONE))
+        assertEquals(listOf("b"), ScreenShareProtocol.visibleIds(order, layout("b", null)))
+        assertEquals(order, ScreenShareProtocol.visibleIds(order, layout("gone", null)))   // not ours: tiles
+        assertEquals(listOf("a", "b", "c", "d"), ScreenShareProtocol.visibleIds(listOf("a", "b", "c", "d", "e"), ScreenShareProtocol.Layout.NONE))
+        assertEquals(emptyList<String>(), ScreenShareProtocol.visibleIds(emptyList(), layout("a", null)))
+    }
+
+    @Test fun audioIsTheLayoutsWhenLiveElseTheNewest() {
+        val order = listOf("a", "b", "c")
+        assertEquals("a", ScreenShareProtocol.audioId(order, layout(null, "a")))
+        assertEquals("c", ScreenShareProtocol.audioId(order, layout(null, null)))
+        assertEquals("c", ScreenShareProtocol.audioId(order, layout("a", "gone")))
+        assertNull(ScreenShareProtocol.audioId(emptyList(), layout(null, "a")))
+    }
+
+    @Test fun parsesTheLayoutEvent() {
+        val l = ScreenShareProtocol.parseLayout(JSONObject().put("spotlight", "s_1").put("audio", "s-2").put("count", 3))
+        assertEquals(ScreenShareProtocol.Layout("s_1", "s-2", 3), l)
+        assertEquals(ScreenShareProtocol.Layout(null, null, 2),
+            ScreenShareProtocol.parseLayout(JSONObject().put("spotlight", JSONObject.NULL).put("audio", JSONObject.NULL).put("count", 2)))
+    }
+
+    @Test fun aBadLayoutEventIsNoPreference() {
+        assertEquals(ScreenShareProtocol.Layout.NONE, ScreenShareProtocol.parseLayout(null))
+        assertEquals(ScreenShareProtocol.Layout.NONE, ScreenShareProtocol.parseLayout(JSONObject()))
+        assertEquals(ScreenShareProtocol.Layout.NONE, ScreenShareProtocol.parseLayout(
+            JSONObject().put("spotlight", 42).put("audio", true).put("count", "x")))
+        assertEquals(ScreenShareProtocol.Layout.NONE, ScreenShareProtocol.parseLayout(
+            JSONObject().put("spotlight", "../x").put("audio", "").put("count", -1)))
+    }
+
+    @Test fun aFifthStartReplacesTheOldest() {
+        assertEquals(emptyList<String>(), ScreenShareProtocol.toReplace(emptyList()))
+        assertEquals(emptyList<String>(), ScreenShareProtocol.toReplace(listOf("a", "b", "c")))
+        assertEquals(listOf("a"), ScreenShareProtocol.toReplace(listOf("a", "b", "c", "d")))
+        assertEquals(listOf("a", "b"), ScreenShareProtocol.toReplace(listOf("a", "b", "c", "d", "e")))
+    }
 }
