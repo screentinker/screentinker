@@ -68,7 +68,7 @@ ScreenTinker-CacheNode-Setup-3.0.2.exe /S ^
 ```
 
 Exit code 0 means installed and started. 2 means a value was missing or wrong and nothing was
-changed. 3 means it installed but the service did not start (see the logs).
+changed; the reason is in `%TEMP%\ScreenTinker-CacheNode-setup.txt`. 3 means it installed but the service did not start (see the logs).
 
 A silent uninstall is `"C:\Program Files\ScreenTinker Cache Node\uninstall.exe" /S`.
 

@@ -8,8 +8,8 @@
 ; The same values can be passed for a silent install (by us or a partner):
 ;   ScreenTinker-CacheNode-Setup-X.Y.Z.exe /S /PRIMARY_URL=https://... /JOIN_CODE=ABCDE-FGHJK
 ;       /JWT_SECRET=... [/CACHE_GB=100] [/PORT=3001] [/PLAYERS=1] [/DATADIR=D:\ScreenTinker]
-; A silent install with a missing or bad value changes nothing and exits 2; a service that did not
-; start exits 3. An upgrade (settings file already present) asks nothing and keeps the settings, the
+; A silent install with a missing or bad value changes nothing, exits 2 and writes why to
+; %TEMP%\ScreenTinker-CacheNode-setup.txt; a service that did not start exits 3. An upgrade (settings file already present) asks nothing and keeps the settings, the
 ; copy and the cache.
 
 !ifndef VERSION
@@ -89,11 +89,91 @@ Page custom DataPage DataLeave
 
 ; ---------------------------------------------------------------- start-up
 
+Var Args
+Var aOpt
+Var aVal
+
+; FileFunc's GetOptions is NOT used: it ends a value at the next "/", so /PRIMARY_URL=https://x
+; arrived as "https:" (seen on the first silent install). A value here ends at the next " /" or the
+; end of the line, and may be "quoted" to hold spaces (/DATADIR="D:\Screen Tinker").
+!macro Arg OPT OUT
+  StrCpy $aOpt "${OPT}"
+  Call ArgValue
+  StrCpy ${OUT} $aVal
+!macroend
+
+Function ArgValue
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  StrCpy $aVal ""
+  StrLen $1 $aOpt
+  StrLen $2 $Args
+  StrCpy $0 0
+  find:
+    IntCmp $0 $2 done 0 done
+    StrCpy $3 $Args $1 $0
+    StrCmp $3 $aOpt 0 next
+    ; must start an argument, so /PORT= never matches inside /XPORT=: at the start of the line, after
+    ; a space, or after the quote of a wholly quoted argument ("/DATADIR=D:\Screen Tinker")
+    IntCmp $0 0 found
+    IntOp $3 $0 - 1
+    StrCpy $3 $Args 1 $3
+    StrCmp $3 " " found
+    StrCmp $3 '"' 0 next
+    IntCmp $0 1 found
+    IntOp $3 $0 - 2
+    StrCpy $3 $Args 1 $3
+    StrCmp $3 " " found
+  next:
+    IntOp $0 $0 + 1
+    Goto find
+  found:
+    IntOp $0 $0 + $1
+    StrCpy $3 $Args 1 $0
+    StrCmp $3 '"' quoted
+  plain:
+    StrCpy $3 $Args 2 $0
+    StrCmp $3 " /" plainend
+    StrCpy $3 $Args 3 $0
+    StrCmp $3 ' "/' plainend
+    StrCpy $3 $Args 1 $0
+    StrCmp $3 "" plainend
+    StrCpy $aVal "$aVal$3"
+    IntOp $0 $0 + 1
+    Goto plain
+  plainend:
+    ; the closing quote of a wholly quoted argument
+    StrCpy $3 $aVal 1 -1
+    StrCmp $3 '"' 0 done
+    StrCpy $aVal $aVal -1
+    Goto done
+  quoted:
+    IntOp $0 $0 + 1
+    StrCpy $3 $Args 1 $0
+    StrCmp $3 '"' done
+    StrCmp $3 "" done
+    StrCpy $aVal "$aVal$3"
+    Goto quoted
+  done:
+  ; trailing spaces from the command line are not part of the value
+  trim:
+    StrCpy $3 $aVal 1 -1
+    StrCmp $3 " " 0 +3
+      StrCpy $aVal $aVal -1
+      Goto trim
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
+
 Function .onInit
   ${IfNot} ${RunningX64}
-    MessageBox MB_ICONSTOP "${APP} needs 64-bit Windows 10 or 11." /SD IDOK
-    SetErrorLevel 2
-    Quit
+    StrCpy $Problem "${APP} needs 64-bit Windows 10 or 11."
+    MessageBox MB_ICONSTOP "$Problem" /SD IDOK
+    Call SilentFail
   ${EndIf}
   SetRegView 64
   SetShellVarContext all
@@ -104,16 +184,14 @@ Function .onInit
     StrCpy $Upgrade 0
   ${EndIf}
 
-  ${GetParameters} $R0
-  ClearErrors
-  ${GetOptions} $R0 "/PRIMARY_URL=" $PrimaryUrl
-  ${GetOptions} $R0 "/JOIN_CODE=" $JoinCode
-  ${GetOptions} $R0 "/JWT_SECRET=" $Secret
-  ${GetOptions} $R0 "/CACHE_GB=" $CacheGb
-  ${GetOptions} $R0 "/PORT=" $Port
-  ${GetOptions} $R0 "/PLAYERS=" $Players
-  ${GetOptions} $R0 "/DATADIR=" $DataDir
-  ClearErrors
+  ${GetParameters} $Args
+  !insertmacro Arg "/PRIMARY_URL=" $PrimaryUrl
+  !insertmacro Arg "/JOIN_CODE=" $JoinCode
+  !insertmacro Arg "/JWT_SECRET=" $Secret
+  !insertmacro Arg "/CACHE_GB=" $CacheGb
+  !insertmacro Arg "/PORT=" $Port
+  !insertmacro Arg "/PLAYERS=" $Players
+  !insertmacro Arg "/DATADIR=" $DataDir
   StrCmp $CacheGb "" 0 +2
     StrCpy $CacheGb 100
   StrCmp $Port "" 0 +2
@@ -130,11 +208,19 @@ Function .onInit
   ${AndIf} $Upgrade == 0
     Call Validate
     ${If} $Problem != ""
-      DetailPrint "$Problem"
-      SetErrorLevel 2
-      Quit
+      Call SilentFail
     ${EndIf}
   ${EndIf}
+FunctionEnd
+
+; A silent install has nowhere to show $Problem, so it goes to %TEMP%\ScreenTinker-CacheNode-setup.txt
+; (README.md says to look there) and the exit code is 2. Nothing else has been changed yet.
+Function SilentFail
+  FileOpen $9 "$TEMP\ScreenTinker-CacheNode-setup.txt" w
+  FileWrite $9 "$Problem$\r$\n"
+  FileClose $9
+  SetErrorLevel 2
+  Quit
 FunctionEnd
 
 ; The port in the settings file, for the firewall rule and the status shortcut on an upgrade.
@@ -176,7 +262,7 @@ Function ValidateServer
   StrCpy $1 $PrimaryUrl 7
   ${If} $0 != "https://"
   ${AndIf} $1 != "http://"
-    StrCpy $Problem "Enter the main server address, starting with https:// (or http://)."
+    StrCpy $Problem "Enter the main server address, starting with https:// (or http://). Got: [$PrimaryUrl]"
     Return
   ${EndIf}
   StrLen $0 $JoinCode
