@@ -80,12 +80,15 @@ function Copy-Tree([string]$name, [string[]]$excludeDirs = @(), [string[]]$exclu
 }
 # State never ships: no database, uploads, certificates (JWT secret) or plugins installed at run time.
 Copy-Tree "server" @("node_modules", "test", "packaging", "uploads", "certs") @("*.db", "*.db-wal", "*.db-shm", ".jwt_secret")
+# The same set the Docker image ships (Dockerfile COPY lines); server.js reads shared/ at boot.
 Copy-Tree "frontend"
+Copy-Tree "shared"
+Copy-Tree "brightsign" @() @("*.zip", "server-payload.json")
 Copy-Tree "plugins"
 Copy-Tree "catalog"
 Copy-Tree "scripts"
 Copy-Tree "docs"
-foreach ($f in @("VERSION", "LICENSE", "certified-hardware.json")) { Copy-Item (Join-Path $repo $f) (Join-Path $app $f) }
+foreach ($f in @("VERSION", "LICENSE", "certified-hardware.json", "release-notes.json")) { Copy-Item (Join-Path $repo $f) (Join-Path $app $f) }
 Set-Content -Path (Join-Path $app "VERSION") -Value $Version -NoNewline
 
 # The status page belongs to this package only; a stock server never serves it.
