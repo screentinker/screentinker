@@ -34,6 +34,19 @@ const { serverTransport, deviceTransport } = require('../lib/onvif/transport');
 const { OnvifError } = require('../lib/onvif/soap');
 
 const router = express.Router();
+
+/*
+ * Rate limits, per client address. Every route here reaches a camera, through this server or a
+ * screen: `connectLimit` for the ones that search a network or sign in (discover, inspect, add,
+ * refresh); `cameraLimit` for the rest, generous enough for a held PTZ arrow (a move every 700 ms).
+ */
+const { rateLimit } = require('express-rate-limit');
+const limiter = (windowMs, limit) => rateLimit({
+  windowMs, limit, standardHeaders: 'draft-8', legacyHeaders: false,
+  message: { error: 'Too many camera requests, slow down and retry in a moment.', code: 'rate-limited' },
+});
+const connectLimit = limiter(60 * 1000, 20);
+const cameraLimit = limiter(60 * 1000, 240);
 const RTSP_MIME = 'video/rtsp';
 
 /**
@@ -142,7 +155,7 @@ function publicOnvif(o, row) {
 // ─── Finding and adding cameras ───────────────────────────────────────────────
 
 /** How cameras can be reached from this workspace: the server, and which screens. */
-router.get('/bridges', (req, res) => {
+router.get('/bridges', cameraLimit, (req, res) => {
   if (!needWorkspace(req, res)) return;
   const devices = db.prepare('SELECT * FROM devices WHERE workspace_id = ? ORDER BY name COLLATE NOCASE').all(req.workspaceId);
   res.json({
@@ -153,7 +166,7 @@ router.get('/bridges', (req, res) => {
 });
 
 /** WS-Discovery: { via, host? } -> the cameras that answered. */
-router.post('/discover', async (req, res) => {
+router.post('/discover', connectLimit, async (req, res) => {
   if (!needWorkspace(req, res)) return;
   if (denyReadOnly(req, res)) return;
   const { via, host } = req.body || {};
@@ -166,7 +179,7 @@ router.post('/discover', async (req, res) => {
 });
 
 /** Sign in to a camera and list what it offers: { via, xaddr | host, username, password }. */
-router.post('/inspect', async (req, res) => {
+router.post('/inspect', connectLimit, async (req, res) => {
   if (!needWorkspace(req, res)) return;
   if (denyReadOnly(req, res)) return;
   const { via, username, password } = req.body || {};
@@ -191,7 +204,7 @@ router.post('/inspect', async (req, res) => {
  * The stream address is resolved now and stored with the credentials (masked in every response, as
  * any camera URL); a snapshot becomes the thumbnail when the camera has one.
  */
-router.post('/cameras', async (req, res) => {
+router.post('/cameras', connectLimit, async (req, res) => {
   if (!needWorkspace(req, res)) return;
   if (denyReadOnly(req, res)) return;
   const b = req.body || {};
@@ -235,14 +248,14 @@ router.post('/cameras', async (req, res) => {
 
 // ─── An added camera ──────────────────────────────────────────────────────────
 
-router.get('/cameras/:id', (req, res) => {
+router.get('/cameras/:id', cameraLimit, (req, res) => {
   const c = cameraItem(req, res, { write: false });
   if (!c) return;
   res.json(publicOnvif(c.o, c.row));
 });
 
 /** Ask the camera again for the stream address (it changed IP, firmware, password): { username?, password?, via? }. */
-router.post('/cameras/:id/refresh', async (req, res) => {
+router.post('/cameras/:id/refresh', connectLimit, async (req, res) => {
   const c = cameraItem(req, res);
   if (!c) return;
   const b = req.body || {};
@@ -268,7 +281,7 @@ router.post('/cameras/:id/refresh', async (req, res) => {
 });
 
 /** A new snapshot as the thumbnail. */
-router.post('/cameras/:id/snapshot', async (req, res) => {
+router.post('/cameras/:id/snapshot', cameraLimit, async (req, res) => {
   const c = cameraItem(req, res);
   if (!c) return;
   const t = transportFor(req, res, c.o.via, c.row.workspace_id);
@@ -280,7 +293,7 @@ router.post('/cameras/:id/snapshot', async (req, res) => {
   } catch (e) { sendError(res, e); }
 });
 
-router.get('/cameras/:id/presets', async (req, res) => {
+router.get('/cameras/:id/presets', cameraLimit, async (req, res) => {
   const c = cameraItem(req, res);
   if (!c) return;
   if (!c.o.ptz) return res.json({ presets: [] });
@@ -296,7 +309,7 @@ router.get('/cameras/:id/presets', async (req, res) => {
  * `timeout` seconds, default 1, so a lost Stop can't leave it spinning), { action: 'stop' },
  * { action: 'preset', preset }, { action: 'home' }.
  */
-router.post('/cameras/:id/ptz', async (req, res) => {
+router.post('/cameras/:id/ptz', cameraLimit, async (req, res) => {
   const c = cameraItem(req, res);
   if (!c) return;
   if (!c.o.ptz) return res.status(409).json({ error: 'This camera cannot pan, tilt or zoom', code: 'no-ptz' });

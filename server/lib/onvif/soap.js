@@ -16,7 +16,6 @@
  */
 
 const crypto = require('crypto');
-const { DOMParser } = require('@xmldom/xmldom');
 
 const NS = Object.freeze({
   soap: 'http://www.w3.org/2003/05/soap-envelope',
@@ -130,6 +129,9 @@ function parse(xml) {
   if (!/<[^>]*Envelope[\s>]/.test(text)) throw new OnvifError('The camera did not answer with ONVIF (SOAP)', 'not-soap');
   let doc;
   const errors = [];
+  // Loaded here, not at the top: building a message (probeMessage, envelope) needs no XML parser,
+  // so the players' tests can compare their Probe with this module's in a checkout without npm deps.
+  const { DOMParser } = require('@xmldom/xmldom');
   try {
     doc = new DOMParser({ onError: (level, msg) => { if (level !== 'warning') errors.push(msg); } }).parseFromString(text, 'text/xml');
   } catch (e) {
