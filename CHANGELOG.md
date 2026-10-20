@@ -13,6 +13,12 @@
   `day0_precip_text`. The **Weather forecast** template 1.1.0 (needs server 3.0.2) and **Weather —
   animated** 1.1.0 use them; the animated one falls back to English on an older server.
 
+- **A default zone for a playlist.** Under the playlist's **Layout**, pick the zone that **new** items
+  go to when they're added without one (from the Manager app, the API, Make a sign, content requests,
+  agency uploads, cloud folders...). It replaces the layout's main zone for that playlist's new items
+  only, so playlists sharing a layout can each send new items to a different zone. **Existing items
+  never move**: the zone is saved on each item as it's added, so items already in the playlist, and
+  ones added before a later change, stay where they are. Additive column `playlists.default_zone_id`.
 - **Status screen on the Raspberry Pi player**: a small SPI panel (ILI9341 2.4", 240x320, e.g. the
   HiLetgo module) next to the main display shows online, offline or pairing (with the pairing code),
   what's playing, the server, IP and Wi-Fi signal, temperature, disk, RAM and the last warning or
@@ -50,6 +56,14 @@
   held to the Android and native maths by `shared/fisheye-vectors.json`.
 
 ### Fixed
+
+- **Empty zones stay empty on the web player** (#666, reported by @djalfe). In a multi-zone layout, a
+  zone with nothing assigned to it showed a copy of whatever was playing, so the same content
+  appeared in zones it was never put in. This affected browsers, BrightSign and webOS, which use
+  the web player. Those zones now stay blank, as they already did on Android, Tizen, the native player and Roku. Items
+  without a zone still go to the first zone that has nothing of its own, so no existing screen moves
+  its content. If no zone has anything at all, the current item is still shown, so a layout never
+  blanks the whole screen.
 
 - **Android and Samsung Tizen now paint the device's background colour** (#325 parity). Only the web,
   native and Roku players did; on these two it was saved and never shown.

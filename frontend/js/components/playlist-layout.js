@@ -36,11 +36,47 @@ export function layoutPickerHtml(playlist) {
         ${explicit ? `<option value="${esc(playlist.layout.id)}" selected>${esc(playlist.layout.name || '')}</option>` : ''}
       </select>
       <span style="font-size:12px;color:var(--text-muted)">${esc(explicit ? t('layoutpl.hint_set') : t('layoutpl.hint_unset'))}</span>
+      ${explicit ? defaultZonePickerHtml(playlist.layout) : ''}
     </div>`;
+}
+
+/**
+ * The zone NEW items get when whoever adds them doesn't pick one (the Manager app, the API, Make a
+ * sign, content requests...). Stored on each item as it's added, so items already in the playlist
+ * never move. The empty value gives new items no zone: they play in the layout's main zone, as
+ * before. Only for a layout with two or more zones; one zone has nothing to choose.
+ */
+function defaultZonePickerHtml(layout) {
+  if (!layout || !Array.isArray(layout.zones) || layout.zones.length < 2) return '';
+  const main = layout.zones.find((z) => z.id === layout.main_zone_id);
+  const chosen = layout.default_zone_id || '';
+  return `
+      <span style="display:flex;align-items:center;gap:8px;flex-basis:100%;flex-wrap:wrap">
+        <label for="playlistDefaultZoneSelect" style="color:var(--text-muted)">${esc(t('layoutpl.default_zone'))}</label>
+        <select id="playlistDefaultZoneSelect" class="input" style="width:auto;max-width:280px;background:var(--bg-input);font-size:13px;padding:4px 8px">
+          <option value="" ${chosen ? '' : 'selected'}>${esc(t('layoutpl.default_zone_layout_main', { name: main ? main.name : '' }))}</option>
+          ${layout.zones.map((z) => `<option value="${esc(z.id)}" ${z.id === chosen ? 'selected' : ''}>${esc(z.name)}</option>`).join('')}
+        </select>
+        <span style="font-size:12px;color:var(--text-muted)">${esc(t('layoutpl.default_zone_hint'))}</span>
+      </span>`;
 }
 
 /** Fill the select once the layouts arrive, and wire the change. */
 export async function mountLayoutPicker(playlist, onChanged) {
+  const dz = document.getElementById('playlistDefaultZoneSelect');
+  if (dz) {
+    const was = dz.value;
+    dz.addEventListener('change', async () => {
+      try {
+        await api.updatePlaylist(playlist.id, { default_zone_id: dz.value || null });
+        showToast(t('layoutpl.toast_default_zone'), 'info');
+        onChanged && onChanged();
+      } catch (err) {
+        showToast(err.message, 'error');
+        dz.value = was;
+      }
+    });
+  }
   const sel = document.getElementById('playlistLayoutSelect');
   if (!sel) return;
   let layouts = [];

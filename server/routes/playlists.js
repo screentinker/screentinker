@@ -623,6 +623,8 @@ function playlistPreviewLayout(playlist, items) {
       l.explicit = true;
       const main = playlistLayout.mainZone(l.zones);
       l.main_zone_id = main ? main.id : null;
+      // The zone new items added without one are given (zoneForNewItem), while it is in this layout.
+      l.default_zone_id = playlist.default_zone_id && l.zones.some((z) => z.id === playlist.default_zone_id) ? playlist.default_zone_id : null;
       return l;
     }
   }
@@ -1340,6 +1342,39 @@ router.put('/:id', requirePlaylistWrite, (req, res) => {
     }
   }
 
+  /*
+   * The playlist's default zone: the zone NEW items added without one are given
+   * (lib/playlist-layout.js zoneForNewItem). A setting, not a draft: it changes no item already in the
+   * playlist, so there is nothing to publish. It must be a zone of the layout the playlist has AFTER
+   * this request. A layout change carries it through the confirmed zone_map and drops it when the new
+   * layout has no such zone; clearing the layout clears it.
+   */
+  let defaultZoneChanged = false;
+  if (schemaProbe.hasColumn(db, 'playlists', 'default_zone_id')) {
+    const layoutAfter = layoutChanged ? (req.body.layout_id || null) : (req.playlist.layout_id || null);
+    const current = req.playlist.default_zone_id || null;
+    const asked = req.body.default_zone_id !== undefined;
+    let wanted = current;
+    if (asked) {
+      wanted = req.body.default_zone_id || null;
+      if (wanted !== null && typeof wanted !== 'string') return res.status(400).json({ error: 'default_zone_id must be a zone id or null' });
+      if (wanted && !layoutAfter) return res.status(400).json({ error: 'Choose a layout for this playlist before choosing its default zone.', code: 'DEFAULT_ZONE_NO_LAYOUT' });
+    } else if (layoutChanged && current) {
+      const moved = (zoneMoves || []).find(([from]) => from === current);
+      if (moved) wanted = moved[1];
+    }
+    if (!layoutAfter) wanted = null;
+    if (wanted && !db.prepare('SELECT 1 FROM layout_zones WHERE id = ? AND layout_id = ?').get(wanted, layoutAfter)) {
+      if (asked) return res.status(400).json({ error: 'default_zone_id is not a zone of this playlist\'s layout' });
+      wanted = null;
+    }
+    if (wanted !== current) {
+      updates.push('default_zone_id = ?');
+      values.push(wanted);
+      defaultZoneChanged = true;
+    }
+  }
+
   const moving = !!(zoneMoves && zoneMoves.length);
   if (updates.length > 0 || moving) {
     if (updates.length) {
@@ -1355,7 +1390,8 @@ router.put('/:id', requirePlaylistWrite, (req, res) => {
     const summary = rulesChanged ? 'Changed smart rules'
       : req.body.playback_order !== undefined ? 'Changed playback order'
         : (layoutChanged || moving) ? 'Changed layout'
-          : bgChanged ? 'Changed background colour' : 'Renamed';
+          : defaultZoneChanged ? 'Changed default zone'
+            : bgChanged ? 'Changed background colour' : 'Renamed';
     require('../lib/revisions').recordCurrent(db, 'playlist', req.params.id, { actor: require('../lib/releases').actorOf(req), summary });
     if (req.body.playback_order !== undefined) markDraft(req.params.id, req, 'Changed playback order');
     if (rulesChanged) markDraft(req.params.id, req, 'Changed smart rules');
@@ -1797,6 +1833,7 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
 
     // #public-api: optional multi-zone placement. Validate the zone belongs to a
     // template or a layout in this playlist's workspace (the agency portal needs this).
+    // Given none, a new item takes the playlist's default zone (lib/playlist-layout.js zoneForNewItem).
     if (zone_id) {
       const zone = db.prepare('SELECT lz.id FROM layout_zones lz JOIN layouts l ON l.id = lz.layout_id WHERE lz.id = ? AND (l.is_template = 1 OR l.workspace_id = ?)').get(zone_id, req.playlist.workspace_id);
       if (!zone) return res.status(400).json({ error: 'zone_id not found in this workspace' });
@@ -1818,7 +1855,7 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
       INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_to_end)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(req.params.id, content_id || null, widget_id || null, child_playlist_id || null,
-           zone_id || null, order, duration_sec, playToEndValue);
+           playlistLayout.zoneForNewItem(db, req.params.id, zone_id || null), order, duration_sec, playToEndValue);
 
     // Mark as draft (items changed since last publish)
     markDraft(req.params.id, req, 'Added item');
@@ -2534,6 +2571,7 @@ router.post('/:id/items/bulk', requirePlaylistWrite, async (req, res) => {
       const max = db.prepare('SELECT MAX(sort_order) as max_order FROM playlist_items WHERE playlist_id = ?')
         .get(req.params.id);
       let order = (max.max_order || 0) + 1;
+      const zid = playlistLayout.zoneForNewItem(db, req.params.id, zone_id || null);
       const ins = db.prepare(`
         INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_to_end)
         VALUES (?, ?, NULL, NULL, ?, ?, ?, ?)
@@ -2543,7 +2581,7 @@ router.post('/:id/items/bulk', requirePlaylistWrite, async (req, res) => {
       // failure halfway must not leave half a party in the playlist.
       db.transaction(() => {
         for (const r of ready) {
-          ids.push(ins.run(req.params.id, r.content_id, zone_id || null, order++, r.duration_sec, r.play_to_end || null).lastInsertRowid);
+          ids.push(ins.run(req.params.id, r.content_id, zid, order++, r.duration_sec, r.play_to_end || null).lastInsertRowid);
         }
       })();
 

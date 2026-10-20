@@ -8272,14 +8272,24 @@
         renderPreviewBanner();
       }
 
+      /*
+       * #666: a zone with nothing of its own stays EMPTY. It used to be filled with the current item
+       * (defaultItem), so the same content showed in every empty zone, which the Android, Tizen,
+       * native and Roku players never did. defaultItem is used only when NO zone has anything at
+       * all, so a layout can still never blank the whole screen; it goes where zone-less items go.
+       */
       let unassignedUsed = false;
-      layout.zones.forEach(zone => {
+      const zoneItems = layout.zones.map(zone => {
         let items = byZone[zone.id];
         if ((!items || !items.length) && !unassignedUsed && byZone['__none__']) {
           unassignedUsed = true; items = byZone['__none__'];
         }
-        if ((!items || !items.length) && defaultItem) items = [defaultItem];
-        if (!items || !items.length) return;
+        return items && items.length ? items : null;
+      });
+      if (!zoneItems.some(Boolean) && defaultItem && zoneItems.length) zoneItems[0] = [defaultItem];
+      layout.zones.forEach((zone, i) => {
+        const items = zoneItems[i];
+        if (!items) return;
 
         const div = document.createElement('div');
         div.className = 'zone';
