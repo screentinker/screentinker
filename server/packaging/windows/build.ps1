@@ -3,7 +3,7 @@
 #   powershell -ExecutionPolicy Bypass -File server\packaging\windows\build.ps1 [-Version 3.0.2]
 #
 # Output: server\packaging\windows\dist\ScreenTinker-CacheNode-Setup-<Version>.exe
-# Needs: Windows x64, Inno Setup 6 (ISCC.exe), internet access to nodejs.org, github.com and the npm
+# Needs: Windows x64, NSIS 3 (makensis.exe), internet access to nodejs.org, github.com and the npm
 # registry. Nothing else: Node is downloaded here and bundled, so the target PC needs no Node install.
 #
 # What goes in:
@@ -106,23 +106,27 @@ try {
     & $node -e $probe
     if ($LASTEXITCODE) {
         $bsVersion = (Get-Content "package.json" -Raw | ConvertFrom-Json).optionalDependencies.'better-sqlite3'
-        Write-Host "==> better-sqlite3 was skipped by npm ci; installing $bsVersion on its own"
+        Write-Host "==> better-sqlite3 was skipped by npm ci; what npm logged about it:"
+        $npmLog = Get-ChildItem (Join-Path $env:LOCALAPPDATA "npm-cache\_logs\*-debug-*.log") -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime | Select-Object -Last 1
+        if ($npmLog) { Select-String -Path $npmLog.FullName -Pattern "better-sqlite3|node-addon-api" | Select-Object -First 40 | ForEach-Object { "    " + $_.Line } }
+        Write-Host "==> installing better-sqlite3 $bsVersion on its own"
         & $npm install --no-save --omit=dev --no-audit --no-fund --foreground-scripts "better-sqlite3@$bsVersion"
         & $node -e $probe
         if ($LASTEXITCODE) { throw "better-sqlite3 did not load with the bundled Node" }
     }
 } finally { Pop-Location }
 
-# ---- installer ----
-$iscc = @(
-    (Get-Command iscc.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source),
-    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-    "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+# ---- installer (NSIS 3: zlib/libpng licence, free for any use) ----
+$makensis = @(
+    (Get-Command makensis.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source),
+    "${env:ProgramFiles(x86)}\NSIS\makensis.exe",
+    "$env:ProgramFiles\NSIS\makensis.exe"
 ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
-if (-not $iscc) { throw "Inno Setup 6 (ISCC.exe) not found" }
+if (-not $makensis) { throw "NSIS 3 (makensis.exe) not found: https://nsis.sourceforge.io" }
 Write-Host "==> building the installer"
-& $iscc "/DAppVersion=$Version" "/DAppVersionNumeric=$numeric" "/DStageDir=$stage" "/DOutputDir=$dist" (Join-Path $here "ScreenTinkerCacheNode.iss")
-if ($LASTEXITCODE) { throw "ISCC failed" }
+& $makensis -V2 "-DVERSION=$Version" "-DVERSION_NUMERIC=$numeric" "-DSTAGE_DIR=$stage" "-DOUTPUT_DIR=$dist" (Join-Path $here "ScreenTinkerCacheNode.nsi")
+if ($LASTEXITCODE) { throw "makensis failed" }
 $out = Join-Path $dist "ScreenTinker-CacheNode-Setup-$Version.exe"
 Write-Host "==> $out"
 Write-Host ("    SHA-256 " + (Get-FileHash $out -Algorithm SHA256).Hash.ToLower())

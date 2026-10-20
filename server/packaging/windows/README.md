@@ -62,10 +62,15 @@ and the media for dashboards and for a catalog that lists what is on the PC.
 ### Silent install (for us or a partner)
 
 ```
-ScreenTinker-CacheNode-Setup-3.0.2.exe /VERYSILENT /SUPPRESSMSGBOXES ^
+ScreenTinker-CacheNode-Setup-3.0.2.exe /S ^
   /PRIMARY_URL=https://signage.example.com /JOIN_CODE=ABCDE-FGHJK /JWT_SECRET=... ^
   [/CACHE_GB=100] [/PORT=3001] [/PLAYERS=1] [/DATADIR=D:\ScreenTinker]
 ```
+
+Exit code 0 means installed and started. 2 means a value was missing or wrong and nothing was
+changed. 3 means it installed but the service did not start (see the logs).
+
+A silent uninstall is `"C:\Program Files\ScreenTinker Cache Node\uninstall.exe" /S`.
 
 ## What the status page shows
 
@@ -93,7 +98,8 @@ reporting** next to the studio under **This server reports to**.
 
 ## Building the installer
 
-On Windows x64 with Inno Setup 6:
+On Windows x64 with [NSIS 3](https://nsis.sourceforge.io) (`choco install nsis`). NSIS is
+zlib/libpng-licensed, free for any use including commercial:
 
 ```
 powershell -ExecutionPolicy Bypass -File server\packaging\windows\build.ps1 [-Version 3.0.2]

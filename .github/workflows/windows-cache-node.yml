@@ -45,10 +45,10 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Inno Setup
+      - name: NSIS
         shell: pwsh
         run: |
-          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) { choco install nsis -y --no-progress }
 
       - name: Build the installer
         shell: pwsh
@@ -57,13 +57,20 @@ jobs:
       - name: Start a primary from this checkout
         shell: pwsh
         run: |
-          Push-Location server; npm ci --no-audit --no-fund; Pop-Location
+          Push-Location server
+          npm ci --no-audit --no-fund
+          # npm ci on Windows skips the optional better-sqlite3 (see build.ps1); install it by name.
+          node -e "require('better-sqlite3')" 2>$null
+          if ($LASTEXITCODE) { npm install --no-save --no-audit --no-fund "better-sqlite3@$((Get-Content package.json -Raw | ConvertFrom-Json).optionalDependencies.'better-sqlite3')" }
+          Pop-Location
           $env:PORT = $env:PRIMARY_PORT; $env:MESH_ALLOW_UPLINK = 'true'; $env:JWT_SECRET = $env:JWT
           $env:DATA_DIR = "$env:RUNNER_TEMP\primary"; $env:NODE_ENV = 'test'
           Start-Process -FilePath node -ArgumentList 'server.js' -WorkingDirectory server `
             -RedirectStandardOutput "$env:RUNNER_TEMP\primary.log" -RedirectStandardError "$env:RUNNER_TEMP\primary.err.log"
           $base = "http://127.0.0.1:$env:PRIMARY_PORT"
-          for ($i = 0; $i -lt 120; $i++) { try { Invoke-RestMethod "$base/api/status" | Out-Null; break } catch { Start-Sleep 1 } }
+          $up = $false
+          for ($i = 0; $i -lt 120; $i++) { try { Invoke-RestMethod "$base/api/status" | Out-Null; $up = $true; break } catch { Start-Sleep 1 } }
+          if (-not $up) { Get-Content "$env:RUNNER_TEMP\primary.err.log", "$env:RUNNER_TEMP\primary.log" -ErrorAction SilentlyContinue; throw 'the primary did not start' }
           $reg = Invoke-RestMethod "$base/api/auth/register" -Method Post -ContentType 'application/json' -Body (@{ email = 'admin@primary.local'; password = 'Passw0rd123' } | ConvertTo-Json)
           $h = @{ Authorization = "Bearer $($reg.token)" }
           $me = Invoke-RestMethod "$base/api/auth/me" -Headers $h
@@ -75,8 +82,8 @@ jobs:
         shell: pwsh
         run: |
           $exe = Get-ChildItem server\packaging\windows\dist\ScreenTinker-CacheNode-Setup-*.exe | Select-Object -First 1
-          $p = Start-Process $exe.FullName -Wait -PassThru -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
-            "/LOG=$env:RUNNER_TEMP\install.log", "/PRIMARY_URL=http://127.0.0.1:$env:PRIMARY_PORT", "/JOIN_CODE=$env:INVITE",
+          $p = Start-Process $exe.FullName -Wait -PassThru -ArgumentList @('/S',
+            "/PRIMARY_URL=http://127.0.0.1:$env:PRIMARY_PORT", "/JOIN_CODE=$env:INVITE",
             "/JWT_SECRET=$env:JWT", '/CACHE_GB=2', "/PORT=$env:NODE_PORT")
           if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
           (Get-Service ScreenTinkerCacheNode).Status
@@ -112,11 +119,14 @@ jobs:
       - name: Uninstall
         shell: pwsh
         run: |
-          $u = "$env:ProgramFiles\ScreenTinker Cache Node\unins000.exe"
-          $p = Start-Process $u -Wait -PassThru -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          $dir = "$env:ProgramFiles\ScreenTinker Cache Node"
+          # _?= runs the uninstaller in place, so -Wait waits for the real work (NSIS otherwise
+          # copies itself to %TEMP% and returns at once).
+          $p = Start-Process "$dir\uninstall.exe" -Wait -PassThru -ArgumentList '/S', "_?=$dir"
           if ($p.ExitCode -ne 0) { throw "uninstaller exit $($p.ExitCode)" }
-          Start-Sleep 3
+          for ($i = 0; $i -lt 30 -and (Get-Service ScreenTinkerCacheNode -ErrorAction SilentlyContinue); $i++) { Start-Sleep 1 }
           if (Get-Service ScreenTinkerCacheNode -ErrorAction SilentlyContinue) { throw 'service still registered after uninstall' }
+          if (-not (Test-Path "$env:ProgramData\ScreenTinker\screentinker.env")) { throw 'uninstall removed the settings; they are meant to be kept' }
 
       - name: Logs
         if: always()
