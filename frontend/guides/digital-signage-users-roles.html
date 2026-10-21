@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Users, roles and workspaces | ScreenTinker</title>
+  <meta name="description" content="Invite your team and decide who can change what: workspaces, the Admin, Editor and Viewer roles, invites with or without email, approval and two-factor.">
+  <meta name="keywords" content="digital signage user roles, signage user permissions, invite team digital signage, signage workspaces, content approval signage, screentinker members, digital signage multi-user">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/digital-signage-users-roles.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/digital-signage-users-roles.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/digital-signage-users-roles.html">
+  <meta property="og:title" content="Users, roles and workspaces">
+  <meta property="og:description" content="Invite your team and decide who can change what: workspaces, the Admin, Editor and Viewer roles, invites with or without email, approval and two-factor.">
+  <meta property="og:image" content="https://screentinker.com/assets/guides/users-roles/members.webp">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Users, roles and workspaces">
+  <meta name="twitter:description" content="Invite your team and decide who can change what: workspaces, the Admin, Editor and Viewer roles, invites with or without email, approval and two-factor.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/guides/users-roles/members.webp">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/guides/">Guides</a>
+      <span>/</span>
+      <span>Users and roles</span>
+    </nav>
+
+    <h1>Users, roles and workspaces</h1>
+    <p class="lead">You don't have to run your screens alone. Invite the people who help: a manager who changes the menu, a colleague who only needs to see what is on, a second admin for when you are away. Each person gets a role that decides what they can change.</p>
+
+    <p>This guide explains organizations and workspaces, what each role can do, how to invite people (also on a server that cannot send email), how to change or remove someone, how to make changes wait for approval before they go live, and the sign-in options that keep accounts safe.</p>
+
+    <h2 id="before">Before you start</h2>
+    <ul>
+      <li><strong>You need to be an Admin</strong> of the workspace to invite people or change roles. If you made the account, you are.</li>
+      <li><strong>The full members page is in Advanced view.</strong> New accounts start in Simple view. Switch with the <strong>Simple / Advanced</strong> buttons at the top of the menu. Simple view has a shorter version, <strong>Your team</strong>, on its home page.</li>
+    </ul>
+
+    <h2 id="organizations">Organizations and workspaces</h2>
+    <p>Your account belongs to an <strong>organization</strong>. That is the business as a whole: it holds the subscription and everyone who works with you. Inside it are one or more <strong>workspaces</strong>. Each workspace has its own screens, media, playlists, layouts and schedules, and nothing is shared between them. A café with two sites can keep each site in its own workspace, so the staff at one site never see or change the other's screens.</p>
+    <p>You work in one workspace at a time. The workspace switcher at the top of the menu shows which one you are in; open it to switch. Organization owners and admins also see <strong>New workspace</strong> there. Give it a <strong>Name</strong> and choose <strong>Create workspace</strong>. An organization can have up to 25 workspaces.</p>
+    <p>People are invited to a workspace, not to the whole organization. Someone can be an Admin in one workspace and a Viewer in another.</p>
+
+    <h2 id="roles">What each role can do</h2>
+    <p>Every member of a workspace has one of three roles: <strong>Viewer</strong>, <strong>Editor</strong> or <strong>Admin</strong>.</p>
+    <div class="compare-table-wrap">
+      <table class="compare-table">
+        <thead><tr><th>What they can do</th><th>Viewer</th><th>Editor</th><th>Admin</th></tr></thead>
+        <tbody>
+          <tr><td>See the screens, media, playlists and schedules</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+          <tr><td>Upload media, edit playlists, layouts and schedules</td><td class="no">No</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+          <tr><td>Add screens and send them commands</td><td class="no">No</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+          <tr><td>Review other people's changes (when approval is on)</td><td class="no">No</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+          <tr><td>Invite, add and remove people, change roles</td><td class="no">No</td><td class="no">No</td><td class="yes">Yes</td></tr>
+          <tr><td>Workspace settings: content approval, screen sharing, branding, view-only links to screens</td><td class="no">No</td><td class="no">No</td><td class="yes">Yes</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The organization has two roles of its own on top of these. The <strong>Org owner</strong> is the person who created the organization. An <strong>Org admin</strong> has the same reach, without the subscription. Both can do everything in every workspace of the organization, even ones they were never invited to, and only they can create workspaces and set up single sign-on. Everyone else is an organization member and reaches only the workspaces they were invited to.</p>
+    <div class="callout warn">
+      <span class="callout-title">A Viewer really cannot change anything</span>
+      <p>The server refuses every change from a Viewer, not just the buttons. That makes Viewer the right role for someone who only needs to check that the screens are working.</p>
+    </div>
+
+    <h2 id="members">The members page</h2>
+    <p>In Advanced view, choose <strong>Members</strong> under <strong>Workspace</strong> in the sidebar. The page lists the workspace's <strong>Members</strong>, with their role and the date they joined, and the <strong>Pending invites</strong> that nobody has accepted yet. Organization owners and admins who are not members themselves appear under <strong>Organization access</strong>, labelled "via organization".</p>
+    <figure>
+      <img src="/assets/guides/users-roles/members.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Workspace members page for the workspace Main café. Under Members are Sam Rivera (Admin), Priya Shah (Viewer) and Jordan Lee (Editor), each with a role menu, a join date and a remove button. Under Pending invites are alex@example.com as Editor and morgan@example.com as Viewer, both invited by guides@example.com and expiring on Oct 27, 2026. Add user and Invite member buttons are at the top right.">
+      <figcaption>Three members and two invites that have not been accepted yet.</figcaption>
+    </figure>
+
+    <h2 id="invite">Invite someone</h2>
+    <ol class="steps">
+      <li>On the members page, choose <strong>Invite member</strong>.</li>
+      <li>Type their <strong>Email</strong>.</li>
+      <li>Pick a <strong>Role</strong>. It starts on <strong>Viewer</strong>, so change it if they should be able to edit.</li>
+      <li>Choose <strong>Send invite</strong>.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/users-roles/invite.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Invite to Main café window with an empty Email field, the Role menu set to Viewer, and Cancel and Send invite buttons.">
+      <figcaption>The invite form. The role starts on Viewer.</figcaption>
+    </figure>
+    <p>They get an email with a link. When they open it, they sign in, or create an account, with the same email address you invited, and the workspace opens for them. The link works for 7 days and only for that address. Until then the invite waits under <strong>Pending invites</strong>, where the cross on its row cancels it. If the link runs out, cancel the old invite and send a new one.</p>
+    <div class="callout self-hosted">
+      <span class="callout-title">On a self-hosted server</span>
+      <p>If your server has no email set up, the invite is still created, but no email goes out, and the members page in Advanced view does not show you the link. You have two ways round it:</p>
+      <p><strong>Use Simple view.</strong> On the home page choose <strong>Your team</strong> and send the invite from there. It tells you the server cannot send email and gives you a <strong>Copy the invite link</strong> button, so you can pass the link on yourself.</p>
+      <p><strong>Or use Add user</strong> (below) to create the account and give them the password. You need this one if new sign-ups are turned off on your server, because an invited person without an account could not create one.</p>
+    </div>
+    <figure>
+      <img src="/assets/guides/users-roles/simple-team.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Your team page in Simple view. Under Invite someone are an email field and three choices: Can update screens, Can only look, and Can manage everything. Below the Send invite button a message says the invite was created for taylor@example.com but this server cannot send email, with a Copy the invite link button. Under People in this workspace are Sam Rivera, who can manage everything, and Priya Shah, who can only look.">
+      <figcaption>Simple view's Your team page on a server without email. The link is one click away.</figcaption>
+    </figure>
+    <p>In Simple view the roles have plain names: <strong>Can update screens</strong> is Editor, <strong>Can only look</strong> is Viewer and <strong>Can manage everything</strong> is Admin. There the choice starts on Editor.</p>
+
+    <h2 id="add-user">Create an account for someone</h2>
+    <p><strong>Add user</strong> skips the email: you make the account and choose its password. Choose <strong>Add user</strong> on the members page, fill in <strong>Email</strong>, an optional <strong>Name</strong> and a <strong>Password</strong> of at least 8 characters (or press <strong>Generate</strong>), pick a <strong>Role</strong>, and choose <strong>Create user</strong>. Tick <strong>Require a password change on first login</strong> so they set their own password the first time they sign in. Give them the password in person or by phone, not in the same message as their email address.</p>
+    <p>This only works for an email address that has no account yet. For someone who already uses ScreenTinker, send an invite instead.</p>
+
+    <h2 id="change">Change a role or remove someone</h2>
+    <p>To change someone's role, pick the new one in the menu on their row. It applies straight away and you see "Role updated". To take someone out of the workspace, press the cross at the end of their row and confirm.</p>
+    <p>There are two safety rules. A workspace always keeps at least one Admin, so you cannot demote or remove the last one: make someone else Admin first. And the organization owner cannot be removed from a workspace.</p>
+    <p>Removing someone takes away their access to this workspace only. Their account stays, along with any other workspaces they belong to.</p>
+
+    <h2 id="organization">See the whole organization</h2>
+    <p>Organization owners and admins get two tabs at the top of the members page. <strong>Whole organization</strong> lists everyone in the organization, their <strong>Organization role</strong>, and which workspaces they can reach with which role. Type in <strong>Search people or workspaces…</strong> to find someone.</p>
+    <figure>
+      <img src="/assets/guides/users-roles/organization.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Whole organization tab of the members page: 4 people across 2 workspaces. Sam Rivera is Org owner with access to all 2 workspaces. Casey Morgan is a Workspace member and Admin in Second café. Jordan Lee is a Workspace member and Editor in Main café. Priya Shah is a Workspace member and Viewer in Main café.">
+      <figcaption>Who can reach which workspace, across the organization.</figcaption>
+    </figure>
+    <div class="callout">
+      <span class="callout-title">Organization roles are read-only here</span>
+      <p>This list shows organization roles but has no way to change them. If someone needs to look after every workspace, make them <strong>Admin</strong> in each workspace from its own members page. Workspaces you create later need them added too.</p>
+    </div>
+
+    <h2 id="approval">Make changes wait for approval</h2>
+    <p>If what appears on your screens has to be checked first, a workspace Admin can turn on <strong>Content approval</strong>, further down the members page. When it is on, publishing anything in the workspace (playlists, slide decks, widgets, layouts, replaced media) needs a reviewer's approval first. What is already on the screens keeps playing.</p>
+    <ol class="steps">
+      <li>Under <strong>Reviewers</strong>, tick the people who may approve. Only Admins and Editors can be reviewers.</li>
+      <li>Choose <strong>Save</strong>.</li>
+      <li>Tick <strong>Require approval before publishing</strong> and choose <strong>Save</strong> again.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/users-roles/approval.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Content approval card on the members page. It explains that publishing needs approval from a reviewer when enabled. Require approval before publishing is unticked, with a note to assign at least one reviewer before enabling. Under Reviewers, Sam Rivera (admin) and Jordan Lee (editor) can be ticked, followed by a Save button.">
+      <figcaption>Pick reviewers first; the switch unlocks once one is saved.</figcaption>
+    </figure>
+    <p>From then on, an editor's changes stay a draft. They choose <strong>Submit for review</strong>, and the submission appears under <strong>Reviews</strong> in the sidebar (Advanced view). A reviewer can <strong>Approve</strong> it or <strong>Request changes</strong>, and once it is approved, <strong>Publish approved version</strong> puts it on the screens. Nobody can approve their own work, so the workspace needs at least two Admins or Editors before approval can be turned on.</p>
+
+    <h2 id="sign-in">Sign-in security</h2>
+    <p>Each person sets these up for their own account, in Advanced view under <strong>Settings</strong>:</p>
+    <ul>
+      <li><strong>Two-factor authentication</strong>: choose <strong>Enable two-factor authentication</strong>, scan the QR code with an authenticator app, enter the 6-digit code and choose <strong>Verify &amp; enable</strong>. Keep the recovery codes it shows you somewhere safe.</li>
+      <li><strong>Passkeys</strong>: choose <strong>Add a passkey</strong> to sign in with your fingerprint, face, device PIN or a security key instead of a password. A passkey also works in place of the two-factor code.</li>
+    </ul>
+    <p>Organization owners and admins also see <strong>Single sign-on</strong> in Settings. It lets your team sign in with your company's own identity provider (OpenID Connect or SAML 2.0). Once a domain is verified, you can turn on <strong>Require single sign-on</strong>, and passwords stop working for everyone at that domain. Make sure sign-in through your provider works first: turning it back off needs the approval of the people who run the server. With single sign-on in place, <strong>User provisioning (SCIM)</strong> can create and remove people for you and give them workspace access from their groups in your provider.</p>
+    <div class="callout self-hosted">
+      <span class="callout-title">On a self-hosted server</span>
+      <p>Passkeys need the server to have a host name, be served over HTTPS and have <code>APP_URL</code> set to that address. Settings tells you what is missing. Sign-in with Google or Microsoft for the whole server is set up by whoever runs it, not in Settings.</p>
+    </div>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>Someone says their invite link does not work.</h3>
+    <p>Check that they signed in with the exact email address you invited, and that the invite is less than 7 days old. If it has expired, cancel it under <strong>Pending invites</strong> and send a new one.</p>
+    <h3>How do I give someone access to only one site?</h3>
+    <p>Keep each site in its own workspace and invite them to that workspace only. They will not see the other workspaces at all.</p>
+    <h3>Can someone watch a screen without an account?</h3>
+    <p>Yes. An Admin can open the screen's page and turn on <strong>Allow view-only access</strong> in the <strong>View-only access</strong> card. Anyone with the <strong>Share link</strong> can then watch what that screen shows from a browser, with no control over it.</p>
+
+    <div class="cta">
+      <h2>Try it on your own screens</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/digital-signage-getting-started.html">Getting started with ScreenTinker</a></li>
+        <li><a href="/guides/white-label-digital-signage.html">White-label your dashboard and player</a></li>
+        <li><a href="/guides/self-hosted-digital-signage.html">Self-hosted digital signage</a></li>
+        <li><a href="/guides/">All guides</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="/guides/">Guides</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Guides",
+      "item": "https://screentinker.com/guides/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Users and roles",
+      "item": "https://screentinker.com/guides/digital-signage-users-roles.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Users, roles and workspaces",
+  "description": "Invite your team and decide who can change what: workspaces, the Admin, Editor and Viewer roles, invites with or without email, approval and two-factor.",
+  "image": "https://screentinker.com/assets/guides/users-roles/members.webp",
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Open the members page",
+      "text": "Switch to Advanced view and choose Members under Workspace in the sidebar.",
+      "url": "https://screentinker.com/guides/digital-signage-users-roles.html#members"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Invite someone",
+      "text": "Choose Invite member, enter their email, pick a Role (Viewer, Editor or Admin) and choose Send invite. They get a link that is valid for 7 days.",
+      "url": "https://screentinker.com/guides/digital-signage-users-roles.html#invite"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Or create the account yourself",
+      "text": "Choose Add user, enter their email and a password (or Generate one), pick a role and choose Create user. Use this when your server cannot send email.",
+      "url": "https://screentinker.com/guides/digital-signage-users-roles.html#add-user"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 4,
+      "name": "Change a role",
+      "text": "Pick a new role in the member's row. The change applies straight away.",
+      "url": "https://screentinker.com/guides/digital-signage-users-roles.html#change"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 5,
+      "name": "Require approval (optional)",
+      "text": "Under Content approval on the members page, tick at least one reviewer and Save. Then tick Require approval before publishing and Save again.",
+      "url": "https://screentinker.com/guides/digital-signage-users-roles.html#approval"
+    }
+  ]
+}
+  </script>
+</body>
+</html>

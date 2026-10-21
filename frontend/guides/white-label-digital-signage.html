@@ -3,24 +3,24 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>White-label your ScreenTinker dashboard and player | ScreenTinker</title>
-  <meta name="description" content="Customize the look of your ScreenTinker dashboard and player for your clients. Add your brand name, logo, colors, and custom domain.">
-  <meta name="keywords" content="white label, branding, custom branding, customize dashboard, screen branding, screentinker white label, custom domain, custom css">
+  <title>White-label digital signage with your own brand | ScreenTinker</title>
+  <meta name="description" content="Show your own name, logo and colours instead of ScreenTinker on the dashboard, sign-in page and web player, plus custom domains and what keeps our name.">
+  <meta name="keywords" content="white label digital signage, white-label signage software, rebrand digital signage, signage reseller, custom branding, custom domain signage, screentinker white label">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="https://screentinker.com/guides/white-label-digital-signage.html">
   <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/white-label-digital-signage.md">
 
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://screentinker.com/guides/white-label-digital-signage.html">
-  <meta property="og:title" content="White-label your ScreenTinker dashboard and player">
-  <meta property="og:description" content="Customize the look of your ScreenTinker dashboard and player for your clients. Add your brand name, logo, colors, and custom domain.">
-  <meta property="og:image" content="https://screentinker.com/assets/guides/white-label/branding-form.webp">
+  <meta property="og:title" content="White-label digital signage with your own brand">
+  <meta property="og:description" content="Show your own name, logo and colours instead of ScreenTinker on the dashboard, sign-in page and web player, plus custom domains and what keeps our name.">
+  <meta property="og:image" content="https://screentinker.com/assets/guides/white-label/workspace-branding.webp">
   <meta property="og:site_name" content="ScreenTinker">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="White-label your ScreenTinker dashboard and player">
-  <meta name="twitter:description" content="Customize the look of your ScreenTinker dashboard and player for your clients. Add your brand name, logo, colors, and custom domain.">
-  <meta name="twitter:image" content="https://screentinker.com/assets/guides/white-label/branding-form.webp">
+  <meta name="twitter:title" content="White-label digital signage with your own brand">
+  <meta name="twitter:description" content="Show your own name, logo and colours instead of ScreenTinker on the dashboard, sign-in page and web player, plus custom domains and what keeps our name.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/guides/white-label/workspace-branding.webp">
 
   <meta name="theme-color" content="#111827">
   <link rel="icon" href="/assets/icon-192.png">
@@ -58,140 +58,126 @@
       <span>White-label branding</span>
     </nav>
 
-    <h1>White-label your ScreenTinker dashboard and player</h1>
-    <p class="lead">Customize the look of your ScreenTinker dashboard and player for your clients. Add your brand name, logo, colors, and custom domain to make the system appear as part of your own organization.</p>
+    <h1>White-label digital signage: put your own brand on ScreenTinker</h1>
+    <p class="lead">If you run screens for your customers, or for your own company, you may want them to see your name instead of ScreenTinker. White-labelling replaces the name, colours, logo and browser icon on the dashboard and the sign-in page, and the name on web player screens.</p>
 
-    <p>This guide covers how to set up white-label branding for your workspace, the platform default branding that applies when workspaces don't have their own settings, and how to configure a custom domain. It also explains what white-labeling does and doesn't cover, including email branding, installed apps, and how to set up DNS.</p>
+    <p>This guide covers what your brand changes and what it does not, the two places you set it (once for the whole server, and once per workspace), which one wins, and how to use your own web address.</p>
 
     <h2 id="before">Before you start</h2>
     <ul>
-      <li><strong>You need an Enterprise plan.</strong> White-label branding is only available on the Enterprise plan. Non-enterprise users will see an upsell box with a link to View Plans.</li>
-      <li><strong>White-label settings are in Advanced view.</strong> New accounts start in Simple view. Switch with the <strong>Simple / Advanced</strong> buttons at the top of the menu.</li>
-      <li><strong>You need workspace admin permissions.</strong> Only users with workspace admin rights can save branding settings for a workspace.</li>
+      <li><strong>On your own server</strong>, branding is set by the platform administrator. That is the first account created on the server.</li>
+      <li><strong>Logo and icon are web addresses.</strong> There is no upload button. Put your logo and favicon somewhere public (your website, for example) and use their <code>https://</code> addresses.</li>
+      <li><strong>Each workspace has its own brand.</strong> A workspace is the space a customer's screens and content live in. You can switch workspaces from the box under the brand name at the top of the menu.</li>
     </ul>
-
-    <h2 id="access">Access White Label settings</h2>
-    <p>In Advanced view, choose <strong>Settings</strong> in the sidebar. Scroll down to the <strong>White Label / Branding</strong> section. This is only visible for Enterprise users or platform administrators.</p>
-    <figure>
-      <img src="/assets/guides/white-label/branding-form.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The ScreenTinker Settings page, showing the White Label / Branding section with form fields for Brand Name, Logo URL, Primary Color, Background Color, Custom Domain, Favicon URL, and Custom CSS.">
-      <figcaption>White Label / Branding settings in Advanced view. Non-enterprise users see an upsell box instead.</figcaption>
-    </figure>
-
     <div class="callout">
-      <span class="callout-title">Enterprise plan required</span>
-      <p>White-label branding is only available on the Enterprise plan. If you're not seeing this section, check your plan or contact support@screentinker.com to upgrade.</p>
+      <span class="callout-title">On screentinker.com</span>
+      <p>Custom branding comes with the Enterprise plan. If <strong>White Label / Branding</strong> does not appear in your <strong>Settings</strong>, email <a href="mailto:support@screentinker.com">support@screentinker.com</a> and the ScreenTinker team sets it up with you. A custom domain and custom CSS are always set up by the team.</p>
     </div>
 
-    <h2 id="workspace">Set workspace branding</h2>
-    <p>Workspace branding customizes the appearance of your dashboard and player for this specific workspace. Enter the following details:</p>
-
-    <ol class="steps">
-      <li><strong>Brand Name</strong>: The name to display in the dashboard (e.g., "My Company Signage"). If you set this, it replaces "ScreenTinker" in various UI strings.</li>
-      <li><strong>Logo URL</strong>: Enter a public URL for your company logo. Must be HTTPS and publicly accessible. Logo is shown in the sidebar and player.</li>
-      <li><strong>Primary Color</strong>: The main accent color used in the dashboard UI. Choose from the color picker or enter a hex code (e.g., #3B82F6).</li>
-      <li><strong>Background Color</strong>: The background color of the dashboard. Choose from the color picker or enter a hex code (e.g., #111827).</li>
-      <li><strong>Favicon URL</strong>: Enter a public URL for your favicon image (e.g., a 16x16 or 32x32 PNG). Must be HTTPS and publicly accessible.</li>
-      <li><strong>Custom CSS (optional)</strong>: Add custom CSS to further style the dashboard. This is applied only to the workspace's dashboard, not the player.</li>
-      <li><strong>Hide platform branding</strong>: When checked, hides the "Powered by ScreenTinker" branding in the dashboard and player.</li>
-    </ol>
-
-    <p>For non-enterprise users, the form will show an upsell box with a link to View Plans:</p>
+    <h2 id="where">What your brand changes</h2>
+    <ul>
+      <li><strong>The dashboard</strong>: your brand name at the top of the menu and in the browser tab, your primary colour on buttons and highlights, your background colour, and your favicon. Text that names the product, such as the setup steps in <strong>Settings</strong>, uses your brand name too. The small screen icon next to the name stays as it is.</li>
+      <li><strong>The sign-in page</strong>: your logo, your brand name and your colours.</li>
+      <li><strong>Web player screens</strong>: your brand name on the pairing screen, the "Connecting..." screen and the browser tab. Only the name: the logo and colours are not shown there. See <a href="#screens">what screens show</a>.</li>
+      <li><strong>Content request forms</strong> (the public page people use to send you content): your logo or name and your primary colour.</li>
+    </ul>
     <figure>
-      <img src="/assets/guides/white-label/branding-form-enterprise.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The White Label / Branding section showing an upsell box for the Enterprise plan. The box includes a 'View Plans' button that links to the billing page.">
-      <figcaption>Non-enterprise users see an upsell box instead of the branding form.</figcaption>
+      <img src="/assets/guides/white-label/dashboard-branded.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Screens page of the dashboard with the brand name Harbour Café Screens at the top of the menu in orange. The Add screen button, the Advanced view button and the highlights are orange and the background is a warm dark brown. One screen, Counter screen, shows the Morning menu.">
+      <figcaption>A workspace branded "Harbour Café Screens" with an orange primary colour.</figcaption>
     </figure>
 
+    <h2 id="not-branded">What keeps the ScreenTinker name</h2>
+    <ul>
+      <li><strong>Emails.</strong> Password resets, invitations, offline alerts and other emails are not branded: they don't use your logo or colours, and most subjects start with "[ScreenTinker]". The one small exception is the code emailed to someone filling in a content request form, which is signed with your brand name.</li>
+      <li><strong>Installed apps.</strong> The apps for Android and Fire TV, Samsung (Tizen), LG (webOS), Roku and iOS, and the native players for Raspberry Pi and Windows, keep their standard name and icon. Each app is built and signed once and published for everyone, so it cannot carry your brand. Inside the app, your content plays as normal.</li>
+    </ul>
     <div class="callout warn">
-      <span class="callout-title">Custom domain and CSS are platform admin only</span>
-      <p>The <strong>Custom Domain</strong> and <strong>Custom CSS</strong> fields are only available to platform administrators. Other users will see these fields as read-only with a tooltip "Only a platform administrator can change this".</p>
+      <span class="callout-title">Need your own branded apps?</span>
+      <p>Branded app builds, with your name and icon in the app list, need a custom agreement. Email <a href="mailto:support@screentinker.com">support@screentinker.com</a>. Until then, the web player in a browser is the way to show screens that never say ScreenTinker.</p>
     </div>
-
-    <h2 id="platform">Configure platform default branding</h2>
-    <p>Platform administrators can set default branding that applies to all workspaces without individual settings, or those that haven't been customized. This is found in the Platform area under the <strong>Branding</strong> tab:</p>
-    <figure>
-      <img src="/assets/guides/white-label/platform-branding.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Platform → Branding page showing the default branding form with fields for brand name, primary color, background color, logo URL, favicon URL, custom CSS, and 'Hide \"Powered by\" branding'.">
-      <figcaption>Platform default branding settings. Only available to platform administrators.</figcaption>
-    </figure>
-
     <div class="callout self-hosted">
       <span class="callout-title">On a self-hosted server</span>
-      <p>For self-hosted servers, the platform default branding is visible in the Platform area under Settings → Branding. Platform administrators can set default branding that all workspaces inherit unless they have their own workspace settings.</p>
+      <p>You can change the sender name on outgoing email in your server's email settings (<code>GRAPH_SENDER_NAME</code>, or the name in <code>SMTP_FROM</code>). The "[ScreenTinker]" at the start of the subject stays.</p>
     </div>
 
-    <h2 id="apply">Apply branding to dashboard and player</h2>
-    <p>Once saved, your branding will appear on:</p>
-    <ul>
-      <li><strong>Dashboard</strong>: The sidebar logo, accent color, and branding text</li>
-      <li><strong>Login page</strong>: Your brand logo and colors</li>
-      <li><strong>Player</strong>: Custom brand name in setup screens</li>
-      <li><strong>APK download</strong>: APK file name will use your brand name</li>
-    </ul>
-
-    <p>Example of how branding appears on the login page:</p>
-    <figure>
-      <img src="/assets/guides/white-label/login-page.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The ScreenTinker login page with a custom logo, brand name, and color scheme applied. The background uses the configured background color and primary color for elements.">
-      <figcaption>Custom branding on the login page using a custom logo and colors.</figcaption>
-    </figure>
-
-    <p>Example of how branding appears in the player setup screen:</p>
-    <figure>
-      <img src="/assets/guides/white-label/player-setup.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The unpaired player setup screen showing a custom brand name instead of 'ScreenTinker'.">
-      <figcaption>Player setup screen with custom brand name applied.</figcaption>
-    </figure>
-
-    <h2 id="custom-domain">Set up a custom domain</h2>
-    <p>With a custom domain, your dashboard will appear under your own URL. Custom domains are platform-admin only and require DNS configuration:</p>
-
-    <ol class="steps">
-      <li><strong>DNS setup</strong>: Create a CNAME or A record that points your chosen domain (e.g., signage.yourcompany.com) to your ScreenTinker server's IP address.</li>
-      <li><strong>Reverse proxy</strong>: Set up a reverse proxy with TLS that forwards requests to your ScreenTinker server. The proxy must pass the Host header so hostname matching works correctly.</li>
-      <li><strong>Platform admin configuration</strong>: In Platform → Branding, enter your custom domain in the Custom Domain field and save.</li>
+    <h2 id="what-wins">Which brand is used</h2>
+    <p>There can be three brands on one server. ScreenTinker picks one in this order:</p>
+    <ol>
+      <li><strong>The workspace's own brand</strong>, set in <strong>Settings</strong>. Once someone is signed in, or a screen is paired, this is the one they see.</li>
+      <li><strong>The brand of a custom domain.</strong> Before anyone signs in, the server does not know the workspace yet. It looks at the web address instead: if it matches a workspace's <strong>Custom Domain</strong>, that workspace's brand is used. This is what the sign-in page and an unpaired screen show.</li>
+      <li><strong>The server's default brand</strong>, set under <strong>Platform</strong> → <strong>Branding</strong>. It covers every workspace that has no brand of its own, and every web address that is not a custom domain.</li>
     </ol>
-
-    <div class="callout">
-      <span class="callout-title">Custom domain requirements</span>
-      <p>Custom domains require:
-        <ul>
-          <li>A public DNS entry (CNAME or A record) pointing to your server</li>
-          <li>A reverse proxy with TLS configured</li>
-          <li>The platform administrator to enter the domain in Settings</li>
-        </ul>
-      </p>
-    </div>
-
-    <h2 id="what-it-doesnt-cover">What white-labeling does not cover</h2>
-    <p>White-label branding customizes the dashboard and player appearance, but does not change these elements:</p>
-
-    <ul>
-      <li><strong>Emails</strong>: Email subjects are hardcoded as "[ScreenTinker] &lt;subject&gt;" and sender names fall back to config.graphSenderName or "ScreenTinker". Workspace branding is NOT applied to emails.</li>
-      <li><strong>Installed apps</strong>: Android/Fire TV, Tizen, webOS, Roku, iOS/tvOS, and native players keep their own names/icons. Branded app builds require a custom white-label agreement with support@screentinker.com.</li>
-      <li><strong>Brand kit for signs</strong>: The "Your brand" feature in the Make a sign section is separate from white-labeling.</li>
-    </ul>
-
+    <p>If nothing is set at all, you get the ScreenTinker name and colours.</p>
     <div class="callout warn">
-      <span class="callout-title">Important gotchas</span>
-      <p>
-        <ul>
-          <li>Logo and favicon URLs must be publicly accessible HTTPS URLs</li>
-          <li>Once a workspace saves branding, it overrides the platform default completely</li>
-          <li>When "Hide platform branding" is checked and no custom name is set, the player shows no name at all</li>
-          <li>Custom domains require DNS setup and reverse proxy configuration (not handled by ScreenTinker)</li>
-        </ul>
-      </p>
+      <span class="callout-title">A workspace brand replaces the default completely</span>
+      <p>Once a workspace saves its own brand, it no longer follows the server's default, not even for fields it left empty. If you later change the default, workspaces with their own brand keep theirs.</p>
     </div>
+
+    <h2 id="default">Set the default brand for the whole server</h2>
+    <p>This is the brand people see on the sign-in page, and in every workspace that has not set its own. Only the platform administrator can change it.</p>
+    <ol class="steps">
+      <li>In the menu, under <strong>Platform</strong>, choose <strong>Branding</strong>.</li>
+      <li>Fill in <strong>Brand name</strong>.</li>
+      <li><strong>Primary color</strong> and <strong>Background color</strong>: type them as colour codes, such as <code>#14B8A6</code>.</li>
+      <li><strong>Logo URL</strong> and <strong>Favicon URL</strong> (optional): the web addresses of your logo and browser icon.</li>
+      <li><strong>Custom CSS</strong> (optional): style rules for the dashboard and sign-in page, for whoever knows CSS.</li>
+      <li>Tick <strong>Hide "Powered by" branding</strong> if you want no mention of ScreenTinker. See <a href="#screens">what screens show</a>.</li>
+      <li>Press <strong>Save branding</strong>.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/white-label/platform-branding.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Platform Branding page with the Default branding form: Brand name Brightline Signage, Primary color #14B8A6, Background color #0B1220, a Logo URL, an empty Favicon URL, an empty Custom CSS box, Hide Powered by branding ticked, and the Save branding button.">
+      <figcaption>The server's default brand, under Platform → Branding.</figcaption>
+    </figure>
+    <figure>
+      <img src="/assets/guides/white-label/login-page.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The sign-in page with a teal logo, the heading Brightline Signage in teal, the line Sign in to manage your screens, an Email field and a teal Next button. ScreenTinker is not mentioned.">
+      <figcaption>The sign-in page with that default brand.</figcaption>
+    </figure>
+
+    <h2 id="workspace">Brand one workspace</h2>
+    <p>Use this when each customer should see their own brand, or when one workspace should look different from the server's default.</p>
+    <ol class="steps">
+      <li>Switch to the workspace in the box at the top of the menu.</li>
+      <li>Choose <strong>Settings</strong> and scroll down to <strong>White Label / Branding</strong>.</li>
+      <li>Fill in <strong>Brand Name</strong>, and optionally <strong>Logo URL</strong> and <strong>Favicon URL</strong>.</li>
+      <li>Pick a <strong>Primary Color</strong> and <strong>Background Color</strong>. <strong>Preview</strong> tries the colours on your own dashboard straight away (reload the page to undo it).</li>
+      <li>Press <strong>Save Branding</strong>. The dashboard changes at once.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/white-label/workspace-branding.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The White Label / Branding section of Settings: Brand Name Harbour Café Screens, a Logo URL, an orange Primary Color, a dark brown Background Color, an empty Custom Domain, a Favicon URL, an empty Custom CSS (optional) box, Hide platform branding ticked, and the Save Branding and Preview buttons.">
+      <figcaption>A workspace's own brand, in Settings.</figcaption>
+    </figure>
+    <p><strong>Custom Domain</strong> and <strong>Custom CSS (optional)</strong> can only be changed by the platform administrator. For anyone else they are read-only ("Only a platform administrator can change this"). Both affect people outside the workspace: a custom domain decides which brand the public sign-in page shows, and custom CSS runs on that page.</p>
+
+    <h2 id="screens">What screens show</h2>
+    <p>The web player shows your <strong>brand name</strong>, never your logo or colours. You see it above "Web Player" on the pairing screen, on the "Connecting..." screen and in the browser tab. While content is playing, only your content is on screen.</p>
+    <ul>
+      <li><strong>Before pairing</strong>, a screen does not belong to a workspace yet, so it shows the brand of the web address it opened: a custom domain's brand, or else the server's default.</li>
+      <li><strong>Once paired</strong>, it switches to its workspace's brand name and remembers it, so it shows the right name after a restart too.</li>
+    </ul>
+    <figure>
+      <img src="/assets/guides/white-label/player-pairing.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The web player's pairing screen: the name Brightline Signage, Web Player under it, and the pairing code 408847 with the hint Enter this code in the dashboard to pair this display.">
+      <figcaption>A new screen opened on the server: the default brand name above its pairing code.</figcaption>
+    </figure>
+    <p>A brand name you set always shows. <strong>Hide platform branding</strong> only hides the name ScreenTinker: if you tick it and leave the brand name as ScreenTinker, screens show no product name at all, just "Web Player". On a content request form it also removes the line at the bottom.</p>
+    <p>Everything that loads its pages from your server can carry your brand: a browser in kiosk mode, a smart TV's browser, a Chromebook, or a small PC opening your server's <code>/player</code> page. That is the way to run screens that never say ScreenTinker.</p>
+
+    <h2 id="domain">Use your own web address</h2>
+    <p>A custom domain, such as <code>signage.yourcompany.com</code>, lets people open the dashboard and the web player at your own address. The sign-in page and unpaired screens at that address then show the brand of the workspace it belongs to.</p>
+    <div class="callout self-hosted">
+      <span class="callout-title">On a self-hosted server</span>
+      <p>1. Point the domain at your server in your DNS. 2. Put it behind your web proxy with an HTTPS certificate, and make sure the proxy passes the original host name and live connections through (the <a href="/guides/self-hosted-digital-signage.html">self-hosted guide</a> covers the proxy). 3. As platform administrator, switch to the workspace, enter the name in <strong>Custom Domain</strong> without <code>https://</code> or a slash, and press <strong>Save Branding</strong>. ScreenTinker does not create the DNS record or the certificate for you.</p>
+    </div>
+    <p>On screentinker.com you cannot add a custom domain yourself. Email <a href="mailto:support@screentinker.com">support@screentinker.com</a> to ask about one.</p>
 
     <h2 id="faq">FAQ</h2>
-    <h3>Can I use white-labeling with a self-hosted server?</h3>
-    <p>Yes. Self-hosted customers can set up workspace branding and platform default branding just like hosted instances, but they must also configure DNS and reverse proxy for custom domains.</p>
-
-    <h3>What happens if I don't enter a brand name?</h3>
-    <p>If you don't enter a brand name, the player setup screen will still show "ScreenTinker" as the product name. The dashboard will still use the default branding unless a workspace or platform default sets a custom name.</p>
-
-    <h3>Are emails affected by white-labeling?</h3>
-    <p>No. Email subject lines and sender names are hardcoded and not affected by workspace branding settings.</p>
-
-    <h3>Can I customize the player layout with white-labeling?</h3>
-    <p>White-labeling only affects visual elements like colors, logos, and names. It doesn't change player layouts or transitions — those are handled separately in the player configuration.</p>
+    <h3>I changed the default brand, but one workspace still shows its old brand.</h3>
+    <p>That workspace has saved its own brand, and its own brand always wins. Change it in that workspace's <strong>Settings</strong> instead.</p>
+    <h3>Why does my Android TV still say ScreenTinker?</h3>
+    <p>Installed apps keep their standard name and icon; only pages that come from your server carry your brand. Use the web player in a browser, or ask <a href="mailto:support@screentinker.com">support@screentinker.com</a> about branded app builds.</p>
+    <h3>Can I upload my logo?</h3>
+    <p>No. The logo and favicon are web addresses. Put the files somewhere public and paste their <code>https://</code> addresses.</p>
+    <h3>Are emails sent with my brand?</h3>
+    <p>No. Emails are not branded, whichever plan or server you use.</p>
 
     <div class="cta">
       <h2>Try it on your own screens</h2>
@@ -203,7 +189,9 @@
     <div class="related">
       <h2>Related guides</h2>
       <ul>
-        <li><a href="/guides/digital-signage-scheduling.html">Scheduling content on your screens</a></li>
+        <li><a href="/guides/digital-signage-users-roles.html">Users and roles</a></li>
+        <li><a href="/guides/self-hosted-digital-signage.html">Self-hosted digital signage</a></li>
+        <li><a href="/guides/digital-signage-getting-started.html">Getting started</a></li>
         <li><a href="/guides/">All guides</a></li>
       </ul>
     </div>
@@ -253,37 +241,37 @@
 {
   "@context": "https://schema.org",
   "@type": "HowTo",
-  "name": "White-label your ScreenTinker dashboard and player",
-  "description": "Customize the look of your ScreenTinker dashboard and player for your clients. Add your brand name, logo, colors, and custom domain.",
-  "image": "https://screentinker.com/assets/guides/white-label/branding-form.webp",
+  "name": "White-label digital signage with your own brand",
+  "description": "Show your own name, logo and colours instead of ScreenTinker on the dashboard, sign-in page and web player, plus custom domains and what keeps our name.",
+  "image": "https://screentinker.com/assets/guides/white-label/workspace-branding.webp",
   "step": [
     {
       "@type": "HowToStep",
       "position": 1,
-      "name": "Access White Label settings",
-      "text": "Navigate to Settings → White Label / Branding in Advanced view. Enterprise plan required.",
-      "url": "https://screentinker.com/guides/white-label-digital-signage.html#access"
+      "name": "Set the server's default brand",
+      "text": "As the platform administrator, open Branding under Platform in the sidebar, fill in Brand name, colours and Logo URL, and press Save branding.",
+      "url": "https://screentinker.com/guides/white-label-digital-signage.html#default"
     },
     {
       "@type": "HowToStep",
       "position": 2,
-      "name": "Set workspace branding",
-      "text": "Enter your brand name, logo URL, colors, and other branding options for this workspace.",
+      "name": "Brand one workspace",
+      "text": "Switch to the workspace, open Settings, scroll to White Label / Branding, fill in the brand and press Save Branding.",
       "url": "https://screentinker.com/guides/white-label-digital-signage.html#workspace"
     },
     {
       "@type": "HowToStep",
       "position": 3,
-      "name": "Configure platform default branding",
-      "text": "Platform admins can set default branding that applies to all workspaces without individual settings.",
-      "url": "https://screentinker.com/guides/white-label-digital-signage.html#platform"
+      "name": "Add a custom domain",
+      "text": "Point a domain at your server, then enter it in Custom Domain (platform administrator only) so the sign-in page and new screens show that workspace's brand.",
+      "url": "https://screentinker.com/guides/white-label-digital-signage.html#domain"
     },
     {
       "@type": "HowToStep",
       "position": 4,
-      "name": "Apply custom domain",
-      "text": "Set a custom domain to make the dashboard and player appear under your own URL.",
-      "url": "https://screentinker.com/guides/white-label-digital-signage.html#domain"
+      "name": "Check your screens",
+      "text": "Open the web player on a screen: its pairing screen shows your brand name, and after pairing it shows the workspace's brand name.",
+      "url": "https://screentinker.com/guides/white-label-digital-signage.html#screens"
     }
   ]
 }

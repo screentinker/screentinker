@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Troubleshooting your screens | ScreenTinker</title>
+  <meta name="description" content="A screen is offline, a pairing code is refused, new content does not show, the time is wrong or the screen is black: what it means and how to fix it.">
+  <meta name="keywords" content="digital signage troubleshooting, screen offline, pairing code expired, signage not updating, waiting for content, black screen, screentinker help">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/digital-signage-troubleshooting.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/digital-signage-troubleshooting.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/digital-signage-troubleshooting.html">
+  <meta property="og:title" content="Troubleshooting your screens">
+  <meta property="og:description" content="A screen is offline, a pairing code is refused, new content does not show, the time is wrong or the screen is black: what it means and how to fix it.">
+  <meta property="og:image" content="https://screentinker.com/assets/guides/troubleshooting/offline-card.webp">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Troubleshooting your screens">
+  <meta name="twitter:description" content="A screen is offline, a pairing code is refused, new content does not show, the time is wrong or the screen is black: what it means and how to fix it.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/guides/troubleshooting/offline-card.webp">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/guides/">Guides</a>
+      <span>/</span>
+      <span>Troubleshooting</span>
+    </nav>
+
+    <h1>Troubleshooting your screens</h1>
+    <p class="lead">Most screen problems come down to a few causes: the screen lost its connection, a change was never published, a schedule won, or the device itself has the wrong settings. This page goes through the problems people hit most often, what each one means and what to do about it.</p>
+
+    <p>Each section starts with what you see, then the cause, then the fix. If none of them helps, the last section says where to get help and what to send.</p>
+
+    <h2 id="before">Before you start</h2>
+    <ul>
+      <li><strong>Most of the tools here are in Advanced view.</strong> A screen's own page, <strong>Preview at…</strong> and <strong>Alerts</strong> are all there. New accounts start in Simple view. Switch with the <strong>Simple / Advanced</strong> buttons at the top of the menu.</li>
+      <li><strong>Open the screen.</strong> Choose <strong>Screens</strong> in the sidebar and click the screen's card. Its page has tabs: <strong>Now Playing</strong> shows a screenshot of what it is showing, <strong>Device Info</strong> has its status, clock, incidents and buttons such as <strong>Reload Player</strong>, and <strong>Preview at…</strong> shows what it should be playing.</li>
+    </ul>
+
+    <h2 id="offline">The screen is offline</h2>
+    <p>Every screen card on the <strong>Screens</strong> page has a badge:</p>
+    <ul>
+      <li><strong>Healthy</strong>: connected and checking in normally.</li>
+      <li><strong>Reconnecting</strong>: connected, but it keeps dropping and coming back, or it has gone quiet for more than about half a minute. This usually means a weak or busy network.</li>
+      <li><strong>Offline</strong>: not connected. The server marks a screen offline when it has not heard from it for 45 seconds. The badge may add how it went, for example "crashed", "clean exit" or "silent" when the screen simply stopped answering.</li>
+    </ul>
+    <p>In Simple view the home page shows <strong>Playing</strong> or <strong>Offline</strong> instead.</p>
+    <figure>
+      <img src="/assets/guides/troubleshooting/offline-card.webp" width="1440" height="1100" loading="lazy" decoding="async" alt="The Screens page with two screens. Counter screen has a green Healthy badge, a picture of the Morning menu slide and a Verified mark. Window screen, under Ungrouped, has a red badge that says Offline, silent, and shows No preview available, last seen 2 minutes ago. The counters at the top read 2 total, 1 online, 1 offline.">
+      <figcaption>One screen online, one offline. The time on the offline card is when it was last heard from.</figcaption>
+    </figure>
+    <p>To see why a screen went offline, open it and choose <strong>Device Info</strong>. Further down, <strong>Uptime Timeline (Last 24 Hours)</strong> shows when it was online, and <strong>Recent incidents</strong> lists each time it dropped, with a cause such as <strong>Connection lost</strong>, <strong>No internet (router/ISP)</strong>, <strong>Device restarted</strong>, <strong>App crashed</strong> or <strong>Screen off / sleep</strong>.</p>
+    <figure>
+      <img src="/assets/guides/troubleshooting/incidents.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Device Info tab of the offline screen Window screen. Screen verification says Unknown, the screen is offline. The Uptime Timeline for the last 24 hours ends in a red offline block, 0% uptime. Recent incidents lists Connection lost, down 2 minutes, and Screen off / sleep, both 2 minutes ago.">
+      <figcaption>Recent incidents says how the screen went offline and for how long.</figcaption>
+    </figure>
+    <p>What to check, in this order:</p>
+    <ol class="steps">
+      <li><strong>Is the device switched on, and is the player app open?</strong> A TV that went to sleep, or someone closing the app, takes the screen offline.</li>
+      <li><strong>Does the device have internet?</strong> Open a web page on it, or check the network settings. Screens need outgoing HTTPS (port 443), and the connection stays open all the time. Guest Wi-Fi and some office firewalls cut long connections; a wired connection or a different network helps.</li>
+      <li><strong>Restart the device.</strong> It reconnects by itself as soon as it starts.</li>
+    </ol>
+    <p>While a screen is offline it keeps playing what it has already downloaded, and it picks up your changes as soon as it reconnects. Buttons you press for an offline screen are held for it: you see "device offline, will deliver on reconnect".</p>
+    <div class="callout">
+      <span class="callout-title">Get told when a screen goes offline</span>
+      <p>The owner of a screen gets an email when it goes offline, unless they turned email alerts off in Settings. To tell a team, open <strong>Alerts</strong> and press <strong>Add alert channel</strong>: email, Slack, Microsoft Teams, Telegram, PagerDuty or a webhook, after the number of minutes you choose.</p>
+    </div>
+
+    <h2 id="pairing">The pairing code is refused</h2>
+    <p>When you type a screen's 6-digit code under <strong>Add screen</strong>, you may get one of these messages:</p>
+    <ul>
+      <li><strong>"No device found with that pairing code"</strong>: the code is not one the server knows. Check every digit against the screen. Also check that the screen is connected to the same server as your dashboard: a player set up for a different server shows a code that this one has never seen.</li>
+      <li><strong>"Pairing code expired - restart the display to get a new code"</strong>: the screen has not checked in for more than 15 minutes. A code stays valid for as long as the screen showing it is connected. Make sure the device is on and online, restart the player app so it reconnects, then type the code again.</li>
+      <li><strong>"Too many failed pairing attempts. Try again in a few minutes."</strong>: after 5 wrong codes, pairing is blocked from your network for 15 minutes. Wait, then type the code carefully.</li>
+      <li><strong>"Enter a valid 6-digit pairing code"</strong>: the code must be exactly 6 digits.</li>
+    </ul>
+    <p>If you removed a screen from the dashboard and want it back, it shows a pairing code again; pair it as if it were new. The <a href="/guides/digital-signage-getting-started.html">getting started guide</a> walks through pairing step by step.</p>
+
+    <h2 id="not-updating">My changes are not showing</h2>
+    <p>There are two usual reasons: the change is not published, or the screen is meant to be playing something else right now.</p>
+    <p><strong>1. The playlist has unpublished changes.</strong> In Advanced view, edits to a playlist are a draft. Screens keep showing the last published version until you press <strong>Publish</strong>. A playlist with a draft shows a banner across the top:</p>
+    <figure>
+      <img src="/assets/guides/troubleshooting/unpublished.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Morning menu playlist in the editor with a new fourth item, flat-white.png. An orange banner at the top says Unpublished changes, Devices are still showing the last published version, with Discard Changes and Publish buttons.">
+      <figcaption>A fourth item was added, but the screens still play the three published ones until someone presses Publish.</figcaption>
+    </figure>
+    <p>Press <strong>Publish</strong>. You see "Playlist published — devices updated". Simple view publishes for you, so this only happens with edits made in Advanced view. A playlist that has never been published shows nothing on screens at all.</p>
+    <p><strong>2. Another playlist is meant to play.</strong> A schedule can swap in a different playlist for part of the day, and a schedule for the screen itself beats one for its group. Open the screen and choose <strong>Preview at…</strong>, then press <strong>Now</strong>. You see what the screen should be showing at this moment and, under <strong>Why</strong>, every schedule that applies and why it won or lost.</p>
+    <figure>
+      <img src="/assets/guides/troubleshooting/preview-at.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Preview at tab of Counter screen at 8:14 pm on Tuesday October 20, screen time zone America/Chicago. The day timeline shows Morning menu, then Lunch menu from 11 am to 2 pm, then Morning menu. The text says it shows Morning menu, chosen for this screen, 3 of 3 items play. Under Why: schedule Lunch is outside its hours, schedule Weekend brunch does not run on this day, and no schedule is running so the screen plays its own playlist.">
+      <figcaption>No schedule is running at 8:14 pm, so the screen plays its own playlist. The preview counts only published items: 3 of 3, not the draft's 4.</figcaption>
+    </figure>
+    <p>If the preview says the right thing but the screen does not, see <a href="#black-frozen">a black or frozen screen</a>. The <a href="/guides/digital-signage-scheduling.html">scheduling guide</a> explains in detail which schedule wins.</p>
+
+    <h2 id="time-zone">Schedules start at the wrong time</h2>
+    <p>Schedules run in <strong>each screen's own time zone</strong>, and that time zone comes from the device's own settings. There is no field in the dashboard to change it. To see what the screen reported, open it, choose <strong>Device Info</strong> and look at <strong>Device clock</strong>: it shows the time zone and the time the device last reported. If the device's clock is more than two minutes out, it adds a warning: "clock off by … — schedules may fire at the wrong local time".</p>
+    <figure>
+      <img src="/assets/guides/troubleshooting/device-info.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Device Info tab of Counter screen, with Launch Player, Reload Player and Change server URL buttons at the top. Cards show Status online, IP Address, Local IP, Player Type Web Player, Uptime, App Version 3.0.1, Screen Resolution 800x600, and Device Clock America/Chicago, Oct 20, 08:12 PM reported. Below is the Player capabilities list.">
+      <figcaption>Device clock shows the time zone the screen reported and its own time.</figcaption>
+    </figure>
+    <p>To fix it, set the right time zone and automatic time on the device itself (the TV, player box, Raspberry Pi or computer), then restart the player app so it reports again. The schedule form also tells you which time zone its times are in, for example "Times are in America/Chicago".</p>
+    <div class="callout">
+      <span class="callout-title">Raspberry Pi tip</span>
+      <p>Raspberry Pi OS starts out set to London time. If a Pi was set up without choosing a locale, its schedules run on UK time wherever it is. Set the time zone in the Pi's settings.</p>
+    </div>
+
+    <h2 id="video">A video will not play</h2>
+    <ul>
+      <li><strong>Use MP4 (H.264 video, AAC sound), 1080p or smaller.</strong> The upload accepts other formats such as MKV, AVI and WebM, but many TVs and player boxes cannot decode them, or cannot decode 4K or HEVC. A video a screen cannot play is skipped, so the playlist moves on and it looks as if the video is missing. Export it again from your editor as MP4 and upload it as new content.</li>
+      <li><strong>Samsung TVs and tall videos.</strong> A portrait video (1080 wide, 1920 tall) is too big for a Samsung signage TV's video decoder. The server makes a TV-friendly copy, and the TV says on screen that it is preparing it, then switches to it by itself.</li>
+      <li><strong>No sound in the web player.</strong> Browsers do not play sound until someone touches the page. The web player shows "Tap anywhere to start" and, if nobody does, carries on muted after 5 seconds.</li>
+      <li><strong>The screenshot is black but the video plays.</strong> Some players show video on a separate hardware layer that screenshots cannot see. If people in the room can see the video, nothing is wrong.</li>
+    </ul>
+
+    <h2 id="black-frozen">The screen is black or frozen</h2>
+    <p>First check what the screen is showing: open it and look at <strong>Now Playing</strong>, or press <strong>Screenshot</strong> at the top of its page. Players that cannot take screenshots say "This display's player can't take screenshots".</p>
+    <p>ScreenTinker also checks this for you. <strong>Screen verification</strong> takes a screenshot every 30 minutes and compares it with what the screen should be playing. It is on <strong>Device Info</strong>, and a problem also shows under the screen's name on its card: <strong>Blank</strong>, <strong>Frozen</strong>, <strong>Unexpected content</strong> or <strong>Panel off</strong>. Press <strong>Check now</strong> to test it straight away.</p>
+    <figure>
+      <img src="/assets/guides/troubleshooting/verify.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Screen verification section of Counter screen's Device Info tab. It says Verified since 3 minutes ago, with a Check now button, and: The last screenshot showed what this screen is meant to be showing. Below are the Uptime Timeline at 100% uptime, Recent incidents with no incidents recorded, and the Settings section with Orientation, Background colour and Default Content.">
+      <figcaption>Verified means the last screenshot matched what the screen should be playing.</figcaption>
+    </figure>
+    <p>Then try these, one at a time:</p>
+    <ol class="steps">
+      <li><strong>Check the TV itself.</strong> <strong>Panel off</strong> means the player reports the display is off or in standby. Check the power, the input (HDMI) setting and any sleep timer on the TV.</li>
+      <li><strong>Press Reload Player</strong> on the <strong>Device Info</strong> tab. It restarts the player, fetches the published playlist again and redraws the screen.</li>
+      <li><strong>Restart the device</strong>, from the device itself or with <strong>Reboot Device</strong> if the screen's page offers it (click twice to confirm). Only players that can restart themselves have that button.</li>
+      <li><strong>A web page shows blank?</strong> Some websites do not allow being shown inside another page. The preview warns about this, and such a page stays blank on the screen too. Try a different page.</li>
+    </ol>
+    <p>If a screen often freezes after running for days, set <strong>Nightly reboot</strong> in the <strong>Settings</strong> section of <strong>Device Info</strong>. The time is the screen's local time; leave it blank to switch it off.</p>
+    <div class="callout">
+      <span class="callout-title">Screen verification settings</span>
+      <p>A workspace admin can change how often screenshots are taken, how sensitive the check is and how long a problem must last before it counts, in <strong>Alerts</strong>. To get a message about a blank or frozen screen, edit an alert channel and tick "a screen is online but showing a problem".</p>
+    </div>
+
+    <h2 id="waiting">The screen says "Waiting for content..."</h2>
+    <p>The screen is connected and paired, but it has nothing to play. That happens when:</p>
+    <ul>
+      <li>no playlist has been chosen for the screen;</li>
+      <li>its playlist is empty, or has never been published;</li>
+      <li>an item cannot be played on this player, and nothing else is left.</li>
+    </ul>
+    <p>Give the screen a playlist with at least one item, and publish it. In Simple view, use <strong>Change what a screen shows</strong>. To show something better than this message whenever a screen has nothing else to play, pick a file from your library under <strong>Default Content</strong> in the screen's <strong>Device Info</strong> settings and press <strong>Save Settings</strong>.</p>
+    <p>A similar message, "Nothing scheduled right now", means every item in the playlist is limited to other days or hours. It goes away when one of them is due again.</p>
+
+    <h2 id="plan-limit">The plan limit is reached</h2>
+    <p>Each plan includes a number of screens and an amount of storage.</p>
+    <ul>
+      <li><strong>Too many screens.</strong> When you try to add one more, you see "You've connected … screens — the most the … plan includes". Every screen you already have keeps playing. Every screen in the account counts, offline or not, so <strong>Remove</strong> screens you no longer use, or move to a bigger plan under <strong>Subscription</strong>. A screen over the limit shows "Device Limit Reached" instead of its content.</li>
+      <li><strong>Library full.</strong> "Your library is full" means uploads are refused until you free up space. Everything already uploaded keeps playing. Delete content you no longer need under <strong>Content</strong>, or move to a plan with more storage.</li>
+      <li><strong>After the free trial.</strong> When the 14-day trial ends you move to the Free plan. Nothing is deleted, but screens beyond the Free plan pause and show "Trial Expired" until you choose a plan. Then they come back exactly as you left them.</li>
+    </ul>
+
+    <div class="callout self-hosted">
+      <span class="callout-title">On a self-hosted server</span>
+      <p><strong>Server URL.</strong> Every player app must be pointed at your server's address (for example https://signage.example.com), not at screentinker.com. A pairing code shown by a player that talks to a different server is never found by yours. To move a paired screen to a new address, use <strong>Change server URL</strong> on its <strong>Device Info</strong> tab: it only switches if the new address answers.</p>
+      <p><strong>Behind a reverse proxy.</strong> Screens keep a WebSocket connection open to the server all the time. The proxy must pass the <code>Upgrade</code> and <code>Connection</code> headers and allow long-lived connections (nginx: <code>proxy_read_timeout 86400</code>). Without that, screens may connect slowly, drop often or show as <strong>Reconnecting</strong>. The proxy's upload size limit (nginx <code>client_max_body_size</code>) also caps how big a video you can upload.</p>
+      <p><strong>Slow or busy networks.</strong> If screens show offline when they are not, the server's <code>HEARTBEAT_TIMEOUT</code> (45 seconds by default) can be raised. Plan limits do not normally apply: self-hosted accounts get every feature and no screen limit. See the <a href="/guides/self-hosted-digital-signage.html">self-hosted guide</a> for setup.</p>
+    </div>
+
+    <h2 id="help">Getting help</h2>
+    <ul>
+      <li><strong>On screentinker.com:</strong> email <a href="mailto:support@screentinker.com">support@screentinker.com</a>.</li>
+      <li><strong>On your own server:</strong> open an issue on <a href="https://github.com/screentinker/screentinker/issues">GitHub</a>.</li>
+    </ul>
+    <p>Say which screen it is and what you expected to see, and copy in what the screen's <strong>Device Info</strong> tab shows: the <strong>Player Type</strong>, the <strong>App Version</strong> and the <strong>Recent incidents</strong>. A photo of the screen helps too.</p>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>Does a screen keep playing if the internet goes down?</h3>
+    <p>Yes. It plays what it has already downloaded and picks up your changes when the connection comes back. The dashboard shows it as <strong>Offline</strong> in the meantime.</p>
+    <h3>Can I set a screen's time zone in the dashboard?</h3>
+    <p>No. The time zone comes from the device. Change it in the device's own settings and restart the player app.</p>
+    <h3>How long does a change take to reach a screen?</h3>
+    <p>Once you press <strong>Publish</strong>, a connected screen gets it straight away. The item on screen finishes first. A schedule can take up to a minute to start.</p>
+
+    <div class="cta">
+      <h2>Try it on your own screens</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/digital-signage-content-playlists.html">Content and playlists</a></li>
+        <li><a href="/guides/digital-signage-groups-video-walls.html">Groups and video walls</a></li>
+        <li><a href="/guides/digital-signage-getting-started.html">Getting started with ScreenTinker</a></li>
+        <li><a href="/guides/digital-signage-scheduling.html">Scheduling content on your screens</a></li>
+        <li><a href="/guides/self-hosted-digital-signage.html">Self-hosted digital signage software</a></li>
+        <li><a href="/guides/">All guides</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="/guides/">Guides</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Guides",
+      "item": "https://screentinker.com/guides/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Troubleshooting",
+      "item": "https://screentinker.com/guides/digital-signage-troubleshooting.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Troubleshooting your screens",
+  "description": "A screen is offline, a pairing code is refused, new content does not show, the time is wrong or the screen is black: what it means and how to fix it.",
+  "image": "https://screentinker.com/assets/guides/troubleshooting/offline-card.webp",
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Check the screen's status",
+      "text": "On the Screens page, look at the badge on the screen's card: Healthy, Reconnecting or Offline. Open the screen and check Recent incidents on its Device Info tab.",
+      "url": "https://screentinker.com/guides/digital-signage-troubleshooting.html#offline"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Check that your changes are published",
+      "text": "Open the playlist. If it says Unpublished changes, press Publish: screens show only the published version.",
+      "url": "https://screentinker.com/guides/digital-signage-troubleshooting.html#not-updating"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Check which playlist should be playing",
+      "text": "On the screen's page, open Preview at… and pick Now. The Why list says which schedule won, or that none is running.",
+      "url": "https://screentinker.com/guides/digital-signage-troubleshooting.html#not-updating"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 4,
+      "name": "Reload the player",
+      "text": "On the screen's Device Info tab, press Reload Player. It fetches the published playlist again and redraws the screen.",
+      "url": "https://screentinker.com/guides/digital-signage-troubleshooting.html#black-frozen"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 5,
+      "name": "Ask for help",
+      "text": "Write to support@screentinker.com (hosted) or open a GitHub issue (self-hosted), with the player type, app version and Recent incidents.",
+      "url": "https://screentinker.com/guides/digital-signage-troubleshooting.html#help"
+    }
+  ]
+}
+  </script>
+</body>
+</html>
