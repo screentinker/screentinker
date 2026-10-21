@@ -3217,7 +3217,7 @@ app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (
   // (5 failures per IP per 15 min) plus the 5/min route limit, not by this TTL.
   const lastSeen = device.last_heartbeat || device.created_at;
   if (pairLockout.isCodeExpired(lastSeen)) {
-    return res.status(410).json({ error: 'Pairing code expired - restart the display to get a new code' });
+    return res.status(410).json({ error: pairLockout.CODE_EXPIRED_MESSAGE });
   }
   pairLockout.reset(ip); // a valid claim forgives prior failed attempts from this IP
 

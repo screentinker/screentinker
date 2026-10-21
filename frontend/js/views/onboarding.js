@@ -340,6 +340,13 @@ export function render(container, { mode = 'first' } = {}) {
       box?.addEventListener('change', sync);
       sync();
 
+      // A refusal ("No device found with that pairing code") answers the code that was sent, not
+      // the one being typed now: put it away as soon as the code is edited.
+      document.getElementById('onboardPairingCode')?.addEventListener('input', () => {
+        const status = document.getElementById('onboardPairStatus');
+        if (status) status.textContent = '';
+      });
+
       // A display created earlier in this wizard: show its URL again rather than the form, so
       // stepping Back and forward does not lose the one thing the operator came away with.
       if (createdPlayerUrl && urlWrap) {

@@ -124,7 +124,8 @@ function pairInto(db, { importedId, code, orgId }) {
   const prov = db.prepare('SELECT * FROM devices WHERE pairing_code = ?').get(String(code || ''));
   if (!prov) return { error: 'No screen is showing that pairing code', status: 404, guess: true };
   if (prov.user_id || prov.workspace_id) return { error: 'That pairing code belongs to a screen that is already in use', status: 409 };
-  if (require('../pair-lockout').isCodeExpired(prov.last_heartbeat || prov.created_at)) return { error: 'Pairing code expired - restart the display to get a new code', status: 410 };
+  const pairLockout = require('../pair-lockout');
+  if (pairLockout.isCodeExpired(prov.last_heartbeat || prov.created_at)) return { error: pairLockout.CODE_EXPIRED_MESSAGE, status: 410 };
 
   const cols = db.prepare('PRAGMA table_info(devices)').all().map((c) => c.name).filter((c) => !PLAYER_OWNED.has(c));
   const refs = deviceReferences(db);

@@ -137,6 +137,13 @@ test('GET /api/devices/:id returns active_layout_zones for a multi-zone device',
   assert.ok(Array.isArray(zones), 'active_layout_zones is present');
   assert.equal(zones.length, 2, 'both zones of the active layout are returned');
   assert.deepEqual(zones.map((z) => z.id).sort(), [S.Z1, S.Z2].sort(), 'exactly the active-layout zone ids');
+  // The Playlist tab names the main zone ("Main zone (Main)") like the playlist editor, so it
+  // needs is_main and the size (no zone marked = the largest is main).
+  const main = zones.find((z) => z.id === S.Z1);
+  assert.equal(main.name, 'Main');
+  assert.equal(Number(main.is_main), 0);
+  assert.equal(Number(main.width_percent), 60);
+  assert.equal(Number(main.height_percent), 100);
 });
 
 // 3. orphan definition: in-layout zone -> not orphan; different-layout zone -> orphan.

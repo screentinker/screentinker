@@ -1792,6 +1792,9 @@ function mediaFailureSkip(el, label, src, mayAdvance = true) {
   if (mayAdvance) scheduleAdvance(nextItem, 3e3);
 }
 const UNKNOWN_ITEM_HOLD_MS = 15e3;
+function isRenderableItem(item) {
+  return !!(item && (item.widget_id || item.mime_type === BUNDLE_MIME || item.mime_type === "video/youtube" || typeof item.mime_type === "string" && (item.mime_type.startsWith("video/") || item.mime_type.startsWith("image/"))));
+}
 const BUNDLE_MIME = "application/vnd.screentinker.bundle+zip";
 const bundleSkipFrames = /* @__PURE__ */ new Set();
 let fullscreenBundleReg = null;
@@ -5041,6 +5044,17 @@ function handlePlaylistUpdate(data) {
     return;
   }
   if (data.suspended) {
+    teardownCurrentMedia();
+    stopSlideVo();
+    stopSlideBed();
+    clearTimeout(scheduleRetryTimer);
+    clearLookahead();
+    deferredRotation = false;
+    if (deferredRotationDeadline) {
+      clearTimeout(deferredRotationDeadline);
+      deferredRotationDeadline = null;
+    }
+    if (campaign) stopCampaign();
     isPlaying = false;
     playlist = [];
     document.getElementById("playerContainer").style.display = "none";
@@ -6553,11 +6567,11 @@ function renderContent(item) {
     renderWallZones(container);
     return;
   }
-  const hasRenderableType = item && (item.widget_id || item.mime_type === BUNDLE_MIME || item.mime_type === "video/youtube" || typeof item.mime_type === "string" && (item.mime_type.startsWith("video/") || item.mime_type.startsWith("image/")));
+  const hasRenderableType = isRenderableItem(item);
   if (!hasRenderableType) {
     showStatus("Waiting for content...");
     isPlaying = false;
-    const onlyItem = !playlist || playlist.length <= 1;
+    const onlyItem = !playlist || playlist.length <= 1 || !playlist.some((p) => p !== item && isRenderableItem(p));
     console.log("[player] skipping item with unrecognised type:", item && item.mime_type);
     scheduleAdvance(nextItem, onlyItem ? UNKNOWN_ITEM_HOLD_MS : 0);
     return;
