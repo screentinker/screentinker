@@ -269,10 +269,12 @@ function deviceInfoWith(BS) {
     PLAYER_VERSION: '1.1.0-web',
     navigator: { userAgent: 'Mozilla/5.0 Chrome/120' },
     screen: { width: 1920, height: 1200 },
+    window: { innerWidth: 1920, innerHeight: 1080, devicePixelRatio: 1 },
+    cssQuarterTurn: 0,
   };
   const vm = require('node:vm');
   vm.runInNewContext(
-    `${playerFn('hostPackageVersion')}\n${playerFn('buildDeviceInfo')}\nresult = buildDeviceInfo();`,
+    `${playerFn('hostPackageVersion')}\n${playerFn('renderSize')}\n${playerFn('buildDeviceInfo')}\nresult = buildDeviceInfo();`,
     sandbox,
   );
   return sandbox.result;
@@ -312,7 +314,7 @@ test('device_info is always the WHOLE blob — a partial one silently wipes the 
   // (Object.keys().length > 0); device:info is NOT, and that is the path this feature added.
   const di = deviceInfoWith({ telemetrySnapshot: () => ({ package_version: '1.9.36' }) });
   assert.deepEqual(Object.keys(di).sort(),
-    ['android_version', 'app_version', 'screen_height', 'screen_width']);
+    ['android_version', 'app_version', 'render_height', 'render_width', 'screen_height', 'screen_width']);
   assert.match(player, /socket\.emit\('device:info', \{ device_id: config\.deviceId, device_info: buildDeviceInfo\(\) \}\)/,
     'device:info must send buildDeviceInfo(), never a hand-built subset');
 });
