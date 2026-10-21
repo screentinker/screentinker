@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.0.3
+
+### Fixed
+
+- **Test on a table hook no longer changes the table.** The test sends an empty list of rows, so
+  testing a "Replace all rows" hook emptied the table without asking. A table hook's test is now a
+  dry run that says what it would do; real calls to the hook are unchanged.
+- **A "Switch screens back" hook now switches screens back.** It only released switches it had
+  started itself, and it never starts any, so it did nothing. It now ends every automation switch
+  on the screens in its scope, whichever hook or Zap started it, like the Zapier stop action.
+- **End now on the Automation page.** A hook with alerts on screens or screens switched (after a
+  test, say) shows **End now**, which ends them and leaves the hook on. Before, the only way was to
+  switch the hook off and on again.
+- **The Zapier note on the Automation page names the real settings.** It now says **Settings → API
+  Tokens** and the scopes **Read & write** and **Full (incl. device commands)**.
+- **A "Fire a trigger" hook reaches every player that can take it.** Browser, BrightSign, webOS,
+  Vega, iPad and Mac screens handle a trigger relayed by the server, but the hook only sent it to
+  Raspberry Pi and Windows screens and counted the rest as "LAN only". Android, Tizen and Roku
+  screens are still counted that way.
+- **The first Generate of a screen's trigger secret no longer asks "Rotate the shared secret?".**
+  The warning is for replacing a secret, and now only shows when there is one.
+
 ## 3.0.2
 
 ### Upgrade notes

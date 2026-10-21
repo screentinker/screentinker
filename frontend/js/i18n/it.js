@@ -4434,4 +4434,7 @@ export default {
   'review.field.enabled': 'Attivo',
   'review.no_value': '(nessuno)',
   'review.schedule_blocks': '{n} fascia/e oraria/e',
+  'auto.end_now': 'Termina ora',
+  'auto.confirm_end': 'Terminare ciò che {name} mostra ora sugli schermi?',
+  'auto.ended': 'Terminato',
 };

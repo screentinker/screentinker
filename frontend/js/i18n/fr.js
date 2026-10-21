@@ -5187,4 +5187,8 @@ export default {
   'review.field.enabled': 'Activé',
   'review.no_value': '(aucun)',
   'review.schedule_blocks': '{n} plage(s) horaire(s)',
+  'auto.zapier_token': "Connectez-vous avec un jeton d'API depuis Paramètres → Jetons d'API. Utilisez Lecture et écriture pour les événements et les tables, et Complet (cmd. appareils incluses) pour les actions qui prennent le contrôle des écrans.",
+  'auto.end_now': "Arrêter maintenant",
+  'auto.confirm_end': "Arrêter ce que {name} affiche en ce moment sur les écrans ?",
+  'auto.ended': "Arrêté",
 };

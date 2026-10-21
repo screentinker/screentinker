@@ -66,6 +66,8 @@ hook; it then takes the query parameters as its body. A `GET` to a hook without 
 - **Rate limits.** 30 calls a minute per hook. Each sending address also has a limit of 240 calls a
   minute across all hooks.
 - **Who can do it.** Only a workspace admin can create, change, test or delete hooks.
+- **End now.** While a hook has alerts on screens or screens switched, its card shows **End now**,
+  which ends them and leaves the hook switched on. Switching the hook off does the same.
 - **Mesh replication.** Hooks aren't available in a workspace replicated over the mesh.
 
 ### Templates
@@ -99,8 +101,8 @@ are shown as text, never as HTML.
   anything else raises it.
 - **Clear without an id.** A clear with no id ends every alert the hook raised (an all-clear).
 - **Severity.** Words like `critical`, `high` or `low` are mapped onto Extreme, Severe or Minor.
-- **Testing.** **Test** runs the hook for real: the alert shows on screens until it is cleared or
-  ends.
+- **Testing.** **Test** runs the hook for real: the alert shows on screens until it is cleared,
+  ends, or you press **End now**.
 
 ### Mass notification: Alertus, InformaCast, CAP
 
@@ -140,9 +142,12 @@ A body with no id uses the exact body as its id, so a duplicate POST still count
 The hook relays the trigger to each assigned screen, the same way the trigger's own network door
 would. The screen still decides whether the trigger applies.
 
-- **Which screens.** This works over the internet only on **Raspberry Pi and Windows** screens.
-  Other players listen for triggers on their own network, and the hook's result counts them as
-  "can't be fired over the internet".
+- **Which screens.** This works over the internet on the **Raspberry Pi, Windows and macOS**
+  players and on every player that runs the web player: a **browser**, **BrightSign**, **LG webOS**,
+  **Amazon Vega** and **iPad and iPhone**. **Android**, **Samsung Tizen** and **Roku** screens can't be fired
+  this way, and the hook's result counts them as "can't be fired over the internet".
+- **Triggers switched on.** The screen needs a shared secret (its **Triggers** settings); a screen
+  without one is counted as "have triggers switched off".
 - **Allowed sources.** The trigger must accept HTTP as a source.
 - **Head office alerts.** Head office emergency alerts can't be fired from a hook.
 
@@ -158,13 +163,18 @@ list of lists is matched by position. **Rows** says where they are in the reques
 
 A table keeps at most 200 rows.
 
+**Test** on a table hook changes nothing: it checks the hook against an empty list of rows and says
+what it would do. Send real rows to the hook's address to try it for real.
+
 ### Switch to a playlist
 
 Screens in scope play the playlist, full screen, for the minutes you set. The minutes can also be
 taken from a field. Then the screens go back.
 
 - **Repeats.** Calling the hook again restarts the time; it does not stack.
-- **Switch back.** A "Switch screens back" hook, or deleting the hook, ends it early.
+- **Switch back.** A "Switch screens back" hook ends every switch on the screens in its own scope,
+  whichever hook or Zap started it; screens outside its scope keep playing. **End now** on the
+  hook's card, switching it off, or deleting it also ends its switch early.
 - **What it never overrides.** It never applies to a screen on a **head office playlist**, and an
   emergency alert still comes first.
 - **Tags.** A tag scope is resolved to the screens with that tag when the switch starts.
@@ -175,7 +185,7 @@ The integration lives in [`zapier/`](../zapier). It is a private Zapier app: pus
 Zapier account with the Zapier CLI, as its README describes. Connect it with:
 
 - **ScreenTinker address**, for example `https://app.screentinker.com`
-- **API token** from **Settings → API tokens**
+- **API token** from **Settings → API Tokens**
 
 **Triggers** are instant, through REST hooks:
 
@@ -195,9 +205,9 @@ Zapier account with the Zapier CLI, as its README describes. Connect it with:
 
 | Token scope | What it can do |
 | --- | --- |
-| `read` | Test the connection, read recent events, fill dropdowns |
-| `write` | The above, plus update tables. Subscribing to triggers also needs a workspace admin's token. |
-| `full` | Everything, including alerts, playlists and triggers. Also needs a workspace admin's token. |
+| **Read only** (`read`) | Test the connection, read recent events, fill dropdowns |
+| **Read & write** (`write`) | The above, plus update tables. Subscribing to triggers also needs a workspace admin's token. |
+| **Full (incl. device commands)** (`full`) | Everything, including alerts, playlists and triggers. Also needs a workspace admin's token. |
 
 Subscribing and unsubscribing send this workspace's events to an outside address, so they need a
 workspace admin, the same as managing subscriptions on the Automation page.

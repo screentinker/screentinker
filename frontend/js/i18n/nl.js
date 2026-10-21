@@ -6155,4 +6155,8 @@ export default {
   'review.field.enabled': 'Ingeschakeld',
   'review.no_value': '(geen)',
   'review.schedule_blocks': '{n} tijdsblok(ken)',
+  'auto.zapier_token': 'Verbind met een API-token uit Instellingen → API-tokens. Gebruik Lezen en schrijven voor gebeurtenissen en tabellen, en Volledig (incl. apparaatopdrachten) voor acties die schermen overnemen.',
+  'auto.end_now': 'Nu beëindigen',
+  'auto.confirm_end': 'Beëindigen wat {name} nu op de schermen toont?',
+  'auto.ended': 'Beëindigd',
 };

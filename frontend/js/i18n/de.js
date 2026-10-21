@@ -4560,4 +4560,8 @@ export default {
   'review.field.enabled': 'Aktiviert',
   'review.no_value': '(keine)',
   'review.schedule_blocks': '{n} Zeitblock/-blöcke',
+  'auto.zapier_token': 'Verbinden Sie sich mit einem API-Token aus Einstellungen → API-Tokens. Verwenden Sie Lesen & Schreiben für Ereignisse und Tabellen und Voll (inkl. Gerätebefehle) für Aktionen, die Bildschirme übernehmen.',
+  'auto.end_now': 'Jetzt beenden',
+  'auto.confirm_end': 'Beenden, was {name} gerade auf den Bildschirmen zeigt?',
+  'auto.ended': 'Beendet',
 };

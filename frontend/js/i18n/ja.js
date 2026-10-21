@@ -5187,4 +5187,8 @@ export default {
   'review.field.enabled': '有効',
   'review.no_value': '（なし）',
   'review.schedule_blocks': '{n} 件の時間帯',
+  'auto.zapier_token': "設定 → API トークン で作成した API トークンで接続します。イベントとテーブルには「読み取り&書き込み」、画面を切り替えるアクションには「フル (デバイスコマンドを含む)」を使います。",
+  'auto.end_now': "今すぐ終了",
+  'auto.confirm_end': "{name} が今画面に表示しているものを終了しますか?",
+  'auto.ended': "終了しました",
 };

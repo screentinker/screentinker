@@ -4098,4 +4098,8 @@ export default {
   'review.field.enabled': '已启用',
   'review.no_value': '（无）',
   'review.schedule_blocks': '{n} 个时间段',
+  'auto.zapier_token': '使用“设置 → API 令牌”中的 API 令牌连接。事件和表格使用“读写”，接管屏幕的操作使用“完全权限（含设备命令）”。',
+  'auto.end_now': '立即结束',
+  'auto.confirm_end': '结束 {name} 当前在屏幕上显示的内容？',
+  'auto.ended': '已结束',
 };
