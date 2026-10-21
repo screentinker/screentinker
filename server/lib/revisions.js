@@ -474,7 +474,7 @@ function fieldDiff(a, b, skip = new Set()) {
   return changed;
 }
 
-function listDiff(as, bs, keyOf, label) {
+function listDiff(as, bs, keyOf, label, skip = new Set()) {
   const ka = as.map(keyOf), kb = bs.map(keyOf);
   const setA = new Set(ka), setB = new Set(kb);
   const added = bs.filter((x, i) => !setA.has(kb[i])).map(label);
@@ -485,7 +485,7 @@ function listDiff(as, bs, keyOf, label) {
   const changed = [];
   for (const k of common) {
     const x = as[ka.indexOf(k)], y = bs[kb.indexOf(k)];
-    const d = fieldDiff(x, y);
+    const d = fieldDiff(x, y, skip);
     if (d.length) changed.push({ item: label(y), changes: d });
   }
   return { added, removed, reordered, changed };
@@ -496,7 +496,9 @@ function diffStates(type, a, b) {
   if (type === 'playlist') {
     const key = (it) => `${it.content_id || ''}|${it.widget_id || ''}|${it.child_playlist_id || ''}|${it.zone_id || ''}`;
     const label = (it) => ({ content_id: it.content_id, widget_id: it.widget_id, child_playlist_id: it.child_playlist_id, zone_id: it.zone_id, duration_sec: it.duration_sec });
-    return { fields: fieldDiff(a, b, new Set(['items'])), items: listDiff(a.items || [], b.items || [], key, label) };
+    // sort_order is the item's position: an insertion moves every later item's, and position is
+    // already reported as added / removed / reordered. Not a change to the item itself.
+    return { fields: fieldDiff(a, b, new Set(['items'])), items: listDiff(a.items || [], b.items || [], key, label, new Set(['sort_order'])) };
   }
   if (type === 'layout') {
     return { fields: fieldDiff(a, b, new Set(['zones'])), zones: listDiff(a.zones || [], b.zones || [], (z) => z.id, (z) => ({ id: z.id, name: z.name })) };
@@ -508,6 +510,35 @@ function diffStates(type, a, b) {
   }
   if (type === 'widget') return { fields: [...fieldDiff({ name: a.name }, { name: b.name }), ...fieldDiff(a.config || {}, b.config || {}).map((d) => ({ ...d, field: 'config.' + d.field }))] };
   return { fields: fieldDiff(a, b) };
+}
+
+/*
+ * A submitted state against the LIVE one (the Reviews page). captureLiveState rebuilds a playlist
+ * from its published snapshot, which records fewer fields than captureState (no enabled, weight,
+ * playback_order ...), and its item schedules are in the snapshot's {days,start,end} shape. Diffing
+ * the two raw marked every item "changed" whenever anything was added. Compare only what the live
+ * side records, with the schedules in one shape. captureLiveState itself is left alone: submit()
+ * hashes it.
+ */
+function scheduleShape(s) {
+  if (!s || typeof s !== 'object') return s;
+  const days = Array.isArray(s.days) ? s.days : String(s.active_days ?? '').split(',').filter((x) => x !== '').map(Number);
+  return { days, start: s.start ?? s.start_time ?? null, end: s.end ?? s.end_time ?? null, start_date: s.start_date || null, end_date: s.end_date || null };
+}
+function diffFromLive(type, live, state) {
+  if (type !== 'playlist' || !live || !state) return diffStates(type, live, state);
+  const pick = (o, keys) => { const out = {}; for (const k of keys) if (k in o) out[k] = o[k]; return out; };
+  const top = Object.keys(live).filter((k) => k !== 'items');
+  const itemKeys = new Set();
+  for (const it of live.items || []) for (const k of Object.keys(it)) itemKeys.add(k);
+  const shapeItem = (it) => {
+    const o = pick(it, itemKeys);
+    if (itemKeys.has('schedules')) o.schedules = (it.schedules || []).map(scheduleShape);
+    return o;
+  };
+  return diffStates(type,
+    { ...pick(live, top), items: (live.items || []).map(shapeItem) },
+    { ...pick(state, top), items: (state.items || []).map(shapeItem) });
 }
 
 // ─── restore: write an old state into the DRAFT and record it ────────────────────────────────
@@ -663,5 +694,5 @@ function lastPublished(db, type, id) {
 module.exports = { CONTENT_DRAFT_FIELDS, CONTENT_PLAYBACK_FIELDS, disposeDraftFiles,
   RESOURCE_TYPES, TABLE, HISTORY_DIR,
   captureState, captureLiveState, hashState, stable, record, recordCurrent, recordMissingIn, markPublished, baselineAll,
-  retainContentFile, resolveFileRef, refExists, materializeRefs, historyDir, deleteHistoryRows, removeRetainedFiles, redactState, diffStates, restoreToDraft, hasDraft, list, get, latest, lastPublished, parseJson,
+  retainContentFile, resolveFileRef, refExists, materializeRefs, historyDir, deleteHistoryRows, removeRetainedFiles, redactState, diffStates, diffFromLive, restoreToDraft, hasDraft, list, get, latest, lastPublished, parseJson,
 };

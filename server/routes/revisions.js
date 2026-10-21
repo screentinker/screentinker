@@ -68,7 +68,9 @@ router.get('/:type/:id/:rev/diff', requireWorkspaceRead, (req, res) => {
     if (!a || a.resource_id !== req.params.id) return res.status(404).json({ error: 'Comparison revision not found' });
     aState = revisions.parseJson(a.state, null); aLabel = `#${a.rev_no}`;
   } else { aState = revisions.captureLiveState(db, req.params.type, req.params.id); }
-  res.json({ against: aLabel, diff: revisions.diffStates(req.params.type, aState, revisions.parseJson(b.state, null)) });
+  // Against live: the live capture records fewer fields, so compare only those (diffFromLive).
+  const diff = aLabel === 'live' ? revisions.diffFromLive : revisions.diffStates;
+  res.json({ against: aLabel, diff: diff(req.params.type, aState, revisions.parseJson(b.state, null)) });
 });
 
 // The bytes a content revision retained, for preview. Same permission as reading the item.

@@ -75,6 +75,38 @@ function loadSubmission(req, res) {
   return s;
 }
 
+/*
+ * Readable names for the ids a playlist state mentions, so the Reviews page can say "menu.png"
+ * instead of "content cc1a6429". This workspace's rows only; anything else stays unnamed.
+ */
+function namesFor(workspaceId, states) {
+  const ids = { content: new Set(), widget: new Set(), playlist: new Set(), zone: new Set() };
+  for (const st of states) {
+    for (const it of (st && Array.isArray(st.items) ? st.items : [])) {
+      if (it.content_id) ids.content.add(it.content_id);
+      if (it.widget_id) ids.widget.add(it.widget_id);
+      if (it.child_playlist_id) ids.playlist.add(it.child_playlist_id);
+      if (it.zone_id) ids.zone.add(it.zone_id);
+    }
+  }
+  const sql = {
+    content: 'SELECT id, filename AS name FROM content WHERE workspace_id = ? AND id IN',
+    widget: 'SELECT id, name FROM widgets WHERE workspace_id = ? AND id IN',
+    playlist: 'SELECT id, name FROM playlists WHERE workspace_id = ? AND id IN',
+    zone: 'SELECT z.id, z.name FROM layout_zones z JOIN layouts l ON l.id = z.layout_id WHERE l.workspace_id = ? AND z.id IN',
+  };
+  const out = {};
+  for (const [kind, set] of Object.entries(ids)) {
+    out[kind] = {};
+    const list = [...set].slice(0, 500);
+    if (!list.length) continue;
+    try {
+      for (const r of db.prepare(`${sql[kind]} (${list.map(() => '?').join(',')})`).all(workspaceId, ...list)) out[kind][r.id] = r.name;
+    } catch (_) { /* a hand-built schema without the table: names are a nicety */ }
+  }
+  return out;
+}
+
 router.get('/:id', requireWorkspaceRead, (req, res) => {
   const s = loadSubmission(req, res);
   if (!s) return;
@@ -87,7 +119,8 @@ router.get('/:id', requireWorkspaceRead, (req, res) => {
     affected_devices: approvals.affectedDevices(db, s.resource_type, s.resource_id).length,
     revision: rev ? { ...rev, state: revisions.redactState(state) } : null,
     live_state: live ? revisions.redactState(live) : null,
-    diff_from_live: state ? revisions.diffStates(s.resource_type, live, state) : null,
+    diff_from_live: state ? revisions.diffFromLive(s.resource_type, live, state) : null,
+    names: namesFor(req.workspaceId, [state, live]),
     authors: [...approvals.authorsOf(db, s)],
     is_reviewer: approvals.isReviewer(db, req.workspaceId, req.user.id),
     ...publishRight(req, s),

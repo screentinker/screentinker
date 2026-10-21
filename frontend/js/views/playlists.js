@@ -5,7 +5,7 @@ import { esc, hydrateAuthImages } from '../utils.js';
 import { openContentPicker } from '../components/content-picker.js';
 import { t, tn } from '../i18n.js';
 import { frameDeviceOutput, displayAspectRatio } from '../lib/device-frame.js';
-import { renderApprovalBar } from '../components/approval-actions.js';
+import { renderApprovalBar, approvalSettings } from '../components/approval-actions.js';
 import { openSmartRulesModal, rulesSummary, loadFolders, DEFAULT_RULES } from '../components/smart-rules.js';
 import * as cui from '../components/corporate-ui.js';
 import { openSlotDialog } from '../components/corporate-slot-dialog.js';
@@ -593,6 +593,16 @@ function renderDetailContent(container, playlist) {
     onChanged: async () => { try { renderDetailContent(container, await api.getPlaylist(playlist.id)); } catch {} },
   });
   const publishBtn = document.getElementById('publishBtn');
+  // With approval required the server refuses a direct publish (409 approval_required) for
+  // everyone; the approval bar's Submit for review / Publish approved version is the way out.
+  // So the banner says that instead of offering a button that can only fail.
+  if (publishBtn) {
+    approvalSettings().then((s) => {
+      if (s && s.require_approval && publishBtn.isConnected) {
+        publishBtn.replaceWith(Object.assign(document.createElement('span'), { style: 'font-size:12px;color:#fcd34d;align-self:center', textContent: t('review.banner_submit_hint', { submit: t('review.submit') }) }));
+      }
+    }).catch(() => {});
+  }
   if (publishBtn) {
     publishBtn.addEventListener('click', async () => {
       try {
