@@ -158,6 +158,12 @@ router.get('/:id/render', (req, res) => {
     align-items:center; justify-content:center; z-index:100; cursor:pointer; }
   .idle-overlay h2 { font-size:48px; margin-bottom:16px; }
   .idle-overlay p { font-size:20px; opacity:0.6; }
+  .site-view { position:fixed; top:0; right:0; bottom:0; left:0; display:none; flex-direction:column; background:#fff; z-index:50; }
+  .site-bar { display:flex; align-items:center; padding:12px 20px; background:#111827; color:#f1f5f9; }
+  .site-back { font:inherit; font-size:22px; font-weight:600; color:inherit; background:#1e293b; border:2px solid #334155;
+    border-radius:12px; padding:12px 28px; cursor:pointer; touch-action:manipulation; flex-shrink:0; }
+  .site-hint { margin-left:20px; font-size:15px; opacity:0.6; }
+  .site-view iframe { flex:1; width:100%; border:0; background:#fff; }
 </style>
 </head>
 <body>
@@ -179,6 +185,15 @@ router.get('/:id/render', (req, res) => {
   </div>
   <div class="footer">${escapeHtml(config.footer) || ''}</div>
 
+  <!-- "Open URL": the address, inside this page, with a way back (see openSite below) -->
+  <div class="site-view" id="siteView">
+    <div class="site-bar">
+      <button type="button" class="site-back" id="siteBack">&#8592; ${escapeHtml(config.siteBackLabel) || 'Back'}</button>
+      <span class="site-hint">${escapeHtml(config.siteHint) || 'If this stays blank, the website does not allow being shown inside another page.'}</span>
+    </div>
+    <iframe id="siteFrame" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
+  </div>
+
   <!-- Idle screen (shows after inactivity) -->
   <div class="idle-overlay" id="idleOverlay">
     <h2>${escapeHtml(config.idleTitle) || 'Touch to Begin'}</h2>
@@ -193,7 +208,7 @@ router.get('/:id/render', (req, res) => {
         const action = btn.dataset.action;
         const url = btn.dataset.url;
         const page = btn.dataset.page;
-        if (action === 'url' && url) window.open(url, '_blank');
+        if (action === 'url' && url) openSite(url);
         else if (action === 'page' && page) window.location.href = page;
         else if (action === 'back') window.history.back();
         // Visual feedback
@@ -208,15 +223,50 @@ router.get('/:id/render', (req, res) => {
       });
     });
 
+    /*
+     * "Open URL" used to call window.open(), which a screen never honours: the page runs in the
+     * player's sandboxed frames (allow-scripts, no popups) and a TV has no second window to show
+     * anyway. The address opens HERE instead, full screen under a Back bar, in a frame that is
+     * sandboxed the same way as the page itself (a nested frame can never get more than its
+     * parent). http(s) only, so a button cannot carry a javascript: URL. A site that refuses to
+     * be framed stays blank; the bar says so, since that refusal cannot be detected from here.
+     */
+    function siteUrl(raw) {
+      let u = String(raw || '').trim();
+      // "www.example.com" typed without a scheme. (Backslashes doubled: this is inside a template literal.)
+      if (!/^[a-z][a-z0-9+.-]*:/i.test(u) && !/^[\\/?#.]/.test(u) && /^[^\\s\\/]+\\.[^\\s\\/]+/.test(u)) u = 'https://' + u;
+      try {
+        const parsed = new URL(u, window.location.href);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null;
+      } catch (e) { return null; }
+    }
+    function openSite(raw) {
+      const u = siteUrl(raw);
+      if (!u) return;
+      document.getElementById('siteFrame').src = u;
+      document.getElementById('siteView').style.display = 'flex';
+    }
+    function closeSite() {
+      const view = document.getElementById('siteView');
+      if (view.style.display !== 'flex') return;
+      view.style.display = 'none';
+      document.getElementById('siteFrame').src = 'about:blank';
+    }
+    document.getElementById('siteBack').addEventListener('click', closeSite);
+
     // Idle screen after ${safeNumber(config.idleTimeout, 60)} seconds of no interaction
     let idleTimer;
     function resetIdleTimer() {
       document.getElementById('idleOverlay').style.display = 'none';
       clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
+        closeSite();   // the next visitor starts at the home page, not on the last one's website
         document.getElementById('idleOverlay').style.display = 'flex';
       }, ${safeNumber(config.idleTimeout, 60) * 1000});
     }
+    // Touches inside the opened website never reach this document; the first one moves focus
+    // into its frame, which at least restarts the clock.
+    window.addEventListener('blur', resetIdleTimer);
     document.getElementById('idleOverlay').addEventListener('click', resetIdleTimer);
     ['touchstart', 'click', 'mousemove'].forEach(e => document.addEventListener(e, resetIdleTimer));
     resetIdleTimer();
@@ -249,6 +299,60 @@ router.post('/', (req, res) => {
   res.status(201).json(db.prepare('SELECT * FROM kiosk_pages WHERE id = ?').get(id));
 });
 
+/*
+ * A page reaches a screen through a WEBPAGE WIDGET that frames its render URL ("Kiosk: <name>",
+ * made by Add Content -> Kiosk). The widget stores the URL relative, or with an origin on older
+ * assignments, so this matches the path. These are the widgets a save must re-rev and a delete
+ * must not leave behind showing "Page not found".
+ */
+function kioskWidgetIds(pageId) {
+  const like = `%/api/kiosk/${String(pageId).replace(/[\\%_]/g, '\\$&')}/render%`;
+  return db.prepare("SELECT id FROM widgets WHERE widget_type = 'webpage' AND config LIKE ? ESCAPE '\\'")
+    .all(like).map((r) => r.id);
+}
+
+/*
+ * Saving a page used to notify nobody. The render is served live, but a player keeps a widget it is
+ * already showing mounted (a lone widget is held, never reloaded) until the widget's rev moves, so
+ * an edit reached a screen only when the player restarted. Same mechanism as editing the widget
+ * itself (routes/widgets.js PUT): bump the rev (widgets.updated_at, +1 so two saves in one second
+ * still differ) and push to the screens playing it.
+ */
+function pushToScreens(req, widgetIds) {
+  if (!widgetIds.length) return;
+  const placeholders = widgetIds.map(() => '?').join(',');
+  // CAST: strftime() returns TEXT, and SQLite's MAX() ranks any text above any number, so without it
+  // this would always pick "now" and two saves in one second would share a rev.
+  db.prepare(`UPDATE widgets SET updated_at = MAX(updated_at + 1, CAST(strftime('%s','now') AS INTEGER)) WHERE id IN (${placeholders})`)
+    .run(...widgetIds);
+  try {
+    const io = req.app.get('io');
+    if (!io) return;
+    const { buildPlaylistPayload } = require('../ws/deviceSocket');
+    const commandQueue = require('../lib/command-queue');
+    const { devicesPlayingWidget } = require('../lib/devices-playing');
+    const devices = new Set();
+    for (const id of widgetIds) for (const d of devicesPlayingWidget(id)) devices.add(d);
+    for (const d of devices) commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), d, buildPlaylistPayload);
+  } catch (e) { /* best-effort; the heartbeat refresh still picks it up */ }
+}
+
+// Playlists (draft rows or what is published) and schedules that still play one of these widgets.
+// A schedule would otherwise vanish with the widget (schedules.widget_id is ON DELETE CASCADE).
+function usedBy(widgetIds) {
+  const names = new Set();
+  for (const id of widgetIds) {
+    const like = `%${id.replace(/[\\%_]/g, '\\$&')}%`;
+    for (const p of db.prepare(`
+      SELECT DISTINCT p.name FROM playlists p
+       WHERE EXISTS (SELECT 1 FROM playlist_items pi WHERE pi.playlist_id = p.id AND pi.widget_id = ?)
+          OR p.published_snapshot LIKE ? ESCAPE '\\'
+    `).all(id, like)) names.add(p.name);
+    for (const sc of db.prepare('SELECT title FROM schedules WHERE widget_id = ?').all(id)) names.add(sc.title);
+  }
+  return [...names];
+}
+
 // Update kiosk page
 router.put('/:id', (req, res) => {
   const page = checkKioskWrite(req, res);
@@ -256,18 +360,37 @@ router.put('/:id', (req, res) => {
 
   const { name, config: pageConfig } = req.body;
   if (name) db.prepare('UPDATE kiosk_pages SET name = ? WHERE id = ?').run(name, req.params.id);
-  if (pageConfig) db.prepare('UPDATE kiosk_pages SET config = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?')
-    .run(JSON.stringify(pageConfig), req.params.id);
+  if (pageConfig) {
+    db.prepare('UPDATE kiosk_pages SET config = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?')
+      .run(JSON.stringify(pageConfig), req.params.id);
+    pushToScreens(req, kioskWidgetIds(req.params.id));
+  }
 
   res.json(db.prepare('SELECT * FROM kiosk_pages WHERE id = ?').get(req.params.id));
 });
 
-// Delete kiosk page
+/*
+ * Delete kiosk page. A page still in a playlist or schedule is refused (named), the same rule as a slide deck:
+ * deleting it used to leave its "Kiosk: ..." widget in the playlist, showing "Page not found" on
+ * the screen. Once nothing plays it, its widgets go with it, so none is left pointing at nothing.
+ */
 router.delete('/:id', (req, res) => {
   const page = checkKioskWrite(req, res);
   if (!page) return;
-  db.prepare('DELETE FROM kiosk_pages WHERE id = ?').run(req.params.id);
-  res.json({ success: true });
+  const widgetIds = kioskWidgetIds(page.id);
+  const names = usedBy(widgetIds);
+  if (names.length) {
+    return res.status(409).json({
+      error: `This page is still in use: ${names.join(', ')}. Remove it from there first.`,
+      code: 'KIOSK_PAGE_IN_USE',
+      used_by: names,
+    });
+  }
+  db.transaction(() => {
+    for (const id of widgetIds) db.prepare("DELETE FROM widgets WHERE id = ? AND widget_type = 'webpage'").run(id);
+    db.prepare('DELETE FROM kiosk_pages WHERE id = ?').run(req.params.id);
+  })();
+  res.json({ success: true, removed_widgets: widgetIds.length });
 });
 
 function getDefaultKioskConfig() {

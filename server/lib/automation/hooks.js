@@ -28,8 +28,9 @@
  *     prototype walking. Everything a template produces is plain text; the card escapes it.
  *   - A trigger is relayed to the screen exactly as the LAN door would deliver it
  *     (device:trigger-wire, `ST1 <secret> <token>`), so the player's own resolver still decides.
- *     Only players that accept a relayed wire (the native Pi and Windows players) can be fired this
- *     way; the result counts the rest as unsupported rather than pretending.
+ *     Only players that accept a relayed wire can be fired this way (RELAY_FAMILIES: the native
+ *     Pi / Windows / macOS player, and the web player in a browser and in the BrightSign, webOS,
+ *     Vega and iOS shells); the result counts the rest as unsupported rather than pretending.
  */
 
 const crypto = require('crypto');
@@ -45,6 +46,13 @@ const MAX_TEXT = 2000;
 const CLEAR_WORDS = new Set(['clear', 'cleared', 'allclear', 'all clear', 'all-clear', 'cancel', 'cancelled', 'canceled',
   'end', 'ended', 'resolved', 'inactive', 'stop', 'stopped', 'expired', 'terminated', 'deactivated']);
 const PER_HOOK_PER_MIN = 30;
+/*
+ * Player families (lib/player-capabilities platformFamily) that handle a relayed device:trigger-wire:
+ * the native engine (native/screentinker_native/net/link.py) and the web player
+ * (server/player/index.html, and legacy.html for older webOS), which is what the browser, BrightSign,
+ * webOS, Vega and iOS players run. Android, Tizen, Roku and embedded players have no handler.
+ */
+const RELAY_FAMILIES = new Set(['linux', 'windows', 'macos', 'web', 'brightsign', 'vega', 'ios']);
 
 /* ============================== secrets ============================== */
 
@@ -580,7 +588,7 @@ function runTrigger(db, hook, cfg, io) {
   const counts = { sent: 0, offline: 0, unsupported: 0, no_secret: 0 };
   for (const d of devices) {
     const fam = platformFamily(d);
-    if (fam !== 'linux' && fam !== 'windows') { counts.unsupported++; continue; }
+    if (!RELAY_FAMILIES.has(fam)) { counts.unsupported++; continue; }
     if (!d.trigger_secret) { counts.no_secret++; continue; }
     const room = ns && ns.adapter.rooms.get(d.id);
     if (!room || !room.size) { counts.offline++; continue; }
@@ -605,7 +613,12 @@ function rowsFrom(value) {
   return null;
 }
 
-async function runData(db, hook, cfg, ctx) {
+/**
+ * dryRun (a test from the Automation page): everything up to the write, then report what would have
+ * changed. A test must never destroy data — the page's sample body is an empty list, and a "Replace
+ * all rows" hook run for real with it empties the table.
+ */
+async function runData(db, hook, cfg, ctx, { dryRun = false } = {}) {
   const ds = db.prepare('SELECT * FROM data_sources WHERE id = ? AND workspace_id = ?').get(cfg.data_source_id, hook.workspace_id);
   if (!ds || ds.type !== 'table') return { ok: false, status: 409, outcome: 'The Table data source no longer exists.' };
   let conf;
@@ -641,13 +654,18 @@ async function runData(db, hook, cfg, ctx) {
   const next = { ...conf, rows };
   const err = validateTableConfig(next);
   if (err) return { ok: false, status: 422, outcome: err };
+  const did = `${cfg.mode === 'replace' ? 'replaced the table with' : cfg.mode === 'append' ? 'appended' : 'upserted'} ${fresh.length} row(s)`;
+  if (dryRun) {
+    const would = `${cfg.mode === 'replace' ? 'replace the table with' : cfg.mode === 'append' ? 'append' : 'upsert'} ${fresh.length} row(s)`;
+    return { ok: true, rows: rows.length, outcome: `test, nothing changed: would ${would}; the table would have ${rows.length} (it has ${(conf.rows || []).length})` };
+  }
   db.prepare("UPDATE data_sources SET config = ?, last_fetched_at = 0, updated_at = strftime('%s','now') WHERE id = ?").run(JSON.stringify(next), ds.id);
   try {
     await require('../data-sources/service').syncDataSource(ds.id, false);
   } catch (e) {
     return { ok: false, status: 500, outcome: `Rows saved, but the data source could not refresh: ${e && e.message}` };
   }
-  return { ok: true, rows: rows.length, outcome: `${cfg.mode === 'replace' ? 'replaced the table with' : cfg.mode === 'append' ? 'appended' : 'upserted'} ${fresh.length} row(s); the table has ${rows.length}` };
+  return { ok: true, rows: rows.length, outcome: `${did}; the table has ${rows.length}` };
 }
 
 /* ============================== playlist override ============================== */
@@ -655,7 +673,9 @@ async function runData(db, hook, cfg, ctx) {
 function runPlaylist(db, hook, cfg, ctx) {
   const ov = require('./overrides');
   if (cfg.op === 'stop') {
-    const n = ov.stop(db, { workspaceId: hook.workspace_id, hookId: hook.id });
+    // Every automation switch on the screens in this hook's scope, whichever hook or Zap started it
+    // (the Zapier stop action's rule): a stop hook never starts one, so "only its own" was none.
+    const n = ov.stop(db, { workspaceId: hook.workspace_id, scopes: cfg.scopes });
     return { ok: true, screens: n, outcome: `released ${n} screen(s)` };
   }
   let mins = cfg.minutes;
@@ -682,7 +702,7 @@ async function run(db, hook, parsed, { query = {}, io = null, test = false, log 
     if (hook.kind === 'emergency') r = runEmergency(db, hook, cfg, ctx, parsed);
     else if (hook.kind === 'mass_notification') r = runMassNotification(db, hook, cfg, ctx, parsed);
     else if (hook.kind === 'trigger') r = runTrigger(db, hook, cfg, io);
-    else if (hook.kind === 'data') r = await runData(db, hook, cfg, ctx);
+    else if (hook.kind === 'data') r = await runData(db, hook, cfg, ctx, { dryRun: test });
     else if (hook.kind === 'playlist') r = runPlaylist(db, hook, cfg, ctx);
     else r = { ok: false, status: 500, outcome: 'Unknown hook kind' };
   } catch (e) {

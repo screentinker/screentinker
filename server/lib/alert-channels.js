@@ -408,11 +408,14 @@ async function tick({ db = dbOf(), now = Math.floor(Date.now() / 1000), localRow
     if (events.includes('device_offline')) {
       // Measured from when the screen was due: an embedded display asleep until its next scheduled
       // call (heartbeat_expected_by) is not late before then. The outage KEY stays last_heartbeat.
+      // The upper bound keeps a new channel from announcing screens that have been dark for weeks.
+      // It is a day PAST the threshold, not a fixed day: a fixed 86400 s left a 1440-minute
+      // threshold (the form's maximum) no window at all, and one near it a window of a minute or two.
       const rows = db.prepare(`SELECT d.id, d.name, d.last_heartbeat,
           MAX(d.last_heartbeat, COALESCE(d.heartbeat_expected_by, 0)) AS overdue_since FROM devices d
         WHERE d.workspace_id = ? AND d.status = 'offline' AND d.last_heartbeat IS NOT NULL AND ${localRowsSql('d')}
           AND (? - MAX(d.last_heartbeat, COALESCE(d.heartbeat_expected_by, 0))) > ?
-          AND (? - MAX(d.last_heartbeat, COALESCE(d.heartbeat_expected_by, 0))) < 86400`).all(ch.workspace_id, now, thresh, now);
+          AND (? - MAX(d.last_heartbeat, COALESCE(d.heartbeat_expected_by, 0))) < ?`).all(ch.workspace_id, now, thresh, now, thresh + 86400);
       for (const d of rows) {
         if (limited) break;
         if (!inScope(db, ch.id, d.id)) continue;
