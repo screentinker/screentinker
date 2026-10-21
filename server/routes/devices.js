@@ -919,6 +919,16 @@ router.put('/:id', (req, res) => {
     if (orientation !== undefined || timezone !== undefined) {
       require('../lib/corporate/guard').auditMandatedAction(req, device, orientation !== undefined ? 'orientation' : 'timezone');
     }
+    /*
+     * ⚠️ These columns travel in the playlist payload, which was only sent on (re)connect: Save
+     * Settings stored a new Default Content / orientation / background and the screen kept the old
+     * one until it next reconnected. Push now (or queue for an offline screen). The group push
+     * above already sent this screen a fresh payload when dynOps is set.
+     */
+    const payloadFields = [orientation, timezone, background_color, default_content_id, layout_id];
+    if (!dynOps.length && payloadFields.some((v) => v !== undefined)) {
+      groupRules.pushTo(req.app.get('io'), [req.params.id]);
+    }
   }
 
   const updated = db.prepare('SELECT * FROM devices WHERE id = ?').get(req.params.id);

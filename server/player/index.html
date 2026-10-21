@@ -3643,7 +3643,8 @@
         const showIdle = (PMH && typeof PMH.shouldShowIdle === 'function')
           ? PMH.shouldShowIdle({ isPlaying: isPlaying, hasContent: playlist.length > 0 })
           : !isPlaying;
-        if (showIdle) showStatus('Waiting for content...');
+        // The device default image IS the idle screen when one is set; the card would cover it.
+        if (showIdle && !renderDefaultContent()) showStatus('Waiting for content...');
       });
 
       // Server no longer accepts our identity (row deleted, or token rejected). Drop the
@@ -6533,7 +6534,10 @@
       if (!dc || typeof dc.mime_type !== 'string' || !dc.mime_type.startsWith('image/')) return false;
       const container = document.getElementById('playerContainer');
       const key = dc.content_rev || dc.content_id || dc.remote_url || dc.filepath;
-      if (_defaultShownRev === key && container && container.querySelector('img[data-st-default]')) return true;
+      // ⚠️ #statusOverlay (z-index 500) sits ABOVE #playerContainer, so mounting the image is not
+      // enough: an idle card left up by an earlier path ("Waiting for content...", device:paired)
+      // covered it, and the default image was never seen. Every true return hides the card.
+      if (_defaultShownRev === key && container && container.querySelector('img[data-st-default]')) { hideStatus(); return true; }
       teardownCurrentMedia();
       const img = document.createElement('img');
       img.setAttribute('data-st-default', '1');
@@ -6542,6 +6546,7 @@
       img.src = mediaUrl(dc);
       if (container) { container.style.display = 'block'; container.appendChild(img); }
       _defaultShownRev = key;
+      hideStatus();
       return true;
     }
     // Every item filtered out: show the device default image (LED-wall off-times) or the idle screen,

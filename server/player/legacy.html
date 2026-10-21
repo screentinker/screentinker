@@ -3157,7 +3157,7 @@ function connect(serverUrl) {
     document.getElementById("setupScreen").style.display = "none";
     const PMH = window.PlayerMediaHealth;
     const showIdle = PMH && typeof PMH.shouldShowIdle === "function" ? PMH.shouldShowIdle({ isPlaying, hasContent: playlist.length > 0 }) : !isPlaying;
-    if (showIdle) showStatus("Waiting for content...");
+    if (showIdle && !renderDefaultContent()) showStatus("Waiting for content...");
   });
   function clearShareForUnpaired() {
     try {
@@ -5344,7 +5344,10 @@ function renderDefaultContent() {
   if (!dc || typeof dc.mime_type !== "string" || !dc.mime_type.startsWith("image/")) return false;
   const container = document.getElementById("playerContainer");
   const key = dc.content_rev || dc.content_id || dc.remote_url || dc.filepath;
-  if (_defaultShownRev === key && container && container.querySelector("img[data-st-default]")) return true;
+  if (_defaultShownRev === key && container && container.querySelector("img[data-st-default]")) {
+    hideStatus();
+    return true;
+  }
   teardownCurrentMedia();
   const img = document.createElement("img");
   img.setAttribute("data-st-default", "1");
@@ -5358,6 +5361,7 @@ function renderDefaultContent() {
     container.appendChild(img);
   }
   _defaultShownRev = key;
+  hideStatus();
   return true;
 }
 function showNothingScheduled() {

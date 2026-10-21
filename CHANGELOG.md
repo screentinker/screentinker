@@ -97,6 +97,11 @@
 
 ### Fixed
 
+- **A screen's Default Content now shows on the web player** (Device Info → Settings → Default
+  Content). The picture was put on the page but the "Waiting for content..." card stayed on top
+  of it, so it was never seen. **Save Settings** also now sends the change to a screen that is
+  already on, instead of it waiting for the screen to reconnect; that goes for orientation and
+  background colour too.
 - **A whole-server export can no longer fill the disk** (Platform → Data & privacy). One did on our
   own server: it needed about twice the export's size, never checked free space, and when the disk
   filled it hung with its files left behind. Every 15 minutes a sweep also put the hung export back in
