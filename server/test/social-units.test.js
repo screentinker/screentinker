@@ -63,3 +63,33 @@ test('the editor preview renders sample posts with no network', () => {
   assert.match(html, /"layout":"ticker"/);
   assert.match(html, /Doors open at 9/);
 });
+
+// Errors from the networks, in words an admin can act on (they show on the feed's card).
+test('Bluesky and Instagram errors say what to do, not just a status code', async () => {
+  const http = require('node:http');
+  const answers = {
+    '/bsky/app.bsky.feed.searchPosts': [403, ''],
+    '/bsky/app.bsky.feed.getAuthorFeed': [400, JSON.stringify({ error: 'InvalidRequest', message: 'Profile not found' })],
+    '/ig/me': [400, JSON.stringify({ error: { message: 'Failed to decode', type: 'OAuthException', code: 190 } })],
+  };
+  const srv = http.createServer((req, res) => {
+    const [status, body] = answers[req.url.split('?')[0]] || [500, '{}'];
+    res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(body);
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const M = `http://127.0.0.1:${srv.address().port}`;
+  const prev = { ...process.env };
+  Object.assign(process.env, { NODE_ENV: 'test', SOCIAL_API_BASES: JSON.stringify({ bluesky: `${M}/bsky`, instagram: `${M}/ig` }), SOCIAL_TEST_TRUSTED_ORIGINS: M });
+  try {
+    const { fetchSource } = require('../lib/social/networks');
+    await assert.rejects(fetchSource({ network: 'bluesky', kind: 'search', value: '#x' }, null, 5), /signed-in apps search posts.*account sources/);
+    await assert.rejects(fetchSource({ network: 'bluesky', kind: 'account', value: 'nobody.bsky.social' }, null, 5), /^Error: No Bluesky account by that name\.$/);
+    const conn = { kind: 'instagram', config: {}, secret_enc: require('../lib/secretbox').encrypt('bad-token') };
+    await assert.rejects(fetchSource({ network: 'instagram', kind: 'own', value: '' }, conn, 5), /Paste a new token in Settings → Social connections/);
+    answers['/ig/me'] = [400, JSON.stringify({ error: { message: 'Unsupported get request', type: 'GraphMethodException', code: 100 } })];
+    await assert.rejects(fetchSource({ network: 'instagram', kind: 'own', value: '' }, conn, 5), /^Error: 400: Unsupported get request$/, 'other errors pass through');
+  } finally {
+    for (const k of ['NODE_ENV', 'SOCIAL_API_BASES', 'SOCIAL_TEST_TRUSTED_ORIGINS']) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+    srv.close();
+  }
+});

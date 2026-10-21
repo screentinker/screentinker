@@ -4,7 +4,12 @@
 
 import { esc } from '../utils.js';
 import { t } from '../i18n.js';
-import { openContentPicker } from './content-picker.js';
+
+// ⚠️ Images come from the widget IMAGE picker in views/widgets.js (resolves to a URL), NOT the
+// playlist "+ Add Content" picker in components/content-picker.js (returns {modal, close} at once
+// and wants an add() callback): with that one, Logo read "[object Object]" and Add did nothing.
+// Loaded lazily because views/widgets.js imports this file.
+const pickImage = async (title) => (await import('../views/widgets.js')).openContentPicker({ multiple: false, title });
 
 const uid = (p) => p + Math.random().toString(36).slice(2, 9);
 const item = (name, price, extra = {}) => ({ id: uid('i'), name, description: '', prices: [String(price)], tags: [], sold_out: false, ...extra });
@@ -182,7 +187,7 @@ function wire(host) {
     });
   });
   host.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', async () => {
-    const url = await openContentPicker({ multiple: false, title: t('menu.choose_image') });
+    const url = await pickImage(t('menu.choose_image'));
     if (url) { state[b.dataset.pick] = url; paint(host); }
   }));
   host.querySelectorAll('[data-clear]').forEach((b) => b.addEventListener('click', () => { state[b.dataset.clear] = ''; paint(host); }));
@@ -229,7 +234,7 @@ function wire(host) {
       itEl.querySelector('[data-act="it-del"]').addEventListener('click', () => { sec.items.splice(ii, 1); paint(host); });
       itEl.querySelector('[data-act="it-img"]').addEventListener('click', async () => {
         if (it.image_url && confirm(t('menu.remove_photo'))) { it.image_url = ''; paint(host); return; }
-        const url = await openContentPicker({ multiple: false, title: t('menu.item_photo') });
+        const url = await pickImage(t('menu.item_photo'));
         if (url) { it.image_url = url; paint(host); }
       });
     });
