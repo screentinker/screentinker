@@ -72,6 +72,9 @@ test('a refused request is saved but reported with what will actually run, and w
   assert.equal(body.sync_effective, 'screentinker', 'but this is what the screens will run');
   assert.equal(body.sync_downgraded, true);
   assert.match(body.sync_reason, /non-BrightSign/);
+  // ...and in a form the dashboard can translate instead of printing the English reason.
+  assert.equal(body.sync_reason_code, 'non_brightsign');
+  assert.equal(body.sync_reason_count, 1);
 });
 
 test('the group list carries the same decision, so the UI never disagrees with the players', async () => {

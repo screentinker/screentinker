@@ -768,7 +768,10 @@ body {
   position: absolute;
   top: 4px;
   left: 6px;
-  pointer-events: none;
+  /* Grabbable: the label is how you pick the player up when it lies exactly over the screens
+     (video-wall.js gives a press on the player's body to the screen beneath it). */
+  pointer-events: auto;
+  z-index: 3;
   color: #dbeafe;
   text-shadow: 0 1px 2px rgba(0,0,0,0.6);
   font-size: 11px;

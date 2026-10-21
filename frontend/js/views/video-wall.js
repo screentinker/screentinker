@@ -2,7 +2,7 @@ import { api, assertLocalCallAllowed } from '../api.js';
 import { on, off, requestScreenshot } from '../socket.js';
 import { showToast } from '../components/toast.js';
 import { esc, livenessBadge } from '../utils.js';
-import { t } from '../i18n.js';
+import { t, tn } from '../i18n.js';
 import * as cui from '../components/corporate-ui.js';
 import { snapMove, snapResize } from '../components/snap.js';
 import { mountWallLive } from '../components/wall-live.js';
@@ -36,7 +36,9 @@ const WALL_ROTATIONS = [0, 90, 180, 270];
 // The same commands a group gets (dashboard GROUP_COMMANDS), sent to every panel of the wall.
 const WALL_COMMANDS = ['screen_on', 'screen_off', 'launch', 'update', 'reboot', 'shutdown'];
 const WALL_DESTRUCTIVE = ['reboot', 'shutdown'];
-const ROTATION_LABELS = { 0: 'Normal (0°)', 90: 'Turned left (90°)', 180: 'Upside down (180°)', 270: 'Turned right (270°)' };
+// Keys, not strings: the labels follow the language the dashboard is in now.
+const ROTATION_LABEL_KEYS = { 0: 'wall.rotation_0', 90: 'wall.rotation_90', 180: 'wall.rotation_180', 270: 'wall.rotation_270' };
+const rotationLabel = (r) => t(ROTATION_LABEL_KEYS[r] || ROTATION_LABEL_KEYS[0]);
 // A panel already configured portrait is already hung sideways; carry that across so the operator
 // doesn't have to say the same thing twice (and so the tile lands the right shape first time).
 const ORIENTATION_TO_ROTATION = { 'landscape': 0, 'portrait': 90, 'landscape-flipped': 180, 'portrait-flipped': 270 };
@@ -243,10 +245,10 @@ async function renderWallEditor(container, wallId) {
           <option value="">${t('wall.cmd_placeholder')}</option>
           ${WALL_COMMANDS.map(c => `<option value="${c}" ${WALL_DESTRUCTIVE.includes(c) ? 'style="color:var(--danger)"' : ''}>${t('dashboard.cmd.' + (c === 'launch' ? 'restart_app' : c === 'update' ? 'check_update' : c))}</option>`).join('')}
         </select>
-        <button class="btn btn-sm" id="centerViewBtn" title="Re-center and fit content to the viewport">Center</button>
-        <button class="btn btn-sm" id="autoArrangeBtn" title="Lay out screens in a grid using the columns/rows/bezel below">Auto-arrange</button>
-        <button class="btn btn-sm" id="fitPlayerBtn" title="Snap the player rect to the bounding box of all screens">Fit player to screens</button>
-        <button class="btn btn-sm" id="saveLayoutBtn" disabled>Save layout</button>
+        <button class="btn btn-sm" id="centerViewBtn" title="${esc(t('wall.center_tip'))}">${t('wall.center')}</button>
+        <button class="btn btn-sm" id="autoArrangeBtn" title="${esc(t('wall.auto_arrange_tip'))}">${t('wall.auto_arrange')}</button>
+        <button class="btn btn-sm" id="fitPlayerBtn" title="${esc(t('wall.fit_player_tip'))}">${t('wall.fit_player')}</button>
+        <button class="btn btn-sm" id="saveLayoutBtn" disabled>${t('wall.save_layout')}</button>
         <button class="btn btn-danger btn-sm" id="deleteWallBtn">${t('wall.delete_wall')}</button>
       </div>
     </div>
@@ -274,7 +276,7 @@ async function renderWallEditor(container, wallId) {
           <div class="form-group" style="margin:0"><label style="font-size:11px;color:var(--text-muted)">${t('wall.rows')}</label><input type="number" id="gridRows" class="input" value="${wall.grid_rows}" min="1" max="20" style="width:70px"></div>
           <div class="form-group" style="margin:0"><label style="font-size:11px;color:var(--text-muted)">${t('wall.h_bezel')}</label><input type="number" id="bezelH" class="input" value="${Math.round(wall.bezel_h_mm)}" min="0" step="1" style="width:80px"></div>
           <div class="form-group" style="margin:0"><label style="font-size:11px;color:var(--text-muted)">${t('wall.v_bezel')}</label><input type="number" id="bezelV" class="input" value="${Math.round(wall.bezel_v_mm)}" min="0" step="1" style="width:80px"></div>
-          <span style="font-size:11px;color:var(--text-muted);max-width:340px">Cols/rows/bezel are used by Auto-arrange. Drag freely on the canvas to override.</span>
+          <span style="font-size:11px;color:var(--text-muted);max-width:340px">${t('wall.grid_help')}</span>
         </div>
         <div style="margin-top:16px">
           <h3 style="font-size:14px;margin:0 0 8px">${t('wall.playlist')}</h3>
@@ -310,7 +312,7 @@ async function renderWallEditor(container, wallId) {
              device live here now. -->
         <div style="margin-top:20px">
           <h3 style="font-size:14px;margin:0 0 8px;display:flex;align-items:center;gap:10px">
-            Panels
+            ${t('wall.panels')}
             <span id="wallPanelSummary" style="font-size:12px;font-weight:400;color:var(--text-muted)"></span>
           </h3>
           <div id="wallPanelStatus"></div>
@@ -320,19 +322,13 @@ async function renderWallEditor(container, wallId) {
       <div style="width:260px;flex-shrink:0">
         <div id="selectionPanel" class="wall-selection-panel" style="margin-bottom:14px"></div>
         <h3 style="font-size:14px;margin-bottom:6px">${t('wall.available_displays')}</h3>
-        <p style="color:var(--text-muted);font-size:11px;margin:0 0 8px">Drag onto the canvas to add. Use the ✕ on a tile to remove.</p>
+        <p style="color:var(--text-muted);font-size:11px;margin:0 0 8px">${t('wall.available_help')}</p>
         <div id="availableDevices" style="min-height:60px;padding:6px;border:1px dashed var(--border);border-radius:8px"></div>
         <div class="info-card" style="margin-top:14px;padding:10px;font-size:12px;line-height:1.55">
-          <strong style="font-size:12px">How it works</strong>
+          <strong style="font-size:12px">${t('wall.how_title')}</strong>
           <ul style="margin:6px 0 0 14px;padding:0;color:var(--text-secondary)">
-            <li>This canvas is the wall <strong>as the audience sees it</strong>. Arrange the
-                rectangles to match the physical layout.</li>
-            <li>Each rectangle is a physical screen.</li>
-            <li>The blue dashed rectangle is the player window — content plays inside this rect.</li>
-            <li>Each screen shows only the part of the player that overlaps it.</li>
-            <li>Panel hung sideways? Select it and set <em>How this panel is mounted</em> — the
-                tile turns to match and the content is rotated for you.</li>
-            <li>Drag corners to resize, drag the body to move.</li>
+            ${['how_audience', 'how_rect', 'how_player', 'how_overlap', 'how_player_click', 'how_mounted', 'how_drag']
+              .map(k => `<li>${t('wall.' + k)}</li>`).join('')}
           </ul>
         </div>
       </div>
@@ -394,18 +390,18 @@ async function renderWallEditor(container, wallId) {
     if (!rect) {
       panel.innerHTML = `
         <div class="info-card" style="padding:10px;font-size:12px">
-          <strong style="font-size:12px">Fine position</strong>
-          <p style="margin:4px 0 0;color:var(--text-muted);font-size:11px">Click a tile or the player to dial in exact pixel positions.</p>
+          <strong style="font-size:12px">${t('wall.fine_position')}</strong>
+          <p style="margin:4px 0 0;color:var(--text-muted);font-size:11px">${t('wall.fine_position_help')}</p>
         </div>`;
       return;
     }
     const isPlayer = selected.type === 'player';
-    const label = isPlayer ? 'Player rect' : (rect.device_name || 'Screen');
+    const label = isPlayer ? t('wall.player_rect') : (rect.device_name || t('wall.screen'));
     panel.innerHTML = `
       <div class="info-card" style="padding:10px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
           <strong style="font-size:12px">${esc(label)}</strong>
-          <button class="btn btn-sm" id="deselectBtn" style="padding:2px 8px;font-size:11px">Deselect</button>
+          <button class="btn btn-sm" id="deselectBtn" style="padding:2px 8px;font-size:11px">${t('wall.deselect')}</button>
         </div>
         <div class="wall-pos-grid">
           <label>X</label><input type="number" data-field="x" value="${Math.round(rect.x)}" step="1">
@@ -415,19 +411,16 @@ async function renderWallEditor(container, wallId) {
         </div>
         ${isPlayer ? '' : `
         <div style="margin-top:10px">
-          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:3px">How this panel is mounted</label>
+          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:3px">${t('wall.mounted')}</label>
           <select id="screenRotation" class="input" style="width:100%;font-size:12px;background:var(--bg-input)">
-            ${WALL_ROTATIONS.map(r => `<option value="${r}" ${(rect.rotation || 0) === r ? 'selected' : ''}>${ROTATION_LABELS[r]}</option>`).join('')}
+            ${WALL_ROTATIONS.map(r => `<option value="${r}" ${(rect.rotation || 0) === r ? 'selected' : ''}>${rotationLabel(r)}</option>`).join('')}
           </select>
           <p style="margin:5px 0 0;font-size:10px;color:var(--text-muted);line-height:1.4">
-            Lay the canvas out to match the <strong>physical</strong> wall and set this per panel —
-            content is rotated for you, so portrait walls don't need pre-rotated video.
-            While a panel is in a wall this replaces its own Orientation setting.
+            ${t('wall.mounted_help')}
           </p>
         </div>`}
         <p style="margin:8px 0 0;font-size:10px;color:var(--text-muted);line-height:1.4">
-          Arrow keys nudge by 1px. Hold <kbd>Shift</kbd> for 10px.
-          Click outside any rect to deselect.
+          ${t('wall.nudge_help')}
         </p>
       </div>
     `;
@@ -542,7 +535,7 @@ async function renderWallEditor(container, wallId) {
         <div class="wall-screen-meta">
           <span class="status-dot ${s.device_status}" style="display:inline-block"></span>
           <span style="font-size:10px;color:var(--text-muted)">${Math.round(s.w)}×${Math.round(s.h)}</span>
-          ${(s.rotation || 0) !== 0 ? `<span class="wall-screen-rot" title="${esc(ROTATION_LABELS[s.rotation])}" style="font-size:10px;color:var(--accent);margin-left:4px">⟳${s.rotation}°</span>` : ''}
+          ${(s.rotation || 0) !== 0 ? `<span class="wall-screen-rot" title="${esc(rotationLabel(s.rotation))}" style="font-size:10px;color:var(--accent);margin-left:4px">⟳${s.rotation}°</span>` : ''}
         </div>
         ${renderNoteFor(s.device_id) ? `<div class="wall-screen-rendernote" style="font-size:9px;color:var(--warning,#e0a800);margin-top:2px;line-height:1.2">${esc(renderNoteFor(s.device_id))}</div>` : ''}
       </div>
@@ -578,12 +571,25 @@ async function renderWallEditor(container, wallId) {
     setRectStyle(el, player);
     el.innerHTML = `
       <div class="wall-player-label">
-        <span style="font-weight:600">PLAYER</span>
+        <span style="font-weight:600">${t('wall.player_badge')}</span>
         <span style="font-size:10px;color:rgba(255,255,255,0.7);margin-left:8px">${Math.round(player.w)}×${Math.round(player.h)}</span>
       </div>
       ${resizeHandlesHtml()}
     `;
-    el.addEventListener('pointerdown', () => selectPlayer());
+    // The player is drawn ABOVE the screens, and a new wall (or Fit player to screens) lays it exactly
+    // over them, so every click on a panel used to grab the player instead. Screens win now: a press
+    // on the player's body that lands on a screen goes to that screen. Its PLAYER label, its resize
+    // handles and any part of it not over a screen still take the player, so it stays reachable.
+    // Registered before attachDragResize so stopImmediatePropagation keeps the player's drag from starting.
+    el.addEventListener('pointerdown', (ev) => {
+      const own = ev.target.closest('.wall-handle, .wall-player-label');
+      const under = own ? null : document.elementsFromPoint(ev.clientX, ev.clientY)
+        .find((n) => n.classList && n.classList.contains('wall-screen'));
+      if (!under) { selectPlayer(); return; }
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      under.dispatchEvent(new PointerEvent('pointerdown', ev));
+    });
     attachDragResize(el, player, () => {
       setRectStyle(el, player);
       const meta = el.querySelector('.wall-player-label span:last-child');
@@ -630,7 +636,7 @@ async function renderWallEditor(container, wallId) {
     const summary = document.getElementById('wallPanelSummary');
 
     if (screens.length === 0) {
-      host.innerHTML = `<p style="color:var(--text-muted);font-size:12px;margin:0">No panels on this wall yet — drag displays onto the canvas.</p>`;
+      host.innerHTML = `<p style="color:var(--text-muted);font-size:12px;margin:0">${t('wall.no_panels')}</p>`;
       if (summary) summary.textContent = '';
       return;
     }
@@ -643,10 +649,10 @@ async function renderWallEditor(container, wallId) {
     const degraded = badges.filter(x => x.b.state === 'degraded').length;
     if (summary) {
       summary.textContent = down > 0
-        ? `${down} of ${screens.length} not online`
+        ? t('wall.panels_down', { down, n: screens.length })
         : degraded > 0
-          ? `${screens.length} panel${screens.length === 1 ? '' : 's'} online, ${degraded} degraded`
-          : `${screens.length} panel${screens.length === 1 ? '' : 's'}, all online`;
+          ? tn('wall.panels_degraded', screens.length, { degraded })
+          : tn('wall.panels_all_online', screens.length);
       summary.style.color = down > 0 ? 'var(--danger, #e5484d)' : degraded > 0 ? 'var(--warning, #e0a800)' : 'var(--success)';
     }
 
@@ -656,7 +662,7 @@ async function renderWallEditor(container, wallId) {
           const d = deviceById(s.device_id) || {};
           const meta = [
             d.app_version ? `v${esc(d.app_version)}` : '',
-            (s.rotation || 0) !== 0 ? esc(ROTATION_LABELS[s.rotation]) : '',
+            (s.rotation || 0) !== 0 ? esc(rotationLabel(s.rotation)) : '',
           ].filter(Boolean).join(' · ');
           return `
             <div class="playlist-item" data-device-id="${esc(s.device_id)}" style="display:flex;align-items:center;gap:10px">
@@ -669,15 +675,14 @@ async function renderWallEditor(container, wallId) {
               </div>
               ${(!Array.isArray(d.capabilities) || d.capabilities.includes('remote.screenshot')) ? `
               <button class="btn btn-sm wall-panel-shot" data-device-id="${esc(s.device_id)}" style="padding:2px 8px;font-size:11px"
-                      title="Ask this panel for a screenshot — safe on a live wall, it doesn't change what's playing">Screenshot</button>` : ''}
+                      title="${esc(t('wall.panel_screenshot_tip'))}">${t('wall.panel_screenshot')}</button>` : ''}
               <a class="btn btn-sm" href="#/device/${esc(s.device_id)}" style="padding:2px 8px;font-size:11px"
-                 title="Device info, incident log and remote controls">Open</a>
+                 title="${esc(t('wall.panel_open_tip'))}">${t('wall.panel_open')}</a>
             </div>`;
         }).join('')}
       </div>
       <p style="margin:8px 0 0;font-size:10px;color:var(--text-muted);line-height:1.4">
-        Opening a panel doesn't remove it from the wall. Pushing different content to one panel
-        will desync the wall — use the wall playlist above instead.
+        ${t('wall.panels_help')}
       </p>`;
 
     // The button is only rendered for a panel that declares (or baselines to) remote.screenshot —
@@ -686,7 +691,7 @@ async function renderWallEditor(container, wallId) {
     host.querySelectorAll('.wall-panel-shot').forEach(btn => {
       btn.addEventListener('click', () => {
         requestScreenshot(btn.dataset.deviceId);
-        showToast('Screenshot requested — it appears on the panel\'s device page', 'info');
+        showToast(t('wall.toast.screenshot_requested'), 'info');
       });
     });
   }
@@ -914,7 +919,7 @@ async function renderWallEditor(container, wallId) {
       el.className = 'wall-zone-overlay';
       el.dataset.zoneId = z.id;
       el.style.cssText = `position:absolute;pointer-events:none;border:2px dashed ${zoneColor(i)};background:${zoneColor(i)}22;z-index:3;box-sizing:border-box`;
-      el.innerHTML = `<span style="position:absolute;left:4px;top:2px;font-size:11px;font-weight:600;color:${zoneColor(i)};text-shadow:0 1px 2px #000">${esc(z.name || ('Zone ' + (i + 1)))}</span>`;
+      el.innerHTML = `<span style="position:absolute;left:4px;top:2px;font-size:11px;font-weight:600;color:${zoneColor(i)};text-shadow:0 1px 2px #000">${esc(z.name || t('layout.zone_n', { n: i + 1 }))}</span>`;
       canvas.appendChild(el);
     });
     positionZoneOverlay();
@@ -969,7 +974,7 @@ async function renderWallEditor(container, wallId) {
     const used = totals.filter(n => n > 0);
     const uneven = used.length > 1 && used.some(n => n !== used[0]);
     const zoneOptions = (cur) => `<option value="">${esc(t('wall.zone_none'))}</option>` +
-      zones.map((z, i) => `<option value="${esc(z.id)}" ${z.id === cur ? 'selected' : ''}>${esc(z.name || ('Zone ' + (i + 1)))}</option>`).join('');
+      zones.map((z, i) => `<option value="${esc(z.id)}" ${z.id === cur ? 'selected' : ''}>${esc(z.name || t('layout.zone_n', { n: i + 1 }))}</option>`).join('');
     const row = (it) => `
       <div style="display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
         <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="${esc(it.filename || '')}">${it.mime_type === 'application/x-st-hold' ? '⏸ ' : ''}${esc(it.filename || it.widget_name || it.child_playlist_name || '?')}</span>
@@ -986,7 +991,7 @@ async function renderWallEditor(container, wallId) {
       ${zones.map((z, i) => `
         <div style="margin:8px 0 4px;display:flex;align-items:center;gap:8px">
           <span style="width:10px;height:10px;border-radius:2px;background:${zoneColor(i)}"></span>
-          <strong style="font-size:12px">${esc(z.name || ('Zone ' + (i + 1)))}</strong>
+          <strong style="font-size:12px">${esc(z.name || t('layout.zone_n', { n: i + 1 }))}</strong>
           <span style="font-size:11px;color:var(--text-muted)">${esc(t('wall.zone_loop', { s: totals[i] }))}</span>
           <button class="btn btn-sm wz-hold" data-zone="${esc(z.id)}" style="margin-left:auto;padding:2px 8px;font-size:11px">${esc(t('wall.zone_add_hold'))}</button>
         </div>
@@ -1115,7 +1120,7 @@ async function renderWallEditor(container, wallId) {
       const btn = document.getElementById('saveLayoutBtn');
       btn.disabled = true;
       btn.classList.remove('btn-primary');
-      showToast('Layout saved', 'success');
+      showToast(t('wall.toast.layout_saved'), 'success');
     } catch (err) { showToast(err.message, err.cancelled ? 'info' : 'error'); }
   });
 
@@ -1136,7 +1141,7 @@ async function renderWallEditor(container, wallId) {
   });
 
   document.getElementById('renameWallBtn').addEventListener('click', async () => {
-    const newName = prompt('Wall name:', wall.name);
+    const newName = prompt(t('wall.prompt_rename'), wall.name);
     if (!newName || newName === wall.name) return;
     try {
       await API(`/walls/${wallId}`, { method: 'PUT', body: JSON.stringify({ name: newName }) });

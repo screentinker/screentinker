@@ -31,7 +31,29 @@ test('auto picks native sync when every display is a BrightSign', () => {
 test('auto falls back to our protocol the moment one member is not a BrightSign', () => {
   const r = resolveSyncBackend('auto', [bs(1), bs(2), android]);
   assert.equal(r.backend, 'screentinker');
-  assert.equal(r.reason, 'mixed fleet');
+  assert.equal(r.reason, 'not every display is a BrightSign');
+  assert.equal(r.code, 'not_all_brightsign');
+});
+
+test('a group of identical web players is not called a "mixed fleet"', () => {
+  // Seen filming the groups guide: three web players under Sync: Auto read "screentinker — mixed fleet".
+  const r = resolveSyncBackend('auto', [web, { ...web, id: 'w2' }, { ...web, id: 'w3' }]);
+  assert.equal(r.backend, 'screentinker');
+  assert.doesNotMatch(r.reason, /mixed/);
+  assert.equal(r.code, 'not_all_brightsign');
+});
+
+test('every decision carries a code the dashboard can translate (and a count where it says one)', () => {
+  const cases = [
+    [resolveSyncBackend('auto', [bs(1), bs(2)]), 'all_brightsign'],
+    [resolveSyncBackend('auto', []), 'empty'],
+    [resolveSyncBackend('screentinker', [bs(1)]), 'explicit'],
+    [resolveSyncBackend('brightsign', [bs(1), bs(2)]), 'explicit'],
+    [resolveSyncBackend('brightsign', []), 'empty_native'],
+    [resolveSyncBackend('brightsign', [bs(1), android, web]), 'non_brightsign'],
+  ];
+  for (const [r, code] of cases) assert.equal(r.code, code, r.reason);
+  assert.equal(cases[5][0].count, 2);
 });
 
 test('THE TRAP: native sync explicitly selected for a mixed group downgrades and says why', () => {
@@ -96,6 +118,7 @@ test('THE SILENT SPLIT: all-BrightSign but on different subnets does not get nat
   const r = resolveSyncBackend('auto', [bsAt(1, '10.1.5.20'), bsAt(2, '10.9.5.20')]);
   assert.equal(r.backend, 'screentinker');
   assert.match(r.reason, /different networks/);
+  assert.equal(r.code, 'split_network');
 });
 
 test('explicitly selecting native across subnets downgrades and explains multicast', () => {
@@ -103,6 +126,7 @@ test('explicitly selecting native across subnets downgrades and explains multica
   assert.equal(r.backend, 'screentinker');
   assert.equal(r.downgraded, true);
   assert.match(r.reason, /multicast/);
+  assert.equal(r.code, 'split_network_multicast');
 });
 
 test('one subnet keeps native sync', () => {

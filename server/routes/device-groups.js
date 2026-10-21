@@ -65,13 +65,17 @@ function syncDecisionFor(group) {
   // The sync key is the group's playlist — or, when a head office mandate covers the group, the
   // corporate playlist its members actually play (lib/corporate/resolve.js; identical to the
   // group's playlist id when no mandate exists).
-  if (!group || !corpResolve.syncKeyForGroup(db, group)) return { sync_effective: null, sync_reason: null, sync_downgraded: false };
+  if (!group || !corpResolve.syncKeyForGroup(db, group)) return { sync_effective: null, sync_reason: null, sync_reason_code: null, sync_reason_count: null, sync_downgraded: false };
   // Resolved playlist, matching ws/deviceSocket.js's groupSyncMembers exactly. Reading the raw
   // column here would report "sync off / downgraded" for a group whose members all inherit — the
   // dashboard explaining a refusal that never happened.
   const members = corpResolve.syncMembers(db, group, 'd.id, d.platform, d.ip_address');
   const d = resolveSyncBackend(group.sync_backend, members);
-  return { sync_effective: d.backend, sync_reason: d.reason, sync_downgraded: d.downgraded };
+  return {
+    sync_effective: d.backend, sync_reason: d.reason, sync_downgraded: d.downgraded,
+    // The dashboard translates these; sync_reason stays English for API clients and logs.
+    sync_reason_code: d.code || null, sync_reason_count: d.count ?? null,
+  };
 }
 
 // List groups in the caller's current workspace.
@@ -572,7 +576,16 @@ router.post('/:id/assign-playlist', requireGroupWrite, (req, res) => {
   db.prepare('UPDATE device_groups SET playlist_id = ? WHERE id = ?').run(playlist_id, req.params.id);
 
   for (const m of members) pushPlaylistToDevice(req, m.device_id);
-  res.json({ success: true, devices_updated: members.length, ...(coverage.mandated_members ? { mandated_members: coverage.mandated_members } : {}) });
+  // Count the members that actually PLAY it now. A member with its own playlist (playlist_source
+  // 'device'), a wall's, a higher-priority group's, an active schedule's or head office's keeps
+  // that one, and "assigned to 3 devices" when one of them kept its own was simply not true.
+  const playing = members.filter((m) => resolveDevicePlaylistId(m.device_id) === playlist_id).length;
+  const others = members.length - playing;
+  res.json({
+    success: true, devices_updated: playing,
+    ...(others ? { devices_overridden: others } : {}),
+    ...(coverage.mandated_members ? { mandated_members: coverage.mandated_members } : {}),
+  });
 });
 
 // Send command to all devices in a group (reboot/shutdown/screen on/off etc.). Token scope by

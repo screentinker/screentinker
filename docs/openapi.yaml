@@ -1822,7 +1822,7 @@ paths:
               properties:
                 playlist_id: { type: string }
       responses:
-        '200': { description: "{ success, devices_updated, mandated_members? }: members head office's playlist covers keep it." }
+        '200': { description: "{ success, devices_updated, devices_overridden?, mandated_members? }: devices_updated counts the members that now play this playlist; devices_overridden the ones that keep another (their own, a schedule's, a wall's, a higher-priority group's or head office's)." }
         '403':
           description: "CORPORATE_OVERRIDE: head office's playlist covers this whole group."
           content:
@@ -2851,8 +2851,8 @@ paths:
                 name: { type: string }
                 grid_cols: { type: integer }
                 grid_rows: { type: integer }
-                bezel_h_mm: { type: number }
-                bezel_v_mm: { type: number }
+                bezel_h_mm: { type: number, description: 'Horizontal gap between panels for Auto-arrange, in canvas PIXELS despite the name.' }
+                bezel_v_mm: { type: number, description: 'Vertical gap between panels for Auto-arrange, in canvas PIXELS despite the name.' }
                 playlist_id: { type: string }
       responses:
         '201': { description: Created wall. }
@@ -2882,8 +2882,8 @@ paths:
                 name: { type: string }
                 grid_cols: { type: integer }
                 grid_rows: { type: integer }
-                bezel_h_mm: { type: number }
-                bezel_v_mm: { type: number }
+                bezel_h_mm: { type: number, description: 'Horizontal gap between panels for Auto-arrange, in canvas PIXELS despite the name.' }
+                bezel_v_mm: { type: number, description: 'Vertical gap between panels for Auto-arrange, in canvas PIXELS despite the name.' }
                 sync_mode: { type: string }
                 leader_device_id: { type: string }
                 content_id: { type: string }

@@ -74,7 +74,8 @@ function networksDiffer(members) {
 /**
  * @param {string} setting  'auto' | 'screentinker' | 'brightsign' (unknown values read as auto)
  * @param {Array}  members  device rows in the group
- * @returns {{backend: 'screentinker'|'brightsign', reason: string, downgraded: boolean}}
+ * @returns {{backend: 'screentinker'|'brightsign', reason: string, code: string, count?: number, downgraded: boolean}}
+ *   `reason` is English for logs and the player; `code` (+ `count`) is what the dashboard translates.
  */
 function resolveSyncBackend(setting, members) {
   const list = Array.isArray(members) ? members.filter(Boolean) : [];
@@ -85,12 +86,12 @@ function resolveSyncBackend(setting, members) {
   const split = networksDiffer(list);
 
   if (requested === 'screentinker') {
-    return { backend: 'screentinker', reason: 'explicitly selected', downgraded: false };
+    return { backend: 'screentinker', reason: 'explicitly selected', code: 'explicit', downgraded: false };
   }
 
   if (requested === 'brightsign') {
     if (allBrightSign && !split) {
-      return { backend: 'brightsign', reason: 'explicitly selected', downgraded: false };
+      return { backend: 'brightsign', reason: 'explicitly selected', code: 'explicit', downgraded: false };
     }
     if (allBrightSign && split) {
       // Every member is a BrightSign, but they are not on one network. Native sync would appear
@@ -98,6 +99,7 @@ function resolveSyncBackend(setting, members) {
       return {
         backend: 'screentinker',
         reason: 'displays are on different networks — native sync is multicast and cannot cross them',
+        code: 'split_network_multicast',
         downgraded: true
       };
     }
@@ -109,24 +111,30 @@ function resolveSyncBackend(setting, members) {
       reason: list.length === 0
         ? 'group is empty — native sync needs BrightSign members'
         : `group has ${others} non-BrightSign display${others === 1 ? '' : 's'}`,
+      code: list.length === 0 ? 'empty_native' : 'non_brightsign',
+      count: others,
       downgraded: true
     };
   }
 
   // auto
   if (allBrightSign && !split) {
-    return { backend: 'brightsign', reason: 'every display is a BrightSign', downgraded: false };
+    return { backend: 'brightsign', reason: 'every display is a BrightSign', code: 'all_brightsign', downgraded: false };
   }
   if (allBrightSign && split) {
     return {
       backend: 'screentinker',
       reason: 'displays are on different networks',
+      code: 'split_network',
       downgraded: false
     };
   }
+  // Not "mixed fleet": a group of three identical web players is not mixed, it simply has no
+  // BrightSign in it — which is the only thing this branch actually knows.
   return {
     backend: 'screentinker',
-    reason: list.length === 0 ? 'no displays in the group' : 'mixed fleet',
+    reason: list.length === 0 ? 'no displays in the group' : 'not every display is a BrightSign',
+    code: list.length === 0 ? 'empty' : 'not_all_brightsign',
     downgraded: false
   };
 }

@@ -432,20 +432,38 @@ function corpGroupBadge(group) {
 }
 const corpGroupCovered = (group) => !!(corpCoverage && corpCoverage.groups && corpCoverage.groups[group.id] && corpCoverage.groups[group.id].covered);
 
+// The effective protocol by the name the Sync menu gives it ("Standard"), not the internal id.
+function syncEffectiveLabel(backend) {
+  const key = 'dashboard.group_sync.effective_' + backend;
+  const label = t(key);
+  return label === key ? backend : label;
+}
+// The server sends an English reason plus a code; translate the code, fall back to the English
+// (a newer server may send a code this bundle does not know yet).
+function syncReasonText(g) {
+  if (!g || !g.sync_reason) return '';
+  const key = 'dashboard.group_sync.reason_' + (g.sync_reason_code || '');
+  if (!g.sync_reason_code) return g.sync_reason;
+  const text = g.sync_reason_code === 'non_brightsign' ? tn(key, g.sync_reason_count || 0) : t(key);
+  return text.startsWith(key) ? g.sync_reason : text;
+}
+
 function renderGroupSection(group, devices, playlists) {
   const onlineCount = devices.filter(d => d.status === 'online').length;
   const playlistLabel = corpGroupCovered(group) ? '' : getGroupPlaylistLabel(devices, playlists);
   return `
     <div class="group-section" data-group-id="${group.id}" style="margin-bottom:24px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border-left:4px solid ${esc(group.color || '#3B82F6')}">
-        <div style="display:flex;align-items:center;gap:10px">
-          <strong style="font-size:15px">${esc(group.name)}</strong>
-          <span style="color:var(--text-muted);font-size:12px">${tn('dashboard.devices_count', devices.length)} &middot; ${t('dashboard.online_count', { n: onlineCount })}</span>
-          ${playlistLabel ? `<span style="font-size:11px;color:var(--text-secondary);background:var(--bg-primary);padding:2px 8px;border-radius:10px">${t('dashboard.playlist_label', { name: playlistLabel })}</span>` : ''}
+      <!-- Both halves wrap: with the Auto: badge and the Sync controls showing, a 1440px-wide window
+           had no room for one line and squeezed the name onto two lines and the badges into a column. -->
+      <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px 12px;margin-bottom:10px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border-left:4px solid ${esc(group.color || '#3B82F6')}">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0">
+          <strong style="font-size:15px;white-space:nowrap">${esc(group.name)}</strong>
+          <span style="color:var(--text-muted);font-size:12px;white-space:nowrap">${tn('dashboard.devices_count', devices.length)} &middot; ${t('dashboard.online_count', { n: onlineCount })}</span>
+          ${playlistLabel ? `<span style="font-size:11px;color:var(--text-secondary);background:var(--bg-primary);padding:2px 8px;border-radius:10px;white-space:nowrap">${t('dashboard.playlist_label', { name: playlistLabel })}</span>` : ''}
           ${corpGroupBadge(group)}
           ${group.rules ? `<span style="font-size:11px;color:var(--accent, #3B82F6);background:var(--bg-primary);padding:2px 8px;border-radius:10px" title="${esc(t('grouprules.badge_hint'))}">${esc(t('grouprules.badge', { summary: groupRulesSummary(group.rules) }))}</span>` : ''}
         </div>
-        <div style="display:flex;gap:6px;align-items:center">
+        <div style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;align-items:center;margin-left:auto">
           ${devices.length > 0 && corpGroupCovered(group) ? `<button type="button" class="btn btn-secondary btn-sm corp-group-why" data-group-id="${group.id}" style="padding:4px 8px;font-size:12px;white-space:nowrap">${cui.LOCK_SVG} ${esc(t('corp.group.why'))}</button>` : ''}
           ${devices.length > 0 ? `
           ${corpGroupCovered(group) ? '' : `<select class="input group-playlist-select" data-group-id="${group.id}" data-group-name="${esc(group.name)}" style="width:160px;padding:4px 8px;font-size:12px;background:var(--bg-input)">
@@ -479,7 +497,7 @@ function renderGroupSection(group, devices, playlists) {
           </select>
           ${group.sync_effective ? `
           <span style="font-size:11px;color:${group.sync_downgraded ? 'var(--warning, #d97706)' : 'var(--text-muted)'};white-space:nowrap"
-                title="${esc(group.sync_reason || '')}">${group.sync_downgraded ? '&#9888; ' : ''}${esc(group.sync_effective)}${group.sync_reason ? ' — ' + esc(group.sync_reason) : ''}</span>` : ''}
+                title="${esc(syncReasonText(group))}">${group.sync_downgraded ? '&#9888; ' : ''}${esc(syncEffectiveLabel(group.sync_effective))}${syncReasonText(group) ? ' — ' + esc(syncReasonText(group)) : ''}</span>` : ''}
           <button class="btn group-resync-btn" data-group-id="${group.id}" style="padding:4px 10px;font-size:12px" title="${esc(t('dashboard.group_sync.resync_hint'))}">${t('dashboard.group_sync.resync')}</button>` : ''}
           ` : ''}
           <!-- #talk broadcast: PA to every device in this group. Hidden until live video is confirmed. -->
@@ -1061,8 +1079,8 @@ function defaultGridForCount(n) {
 
 async function createWallFromSelection() {
   const ids = [...selectedDeviceIds];
-  if (ids.length < 2) { showToast('Select at least 2 displays', 'error'); return; }
-  const name = prompt('Name this video wall:', `Wall ${new Date().toLocaleString()}`);
+  if (ids.length < 2) { showToast(t('dashboard.wall.select_two'), 'error'); return; }
+  const name = prompt(t('dashboard.wall.prompt_name'), t('dashboard.wall.default_name', { date: new Date().toLocaleString() }));
   if (!name) return;
   const { cols, rows } = defaultGridForCount(ids.length);
   try {
@@ -1084,7 +1102,7 @@ async function createWallFromSelection() {
       return;
     }
     selectedDeviceIds.clear();
-    showToast('Video wall created', 'success');
+    showToast(t('dashboard.wall.created'), 'success');
     window.location.hash = `#/wall/${wall.id}`;
   } catch (e) {
     showToast(e.message, 'error');
@@ -1613,7 +1631,9 @@ function attachGroupHandlers(groupsWithDevices) {
 
       try {
         const result = await api.groupAssignPlaylist(groupId, playlistId);
-        showToast(tn('dashboard.toast.playlist_assigned', result.devices_updated), 'success');
+        let msg = tn('dashboard.toast.playlist_assigned', result.devices_updated);
+        if (result.devices_overridden) msg += ' ' + tn('dashboard.toast.playlist_kept_other', result.devices_overridden);
+        showToast(msg, 'success');
       } catch (err) {
         showToast(err.message, 'error');
       }
@@ -1649,7 +1669,7 @@ function attachGroupHandlers(groupsWithDevices) {
       try {
         const updated = await api.updateGroup(groupId, { sync_backend: chosen });
         if (updated?.sync_downgraded && updated?.sync_reason) {
-          showToast(t('dashboard.group_sync.toast_downgraded') + ' ' + updated.sync_reason, 'warning');
+          showToast(t('dashboard.group_sync.toast_downgraded') + ' ' + syncReasonText(updated), 'warning');
         } else {
           showToast(t('dashboard.group_sync.toast_backend'), 'success');
         }
