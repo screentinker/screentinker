@@ -176,6 +176,10 @@
 - A stream added without a name was named from the end of its URL, which for `rtsp://user:pass@host`
   was the user name and password. It is now named from the path or the host, and never after a share
   token.
+- **Simple view: "Replace what it shows now" added instead of replacing on a screen whose group has
+  a playlist.** The screen made its own copy of the group's playlist and the new photo was added to
+  the end, so it played the group's items too. Now only the chosen photos and videos play on that
+  screen. The group's playlist and the other screens in the group don't change.
 
 ### Security
 

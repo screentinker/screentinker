@@ -705,10 +705,25 @@ export async function showOnScreen(device, contentIds, how, ctx = {}) {
   }
 
   let playlistId = device.playlist_id || null;
+  const added = new Set();
+  let redirected = false;
   // An entry is a content id, or an item body as is ({ widget_id, duration_sec } for a sign).
   for (const id of contentIds) {
     const r = await api.addAssignment(device.id, typeof id === 'object' ? id : { content_id: id });
     if (r && r.playlist_id) playlistId = r.playlist_id;
+    if (r && r.id != null) added.add(String(r.id));
+    if (r && r.redirected_to) redirected = true;
+  }
+  /*
+   * ⚠️ Replace on a screen that INHERITS (its group's or wall's list, incl. after the clear above):
+   * the first add FORKED that list (server/lib/fork-device-playlist.js), so the screen's new own list
+   * still holds every inherited item and "replace" played as "add". Drop all but what was just added.
+   * Only the fork is touched: the group's list and the other screens are not. Skipped when head
+   * office's playlist plays here: those adds went into shared slot content, not this screen's list.
+   */
+  if (how === 'replace' && !redirected && added.size) {
+    const now = await api.getAssignments(device.id);
+    for (const item of now || []) if (!added.has(String(item.id))) await api.deleteAssignment(item.id, device.id);
   }
   if (!playlistId) return { ok: true };
   device.playlist_id = playlistId;
