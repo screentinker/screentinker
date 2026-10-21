@@ -31,4 +31,5 @@ export function showToast(message, type = 'info', duration = 4000) {
     toast.style.transition = 'all 0.3s ease';
     setTimeout(() => toast.remove(), 300);
   }, duration);
+  return toast;
 }
