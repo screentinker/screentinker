@@ -24,17 +24,33 @@ const path = require('node:path');
 
 const I18N_DIR = path.join(__dirname, '..', '..', 'frontend', 'js', 'i18n');
 
-/* The keys the issue enumerated: every user-facing string that named the product. */
+/* The keys the issue enumerated that name the dashboard or the server: these follow the brand. */
 const BRANDED_KEYS = [
   'auth.sso_err_domain_not_allowed',
-  'dashboard.no_displays_desc',
-  'device.owner_provision.constraints',
-  'device.terminal.welcome',
   'settings.signin_err_link_already_used',
-  'settings.setup_step_1',
   'settings.import.invalid_file',
   'onboarding.step.welcome.title',
 ];
+
+/*
+ * ⚠️ Keys that name an INSTALLED app, and so must NOT follow the brand.
+ *
+ * Policy: the installed players (Android/Fire TV, Tizen, webOS, Roku, iOS, native Pi/Windows) keep
+ * the ScreenTinker name and icon; only the web player and what the server serves is white-labelled
+ * (branded app builds are a custom agreement). #292 had swept these in too, so a branded workspace
+ * was told to "Install the Acme APK" — an app that does not exist. They say "ScreenTinker", as the
+ * /download page does (the APK is ScreenTinker.apk, even though its Android label is RemoteDisplay).
+ */
+const APP_KEYS = [
+  'settings.setup_step_1',
+  'device.owner_provision.constraints',
+  'device.terminal.welcome',
+  'device.terminal.welcome_linux',
+  'device.terminal.welcome_windows',
+];
+
+/* One sentence names both: the installed app (ScreenTinker) and the web player (the brand). */
+const MIXED_KEY = 'dashboard.no_displays_desc';
 
 const localeFiles = () => fs.readdirSync(I18N_DIR).filter((f) => f.endsWith('.js'));
 
@@ -115,19 +131,29 @@ test('the interpolation resolves, and falls back to the product name', async () 
                         navigator: globalThis.navigator };
   const { t } = await import(`file://${mod}`);
 
-  const unbranded = t('settings.setup_step_1');
+  const unbranded = t('onboarding.step.welcome.title');
   assert.ok(unbranded.includes('ScreenTinker'),
     `an un-branded install must read as before, got: ${unbranded}`);
   assert.ok(!unbranded.includes('{brandName}'), 'the placeholder must not leak to the screen');
 
   globalThis.window.__ST_BRAND_NAME = 'BoldSignage';
-  const branded = t('settings.setup_step_1');
+  const branded = t('onboarding.step.welcome.title');
   assert.ok(branded.includes('BoldSignage'), `expected the brand, got: ${branded}`);
   assert.ok(!branded.includes('ScreenTinker'), 'the upstream name must be gone once branded');
 
+  // Under a brand, text about an installed app still names the app that is actually installed...
+  for (const key of APP_KEYS) {
+    const s = t(key);
+    assert.ok(s.includes('ScreenTinker') && !s.includes('BoldSignage'), `${key} under a brand: ${s}`);
+  }
+  // ...while the empty-dashboard hint names the app AND the (branded) web player.
+  const hint = t(MIXED_KEY);
+  assert.match(hint, /ScreenTinker app/, hint);
+  assert.match(hint, /BoldSignage web player/, hint);
+
   // Whitespace-only is not a brand.
   globalThis.window.__ST_BRAND_NAME = '   ';
-  assert.ok(t('settings.setup_step_1').includes('ScreenTinker'));
+  assert.ok(t('onboarding.step.welcome.title').includes('ScreenTinker'));
   delete globalThis.window;
   delete globalThis.localStorage;
   if (!priorNavigator) delete globalThis.navigator;
@@ -143,4 +169,37 @@ test('the hide-branding toggle names nobody', () => {
     assert.ok(!line.includes('ScreenTinker'), `${file}: ${GENERIC_KEY} still names the product`);
     assert.ok(!line.includes('{brandName}'), `${file}: ${GENERIC_KEY} should be generic wording`);
   }
+});
+
+test('no locale brands a string about an installed app', () => {
+  const offences = [];
+  for (const file of localeFiles()) {
+    const src = fs.readFileSync(path.join(I18N_DIR, file), 'utf8');
+    for (const key of APP_KEYS) {
+      // Exact key match: 'device.terminal.welcome' must not also pick up 'device.terminal.welcome_linux'.
+      const line = src.split('\n').find((l) => l.includes(`'${key}':`));
+      if (!line) continue;
+      if (line.includes('{brandName}') || !line.includes('ScreenTinker')) offences.push(`${file}: ${key}`);
+    }
+  }
+  assert.deepEqual(offences, [], 'installed apps keep the ScreenTinker name; say ScreenTinker, not {brandName}');
+});
+
+test('the empty-dashboard hint names the app as ScreenTinker and the web player by the brand', () => {
+  const bad = [];
+  for (const file of localeFiles()) {
+    const src = fs.readFileSync(path.join(I18N_DIR, file), 'utf8');
+    const line = src.split('\n').find((l) => l.includes(`'${MIXED_KEY}'`));
+    if (!line) continue;
+    if (!line.includes('ScreenTinker') || !line.includes('{brandName}')) bad.push(file);
+  }
+  assert.deepEqual(bad, []);
+});
+
+test('saving branding refreshes the brand already rendered on the Settings page', () => {
+  // Settings renders once; without this the About block kept the old brand until a reload.
+  const src = fs.readFileSync(path.join(I18N_DIR, '..', 'views', 'settings.js'), 'utf8');
+  assert.match(src, /id="aboutBrandName"/);
+  const save = src.slice(src.indexOf('await resetBranding();'));
+  assert.match(save.slice(0, 400), /getElementById\('aboutBrandName'\)/);
 });
