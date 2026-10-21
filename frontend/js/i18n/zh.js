@@ -4142,4 +4142,5 @@ export default {
   'slides.slide.delete': "删除此幻灯片",
   'slides.slide.last_one': "演示至少需要一张幻灯片",
   'slides.edit.add_hint': "从工具栏添加一个元素。",
+  'data_sources.weather_locale_label': '天气语言',
 };

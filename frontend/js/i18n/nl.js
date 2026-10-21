@@ -6199,4 +6199,5 @@ export default {
   'slides.slide.last_one': "Een deck heeft minstens één dia nodig",
   'slides.edit.add_hint': "Voeg een element toe via de werkbalk.",
   'slides.ai.done': "{n} elementen gegenereerd — Ongedaan maken haalt de oude dia terug; sla alleen op als je tevreden bent",
+  'data_sources.weather_locale_label': 'Taal van het weer',
 };

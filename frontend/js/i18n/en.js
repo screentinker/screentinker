@@ -532,7 +532,7 @@ export default {
   'data_sources.weather_units_label': 'Units',
   'data_sources.weather_units_metric': 'Metric (°C, km/h)',
   'data_sources.weather_units_imperial': 'Imperial (°F, mph)',
-  'data_sources.weather_locale_label': 'Language for day names',
+  'data_sources.weather_locale_label': 'Weather language',
   'data_sources.weather_attribution': 'Weather data by Open-Meteo.com (CC BY 4.0).',
   'data_sources.weather_location_required': 'Please enter a location, or both latitude and longitude.',
   'data_sources.weather_test_success': '✅ Weather found for {location}.',

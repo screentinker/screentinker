@@ -4604,4 +4604,5 @@ export default {
   'slides.slide.delete': "Diese Folie löschen",
   'slides.slide.last_one': "Ein Deck braucht mindestens eine Folie",
   'slides.edit.add_hint': "Fügen Sie über die Werkzeugleiste ein Element hinzu.",
+  'data_sources.weather_locale_label': 'Sprache für das Wetter',
 };

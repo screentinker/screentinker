@@ -535,7 +535,7 @@ export default {
   'data_sources.weather_units_label': "Unidades",
   'data_sources.weather_units_metric': "Métrico (°C, km/h)",
   'data_sources.weather_units_imperial': "Imperial (°F, mph)",
-  'data_sources.weather_locale_label': "Idioma para nomes dos dias",
+  'data_sources.weather_locale_label': 'Idioma do clima',
   'data_sources.weather_attribution': "Dados de clima por Open-Meteo.com (CC BY 4.0).",
   'data_sources.weather_location_required': "Digite um local ou latitude e longitude.",
   'data_sources.weather_test_success': "✅ Clima encontrado para {location}.",

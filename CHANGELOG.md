@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **Danish (and every other weather language) can be chosen for a Weather data source** (#667, reported by
+  @djalfe). 3.0.2 shipped Danish weather words, but the form's language list was the dashboard's own,
+  which has no Danish. It now lists every language the weather supports, each in its own name, and the
+  label says **Weather language** instead of "Language for day names".
 - **The slide editor's Insert Variable list offers the keys each data source really has.** It listed
   the same six calendar keys for every source, so a tag picked for a Sheet, Weather or table source
   showed nothing. It now lists the keys from the source's last sync (as the Data Sources page does),

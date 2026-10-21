@@ -4478,4 +4478,5 @@ export default {
   'slides.slide.delete': "Elimina questa slide",
   'slides.slide.last_one': "Una presentazione deve avere almeno una slide",
   'slides.edit.add_hint': "Aggiungi un elemento dalla barra degli strumenti.",
+  'data_sources.weather_locale_label': 'Lingua del meteo',
 };

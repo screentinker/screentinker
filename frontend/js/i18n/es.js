@@ -5295,7 +5295,7 @@ export default {
   'data_sources.weather_units_label': 'Unidades',
   'data_sources.weather_units_metric': 'Sistema métrico (°C, km/h)',
   'data_sources.weather_units_imperial': 'Sistema imperial (°F, mph)',
-  'data_sources.weather_locale_label': 'Idioma de los nombres de los días',
+  'data_sources.weather_locale_label': 'Idioma del tiempo',
   'data_sources.weather_attribution': 'Datos meteorológicos de Open-Meteo.com (CC BY 4.0).',
   'data_sources.weather_location_required': 'Introduce una ubicación o la latitud y la longitud.',
   'data_sources.weather_test_success': '✅ Se han encontrado datos meteorológicos para {location}.',

@@ -5231,4 +5231,5 @@ export default {
   'slides.slide.delete': "Supprimer cette diapositive",
   'slides.slide.last_one': "Une présentation doit contenir au moins une diapositive",
   'slides.edit.add_hint': "Ajoutez un élément depuis la barre d'outils.",
+  'data_sources.weather_locale_label': 'Langue de la météo',
 };

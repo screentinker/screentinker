@@ -5231,4 +5231,5 @@ export default {
   'slides.slide.delete': "このスライドを削除",
   'slides.slide.last_one': "デッキには少なくとも1枚のスライドが必要です",
   'slides.edit.add_hint': "ツールバーから要素を追加してください。",
+  'data_sources.weather_locale_label': '天気の言語',
 };
