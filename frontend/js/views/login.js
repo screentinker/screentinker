@@ -588,7 +588,7 @@ function setupHandlers(container, config, isSetup, passkeyUsable = false) {
     const password = document.getElementById(isFirstUser ? 'loginPassword' : 'regPassword').value;
     const name = document.getElementById(isFirstUser ? 'loginName' : 'regName')?.value.trim() || '';
     if (!email || !password) { showError(t('auth.error_email_password_required')); return; }
-    if (password.length < 6) { showError(t('auth.error_password_min_6')); return; }
+    if (password.length < 8) { showError(t('auth.error_password_min_8')); return; }
 
     try {
       const res = await fetch('/api/auth/register', {

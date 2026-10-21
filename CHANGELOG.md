@@ -112,6 +112,15 @@
 - **"It's live!" no longer promises the screen changes in a few seconds.** Screens get the change
   that fast, but a screen keeps playing what's on and shows a new item when its turn comes in the
   loop (about 25 s in one test). The text now says so.
+- **"Pairing code expired" now says what helps.** It told people to "restart the display to get a
+  new code", which cannot work: a restarted player shows the same code. It now says the screen has
+  not been online for over 15 minutes and to get it back online, then type the code again.
+- **Create Account asks for 8 characters, like the server.** The form said "At least 6 characters"
+  and let a 6- or 7-character password through, which the server then refused. In every language.
+- **The setup guide's "No device found with that pairing code" goes away when you edit the code**,
+  instead of staying under the box while the corrected code is typed.
+- **Add screen shows one pairing error at a time.** After a too-short code, "Enter a valid 6-digit
+  pairing code" was still on screen when the next attempt's error arrived, and the two stacked.
 - **A screen's Default Content now shows on the web player** (Device Info → Settings → Default
   Content). The picture was put on the page but the "Waiting for content..." card stayed on top
   of it, so it was never seen. **Save Settings** also now sends the change to a screen that is
