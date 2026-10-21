@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const LOCALES = ['en', 'es', 'fr', 'de', 'pt', 'nl'];
+const LOCALES = ['en', 'es', 'fr', 'de', 'pt', 'nl', 'da'];
 const I18N_DIR = path.join(__dirname, '..', '..', 'frontend', 'js', 'i18n');
 
 function apitokenKeys(locale) {

@@ -15,7 +15,7 @@ const path = require('node:path');
 
 const FE = path.join(__dirname, '..', '..', 'frontend', 'js');
 const read = (f) => fs.readFileSync(path.join(FE, f), 'utf8');
-const LOCALES = ['en', 'de', 'es', 'fr', 'hi', 'it', 'ja', 'nl', 'pt', 'zh'];
+const LOCALES = ['en', 'de', 'es', 'fr', 'hi', 'it', 'ja', 'nl', 'pt', 'zh', 'da'];
 const keysOf = (src) => new Set([...src.matchAll(/^\s*'([^']+)'\s*:/gm)].map((m) => m[1]));
 
 const KEYS = [

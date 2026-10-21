@@ -2,6 +2,12 @@
 
 ## 3.0.3
 
+### Added
+
+- **The dashboard in Danish (Dansk).** Pick it from the language menu. This is a first, machine-assisted
+  translation of every dashboard string and still needs a native speaker's review; corrections are
+  welcome. It also puts Danish in every list built from the dashboard's languages.
+
 ### Fixed
 
 - **The slide editor's Insert Variable list offers the keys each data source really has.** It listed
