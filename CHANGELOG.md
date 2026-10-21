@@ -97,6 +97,11 @@
 
 ### Fixed
 
+- **The playlist editor no longer looks as if Publish lost your work.** After **Publish** (or
+  **Discard changes**) the editor redrew from a shorter answer than a page load gets, so until a
+  reload the Layout row said "Each screen's own layout", the Default zone row and every Zone picker
+  were gone, and items lost their schedule chip and clock icon. Screens and the saved playlist were
+  always fine. Publish and discard now answer with exactly what `GET /api/playlists/:id` returns.
 - **A whole-server export can no longer fill the disk** (Platform → Data & privacy). One did on our
   own server: it needed about twice the export's size, never checked free space, and when the disk
   filled it hung with its files left behind. Every 15 minutes a sweep also put the hung export back in
