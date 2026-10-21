@@ -56,11 +56,50 @@ Restore it on another server: Platform -> Data & privacy -> Import the whole ser
 
 /* ───────────── export ───────────── */
 
+/*
+ * ⚠️ DISK SPACE. A bundle is roughly every organization's files, so it can be most of the disk the
+ * server itself runs on (prod, 2026-10-20: 4.7 GB of bundle plus 4.5 GB of per-organization zips
+ * filled a 75 GB disk and the database could no longer checkpoint). So: refuse up front when the
+ * estimate does not fit with a reserve to spare, check again before every organization, and never
+ * hold more than one organization's zip beside the bundle.
+ */
+const RESERVE_MIN_BYTES = 1024 ** 3;   // always leave at least 1 GiB...
+const RESERVE_FRACTION = 0.05;         // ...or 5% of the disk, whichever is larger
+function reserveBytes(dir) {
+  const disk = exporter.diskBytes(dir);
+  return Math.max(RESERVE_MIN_BYTES, disk ? Math.floor(disk * RESERVE_FRACTION) : 0);
+}
+/** What the bundle will need while it is being written: the files, plus the largest organization's zip. */
+function estimateBytes(db) {
+  const rows = db.prepare(`SELECT w.organization_id AS org, COALESCE(SUM(c.file_size), 0) AS bytes
+    FROM content c JOIN workspaces w ON w.id = c.workspace_id
+    WHERE c.remote_url IS NULL GROUP BY w.organization_id`).all();
+  const total = rows.reduce((n, r) => n + Number(r.bytes || 0), 0);
+  const largest = rows.reduce((n, r) => Math.max(n, Number(r.bytes || 0)), 0);
+  // Tables, thumbnails and zip overhead are small next to the media; 10% and 64 MB cover them.
+  return Math.ceil((total + largest) * 1.1) + 64 * 1024 ** 2;
+}
+const gb = (n) => `${(n / 1024 ** 3).toFixed(1)} GB`;
+/** Throws a 507 when `need` bytes would leave less than the reserve free. */
+function assertSpace(need, phase) {
+  const dir = fs.existsSync(exporter.exportsDir()) ? exporter.exportsDir() : config().dataDir;
+  const free = exporter.freeBytes(dir);
+  if (free == null) return;   // cannot tell (an unusual filesystem): do not block on a guess
+  const reserve = reserveBytes(dir);
+  if (free - need < reserve) {
+    throw new exporter.ExportError(`Not enough free disk space ${phase}: about ${gb(need)} is needed and ${gb(free)} is free, `
+      + `and ${gb(reserve)} must stay free for the server itself. Free some space or export organizations one at a time.`, 507, 'disk_space');
+  }
+}
+function config() { return require('../../config'); }
+let runningJobId = null;
+
 function request(db, userId, options = {}) {
   const busy = db.prepare("SELECT id FROM instance_exports WHERE status IN ('queued','running')").get();
   if (busy) throw new exporter.ExportError('A whole-server export is already being prepared.', 429, 'busy');
   const recent = db.prepare('SELECT COUNT(*) AS n FROM instance_exports WHERE created_at > ?').get(now() - 86400).n;
   if (recent >= MAX_PER_DAY) throw new exporter.ExportError(`At most ${MAX_PER_DAY} whole-server exports a day.`, 429, 'daily_limit');
+  assertSpace(estimateBytes(db), 'for this export');
   const id = crypto.randomUUID();
   db.prepare("INSERT INTO instance_exports (id, user_id, status, options) VALUES (?, ?, 'queued', ?)")
     .run(id, userId, JSON.stringify({ include_settings: options.include_settings !== false }));
@@ -73,12 +112,17 @@ async function writeBundle(archive, db, job, tmps) {
   const orgs = db.prepare('SELECT id, name FROM organizations ORDER BY created_at, rowid').all();
   const listed = [];
   for (const o of orgs) {
+    assertSpace(0, 'to continue');   // the estimate can be wrong, and other things write to this disk too
     const tmp = path.join(exporter.exportsDir(), `instance-${job.id}-${o.id}.zip`);
     tmps.push(tmp);
     const r = await exporter.buildZip(tmp, (a) => exporter.writeOrgExport(a, db, { organization_id: o.id, user_id: job.user_id }));
     const name = `orgs/${o.id}.zip`;
     exporter.recordIntegrity(archive, name, r.sha256, r.bytes);
+    const written = entryWritten(archive, name);
     archive.file(tmp, { name });
+    // Copied into the bundle: drop it before the next one, so only one ever sits beside the bundle.
+    await written;
+    try { fs.rmSync(tmp, { force: true }); } catch (_) { /* the finally below retries */ }
     listed.push({ id: o.id, name: o.name, file: name, sha256: r.sha256, bytes: r.bytes });
   }
   const tables = {};
@@ -108,12 +152,23 @@ async function writeBundle(archive, db, job, tmps) {
 }
 const archive_format = () => archive.INSTANCE_FORMAT;
 
+/** Resolves once `name` has been read into the archive; rejects if the archive's output fails first. */
+function entryWritten(arch, name) {
+  return new Promise((resolve, reject) => {
+    const on = (e) => { if (e && e.name === name) { arch.removeListener('entry', on); resolve(); } };
+    arch.on('entry', on);
+    if (arch._stFailed) arch._stFailed.catch((err) => { arch.removeListener('entry', on); reject(err); });
+  });
+}
+
 async function runJob(db, job) {
   db.prepare("UPDATE instance_exports SET status = 'running', started_at = ? WHERE id = ?").run(now(), job.id);
   fs.mkdirSync(exporter.exportsDir(), { recursive: true });
   const file = path.join(exporter.exportsDir(), `instance-${job.id}.zip`);
   const tmps = [];
+  runningJobId = job.id;
   try {
+    assertSpace(estimateBytes(db), 'for this export');   // space may have gone since it was requested
     const { manifest, sha256, bytes } = await exporter.buildZip(file, (a) => writeBundle(a, db, job, tmps), { store: true });
     db.prepare("UPDATE instance_exports SET status = 'ready', file_name = ?, bytes = ?, sha256 = ?, manifest = ?, finished_at = ?, expires_at = ? WHERE id = ?")
       .run(path.basename(file), bytes, sha256, JSON.stringify({ organizations: manifest.organizations.length, tables: manifest.instance.tables }), now(), now() + exporter.TTL_HOURS * 3600, job.id);
@@ -122,6 +177,7 @@ async function runJob(db, job) {
     db.prepare("UPDATE instance_exports SET status = 'failed', error = ?, finished_at = ? WHERE id = ?").run(String((e && e.message) || e).slice(0, 300), now(), job.id);
   } finally {
     for (const t of tmps) { try { fs.rmSync(t, { force: true }); } catch (_) { /* */ } }
+    runningJobId = null;
   }
 }
 
@@ -170,8 +226,24 @@ function sweep(db = dbOf()) {
       if (p) { try { fs.rmSync(p, { force: true }); } catch (_) { /* */ } }
       db.prepare("UPDATE instance_exports SET status = 'expired', download_hash = NULL WHERE id = ?").run(j.id);
     }
-    db.prepare("UPDATE instance_exports SET status = 'queued' WHERE status = 'running'").run();
   } catch (_) { /* table absent */ }
+  removeStrays(db);
+}
+
+/*
+ * Files in the exports folder that no job owns: the per-organization zips and the partial bundle of an
+ * export a crash or a full disk stopped. Never the job running now, never a ready bundle.
+ */
+function removeStrays(db) {
+  let names;
+  try { names = fs.readdirSync(exporter.exportsDir()); } catch (_) { return; }
+  let keep;
+  try { keep = new Set(db.prepare("SELECT file_name FROM instance_exports WHERE status = 'ready'").all().map((r) => r.file_name)); } catch (_) { return; }
+  for (const n of names) {
+    const m = /^instance-([0-9a-f-]{36})(?:-[A-Za-z0-9_-]+)?\.zip$/.exec(n);
+    if (!m || keep.has(n) || m[1] === runningJobId) continue;
+    try { fs.rmSync(path.join(exporter.exportsDir(), n), { force: true }); } catch (_) { /* */ }
+  }
 }
 
 function publicJob(j) {
@@ -339,10 +411,18 @@ async function restoreSettings(db, arch) {
 }
 
 function start(db = dbOf()) {
+  /*
+   * ⚠️ A job left 'running' by a stopped process is FAILED, not requeued. This used to run on every
+   * sweep (every 15 minutes, against a job still running) and set it back to 'queued', so the next
+   * restart would start a multi-gigabyte export again by itself, on the disk it had just filled.
+   */
+  try {
+    db.prepare("UPDATE instance_exports SET status = 'failed', error = 'interrupted by a restart', finished_at = ? WHERE status = 'running'").run(now());
+  } catch (_) { /* table absent */ }
   sweep(db);
   kick();
   const t = setInterval(() => sweep(db), 15 * 60 * 1000);
   t.unref?.();
 }
 
-module.exports = { request, runQueue, link, verifyKey, filePath, sweep, start, publicJob, scanBundle, startBundleRestore, runBundleRestore, MAX_PER_DAY };
+module.exports = { request, runQueue, link, verifyKey, filePath, sweep, start, publicJob, scanBundle, startBundleRestore, runBundleRestore, MAX_PER_DAY, estimateBytes, _removeStrays: removeStrays };

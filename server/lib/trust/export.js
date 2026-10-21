@@ -42,6 +42,14 @@ const STALE_RUNNING_SEC = 6 * 3600;
 
 const now = () => Math.floor(Date.now() / 1000);
 const exportsDir = () => path.join(config.dataDir, 'exports');
+/** Bytes a non-root process may still write on the filesystem holding `dir` (null if unknown). */
+function freeBytes(dir) {
+  try { const st = fs.statfsSync(dir); return st.bavail * st.bsize; } catch (_) { return null; }
+}
+/** Bytes of the whole filesystem holding `dir` (null if unknown). */
+function diskBytes(dir) {
+  try { const st = fs.statfsSync(dir); return st.blocks * st.bsize; } catch (_) { return null; }
+}
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 
 /* ───────────── redaction ───────────── */
@@ -448,10 +456,20 @@ async function buildZip(file, write, { store = false } = {}) {
     });
   });
   done.catch(() => { /* surfaced by the await below, or by the writer that stopped */ });
+  /*
+   * ⚠️ A WRITE ERROR (A FULL DISK) MUST STOP THE WRITER. `done` is only awaited after `write`, so
+   * without this the writer kept queueing entries into an archive whose output was gone, waited on
+   * back-pressure that never drained, and the job hung as 'running' with its files left on disk
+   * (prod, 2026-10-20: a whole-server export filled the disk and held it). Writers that wait on the
+   * archive themselves race `archive._stFailed`.
+   */
+  const failed = new Promise((_, reject) => { done.catch(reject); });
+  failed.catch(() => { /* raced below */ });
+  archive._stFailed = failed;
   archive.pipe(tap).pipe(out);
   try {
-    const manifest = await write(archive);
-    await archive.finalize();
+    const manifest = await Promise.race([write(archive), failed]);
+    await Promise.race([archive.finalize(), failed]);
     await done;
     return { manifest, sha256: whole.digest('hex'), bytes: fs.statSync(file).size };
   } catch (e) {
@@ -544,7 +562,7 @@ function publicJob(j) {
 
 module.exports = {
   request, runQueue, runJob, link, verifyKey, filePath, sweep, start, publicJob, whereFor, exportableColumns, redactRow,
-  buildZip, writeOrgExport, appendTable, appendString, recordIntegrity, now, exportsDir,
+  buildZip, writeOrgExport, appendTable, appendString, recordIntegrity, now, exportsDir, freeBytes, diskBytes,
   ExportError, MAX_PER_DAY, LINK_TTL_MIN, TTL_HOURS,
   _setHooks: (h) => { _hooks = { ...(h || {}) }; },
 };
