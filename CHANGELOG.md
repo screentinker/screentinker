@@ -24,6 +24,23 @@
 - **Undo works right after A.I. Generate**, even with nothing edited before it.
 - **More of the slide editor is translated**: the QR code panel, the Slide tab, + New deck, Edit,
   Delete and ▶ Play entrance.
+- **Reports' Export CSV downloads the file.** It opened a new tab that only said "Authentication
+  required", because the link carried the sign-in token in the address, which the server does not
+  read. The file is now fetched with the session and saved, like the uptime CSV.
+- **Reports' Plays per Day labels each bar with its own day.** West of UTC every label was a day
+  early. The default date range is now today and the 30 days before it in your own time zone (in
+  the evening it could start a day late and end on tomorrow), and the range covers your whole days.
+- **Reports' "Screen uptime by client" section is translated**, and the numbers over the Plays per
+  Day bars are no longer printed on top of each other when they do not fit (hover a bar for its value).
+- **A content request form's place picker shows which groups have no playlist yet** and does not
+  let you pick them. Choosing one was only refused on Save.
+- **Request dates in the content request inbox are shown in your own date format** instead of
+  2026-10-21.
+- **An offline alert set to 1440 minutes (a day) is sent.** The form allows 2 to 1440 minutes, but
+  screens dark for more than a day were never looked at, so 1440 never fired and thresholds near it
+  barely did.
+- **The Alerts page's description mentions screen problems** (blank, frozen, wrong content, panel
+  off) as well as offline and back online.
 
 ## 3.0.2
 
