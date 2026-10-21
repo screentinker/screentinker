@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interactive kiosk pages for touchscreens | ScreenTinker</title>
+  <meta name="description" content="Build a touchscreen page with big buttons, link pages together, set an idle screen, and put it on a screen. How ScreenTinker kiosk pages work.">
+  <meta name="keywords" content="digital signage kiosk, touchscreen kiosk, interactive digital signage, kiosk page builder, touch screen menu, screentinker kiosk">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/digital-signage-interactive-kiosk.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/digital-signage-interactive-kiosk.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/digital-signage-interactive-kiosk.html">
+  <meta property="og:title" content="Interactive kiosk pages for touchscreens">
+  <meta property="og:description" content="Build a touchscreen page with big buttons, link pages together, set an idle screen, and put it on a screen. How ScreenTinker kiosk pages work.">
+  <meta property="og:image" content="https://screentinker.com/assets/guides/kiosk/preview.webp">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Interactive kiosk pages for touchscreens">
+  <meta name="twitter:description" content="Build a touchscreen page with big buttons, link pages together, set an idle screen, and put it on a screen. How ScreenTinker kiosk pages work.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/guides/kiosk/preview.webp">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/guides/">Guides</a>
+      <span>/</span>
+      <span>Kiosk pages</span>
+    </nav>
+
+    <h1>Interactive kiosk pages for touchscreens</h1>
+    <p class="lead">A kiosk page is a full-screen page of big buttons that people can tap: the menu, today's bakes, the Wi-Fi password, opening hours. You build it in the dashboard, with no code, and put it on a touchscreen like any other item in a playlist.</p>
+
+    <p>This guide covers making a page, what each setting does, how to link several pages together, how to put a page on a screen, and the few things that do not work the way you might expect.</p>
+
+    <h2 id="before">Before you start</h2>
+    <ul>
+      <li><strong>Kiosk is in Advanced view.</strong> New accounts start in Simple view. Switch with the <strong>Simple / Advanced</strong> buttons at the top of the menu.</li>
+      <li><strong>Anyone in the workspace can build pages</strong>, except people with the <strong>Viewer</strong> role. A Viewer can open the pages but not create, change or delete them.</li>
+      <li><strong>You need a screen people can touch.</strong> The page works on any screen, but without a touchscreen nobody can press the buttons.</li>
+    </ul>
+
+    <h2 id="open">Open Kiosk</h2>
+    <p>Choose <strong>Kiosk</strong> in the sidebar, under <strong>Create</strong>. The <strong>Kiosk Pages</strong> list shows every page in this workspace. Each card has <strong>Preview</strong>, which opens the finished page in a new browser tab, and <strong>Delete</strong>. Click a card to edit it.</p>
+    <figure>
+      <img src="/assets/guides/kiosk/list.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Kiosk Pages list with three cards called Menu, Wi-Fi and Café welcome. Each card says Kiosk Page and has a Preview button and a red Delete button. The New Kiosk Page button is at the top right.">
+      <figcaption>Three kiosk pages for a café: a welcome page, a menu page and a Wi-Fi page.</figcaption>
+    </figure>
+
+    <h2 id="create">Create a page</h2>
+    <ol class="steps">
+      <li>Press <strong>New Kiosk Page</strong>.</li>
+      <li>Type a name when asked, for example "Café welcome", and press OK. Choose the name with care: the editor has no way to change it later.</li>
+      <li>The editor opens. A new page already has a title ("Welcome"), a subtitle and six example buttons (Directory, Events, Map, Contact, WiFi and Help), so you can see how it looks straight away. Change them or delete them.</li>
+    </ol>
+
+    <h2 id="edit">Set the text, style and buttons</h2>
+    <p>The editor shows a small preview on the left and three panels on the right. Nothing is kept until you press <strong>Save</strong> at the top. Saving also refreshes the small preview.</p>
+    <figure>
+      <img src="/assets/guides/kiosk/editor.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The kiosk editor for the page Café welcome. On the left, a preview with the title Welcome to Larkspur Café, the subtitle Tap a button to find out more, and buttons for Menu, Today's bakes and Wi-Fi. On the right, the Page Settings panel with Title, Subtitle, Logo URL, Footer Text, Idle Screen Title set to Touch to Begin and Idle Timeout set to 60, and the start of the Style panel. Preview and Save buttons are at the top right.">
+      <figcaption>The editor. The small preview can cut off the lower rows of buttons; <strong>Preview</strong> shows the whole page.</figcaption>
+    </figure>
+
+    <h3 id="page-settings">Page Settings</h3>
+    <ul>
+      <li><strong>Title</strong> and <strong>Subtitle</strong>: the big heading and the line under it.</li>
+      <li><strong>Logo URL</strong>: the web address of a picture to show above the title. Leave it empty for no logo.</li>
+      <li><strong>Footer Text</strong>: a small line at the bottom, such as your opening hours.</li>
+      <li><strong>Idle Screen Title</strong> and <strong>Idle Timeout (seconds)</strong>: see <a href="#idle">the idle screen</a>.</li>
+    </ul>
+
+    <h3 id="style">Style</h3>
+    <ul>
+      <li><strong>Background</strong>: a colour such as <code>#111827</code>. It also accepts a colour gradient; the example page uses one.</li>
+      <li><strong>Text Color</strong>, <strong>Button Color</strong> and <strong>Button Hover Color</strong>. The hover colour is also the colour a button turns when someone presses it.</li>
+      <li><strong>Columns</strong>: 2, 3 or 4 buttons per row. Fewer columns give bigger buttons, which are easier to hit on a small touchscreen.</li>
+    </ul>
+
+    <h3 id="buttons">Buttons</h3>
+    <p>Press <strong>+ Add</strong> to add a button. Each button has an emoji, a label, a smaller line under it (the sublabel), an action, and an address. The ✕ removes a button. New buttons are added at the end, and there is no way to move a button, so add them in the order you want them.</p>
+    <figure>
+      <img src="/assets/guides/kiosk/buttons.webp" width="320" height="1149" loading="lazy" decoding="async" alt="The Buttons panel with six buttons. Menu, Today's bakes and Wi-Fi are set to Go to page, each with an address that starts with /api/kiosk/. Loyalty card, Opening hours and Find us are set to No action, with the address box empty.">
+      <figcaption>Three buttons open other kiosk pages. The other three only show information.</figcaption>
+    </figure>
+    <p>The action decides what a tap does:</p>
+    <ul>
+      <li><strong>No action</strong>: the button is just a label. Good for short facts such as opening hours.</li>
+      <li><strong>Go to page</strong>: the screen opens the address in the box, in place of the kiosk page. Use this to link to your other kiosk pages (see <a href="#link-pages">link pages together</a>).</li>
+      <li><strong>Open URL</strong>: opens the address in a new browser tab. This only works in <strong>Preview</strong> on a computer. On a screen, new tabs are blocked and the button does nothing, so use <strong>Go to page</strong> instead.</li>
+    </ul>
+    <div class="callout warn">
+      <span class="callout-title">Choose the action first, then type the address</span>
+      <p>The address box remembers which action was chosen when you typed into it. If you type the address first and change the action to <strong>Go to page</strong> afterwards, the button will do nothing. Choose the action, then type (or retype) the address, then <strong>Save</strong>.</p>
+    </div>
+
+    <h3 id="idle">The idle screen</h3>
+    <p>When nobody has touched the screen for the <strong>Idle Timeout (seconds)</strong> (60 unless you change it), a dark cover with the <strong>Idle Screen Title</strong> ("Touch to Begin") appears over the page. The next touch removes it. The idle screen belongs to each kiosk page: it does not take a visitor back to your first page.</p>
+
+    <h2 id="preview">Check the whole page</h2>
+    <p>Press <strong>Preview</strong> to open the page in a new browser tab, at full size. You can click the buttons there to try them. That address works without signing in, so anyone who has it can open the page: don't put private information on a kiosk page.</p>
+    <figure>
+      <img src="/assets/guides/kiosk/preview.webp" width="1440" height="810" loading="lazy" decoding="async" alt="The finished kiosk page at full screen: the title Welcome to Larkspur Café, the subtitle Tap a button to find out more, six large buttons in three columns (Menu, Today's bakes, Wi-Fi, Loyalty card, Opening hours and Find us), each with an emoji and a short line of text, and the footer Open 7am to 6pm, every day.">
+      <figcaption>The page as visitors see it.</figcaption>
+    </figure>
+
+    <h2 id="link-pages">Link pages together</h2>
+    <p>One kiosk page is one screen of buttons. For more, make one page per topic (a "Menu" page, a "Wi-Fi" page) and link them:</p>
+    <ol class="steps">
+      <li>Make each page and press <strong>Save</strong>.</li>
+      <li>Open a page with <strong>Preview</strong> and copy the address from the new tab. It ends in <code>/api/kiosk/</code>, a long code, and <code>/render</code>.</li>
+      <li>On your first page, set a button to <strong>Go to page</strong> and paste that address. You can also type just the part from <code>/api/kiosk/</code> onwards.</li>
+      <li>On every other page, add a "Back" button set to <strong>Go to page</strong> with the first page's address. There is no other way back, and the idle screen does not go back by itself.</li>
+    </ol>
+    <p><strong>Go to page</strong> can open an ordinary website too, but many websites refuse to be shown inside another page and stay blank. Try it on your screen before you rely on it.</p>
+
+    <h2 id="screen">Put a page on a screen</h2>
+    <ol class="steps">
+      <li>Open the playlist the touchscreen plays in <strong>Playlists</strong> (or open the screen in <strong>Screens</strong> and go to its <strong>Playlist</strong> tab).</li>
+      <li>Choose <strong>+ Add Content</strong> (on a screen's page, <strong>Add Content</strong>) and open the <strong>Kiosk</strong> tab.</li>
+      <li>Press <strong>Add</strong> next to your first page. It goes into the playlist as a web page widget called "Kiosk:" and the page's name.</li>
+      <li>Press <strong>Publish</strong>. Screens keep showing the last published playlist until you do.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/kiosk/add-picker.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Add Content to Playlist window over a playlist called Touchscreen, with the Kiosk tab selected. It lists Café welcome, Menu and Wi-Fi, each marked Kiosk page, with an Add button. Behind it, a banner says Unpublished changes and this playlist has never been published.">
+      <figcaption>The <strong>Kiosk</strong> tab lists every kiosk page in the workspace.</figcaption>
+    </figure>
+    <p>Add only your first page. The others open from its buttons.</p>
+    <div class="callout warn">
+      <span class="callout-title">Give the touchscreen a playlist of its own</span>
+      <p>A kiosk page is an item like any other: it plays for its <strong>Duration</strong> (10 seconds unless you change it) and then the playlist moves on, even if someone is using it. When the kiosk page is the only item in the playlist, it stays on the screen. So give the touchscreen a playlist with just the kiosk page in it.</p>
+    </div>
+
+    <h2 id="changes">Changing a page that is already on a screen</h2>
+    <p>Press <strong>Save</strong> after your changes. Saving does not send the page to your screens again: a screen picks up the new version the next time it loads the page. A touchscreen that shows only the kiosk page can keep the old version for a long time. To update it now, open the screen in <strong>Screens</strong>, go to <strong>Device Info</strong> and press <strong>Reload Player</strong>. Not every player has that button; if yours does not, restart the player.</p>
+    <div class="callout warn">
+      <span class="callout-title">Remove it from playlists before you delete it</span>
+      <p>Deleting a kiosk page does not remove its "Kiosk:" item from your playlists. A screen that still plays it shows "Page not found". Take it out of the playlist and <strong>Publish</strong> first, then delete the page.</p>
+    </div>
+
+    <div class="callout self-hosted">
+      <span class="callout-title">On a self-hosted server</span>
+      <p>Kiosk pages work the same way. Your server sends the page to the screen, so a touchscreen needs to reach your server, as it already does for everything else it plays. The same goes for a <strong>Logo URL</strong>: the screen must be able to reach the picture's address.</p>
+    </div>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>A button does nothing when I tap it on the screen.</h3>
+    <p>Check its action. <strong>Open URL</strong> never works on a screen; change it to <strong>Go to page</strong>. If it is already <strong>Go to page</strong>, choose the action again, retype the address and press <strong>Save</strong>. Then reload the player on the screen, as described in <a href="#changes">changing a page</a>.</p>
+    <h3>The screen goes back to my other content after a few seconds.</h3>
+    <p>The kiosk page is sharing a playlist with other items, so it plays for its <strong>Duration</strong> and moves on. Give the touchscreen a playlist that holds only the kiosk page.</p>
+    <h3>Is this the same as "Interactive (walk-up kiosk)"?</h3>
+    <p>No. That is a setting on a Web page widget, for letting visitors use a whole website and wiping what they did when they leave. A kiosk page is a simpler page of buttons that you build here.</p>
+    <h3>Can I rename a kiosk page?</h3>
+    <p>Not in the editor. Make a new page with the new name, copy the settings and buttons across, and swap it into your playlist.</p>
+
+    <div class="cta">
+      <h2>Try it on your own screens</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/digital-signage-content-playlists.html">Content and playlists</a></li>
+        <li><a href="/guides/digital-signage-widgets-layouts-transitions.html">Widgets, layouts and transitions</a></li>
+        <li><a href="/guides/digital-signage-getting-started.html">Getting started</a></li>
+        <li><a href="/guides/digital-signage-troubleshooting.html">Troubleshooting</a></li>
+        <li><a href="/guides/">All guides</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="/guides/">Guides</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Guides",
+      "item": "https://screentinker.com/guides/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Kiosk pages",
+      "item": "https://screentinker.com/guides/digital-signage-interactive-kiosk.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Interactive kiosk pages for touchscreens",
+  "description": "Build a touchscreen page with big buttons, link pages together, set an idle screen, and put it on a screen. How ScreenTinker kiosk pages work.",
+  "image": "https://screentinker.com/assets/guides/kiosk/preview.webp",
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Open Kiosk",
+      "text": "Switch to Advanced view and choose Kiosk in the sidebar.",
+      "url": "https://screentinker.com/guides/digital-signage-interactive-kiosk.html#open"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Create a page",
+      "text": "Choose New Kiosk Page, type a name and press OK. The editor opens with six example buttons.",
+      "url": "https://screentinker.com/guides/digital-signage-interactive-kiosk.html#create"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Set the text, style and buttons",
+      "text": "Fill in Page Settings and Style, change the buttons, and press Save.",
+      "url": "https://screentinker.com/guides/digital-signage-interactive-kiosk.html#edit"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 4,
+      "name": "Put it on a touchscreen",
+      "text": "In the screen's playlist choose + Add Content, open the Kiosk tab, press Add next to the page, then Publish.",
+      "url": "https://screentinker.com/guides/digital-signage-interactive-kiosk.html#screen"
+    }
+  ]
+}
+  </script>
+</body>
+</html>

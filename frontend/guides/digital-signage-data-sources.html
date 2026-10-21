@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live data on your screens: Data Sources | ScreenTinker</title>
+  <meta name="description" content="Show live prices, weather, calendars and feeds on your screens. Connect a Google Sheet or a typed table once and every slide that uses it updates itself.">
+  <meta name="keywords" content="digital signage data sources, digital signage google sheets, live menu board, digital signage weather, dynamic signage content, screentinker data sources">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/digital-signage-data-sources.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/digital-signage-data-sources.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/digital-signage-data-sources.html">
+  <meta property="og:title" content="Live data on your screens: Data Sources">
+  <meta property="og:description" content="Show live prices, weather, calendars and feeds on your screens. Connect a Google Sheet or a typed table once and every slide that uses it updates itself.">
+  <meta property="og:image" content="https://screentinker.com/assets/guides/data-sources/cards.webp">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Live data on your screens: Data Sources">
+  <meta name="twitter:description" content="Show live prices, weather, calendars and feeds on your screens. Connect a Google Sheet or a typed table once and every slide that uses it updates itself.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/guides/data-sources/cards.webp">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/guides/">Guides</a>
+      <span>/</span>
+      <span>Data Sources</span>
+    </nav>
+
+    <h1>Live data on your screens: Data Sources</h1>
+    <p class="lead">A data source keeps a value on your screens up to date without anyone editing a slide. Put your prices in a Google Sheet or a table, connect it once, and the price on every screen changes when you change the sheet. The same works for the weather, a calendar, a news feed or your own system.</p>
+
+    <p>This guide shows how to connect a source, test it, copy one of its values, and put that value on a slide. It also covers key columns (so a price stays on the right line after you sort the sheet), how often sources refresh, and what screens show when something goes wrong.</p>
+
+    <h2 id="before">Before you start</h2>
+    <ul>
+      <li><strong>Data Sources is in Advanced view.</strong> New accounts start in Simple view. Switch with the <strong>Simple / Advanced</strong> buttons at the top of the menu.</li>
+      <li><strong>You need to be an Editor or an Admin</strong> of the workspace to connect, change or delete a source. A <strong>Viewer</strong> can open the page and see the values, but not the addresses or keys behind them.</li>
+      <li><strong>Values appear on slides.</strong> You type a tag like <code>{{ds:specials.latte}}</code> into a slide's text, and the screen shows the current value in its place. There is no plan limit on data sources.</li>
+    </ul>
+
+    <h2 id="open">Open Data Sources</h2>
+    <p>Choose <strong>Data Sources</strong> in the sidebar, under <strong>Automate</strong>. The page is called <strong>Data Sources &amp; Integrations</strong>. Each source you have connected gets a card. If you have none yet, the page shows the list of connectors straight away.</p>
+
+    <h2 id="connect">Connect a source</h2>
+    <ol class="steps">
+      <li>Press <strong>Connect data</strong> at the top right.</li>
+      <li>Pick where the data lives. <strong>Manual table</strong> and <strong>Weather</strong> need no account at all. <strong>Google Sheets</strong> is the usual choice for menus and price lists.</li>
+      <li>Give it a <strong>Name</strong>. The <strong>Identifier Slug</strong> fills itself in from the name; it is the short word you will use on slides, shown under the box as "Used on slides as {{ds:<em>slug</em>.key}}". Keep it short, like <code>specials</code> or <code>weather</code>.</li>
+      <li>Fill in the form for that kind of source (see below).</li>
+      <li>Press <strong>Test &amp; preview</strong>. You see whether it connected, the first rows, and every value it found under <strong>Variables — click to copy</strong>. Nothing is saved yet.</li>
+      <li>Press <strong>Save &amp; connect</strong>. The card appears and the first sync runs in the background.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/data-sources/gallery.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Connect data window with nine connectors as tiles: Google Sheets marked Most popular, REST API, Calendar, Weather marked No setup, Manual table marked No setup, CSV file, RSS / news feed, Square and Shopify. Each tile has one line about what it is for.">
+      <figcaption>Connect data: pick where the data lives. You can connect as many sources as you need.</figcaption>
+    </figure>
+
+    <h3 id="sheets">A Google Sheet</h3>
+    <p>The form shows three steps to make the sheet readable, which you do once in Google Sheets: click <strong>Share</strong>, set <strong>General access</strong> to "Anyone with the link" as <strong>Viewer</strong>, and copy the link. Paste it into <strong>Sheet link</strong>. Open the tab you want before you copy the link and the link remembers it, or type the tab in <strong>Tab name (optional)</strong>. <strong>Range (optional)</strong> reads only part of the sheet, for example A1:D50.</p>
+    <figure>
+      <img src="/assets/guides/data-sources/sheets-form.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Google Sheets form: Name and Identifier Slug at the top, a green box headed Make the sheet readable (once) with three numbered steps, then Sheet link, Tab name (optional), Range (optional), a closed section called Rows, key column and refresh, and the buttons Test and preview, Cancel and Save and connect.">
+      <figcaption>The Google Sheets form. The three steps in the green box are the only setup in Google.</figcaption>
+    </figure>
+    <div class="callout warn">
+      <span class="callout-title">"Google returned a sign-in page"</span>
+      <p>That test result means the sheet is not shared publicly. Go back to <strong>Share</strong> in Google Sheets and choose "Anyone with the link". Anyone who has the link can read the sheet, so keep only what belongs on the screens in it.</p>
+    </div>
+
+    <h3 id="table">A manual table</h3>
+    <p>No account, nothing to break: you type the data into ScreenTinker itself. Type into the grid, or copy a block of cells from Excel or Google Sheets and paste it into any cell. <kbd>Enter</kbd> adds a row; <strong>+ Row</strong> and <strong>+ Column</strong> do the same, and the × removes one. A table holds up to 200 rows and 20 columns. It changes only when you edit it and press <strong>Save</strong>.</p>
+    <figure>
+      <img src="/assets/guides/data-sources/table-editor.webp" width="1440" height="900" loading="lazy" decoding="async" alt="Editing the manual table Today's specials, slug specials. A grid with the columns Item and Price lists Latte 3.50, Flat white 3.80, Cinnamon bun 2.90, Soup of the day 5.50 and Toasted sandwich 6.20. Below it, + Row and + Column buttons, and Key column (recommended) is set to Item.">
+      <figcaption>A typed table of today's specials, with Item as the key column.</figcaption>
+    </figure>
+
+    <h3 id="weather">The weather</h3>
+    <p>Type a town into <strong>Location</strong>, or leave it empty and enter <strong>Latitude (optional)</strong> and <strong>Longitude (optional)</strong>. Choose the <strong>Units</strong> (°C or °F), the <strong>Language for day names</strong> and the <strong>Sync Interval</strong> (every 15 minutes, 30 minutes or hour). It needs no account or key. You get the current temperature, condition and humidity, and a forecast for the coming days.</p>
+    <figure>
+      <img src="/assets/guides/data-sources/weather-test.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The weather form for Weather Portland after pressing Test and preview: Location Portland, Units Imperial, Language for day names English, Sync Interval Every 15 minutes. A green line says Weather found for Portland, and the variables list below shows location Portland, temperature 60, apparent_temperature 58 and humidity 67, with a search box for 66 variables.">
+      <figcaption>Test &amp; preview shows the real values before you save anything.</figcaption>
+    </figure>
+
+    <h3 id="others">The other connectors</h3>
+    <ul>
+      <li><strong>Calendar</strong>: paste a public or secret iCal link from Google Calendar, Outlook, iCloud or Nextcloud. Good for a meeting-room sign ("Free until 14:00", the next meeting). Under <strong>⚙️ Advanced Options</strong> you can filter by keyword, set the <strong>Timezone</strong> and turn on <strong>Privacy Mode</strong>, which shows only "Busy" instead of meeting titles.</li>
+      <li><strong>CSV file</strong>: a direct download link to a CSV file, for example an export from a till or a report. For OneDrive or SharePoint, add <code>?download=1</code> to the link.</li>
+      <li><strong>RSS / news feed</strong>: headlines from a news site, a blog or a status page.</li>
+      <li><strong>REST API</strong>: any address that answers with JSON or CSV, with optional sign-in (<strong>Bearer token</strong>, <strong>API key header</strong> or <strong>Username &amp; password</strong>). Keys you enter are stored encrypted, are never shown again and are never sent to the screens.</li>
+      <li><strong>Square</strong> and <strong>Shopify</strong>: your shop's items and prices for a menu board, with sold-out items left out if you want.</li>
+    </ul>
+
+    <h2 id="variables">Find and copy a value</h2>
+    <p>Every value a source has is a <em>variable</em>. Open <strong>Variables</strong> on the source's card to see them all, with what each one holds right now. Click a variable's name and it is copied as a tag, ready to paste: clicking <code>row1_price</code> on the <code>specials</code> source copies <code>{{ds:specials.row1_price}}</code>. When a source has more than 12 variables, a search box helps you find one.</p>
+    <figure>
+      <img src="/assets/guides/data-sources/cards.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Data Sources and Integrations page with two cards. Today's specials, a Manual table with slug specials, is Live, shows 5 rows with the columns Item and Price, and its open Variables (29) list shows row_count 5, column_count 2, columns Item, Price, then row1_item Latte, row1_price 3.50, row2_item Flat white and so on. Weather Portland, slug weather, is Live and shows Portland, 60°F, Clear sky. Each card has Sync Now, Edit and Delete buttons.">
+      <figcaption>Each card shows its status, its last sync and its variables. Click a variable to copy its tag.</figcaption>
+    </figure>
+
+    <h3 id="key-column">Use a key column for tables</h3>
+    <p>Rows are numbered by default: <code>row3_price</code> is the price on the third row. If someone sorts the sheet or adds a row at the top, row 3 becomes a different item and the screen shows the wrong price. A <strong>Key column (recommended)</strong> fixes that: each row is named after the value in that column instead. With <strong>Item</strong> as the key column, the latte's price is <code>{{ds:specials.latte_price}}</code> wherever the latte moves. When the table has only two columns, <code>{{ds:specials.latte}}</code> works too.</p>
+    <p>For a manual table, pick the key column under the grid. For a Google Sheet, a CSV file or a REST API, open <strong>Rows, key column &amp; refresh</strong>, or press <strong>Test &amp; preview</strong> and click a column's heading in <strong>First rows</strong>.</p>
+    <p>Number columns also get totals and averages, such as <code>avg_price</code> and <code>max_price</code>, which is handy for a sales or KPI board.</p>
+
+    <h2 id="slides">Put the value on a slide</h2>
+    <ol class="steps">
+      <li>Open <strong>Slides</strong> in the sidebar and open a deck (or make one).</li>
+      <li>Select a text box and paste the tag into its <strong>Text</strong>. Mix it with your own words, for example <code>Latte · ${{ds:specials.latte}}</code>. The editor shows the current value on the slide straight away.</li>
+      <li>Press <strong>Publish</strong>. The deck becomes a playlist, which you put on a screen like any other.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/data-sources/slide.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Slides editor with a deck called Specials board. The selected text box's Text field holds Latte · ${{ds:specials.latte}}, and the slide itself reads Latte · $3.50, Cinnamon bun · $2.90 and Soup of the day · $5.50 under the heading Today's specials, with 60°F and Clear sky in Portland on the right.">
+      <figcaption>The tag in the text box, and the live value on the slide.</figcaption>
+    </figure>
+    <p>You publish once. After that, when the data changes, the screens playing that slide update on their own: no re-publishing.</p>
+    <div class="callout warn">
+      <span class="callout-title">Copy tags from the Data Sources page</span>
+      <p>The slide editor has an <strong>⚡ Insert Variable...</strong> list, but it offers calendar values (status, next event) for every source, even a sheet or the weather, where they don't exist. Copy the tag from the source's <strong>Variables</strong> instead. A tag whose source or variable does not exist shows as empty text on the screen.</p>
+    </div>
+
+    <h2 id="refresh">How often it updates, and when it fails</h2>
+    <ul>
+      <li>Each source refreshes on its own <strong>Sync Interval</strong>: every 5 minutes, 15 minutes or hour for a Google Sheet (never faster than every 2 minutes), every 15 minutes to an hour for the weather. A manual table changes only when you save it.</li>
+      <li>Press <strong>Sync Now</strong> on a card to fetch it straight away. Screens update when the values actually change.</li>
+      <li>The card's dot says <strong>Live</strong> when the last sync worked. If it failed, the dot says "Something went wrong." and the card shows the reason in red, for example that the sheet is not shared. <strong>Screens keep showing the last values that worked</strong> until the next good sync.</li>
+      <li><strong>Edit</strong> opens the form again. Press <strong>Test &amp; preview</strong>, then <strong>Save</strong>.</li>
+    </ul>
+    <div class="callout warn">
+      <span class="callout-title">Changing a slug, or deleting a source, empties its tags</span>
+      <p>Slides find a source by its slug. If you change the <strong>Identifier Slug</strong> or press <strong>Delete</strong>, every tag that used the old one shows nothing until you fix the slides. Rename the source's <strong>Name</strong> freely; leave the slug alone.</p>
+    </div>
+
+    <div class="callout self-hosted">
+      <span class="callout-title">On a self-hosted server</span>
+      <p>Your server fetches the data, so it needs internet access for every connector except <strong>Manual table</strong>. It refuses addresses on your own network (such as 192.168.x.x or a calendar server in the office) with "The address is not allowed. It is on a private network." To allow them, the server's administrator sets <code>OUTBOUND_ALLOW_HOSTS</code> (a list of names or address ranges) or <code>OUTBOUND_ALLOW_PRIVATE=1</code> (every private address; only for a server you alone use) and restarts it. If plugins are turned on (<code>PLUGINS_ENABLED=1</code>), connectors from installed plugins appear in <strong>Connect data</strong> marked <strong>Plugin</strong>.</p>
+    </div>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>I changed the price in the sheet. When does the screen change?</h3>
+    <p>At the next sync of that source, by default within 15 minutes for a sheet. Press <strong>Sync Now</strong> on its card to do it at once. You don't need to publish anything again.</p>
+    <h3>Can a Viewer see my API keys or the sheet link?</h3>
+    <p>No. Keys are never shown to anyone after you save them, and Viewers see the addresses with the private parts hidden. They can still see the values that are on the screens.</p>
+    <h3>Do I need a Google account or an API key for the weather?</h3>
+    <p>No. The weather comes from Open-Meteo and needs no account or key. A manual table needs nothing at all.</p>
+
+    <div class="cta">
+      <h2>Try it on your own screens</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/digital-signage-widgets-layouts-transitions.html">Widgets, layouts and transitions</a></li>
+        <li><a href="/guides/digital-signage-content-playlists.html">Content and playlists</a></li>
+        <li><a href="/guides/digital-signage-users-roles.html">Users and roles</a></li>
+        <li><a href="/guides/self-hosted-digital-signage.html">Self-hosted digital signage</a></li>
+        <li><a href="/guides/">All guides</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="/guides/">Guides</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Guides",
+      "item": "https://screentinker.com/guides/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Data Sources",
+      "item": "https://screentinker.com/guides/digital-signage-data-sources.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Live data on your screens: Data Sources",
+  "description": "Show live prices, weather, calendars and feeds on your screens. Connect a Google Sheet or a typed table once and every slide that uses it updates itself.",
+  "image": "https://screentinker.com/assets/guides/data-sources/cards.webp",
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Open Data Sources",
+      "text": "Switch to Advanced view and choose Data Sources in the sidebar, under Automate.",
+      "url": "https://screentinker.com/guides/digital-signage-data-sources.html#open"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Connect a source",
+      "text": "Press Connect data, pick where the data lives (for example Google Sheets or Manual table), fill in the form, press Test & preview, then Save & connect.",
+      "url": "https://screentinker.com/guides/digital-signage-data-sources.html#connect"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Copy a variable",
+      "text": "Open Variables on the source's card and click a key. It is copied as a tag like {{ds:specials.latte}}.",
+      "url": "https://screentinker.com/guides/digital-signage-data-sources.html#variables"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 4,
+      "name": "Put it on a slide",
+      "text": "Paste the tag into a text box in the Slides editor, then Publish the deck. The screen shows the current value and updates when the data changes.",
+      "url": "https://screentinker.com/guides/digital-signage-data-sources.html#slides"
+    }
+  ]
+}
+  </script>
+</body>
+</html>
