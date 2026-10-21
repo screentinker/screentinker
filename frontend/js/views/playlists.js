@@ -602,9 +602,8 @@ function renderDetailContent(container, playlist) {
         publishBtn.textContent = t('playlist.draft.publishing');
         const updated = await api.publishPlaylist(playlist.id);
         showToast(t('playlist.toast.published'));
-        // Only GET /:id resolves a smart playlist's matches, and decorates head office's playlist and a
-        // slot's content (corporate_slot); the publish response is the bare row.
-        renderDetailContent(container, updated.smart_rules || playlist.corporate || playlist.corporate_slot ? await api.getPlaylist(playlist.id) : updated);
+        // The publish response is GET /:id's shape (layout, item schedules, smart matches, corporate_slot).
+        renderDetailContent(container, updated);
       } catch (err) {
         publishBtn.disabled = false;
         publishBtn.textContent = t('playlist.draft.publish');
@@ -622,7 +621,7 @@ function renderDetailContent(container, playlist) {
       try {
         const updated = await api.discardPlaylistDraft(playlist.id);
         showToast(t('playlist.toast.draft_discarded'));
-        renderDetailContent(container, updated.smart_rules || playlist.corporate || playlist.corporate_slot ? await api.getPlaylist(playlist.id) : updated);
+        renderDetailContent(container, updated);   // GET /:id's shape, like publish
       } catch (err) {
         showToast(err.message, 'error');
       }
