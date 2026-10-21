@@ -3373,15 +3373,20 @@ function setupActions(device) {
     } catch (err) { showToast(err.message, 'error'); }
   });
 
-  document.getElementById('rotateTrigSecretBtn')?.addEventListener('click', async () => {
+  // Whether the screen has a secret yet: the first Generate has nothing to invalidate.
+  let trigSecretSet = !!device.trigger_secret;
+  const trigSecretBtn = document.getElementById('rotateTrigSecretBtn');
+  trigSecretBtn?.addEventListener('click', async () => {
     // ⚠️ Rotating invalidates whatever the integrator already typed into their control system, and
     // there is no way to un-rotate. Confirm rather than treating it as an ordinary button.
-    if (!confirm(t('device.trigcfg.rotate_confirm'))) return;
+    if (trigSecretSet && !confirm(t('device.trigcfg.rotate_confirm'))) return;
     try {
       const res = await api.setTriggerSecret(device.id, { rotate: true });
       if (res.secret) {
         const el = document.getElementById('trigSecretVal');
         if (el) el.textContent = res.secret;
+        trigSecretSet = true;
+        trigSecretBtn.textContent = t('device.trigcfg.rotate');
       }
       showToast(res.delivered ? t('device.trigcfg.saved_live') : t('device.trigcfg.saved_queued'),
         res.delivered ? 'success' : 'warning');
@@ -3638,8 +3643,9 @@ async function setupPlaylistActions(device) {
     const payload = (item, extras) => {
       const base = item.type === 'widget' ? { widget_id: item.id }
         : item.type === 'playlist' ? { child_playlist_id: item.id } : { content_id: item.id };
-      // A kiosk page is interactive: it stays up until skipped (duration 0 = live dwell).
-      if (item.kiosk) return { ...base, duration_sec: 0, zone_id: extras.zone_id };
+      // A kiosk page is interactive: it stays up until skipped (KIOSK_DWELL_SEC, content-picker.js),
+      // unless the operator typed a duration.
+      if (item.kiosk) return { ...base, duration_sec: extras.duration_sec ?? item.duration_sec, zone_id: extras.zone_id };
       return { ...base, ...extras };
     };
 

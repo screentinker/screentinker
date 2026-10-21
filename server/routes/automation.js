@@ -185,7 +185,9 @@ router.post('/:id/rotate', (req, res) => {
 /*
  * Test-fire: runs the hook for real with the body given (or a representative one), marked as a test
  * in the call log. It is not a dry run — a test of an emergency hook shows the alert on screens, so
- * the page says so and offers the clear straight after.
+ * the page says so and offers End now (POST /:id/end) while the hook has something live. The one
+ * exception is a table hook: its test is a dry run (lib/automation/hooks.js runData), because the
+ * sample body is an empty list and a "Replace all rows" hook run for real with it empties the table.
  */
 router.post('/:id/test', asyncRoute(async (req, res) => {
   if (!access(req, res, { write: true })) return;
@@ -197,6 +199,19 @@ router.post('/:id/test', asyncRoute(async (req, res) => {
   logActivity(req.user.id, 'automation:hook_tested', `${h.name}: ${r.outcome}`, null, getClientIp(req), req.workspaceId);
   res.status(r.ok ? 200 : 422).json({ ok: r.ok, outcome: r.outcome });
 }));
+
+/*
+ * End now: take down what a hook has live — the alerts it raised and the screens it switched — the
+ * same as switching it off (PUT above), but the hook stays on. A test's clear, and a manual one.
+ */
+router.post('/:id/end', (req, res) => {
+  if (!access(req, res, { write: true })) return;
+  const h = loadHook(req, res); if (!h) return;
+  hooks.endAll(db, h);
+  require('../lib/automation/overrides').stop(db, { workspaceId: h.workspace_id, hookId: h.id });
+  logActivity(req.user.id, 'automation:hook_ended', `${h.name} (${h.kind})`, null, getClientIp(req), req.workspaceId);
+  res.json(present(req, db.prepare('SELECT * FROM automation_hooks WHERE id = ?').get(h.id)));
+});
 
 function sampleBody(h) {
   if (h.kind === 'emergency') return { id: 'test-1', headline: 'Test alert', message: 'This is a test of the emergency hook.', status: 'active' };

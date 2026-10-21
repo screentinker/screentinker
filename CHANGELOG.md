@@ -8,6 +8,45 @@
   @djalfe). 3.0.2 shipped Danish weather words, but the form's language list was the dashboard's own,
   which has no Danish. It now lists every language the weather supports, each in its own name, and the
   label says **Weather language** instead of "Language for day names".
+- **Test on a table hook no longer changes the table.** The test sends an empty list of rows, so
+  testing a "Replace all rows" hook emptied the table without asking. A table hook's test is now a
+  dry run that says what it would do; real calls to the hook are unchanged.
+- **A "Switch screens back" hook now switches screens back.** It only released switches it had
+  started itself, and it never starts any, so it did nothing. It now ends every automation switch
+  on the screens in its scope, whichever hook or Zap started it, like the Zapier stop action.
+- **End now on the Automation page.** A hook with alerts on screens or screens switched (after a
+  test, say) shows **End now**, which ends them and leaves the hook on. Before, the only way was to
+  switch the hook off and on again.
+- **The Zapier note on the Automation page names the real settings.** It now says **Settings → API
+  Tokens** and the scopes **Read & write** and **Full (incl. device commands)**.
+- **A "Fire a trigger" hook reaches every player that can take it.** Browser, BrightSign, webOS,
+  Vega, iPad and Mac screens handle a trigger relayed by the server, but the hook only sent it to
+  Raspberry Pi and Windows screens and counted the rest as "LAN only". Android, Tizen and Roku
+  screens are still counted that way.
+- **The first Generate of a screen's trigger secret no longer asks "Rotate the shared secret?".**
+  The warning is for replacing a secret, and now only shows when there is one.
+- **"Open URL" kiosk buttons work on a screen.** They called `window.open()`, which a screen never
+  honours (the page runs in the player's sandboxed frames, and a TV has no second window), so the
+  button did nothing anywhere but Preview. The address now opens inside the kiosk page, full screen
+  under a **Back** bar, in a frame sandboxed like the page itself; http(s) addresses only. A site
+  that refuses to be shown inside another page stays blank, and the bar says so. The idle timeout
+  closes it and returns to the buttons.
+- **A kiosk page stays on screen until skipped.** Adding one sent duration 0, which the server
+  stores as the 10 s default (0 is only kept for live streams), and the playlist editor sent no
+  duration at all, so in a playlist with other items the page left after 10 s, even mid-use. New
+  kiosk items get 43200 s (12 h, the longest duration kept); lower it in Duration if you want it to
+  rotate. Items already in playlists keep their duration.
+- **Saving a kiosk page updates the screens already showing it.** The save notified nobody and a
+  screen keeps a widget it is showing mounted, so the change appeared only after a player restart.
+- **The kiosk editor's address box no longer depends on the order you fill it in.** Typing the
+  address before choosing **Go to page** stored it as an Open URL address, and the button did
+  nothing. The address now follows the action when it changes.
+- **Deleting a kiosk page no longer leaves a broken widget behind.** Its "Kiosk: …" widget stayed in
+  playlists and the screen showed "Page not found". A page still in a playlist or schedule is now
+  refused, naming where it is used; once nothing plays it, its widgets are deleted with it.
+- **The kiosk editor's preview shows every row of buttons.** It drew the page at the preview box's
+  own size, where the page's fixed paddings and text sizes pushed the lower rows out of view. It now
+  draws it at 1920x1080 and scales it down, as it looks on a screen.
 - **Menu Board's Logo, Background image and item Photo buttons work.** They opened the playlist's
   Add Content dialog, so the Logo field read "[object Object]" at once and Add did nothing. They now
   open the widget image picker (with upload), and the picked image is saved.
