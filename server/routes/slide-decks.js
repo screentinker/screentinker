@@ -184,6 +184,19 @@ router.put('/:id', (req, res) => {
   db.prepare('UPDATE slide_decks SET name = ?, doc = ?, updated_at = ? WHERE id = ?')
     .run(name, JSON.stringify(doc), nowSec(), deck.id);
   require('../lib/revisions').recordCurrent(db, 'slide_deck', deck.id, { actor: require('../lib/releases').actorOf(req), summary: 'Saved' });
+  /*
+   * A renamed deck takes its playlist's name along — but ONLY while the playlist still has the
+   * deck's old name (the one Publish gave it). A playlist somebody renamed on the Playlists page
+   * keeps the name they chose. Same write as a rename there (routes/playlists.js PUT): a name is
+   * not playback, so nothing is marked draft and no screen restarts.
+   */
+  if (name !== deck.name && deck.playlist_id) {
+    const pl = db.prepare('SELECT id, name, workspace_id FROM playlists WHERE id = ?').get(deck.playlist_id);
+    if (pl && pl.workspace_id === deck.workspace_id && pl.name === deck.name) {
+      db.prepare("UPDATE playlists SET name = ?, updated_at = strftime('%s','now') WHERE id = ?").run(name, pl.id);
+      require('../lib/revisions').recordCurrent(db, 'playlist', pl.id, { actor: require('../lib/releases').actorOf(req), summary: 'Renamed' });
+    }
+  }
   res.json(present(db.prepare('SELECT * FROM slide_decks WHERE id = ?').get(deck.id)));
 });
 
