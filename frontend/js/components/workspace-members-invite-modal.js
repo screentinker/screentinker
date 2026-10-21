@@ -15,6 +15,7 @@
 
 import { api } from '../api.js';
 import { t } from '../i18n.js';
+import { showToast } from './toast.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -121,4 +122,49 @@ export function openInviteMemberModal(workspace, opts = {}) {
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+// The invite was created but no email went out (no mail transport on this server): say so, and
+// give the inviter the link to pass on themselves - what Simple view's Team page does
+// (views/simple-home.js). The link only works for the invited address (accept-invite checks it).
+export function openInviteLinkModal(workspace, result) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <div class="modal-header">
+        <h3>${t('members.modal.invite_title', { workspace: esc(workspace.name) })}</h3>
+        <button class="btn-icon" type="button" data-link-close aria-label="${t('common.close')}">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p style="margin:0 0 8px">${esc(t('simple.team.not_emailed', { email: result.email }))}</p>
+        <input id="inviteLinkUrl" class="input" type="text" readonly style="width:100%" value="${esc(result.accept_url)}">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" type="button" data-link-close>${t('common.close')}</button>
+        <button class="btn btn-primary" type="button" id="inviteLinkCopyBtn">${esc(t('simple.team.copy_link'))}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const input = overlay.querySelector('#inviteLinkUrl');
+  input.addEventListener('focus', () => input.select());
+  function close() { overlay.remove(); document.removeEventListener('keydown', onKey); }
+  function onKey(e) { if (e.key === 'Escape') close(); }
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelectorAll('[data-link-close]').forEach(b => b.addEventListener('click', close));
+  overlay.querySelector('#inviteLinkCopyBtn').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(result.accept_url);
+      showToast(t('simple.team.copied'), 'success');
+    } catch {
+      // No clipboard (plain http, an older browser): leave the link selected for Ctrl+C.
+      input.focus(); input.select();
+    }
+  });
 }

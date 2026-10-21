@@ -5,7 +5,7 @@ import { esc, hydrateAuthImages } from '../utils.js';
 import { openContentPicker } from '../components/content-picker.js';
 import { t, tn } from '../i18n.js';
 import { frameDeviceOutput, displayAspectRatio } from '../lib/device-frame.js';
-import { renderApprovalBar } from '../components/approval-actions.js';
+import { renderApprovalBar, approvalSettings } from '../components/approval-actions.js';
 import { openSmartRulesModal, rulesSummary, loadFolders, DEFAULT_RULES } from '../components/smart-rules.js';
 import * as cui from '../components/corporate-ui.js';
 import { openSlotDialog } from '../components/corporate-slot-dialog.js';
@@ -593,6 +593,16 @@ function renderDetailContent(container, playlist) {
     onChanged: async () => { try { renderDetailContent(container, await api.getPlaylist(playlist.id)); } catch {} },
   });
   const publishBtn = document.getElementById('publishBtn');
+  // With approval required the server refuses a direct publish (409 approval_required) for
+  // everyone; the approval bar's Submit for review / Publish approved version is the way out.
+  // So the banner says that instead of offering a button that can only fail.
+  if (publishBtn) {
+    approvalSettings().then((s) => {
+      if (s && s.require_approval && publishBtn.isConnected) {
+        publishBtn.replaceWith(Object.assign(document.createElement('span'), { style: 'font-size:12px;color:#fcd34d;align-self:center', textContent: t('review.banner_submit_hint', { submit: t('review.submit') }) }));
+      }
+    }).catch(() => {});
+  }
   if (publishBtn) {
     publishBtn.addEventListener('click', async () => {
       try {
@@ -1436,8 +1446,8 @@ function renderItems(items) {
             : `<div style="color:var(--text-muted);opacity:0.5">${getTypeIcon(item)}</div>`
         }
       </div>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:14px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.layout_ref_id ? esc(t('campaign.item_name', { name: item.filename || '' })) : esc(item.child_playlist_name || item.filename || item.widget_name || t('common.unknown'))}</div>
+      <div style="flex:1 1 160px;min-width:160px">
+        <div style="font-size:14px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(item.child_playlist_name || item.filename || item.widget_name || '')}">${item.layout_ref_id ? esc(t('campaign.item_name', { name: item.filename || '' })) : esc(item.child_playlist_name || item.filename || item.widget_name || t('common.unknown'))}</div>
         <div style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:8px;min-width:0">
           <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.layout_ref_id ? esc(layoutItemSummary(item)) : item.child_playlist_id ? t('playlist.item_nested') : item.widget_id ? t('playlist.item_widget') : esc(item.mime_type || t('playlist.unknown_type'))}</span>
           ${/* In a slot a video counts at its full length (it always plays to the end), so say so. */ ''}
@@ -1448,7 +1458,9 @@ function renderItems(items) {
           ${Array.isArray(item.tags) && item.tags.length ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:var(--bg-input);color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.tags.map((tg) => '#' + esc(tg)).join(' ')}</span>` : ''}
         </div>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+      ${/* The controls wrap onto a second line on a narrow window (a 1280 px laptop) instead of
+           squeezing the item's name out of the row. */ ''}
+      <div style="display:flex;align-items:center;gap:8px;flex:0 1 auto;min-width:0;flex-wrap:wrap;justify-content:flex-end;row-gap:6px">
         ${item.child_playlist_id
           ? `<span style="font-size:12px;color:var(--text-muted)" title="${esc(t('playlist.nested_duration_hint'))}">${esc(t('playlist.plays_through'))}</span>`
           : (item.mime_type === 'video/hls' || item.mime_type === 'video/rtsp' || item.mime_type === 'video/hdmi-in')
@@ -1464,10 +1476,10 @@ function renderItems(items) {
         <input type="number" class="input item-weight" data-item-id="${item.id}" value="${item.weight || 1}" min="1" max="1000" style="width:56px;padding:4px 8px;font-size:13px;text-align:center">` : ''}
         ${currentPlaybackOrder === 'sequential' && !item.child_playlist_id && !item.layout_ref_id && !fillMode ? repeatSelect(item) : ''}
         ${campaignZones.length ? campaignZoneSelectHtml(item, campaignZones) : zoneSelectHtml(item, currentLayout)}
-        <label style="font-size:12px;color:var(--text-muted)" title="${esc(t('playlist.play_window_hint'))}">${t('playlist.play_from')}</label>
-        <input type="datetime-local" class="input item-play-from" data-item-id="${item.id}" value="${esc(item.play_from || '')}" style="width:168px;padding:4px 6px;font-size:12px">
-        <label style="font-size:12px;color:var(--text-muted)">${t('playlist.play_until')}</label>
-        <input type="datetime-local" class="input item-play-until" data-item-id="${item.id}" value="${esc(item.play_until || '')}" style="width:168px;padding:4px 6px;font-size:12px">
+        <span style="display:inline-flex;align-items:center;gap:8px"><label style="font-size:12px;color:var(--text-muted)" title="${esc(t('playlist.play_window_hint'))}">${t('playlist.play_from')}</label>
+        <input type="datetime-local" class="input item-play-from" data-item-id="${item.id}" value="${esc(item.play_from || '')}" style="width:168px;padding:4px 6px;font-size:12px"></span>
+        <span style="display:inline-flex;align-items:center;gap:8px"><label style="font-size:12px;color:var(--text-muted)">${t('playlist.play_until')}</label>
+        <input type="datetime-local" class="input item-play-until" data-item-id="${item.id}" value="${esc(item.play_until || '')}" style="width:168px;padding:4px 6px;font-size:12px"></span>
       </div>
       <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
         <button class="btn-icon item-schedule" data-item-id="${item.id}" title="${t('itemsched.title')}" aria-label="${t('itemsched.title')}" style="color:${item.schedules && item.schedules.length ? '#38bdf8' : 'var(--text-muted)'};background:none;border:none;cursor:pointer;padding:4px;border-radius:4px">

@@ -36,15 +36,43 @@ export async function render(container) {
       </div>`).join('') || `<div style="padding:12px;color:var(--text-muted)">${esc(t('review.empty'))}</div>`;
   }
 
-  function diffHtml(d) {
+  // Readable, not JSON: a playlist item by its file / widget / playlist name (the server sends the
+  // names for the ids this submission mentions), and values as a person would write them.
+  const FIELD_LABEL = { duration_sec: 'review.field.duration_sec', muted: 'review.field.muted', zone_id: 'review.field.zone_id', schedules: 'review.field.schedules',
+    name: 'review.field.name', description: 'review.field.description', playback_order: 'review.field.playback_order', enabled: 'review.field.enabled' };
+  const fieldLabel = (f) => (FIELD_LABEL[f] ? t(FIELD_LABEL[f]) : f);
+  function itemName(it, names) {
+    const n = names || {};
+    if (it.content_id) return (n.content && n.content[it.content_id]) || `${t('review.type.content')} ${String(it.content_id).slice(0, 8)}`;
+    if (it.widget_id) return (n.widget && n.widget[it.widget_id]) || `${t('review.type.widget')} ${String(it.widget_id).slice(0, 8)}`;
+    if (it.child_playlist_id) return (n.playlist && n.playlist[it.child_playlist_id]) || `${t('review.type.playlist')} ${String(it.child_playlist_id).slice(0, 8)}`;
+    return it.name || it.id || '';
+  }
+  function fmtValue(field, v, names) {
+    if (v === null || v === undefined || v === '') return t('review.no_value');
+    if (field === 'duration_sec') return `${v}s`;
+    if (field === 'zone_id') return (names && names.zone && names.zone[v]) || String(v).slice(0, 8);
+    if (field === 'schedules' && Array.isArray(v)) return t('review.schedule_blocks', { n: v.length });
+    if (typeof v === 'object') return JSON.stringify(v);
+    return String(v);
+  }
+  function itemLine(it, names) {
+    const bits = [itemName(it, names)];
+    if (it.zone_id) bits.push(`${fieldLabel('zone_id')}: ${fmtValue('zone_id', it.zone_id, names)}`);
+    if (it.duration_sec != null) bits.push(fmtValue('duration_sec', it.duration_sec));
+    return bits.join(' · ');
+  }
+  const change = (f, names) => `${esc(fieldLabel(f.field))}: ${esc(fmtValue(f.field, f.from, names))} → ${esc(fmtValue(f.field, f.to, names))}`;
+
+  function diffHtml(d, names) {
     if (!d) return '';
     const lines = [];
-    for (const f of d.fields || []) lines.push(`<li><b>${esc(f.field)}</b>: ${esc(JSON.stringify(f.from))} → ${esc(JSON.stringify(f.to))}</li>`);
+    for (const f of d.fields || []) lines.push(`<li>${change(f, names)}</li>`);
     const l = d.items || d.zones || d.slides;
     if (l) {
-      for (const a of l.added) lines.push(`<li style="color:#34d399">+ ${esc(JSON.stringify(a))}</li>`);
-      for (const r of l.removed) lines.push(`<li style="color:#f87171">− ${esc(JSON.stringify(r))}</li>`);
-      for (const c of l.changed) lines.push(`<li>~ ${esc(JSON.stringify(c.item))}</li>`);
+      for (const a of l.added) lines.push(`<li style="color:#34d399">+ ${esc(itemLine(a, names))}</li>`);
+      for (const r of l.removed) lines.push(`<li style="color:#f87171">− ${esc(itemLine(r, names))}</li>`);
+      for (const c of l.changed) lines.push(`<li>~ ${esc(itemName(c.item, names))}: ${(c.changes || []).map((x) => change(x, names)).join(', ')}</li>`);
       if (l.reordered) lines.push(`<li>${esc(t('history.reordered'))}</li>`);
     }
     return `<ul style="margin:6px 0 0 16px;padding:0;font-size:12px">${lines.join('') || `<li>${esc(t('review.first_release'))}</li>`}</ul>`;
@@ -68,7 +96,7 @@ export async function render(container) {
         ${esc(t('review.request_where', { where: rq.targets.map((x) => `${x.label} (${x.playlist_name || '?'})`).join(', ') }))}
         ${rq.targets.filter((x) => x.problem && rq.status === 'pending').map((x) => `<div style="color:#fbbf24">${esc(x.label)}: ${esc(x.problem.message)}</div>`).join('')}</div>` : ''}
       <div style="font-size:13px;margin:6px 0">${esc(t('review.affects', { n: sub.affected_devices || 0 }))}</div>
-      <h4 style="margin:12px 0 4px">${esc(t('review.changes_since_live'))}</h4>${diffHtml(sub.diff_from_live)}
+      <h4 style="margin:12px 0 4px">${esc(t('review.changes_since_live'))}</h4>${diffHtml(sub.diff_from_live, sub.names)}
       <h4 style="margin:12px 0 4px">${esc(t('common.preview'))}</h4><div id="reviewPreview" style="font-size:12px"></div>
       <div id="reviewActions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;align-items:center"></div>`;
     const pv = detail.querySelector('#reviewPreview');
@@ -80,7 +108,7 @@ export async function render(container) {
         const url = await fetchRevisionFileUrl('content', sub.resource_id, sub.revision.id).catch(() => null);
         pv.innerHTML = url ? `<img src="${url}" style="max-width:100%;max-height:240px;border-radius:8px">` : esc(t('history.bytes_gone'));
       } else if (sub.resource_type === 'playlist') {
-        pv.innerHTML = `<ol style="margin:0 0 0 18px;padding:0">${(st.items || []).map((it) => `<li>${esc(it.content_id ? 'content ' + it.content_id.slice(0, 8) : it.widget_id ? 'widget ' + it.widget_id.slice(0, 8) : 'playlist ' + String(it.child_playlist_id || '').slice(0, 8))} · ${esc(String(it.duration_sec ?? ''))}s</li>`).join('')}</ol>`;
+        pv.innerHTML = `<ol style="margin:0 0 0 18px;padding:0">${(st.items || []).map((it) => `<li>${esc(itemLine(it, sub.names))}</li>`).join('')}</ol>`;
       } else if (sub.resource_type === 'layout') {
         pv.innerHTML = `<div style="position:relative;width:100%;aspect-ratio:${st.width || 16}/${st.height || 9};background:#111;border-radius:8px;overflow:hidden">${(st.zones || []).map((z) => `<div style="position:absolute;left:${z.x_percent}%;top:${z.y_percent}%;width:${z.width_percent}%;height:${z.height_percent}%;border:1px solid #34d399;color:#fff;font-size:10px;padding:2px">${esc(z.name)}</div>`).join('')}</div>`;
       } else if (sub.resource_type === 'slide_deck') {

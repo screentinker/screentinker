@@ -716,7 +716,9 @@ async function loadBranding() {
   document.getElementById('brSave').onclick = async () => {
     try {
       await api.adminSetBranding({
-        brand_name: document.getElementById('brBrandName').value.trim() || 'ScreenTinker',
+        // Empty stays empty (the placeholder shows the default): with Hide platform branding an
+        // empty name is what gives screens no product name at all (server lib/branding.js playerBrand).
+        brand_name: document.getElementById('brBrandName').value.trim(),
         primary_color: document.getElementById('brPrimary').value.trim() || null,
         bg_color: document.getElementById('brBg').value.trim() || null,
         logo_url: document.getElementById('brLogo').value.trim() || null,

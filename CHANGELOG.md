@@ -101,11 +101,62 @@
   which only allowed youtube.com frames, so the youtube-nocookie.com embed on the Samsung TV guide
   was a blank box. Every user guide (getting started, playlists, scheduling, layouts & zones,
   groups & walls, users & roles, white-label and troubleshooting) now embeds its video too.
+- **With approval required, the playlist editor no longer offers a Publish button that can only
+  fail.** The draft banner says to submit the playlist for review instead (the server already
+  refused a direct publish, for every role).
+- **The Reviews page is readable.** "Changes since the live version" and Preview name the files,
+  widgets and playlists instead of printing JSON and ids, and adding one item no longer marks every
+  other item as changed. The history window's "compare with live" gets the same fix.
+- **Members (Advanced view) no longer says "Invite sent" when no email went out.** On a server
+  without email it shows the invite link with a Copy button, as Simple view's Your team page does.
+- **The sidebar shows your role in the current workspace** (Admin, Editor, Viewer) instead of the
+  account-wide "user" that nearly everyone has. Platform staff still see their platform role.
+- **Platform → Branding keeps an empty Brand name empty.** It was saved as "ScreenTinker", so the
+  field read "ScreenTinker" after a reload. Screens behave as before: with Hide platform branding
+  and no name they show no product name.
+- **Simple view's role descriptions match what each role can do:** Editors can add screens too;
+  what Admins add is inviting people and changing workspace settings.
+- **A screen's Playlist tab names zones like the playlist editor.** Items without a zone said
+  "No zone" there but "Main zone (Main)" in the editor, and an item's zone showed as the start of
+  its id ("Zone: b8daf522"). Both now show the zone's name. `GET /api/devices/:id`
+  `active_layout_zones[]` gains `is_main`, `width_percent` and `height_percent`.
+- **The playlist editor shows item names on a 1280 px laptop.** The row's controls (Duration,
+  From/To and the rest) took the whole width and the name disappeared; they now wrap onto a second
+  line instead.
+- **The schedule calendar uses a schedule's Color.** Blocks were always filled with the screen's or
+  group's calendar colour and the chosen Color was only a thin left edge, so it looked as if it
+  hadn't saved. A Color other than the default now fills the block (the edge keeps the screen's
+  colour); a schedule left on the default looks as before. A long schedule name in a narrow block
+  (two schedules side by side in Week view) now wraps instead of ending at "Past…".
+- **"It's live!" no longer promises the screen changes in a few seconds.** Screens get the change
+  that fast, but a screen keeps playing what's on and shows a new item when its turn comes in the
+  loop (about 25 s in one test). The text now says so.
+- **"Pairing code expired" now says what helps.** It told people to "restart the display to get a
+  new code", which cannot work: a restarted player shows the same code. It now says the screen has
+  not been online for over 15 minutes and to get it back online, then type the code again.
+- **Create Account asks for 8 characters, like the server.** The form said "At least 6 characters"
+  and let a 6- or 7-character password through, which the server then refused. In every language.
+- **The setup guide's "No device found with that pairing code" goes away when you edit the code**,
+  instead of staying under the box while the corrected code is typed.
+- **Add screen shows one pairing error at a time.** After a too-short code, "Enter a valid 6-digit
+  pairing code" was still on screen when the next attempt's error arrived, and the two stacked.
 - **A screen's Default Content now shows on the web player** (Device Info → Settings → Default
   Content). The picture was put on the page but the "Waiting for content..." card stayed on top
   of it, so it was never seen. **Save Settings** also now sends the change to a screen that is
   already on, instead of it waiting for the screen to reconnect; that goes for orientation and
   background colour too.
+- **A web player over the plan's screen limit says so.** After a reload it showed "Nothing
+  scheduled right now" instead of "Device Limit Reached" (or "Trial Expired"): the suspension
+  arrived while the cached playlist was already playing, and that item's timer later replaced the
+  card. The suspension now stops what was playing first.
+- **Uptime Timeline agrees with Recent incidents.** A screen that dropped and came back within the
+  same 15 minutes was drawn all green at "100% uptime", right above an incident saying it was down
+  for 4 minutes. Any downtime now marks its slot red, and the percentage is worked out by time.
+- **A web player whose playlist has nothing it can play no longer spins.** A playlist made only of
+  items of a type the player does not know showed "Waiting for content..." but skipped through
+  them in a tight loop; it now retries every 15 seconds, like a single such item already did.
+- **Device clock shows "--" until a screen reports its time zone**, instead of "UTC", which was
+  only the setting's default.
 - **Creating an account from an invite link lands in the invited workspace.** Someone who opened
   the link signed out and then signed up (or signed in) was added to the workspace, but the page
   reloaded mid-switch: they started in their own workspace instead, and a new account on a hosted

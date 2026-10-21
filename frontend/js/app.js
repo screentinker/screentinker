@@ -901,6 +901,20 @@ function syncCorporateNav() {
   });
 }
 
+/*
+ * The role under the name: platform staff by their platform role (it is what governs their
+ * access everywhere), everyone else by their role in the CURRENT workspace (or their org role when
+ * they reach it as an org owner/admin). Their global users.role is 'user' for nearly everyone, which
+ * told a workspace admin nothing about what they can do here.
+ */
+function sidebarRoleLabel(user) {
+  const STAFF = ['platform_admin', 'platform_operator', 'superadmin'];
+  if (STAFF.includes(user.role)) return t('admin.role.' + user.role);
+  if (['workspace_admin', 'workspace_editor', 'workspace_viewer'].includes(user.current_workspace_role)) return t('members.role.' + user.current_workspace_role);
+  if (['org_owner', 'org_admin'].includes(user.current_org_role)) return t('members.role.' + user.current_org_role);
+  return user.role === 'user' ? t('admin.role.user') : String(user.role || '');
+}
+
 function updateSidebarUser() {
   const user = getCurrentUser();
   if (!user) return;
@@ -994,7 +1008,7 @@ function updateSidebarUser() {
       `<div style="width:28px;height:28px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:white">${esc(((user.name || user.email || '?')[0] || '?').toUpperCase())}</div>`}
     <div style="flex:1;min-width:0">
       <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(user.name || user.email || '')}</div>
-      <div style="font-size:10px;color:var(--text-muted)">${user.role}</div>
+      <div style="font-size:10px;color:var(--text-muted)">${esc(sidebarRoleLabel(user))}</div>
     </div>
     <button id="logoutBtn" class="btn-icon" title="${t('auth.sign_out')}" style="flex-shrink:0">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

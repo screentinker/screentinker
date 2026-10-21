@@ -456,7 +456,9 @@ function formatUptime(seconds) {
 // server's receipt time; a gap > 2 min means the device clock is wrong, so per-item
 // schedules will fire at the wrong local time — surface it instead of a support mystery.
 function renderDeviceClock(device) {
-  const tz = device.reported_timezone || device.timezone || '--';
+  // 'UTC' in `timezone` is the column's default, not a choice (server lib/device-timezone.js treats
+  // it as unset), so a screen that has not reported its zone yet shows "--", not a made-up "UTC".
+  const tz = device.reported_timezone || (device.timezone && device.timezone !== 'UTC' ? device.timezone : null) || '--';
   if (!device.reported_utc || !device.reported_at) return tz;
   const skewSec = Math.abs(Math.round(device.reported_utc / 1000) - device.reported_at);
   let local = '';
@@ -2276,7 +2278,7 @@ function renderPlaylist(assignments) {
         <div class="playlist-item-name">${esc(a.filename || a.widget_name || t('common.unknown'))}</div>
         <div class="playlist-item-meta">
           ${a.child_playlist_id ? esc(tn('device.pl_item.playlist_with_count', a.child_item_count || 0)) : a.widget_id && !a.content_id ? t('device.pl_item.widget_with_type', { type: a.widget_type || 'custom' }) : a.mime_type === 'video/youtube' ? t('device.pl_item.youtube') : a.mime_type?.startsWith('video/') ? t('device.pl_item.video') : t('device.pl_item.image')}
-          ${a.zone_id ? ` &middot; <span style="color:var(--accent)">${t('device.pl_item.zone_label', { id: a.zone_id.slice(0,8) })}</span>` : ''}
+          ${a.zone_id ? ` &middot; <span class="pl-zone-label" data-zone-id="${esc(a.zone_id)}" style="color:var(--accent)">${t('device.pl_item.zone_label', { id: a.zone_id.slice(0,8) })}</span>` : ''}
           ${a.content_duration ? ` &middot; ${Math.floor(a.content_duration / 60)}:${String(Math.floor(a.content_duration % 60)).padStart(2, '0')}` : ''}
           ${!a.content_duration && !a.mime_type?.startsWith('video/') && a.duration_sec ? ` &middot; ${a.duration_sec}s` : ''}
           ${a.schedule_start ? ` &middot; ${a.schedule_start}-${a.schedule_end}` : ''}
@@ -3714,6 +3716,18 @@ function layoutSourceNote(device) {
   return `<div id="layoutSourceNote" style="font-size:12px;color:var(--text-muted);margin-top:4px">${esc(t(key, { name: r.name || '' }))}</div>`;
 }
 
+/*
+ * The zone items without a zone play in: the one marked main, else the largest (the first of equal
+ * ones). Same rule as server/lib/playlist-layout.js mainZone and every player's orphan fallback.
+ */
+function mainZoneOf(zones) {
+  if (!Array.isArray(zones) || !zones.length) return null;
+  const marked = zones.find(z => Number(z.is_main) === 1);
+  if (marked) return marked;
+  const area = z => (Number(z.width_percent) || 0) * (Number(z.height_percent) || 0);
+  return zones.reduce((a, b) => (area(b) > area(a) ? b : a), zones[0]);
+}
+
 function attachRemoveHandlers(device) {
   // Populate zone selectors if device has a layout. The current zone_id for
   // each assignment is read from data-current-zone-id on the .zone-select
@@ -3738,9 +3752,18 @@ function attachRemoveHandlers(device) {
 
     const populateZoneSelects = (zones) => {
       const activeIds = new Set((zones || []).map(z => z.id));
+      // Name things the way the playlist editor does: the empty choice is "Main zone (<name>)"
+      // and an item's zone shows its name, not the first 8 characters of its id.
+      const main = mainZoneOf(zones);
+      const byId = new Map((zones || []).map(z => [z.id, z]));
+      document.querySelectorAll('.pl-zone-label').forEach(el => {
+        const z = byId.get(el.dataset.zoneId);
+        if (z) el.textContent = t('device.pl_item.zone_label', { id: z.name });
+      });
       document.querySelectorAll('.zone-select').forEach(select => {
         select.style.display = '';
         while (select.options.length > 1) select.remove(1); // keep the "no zone" placeholder, drop stale options
+        if (main) select.options[0].textContent = t('layoutpl.zone_main_auto', { name: main.name });
         const assignmentId = select.dataset.assignmentId;
         const currentZoneId = select.dataset.currentZoneId || '';
         (zones || []).forEach(z => {
@@ -3902,14 +3925,38 @@ function renderUptimeTimeline(uptimeData, statusLog = []) {
     }
   }
 
+  // Third pass: the offline periods, by the same rule as Recent incidents (offline row -> next
+  // online row, or now). The passes above leave a slot with the colour of its LAST event, so a
+  // drop and recovery inside one 15-minute slot was drawn all green and counted as 100% uptime,
+  // right above an incident that said "down 4m". Any downtime in a slot now marks it, and the
+  // percentage is time-weighted, not a count of slots.
+  const slotOfflineSec = new Array(slots).fill(0);
+  for (const p of offlinePeriods(statusLog, now)) {
+    const from = Math.max(p.start, dayAgo), to = Math.min(p.end, now);
+    if (to <= from) continue;
+    for (let s = Math.floor((from - dayAgo) / slotDuration); s < slots && dayAgo + s * slotDuration < to; s++) {
+      if (s < 0) continue;
+      const a = Math.max(from, dayAgo + s * slotDuration), b = Math.min(to, dayAgo + (s + 1) * slotDuration);
+      if (b <= a) continue;
+      slotOfflineSec[s] += b - a;
+      slotStatus[s] = 'offline';
+      slotReason[s] = { reason: p.reason, detail: p.detail };
+    }
+  }
+
   // Mark future slots as unknown
   const nowSlot = Math.floor((now - dayAgo) / slotDuration);
   for (let i = nowSlot + 1; i < slots; i++) slotStatus[i] = 'unknown';
 
-  // Calculate uptime percentage (only over known slots)
+  // Calculate uptime percentage (only over known slots, by time; the current slot counts up to now)
   const knownSlots = slotStatus.filter(s => s !== 'unknown').length;
-  const onlineSlots = slotStatus.filter(s => s === 'online').length;
-  const uptimePct = knownSlots > 0 ? Math.round((onlineSlots / knownSlots) * 100) : 0;
+  let knownSec = 0, offlineSec = 0;
+  for (let i = 0; i < slots; i++) {
+    if (slotStatus[i] === 'unknown') continue;
+    knownSec += Math.max(0, Math.min(slotDuration, now - (dayAgo + i * slotDuration)));
+    offlineSec += slotOfflineSec[i];
+  }
+  const uptimePct = knownSec > 0 ? Math.round((Math.max(0, knownSec - offlineSec) / knownSec) * 100) : 0;
   if (percentEl) {
     percentEl.textContent = knownSlots > 0
       ? t('device.timeline.uptime_pct_tracked', { pct: uptimePct, n: knownSlots * 15 })
@@ -3980,6 +4027,32 @@ function relTime(tsSec, nowSec = Math.floor(Date.now() / 1000)) {
   return d + 'd ago';
 }
 
+// Offline periods from the status log: one starts on each offline transition and closes at the
+// next 'online' row (or now, if it has not come back). Shared by the Uptime Timeline and Recent
+// incidents so the two can never disagree about when a screen was down.
+function offlinePeriods(statusLog, nowSec) {
+  const out = [];
+  const log = (statusLog || []).slice().sort((a, b) => a.timestamp - b.timestamp);
+  for (let i = 0; i < log.length; i++) {
+    const ev = log[i];
+    if (ev.status === 'online') continue;
+    // Collapse a repeated offline row (e.g. offline followed by offline_timeout).
+    if (i > 0 && log[i - 1].status !== 'online') continue;
+    let end = null;
+    for (let j = i + 1; j < log.length; j++) {
+      if (log[j].status === 'online') { end = log[j].timestamp; break; }
+    }
+    out.push({
+      start: ev.timestamp,
+      end: end != null ? end : nowSec,
+      ongoing: end == null,
+      reason: ev.reason || null,
+      detail: ev.detail || null,
+    });
+  }
+  return out;
+}
+
 // "Recent incidents" panel: a newest-first, time-sorted merge of typed device_events
 // (display sleep, crash, reboot, network, app_error) with offline→online periods
 // derived from the status log (so a device with only server-side offline data still
@@ -3991,25 +4064,15 @@ function renderIncidents(deviceEvents = [], statusLog = []) {
   const nowSec = Math.floor(Date.now() / 1000);
   const incidents = [];
 
-  // Offline periods from the status log (server-side ground truth). Start a period
-  // on each offline transition and close it at the next 'online' row.
-  const log = (statusLog || []).slice().sort((a, b) => a.timestamp - b.timestamp);
-  for (let i = 0; i < log.length; i++) {
-    const ev = log[i];
-    if (ev.status === 'online') continue;
-    // Collapse a repeated offline row (e.g. offline followed by offline_timeout).
-    if (i > 0 && log[i - 1].status !== 'online') continue;
-    let end = null;
-    for (let j = i + 1; j < log.length; j++) {
-      if (log[j].status === 'online') { end = log[j].timestamp; break; }
-    }
+  // Offline periods from the status log (server-side ground truth).
+  for (const p of offlinePeriods(statusLog, nowSec)) {
     incidents.push({
       type: 'offline',
-      reason: ev.reason || null,
-      detail: ev.detail || null,
-      timestamp: ev.timestamp,
-      durationSec: (end != null ? end : nowSec) - ev.timestamp,
-      ongoing: end == null,
+      reason: p.reason,
+      detail: p.detail,
+      timestamp: p.start,
+      durationSec: p.end - p.start,
+      ongoing: p.ongoing,
     });
   }
 
