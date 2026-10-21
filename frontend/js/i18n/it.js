@@ -123,6 +123,8 @@ export default {
   'common.cancel': 'Annulla',
   'common.delete': 'Elimina',
   'common.edit': 'Modifica',
+  'common.read_only_note': 'Hai accesso in sola lettura a questo spazio di lavoro: puoi vedere tutto, ma non modificare nulla.',
+  'common.admin_only_note': 'Solo un amministratore dello spazio di lavoro può modificarlo. Tu puoi visualizzarlo.',
   'common.done': 'Fatto',
   'common.loading': 'Caricamento...',
   'common.connected': 'Connesso',

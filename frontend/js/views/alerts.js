@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { esc } from '../utils.js';
+import { esc, canWrite, readOnlyNote } from '../utils.js';
 import { t, tn } from '../i18n.js';
 import { mountSettings as mountVerification } from '../components/screen-verify.js';
 
@@ -45,9 +45,9 @@ function card(c) {
         <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(t('alerts.last_sent', { when: ago(c.last_sent_at) }))}${c.last_error ? ` · <span style="color:#ca8a04">${esc(c.last_error)}</span>` : ''}</div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start">
-        <button class="btn btn-secondary btn-sm" data-act="test">${esc(t('alerts.send_test'))}</button>
-        <button class="btn btn-secondary btn-sm" data-act="edit">${esc(t('common.edit'))}</button>
-        <button class="btn btn-secondary btn-sm" data-act="del" style="color:var(--danger)">${esc(t('common.delete'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="test" ${canWrite('admin') ? '' : 'hidden'}>${esc(t('alerts.send_test'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="edit" ${canWrite('admin') ? '' : 'hidden'}>${esc(t('common.edit'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="del" ${canWrite('admin') ? '' : 'hidden'} style="color:var(--danger)">${esc(t('common.delete'))}</button>
       </div>
     </div></div>`;
 }
@@ -59,10 +59,10 @@ export async function render(app) {
     const [chs, devs, grps] = await Promise.all([api.get('/alert-channels'), api.get('/devices'), api.get('/groups')]);
     cache = { channels: Array.isArray(chs) ? chs : [], devices: Array.isArray(devs) ? devs : (devs.devices || []), groups: Array.isArray(grps) ? grps : (grps.groups || []) };
   } catch (e) { body.innerHTML = `<p class="corp-notice corp-notice-danger">${esc((e && e.message) || t('common.error'))}</p>`; return; }
-  body.innerHTML = `<div id="svSettings"></div><div class="corp-toolbar"><button class="btn btn-primary" id="alNew">${esc(t('alerts.new'))}</button></div>
+  body.innerHTML = `<div id="svSettings"></div>${canWrite('admin') ? `<div class="corp-toolbar"><button class="btn btn-primary" id="alNew">${esc(t('alerts.new'))}</button></div>` : readOnlyNote('admin')}
     ${cache.channels.length ? cache.channels.map(card).join('') : `<div class="corp-empty">${esc(t('alerts.empty'))}</div>`}
     <p class="corp-help" style="font-size:12px;margin-top:16px">${esc(t('alerts.owner_note'))}</p>`;
-  document.getElementById('alNew').addEventListener('click', () => openForm(app, null));
+  document.getElementById('alNew')?.addEventListener('click', () => openForm(app, null));
   // Screen verification settings and incident history sit above the channels they alert through.
   mountVerification(document.getElementById('svSettings'));
   body.querySelectorAll('.corp-card[data-id]').forEach((el) => {

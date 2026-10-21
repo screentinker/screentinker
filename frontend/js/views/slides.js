@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { esc } from '../utils.js';
+import { esc, canWrite } from '../utils.js';
 import { showToast } from '../components/toast.js';
 import { t } from '../i18n.js';
 import { renderApprovalBar } from '../components/approval-actions.js';
@@ -530,7 +530,7 @@ export async function render(container) {
       <!-- 3.0 Private AI: a starter set from one sentence, and translations of any deck. -->
       <a class="btn btn-secondary" href="#/ai-setup">${esc(t('ai_setup.short'))}</a>
       <a class="btn btn-secondary" href="#/translate">${esc(t('translate.title'))}</a>
-      <button class="btn btn-primary" id="newDeck">${esc(t('slides.new_deck'))}</button></div></div>
+      <button class="btn btn-primary" id="newDeck" ${canWrite() ? '' : 'hidden'}>${esc(t('slides.new_deck'))}</button></div></div>
     <div id="deckArea"><p style="color:var(--text-muted)">Loading…</p></div>`;
 
   container.querySelector('#newDeck').addEventListener('click', () => openNewDeckModal(container));
@@ -577,7 +577,7 @@ function renderList(container) {
             ${d.playlist_id ? '· published' : '· not published yet'}</div>
         </div>
         <button class="btn btn-secondary btn-sm" data-open="${esc(d.id)}">${esc(t('common.edit'))}</button>
-        <button class="btn btn-secondary btn-sm" data-del="${esc(d.id)}">${esc(t('common.delete'))}</button>
+        <button class="btn btn-secondary btn-sm" ${canWrite() ? '' : 'hidden'} data-del="${esc(d.id)}">${esc(t('common.delete'))}</button>
       </div>`).join('')}
   </div>`;
   host.querySelectorAll('[data-open]').forEach((b) =>
@@ -636,13 +636,13 @@ function renderEditor(container) {
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" id="backBtn">← ${esc(t('slides.all_decks'))}</button>
-        <button class="btn btn-secondary" id="saveBtn">${esc(t('common.save'))}</button>
+        <button class="btn btn-secondary" id="saveBtn" ${canWrite() ? '' : 'hidden'}>${esc(t('common.save'))}</button>
         <!--
           Preview opens the real player in preview mode against this deck's playlist, so what plays
           is the payload a screen would get — same renderer, same transitions, same audio.
         -->
         <button class="btn btn-secondary" id="previewBtn">▶ ${esc(t('common.preview'))}</button>
-        <button class="btn btn-primary" id="pubBtn">${esc(t('common.publish'))}</button>
+        <button class="btn btn-primary" id="pubBtn" ${canWrite() ? '' : 'hidden'}>${esc(t('common.publish'))}</button>
       </div>
     </div>
     <div id="warnBox"></div>

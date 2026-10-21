@@ -2,6 +2,7 @@ import { api, assertLocalCallAllowed } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { t, tn } from '../i18n.js';
 import { workspaceCoverage } from '../components/corporate-ui.js';
+import { canWrite } from '../utils.js';
 import {
   HOUR_PX, pxToMinutes, minutesToPx, rangeFromDrag, moveRange, resizeRange,
   toLocalStamp, formatRange, canMoveAcrossDays, editsWholeSeries, isDrag,
@@ -245,7 +246,7 @@ export async function render(container) {
       <div class="sched-views" role="group" aria-label="${t('schedule.view_week')}">
         ${VIEWS.map((v) => `<button type="button" data-view="${v}">${t(v === 'day' ? 'schedule.view_day' : v === 'workweek' ? 'schedule.view_workweek' : v === 'week' ? 'schedule.view_week' : 'schedule.view_month')}</button>`).join('')}
       </div>
-      <button class="btn btn-primary btn-sm" id="addScheduleBtn">${t('schedule.new')}</button>
+      <button class="btn btn-primary btn-sm" id="addScheduleBtn" ${canWrite() ? '' : 'hidden'}>${t('schedule.new')}</button>
     </div>
     <div class="sched-shell">
       <aside class="sched-rail" id="schedRail">
@@ -370,10 +371,10 @@ export async function render(container) {
           <div class="form-group"><label>${t('schedule.color')}</label><input type="color" id="schedColor" value="#3B82F6" style="width:60px;height:32px;border:none;cursor:pointer"></div>
         </div>
         <div class="modal-footer" style="display:flex;justify-content:space-between;gap:8px">
-          <button class="btn btn-danger" id="deleteScheduleBtn" style="display:none">${t('common.delete')}</button>
+          <button class="btn btn-danger" id="deleteScheduleBtn" ${canWrite() ? '' : 'hidden'} style="display:none">${t('common.delete')}</button>
           <div style="display:flex;gap:8px;margin-left:auto">
             <button class="btn btn-secondary" onclick="document.getElementById('scheduleModal').style.display='none'">${t('common.cancel')}</button>
-            <button class="btn btn-primary" id="saveScheduleBtn">${t('common.save')}</button>
+            <button class="btn btn-primary" id="saveScheduleBtn" ${canWrite() ? '' : 'hidden'}>${t('common.save')}</button>
           </div>
         </div>
       </div>
@@ -955,7 +956,7 @@ export async function render(container) {
       </div>
       ${itemRows}
       <div class="sched-pop-actions">
-        <button type="button" class="btn btn-danger btn-sm left" data-act="delete">${t('schedule.peek_delete')}</button>
+        <button type="button" class="btn btn-danger btn-sm left" data-act="delete" ${canWrite() ? '' : 'hidden'}>${t('schedule.peek_delete')}</button>
         ${ev.playlist_id ? `<button type="button" class="btn btn-secondary btn-sm" data-act="playlist">${t('schedule.peek_open_playlist')}</button>` : ''}
         <button type="button" class="btn btn-secondary btn-sm" data-act="close">${t('schedule.peek_close')}</button>
         <button type="button" class="btn btn-primary btn-sm" data-act="edit">${t('schedule.peek_edit')}</button>
@@ -972,6 +973,7 @@ export async function render(container) {
   // The lightweight create: what, when, for whom, which playlist. "More details" hands the same
   // values to the full dialog.
   function openCompose(dayDate, startMin, endMin, anchorRect) {
+    if (!canWrite()) return;   // a read-only member can look, not create
     const hhmm = (m) => `${p2(Math.floor(m / 60) % 24)}:${p2(m % 60)}`;
     const opts = `<optgroup label="${t('schedule.calendars_screens')}">${devices.map((d) => `<option value="d:${esc(d.id)}">${esc(d.name)}${esc(corpMark(corpDevice(d.id)))}</option>`).join('')}</optgroup>`
       + (groups.length ? `<optgroup label="${t('schedule.calendars_groups')}">${groups.map((g) => `<option value="g:${esc(g.id)}">${esc(g.name)}${esc(corpMark(corpGroup(g.id)))}</option>`).join('')}</optgroup>` : '')
@@ -1168,7 +1170,7 @@ export async function render(container) {
     });
 
     cal.addEventListener('pointermove', (e) => {
-      if (!dragState) return;
+      if (!dragState || !canWrite()) return;   // read-only: a press is still a click (peek), never a drag
       const travelled = isDrag(e.clientX - dragState.origin.x, e.clientY - dragState.origin.y);
       if (dragState.armMode === 'longpress' && !dragState.armed) {
         if (travelled) { clearTimeout(dragState.longPressTimer); dragState = null; clearGhost(); }
@@ -1235,7 +1237,7 @@ export async function render(container) {
 
     cal.addEventListener('contextmenu', (e) => {
       const cell = e.target.closest('[data-hour][data-day]');
-      if (!cell) return;
+      if (!cell || !canWrite()) return;
       e.preventDefault();
       const block = e.target.closest('[data-sched-id]');
       const minutes = gridMinutesFromEvent(e) ?? Number(cell.dataset.hour) * 60;

@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { esc } from '../utils.js';
+import { esc, canWrite, readOnlyNote } from '../utils.js';
 import { t, getAvailableLanguages } from '../i18n.js';
 import { pluginFieldsHtml, readPluginFields } from '../lib/plugin-fields.js';
 
@@ -55,11 +55,12 @@ export async function render(container) {
           <h1>${esc(t('data_sources.title'))}</h1>
           <p>${esc(t('data_sources.subtitle2'))}</p>
         </div>
-        <button id="newDataSourceBtn" class="btn btn-primary ds-cta">
+        <button id="newDataSourceBtn" class="btn btn-primary ds-cta" ${canWrite() ? '' : 'hidden'}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
           <span>${esc(t('data_sources.connect'))}</span>
         </button>
       </header>
+      ${readOnlyNote()}
       <div id="dataSourcesContainer"><div class="ds-loading"><span class="spinner"></span></div></div>
     </div>
   `;
@@ -116,7 +117,7 @@ function renderDataSourcesList(container) {
       <section class="ds-empty">
         <h2>${esc(t('data_sources.empty_title2'))}</h2>
         <p>${esc(t('data_sources.empty_desc2'))}</p>
-        ${galleryHtml()}
+        ${canWrite() ? galleryHtml() : ''}
         <div class="ds-how">
           <div><b>1</b><span>${esc(t('data_sources.how1'))}</span></div>
           <div><b>2</b><span>${esc(t('data_sources.how2'))}</span></div>
@@ -233,10 +234,10 @@ function renderDataSourceCard(ds) {
       </button>
       <div id="vars-drawer-${esc(ds.id)}" class="ds-vars-drawer" hidden></div>
       <div class="ds-card-actions">
-        <button class="btn btn-sm btn-secondary" data-act="refresh" data-id="${esc(ds.id)}">${esc(t('data_sources.sync_now'))}</button>
+        <button class="btn btn-sm btn-secondary" data-act="refresh" data-id="${esc(ds.id)}" ${canWrite() ? '' : 'hidden'}>${esc(t('data_sources.sync_now'))}</button>
         <span class="ds-spacer"></span>
-        <button class="btn btn-sm btn-secondary" data-act="edit" data-id="${esc(ds.id)}">${esc(t('common.edit'))}</button>
-        <button class="btn btn-sm btn-danger" data-act="del" data-id="${esc(ds.id)}">${esc(t('common.delete'))}</button>
+        <button class="btn btn-sm btn-secondary" data-act="edit" data-id="${esc(ds.id)}" ${canWrite() ? '' : 'hidden'}>${esc(t('common.edit'))}</button>
+        <button class="btn btn-sm btn-danger" data-act="del" data-id="${esc(ds.id)}" ${canWrite() ? '' : 'hidden'}>${esc(t('common.delete'))}</button>
       </div>
     </article>`;
 }

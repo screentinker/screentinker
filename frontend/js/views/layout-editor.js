@@ -1,7 +1,7 @@
 import { api, assertLocalCallAllowed } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { t, tn } from '../i18n.js';
-import { esc } from '../utils.js';
+import { esc, canWrite, readOnlyNote } from '../utils.js';
 import { renderApprovalBar } from '../components/approval-actions.js';
 import { snapMove, snapResize } from '../components/snap.js';
 
@@ -40,11 +40,12 @@ async function renderList(container) {
   container.innerHTML = `
     <div class="page-header">
       <div><h1>${t('layout.title')} <span class="help-tip" data-tip="${t('layout.help_tip')}">?</span></h1><div class="subtitle">${t('layout.subtitle')}</div></div>
-      <button class="btn btn-primary" id="newLayoutBtn">
+      <button class="btn btn-primary" id="newLayoutBtn" ${canWrite() ? '' : 'hidden'}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         ${t('layout.new_layout')}
       </button>
     </div>
+    ${readOnlyNote()}
     <h3 style="margin-bottom:12px;font-size:14px;color:var(--text-secondary)">${t('layout.templates')}</h3>
     <div class="content-grid" id="templateGrid"></div>
     <h3 style="margin:24px 0 12px;font-size:14px;color:var(--text-secondary)">${t('layout.my_layouts')}</h3>
@@ -117,10 +118,10 @@ function renderLayoutCard(layout, isTemplate) {
       </div>
       <div class="content-item-actions">
         ${isTemplate
-          ? `<button class="btn btn-primary btn-sm" data-use-template="${layout.id}">${t('layout.use_template')}</button>`
+          ? `<button class="btn btn-primary btn-sm" ${canWrite() ? '' : 'hidden'} data-use-template="${layout.id}">${t('layout.use_template')}</button>`
           : `<button class="btn btn-secondary btn-sm" data-edit-layout="${layout.id}">${t('common.edit')}</button>`
         }
-        <button class="btn btn-danger btn-sm" data-delete-layout="${layout.id}" data-layout-name="${esc(layout.name)}" style="margin-left:4px">${t('common.delete')}</button>
+        <button class="btn btn-danger btn-sm" ${canWrite() ? '' : 'hidden'} data-delete-layout="${layout.id}" data-layout-name="${esc(layout.name)}" style="margin-left:4px">${t('common.delete')}</button>
       </div>
     </div>
   `;
@@ -187,8 +188,8 @@ async function renderEditor(container, layoutId, wallId = null) {
         <input type="number" id="layoutW" class="input" value="${esc(String((layout.draft && layout.draft.width) || layout.width || 1920))}" min="16" step="1" style="width:84px">
         <span style="color:var(--text-muted)">×</span>
         <input type="number" id="layoutH" class="input" value="${esc(String((layout.draft && layout.draft.height) || layout.height || 1080))}" min="16" step="1" style="width:84px">
-        <button class="btn btn-secondary btn-sm" id="addZoneBtn">${t('layout.add_zone')}</button>
-        <button class="btn btn-primary btn-sm" id="saveLayoutBtn">${t('common.save')}</button>
+        <button class="btn btn-secondary btn-sm" id="addZoneBtn" ${canWrite() ? '' : 'hidden'}>${t('layout.add_zone')}</button>
+        <button class="btn btn-primary btn-sm" id="saveLayoutBtn" ${canWrite() ? '' : 'hidden'}>${t('common.save')}</button>
       </div>
     </div>
     <div id="layoutApprovalBar" style="margin:-8px 0 12px"></div>

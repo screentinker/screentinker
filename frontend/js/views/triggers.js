@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { esc } from '../utils.js';
+import { esc, canWrite, readOnlyNote } from '../utils.js';
 import { t, tn } from '../i18n.js';
 import { chip } from '../components/corporate-ui.js';
 
@@ -62,8 +62,8 @@ function rowHtml(tr) {
       <td>${tr.priority}</td>
       <td>${assignmentSummary(tr)}</td>
       <td class="corp-actions-cell">
-        <button class="btn btn-secondary btn-sm" data-act="edit">${esc(t('common.edit'))}</button>
-        <button class="btn btn-sm btn-danger" data-act="del">${esc(t('common.delete'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="edit" ${canWrite() ? '' : 'hidden'}>${esc(t('common.edit'))}</button>
+        <button class="btn btn-sm btn-danger" data-act="del" ${canWrite() ? '' : 'hidden'}>${esc(t('common.delete'))}</button>
       </td>
     </tr>`;
 }
@@ -353,8 +353,9 @@ export async function render(app) {
   const risky = cache.triggers.filter(leaseRisk).length;
   body.innerHTML = `
     ${headOfficeHtml()}
+    ${readOnlyNote()}
     <div class="corp-toolbar">
-      <button class="btn btn-primary" id="tgNew">${esc(t('trigger.new'))}</button>
+      <button class="btn btn-primary" id="tgNew" ${canWrite() ? '' : 'hidden'}>${esc(t('trigger.new'))}</button>
     </div>
     ${risky ? `<div class="corp-notice corp-notice-warn">${esc(t('trigger.lease_risk_banner'))}</div>` : ''}
     ${cache.triggers.length ? `

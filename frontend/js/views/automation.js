@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { esc } from '../utils.js';
+import { esc, canWrite, readOnlyNote } from '../utils.js';
 import { t, tn } from '../i18n.js';
 
 /*
@@ -89,12 +89,12 @@ function hookCard(h) {
         <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(tn('auto.last_called', h.call_count, { when: ago(h.last_called_at) }))}</div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        ${live ? `<button class="btn btn-secondary btn-sm" data-act="end" style="color:var(--danger)">${esc(t('auto.end_now'))}</button>` : ''}
-        <button class="btn btn-secondary btn-sm" data-act="test">${esc(t('auto.test'))}</button>
+        ${live && canWrite('admin') ? `<button class="btn btn-secondary btn-sm" data-act="end" style="color:var(--danger)">${esc(t('auto.end_now'))}</button>` : ''}
+        <button class="btn btn-secondary btn-sm" data-act="test" ${canWrite('admin') ? '' : 'hidden'}>${esc(t('auto.test'))}</button>
         <button class="btn btn-secondary btn-sm" data-act="calls">${esc(t('auto.calls'))}</button>
-        <button class="btn btn-secondary btn-sm" data-act="rotate">${esc(t('auto.rotate'))}</button>
-        <button class="btn btn-secondary btn-sm" data-act="edit">${esc(t('common.edit'))}</button>
-        <button class="btn btn-secondary btn-sm" data-act="del" style="color:var(--danger)">${esc(t('common.delete'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="rotate" ${canWrite('admin') ? '' : 'hidden'}>${esc(t('auto.rotate'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="edit" ${canWrite('admin') ? '' : 'hidden'}>${esc(t('common.edit'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="del" ${canWrite('admin') ? '' : 'hidden'} style="color:var(--danger)">${esc(t('common.delete'))}</button>
       </div>
     </div>
     <div class="auto-calls" hidden style="margin-top:12px"></div>
@@ -145,7 +145,7 @@ export async function render(app) {
     return;
   }
   body.innerHTML = `
-    <div class="corp-toolbar"><button class="btn btn-primary" id="autoNew">${esc(t('auto.new'))}</button></div>
+    ${canWrite('admin') ? `<div class="corp-toolbar"><button class="btn btn-primary" id="autoNew">${esc(t('auto.new'))}</button></div>` : readOnlyNote('admin')}
     ${cache.hooks.length ? cache.hooks.map(hookCard).join('') : `<div class="corp-empty">${esc(t('auto.empty'))}</div>`}
     <h2 style="margin-top:28px;font-size:18px">${esc(t('auto.zapier_title'))}</h2>
     <p class="corp-help" style="font-size:13px">${esc(t('auto.zapier_intro'))}</p>
@@ -158,10 +158,10 @@ export async function render(app) {
     ${cache.subs.length ? `<div class="table-wrap"><table class="corp-table"><thead><tr><th>${esc(t('auto.col.event'))}</th><th>${esc(t('auto.col.receiver'))}</th><th>${esc(t('auto.col.delivered'))}</th><th></th></tr></thead><tbody>
       ${cache.subs.map((s) => `<tr data-sub="${esc(s.id)}"><td>${esc(EVENT_LABEL()[s.event] || s.event)}</td><td>${esc(s.target_host)}${s.token_name ? ` <span class="corp-help">(${esc(s.token_name)})</span>` : ''}</td>
         <td>${esc(t('auto.delivered', { ok: (s.deliveries || {}).ok || 0, failed: (s.deliveries || {}).failed || 0, pending: (s.deliveries || {}).pending || 0 }))}${s.last_error ? `<div style="color:#ca8a04;font-size:12px">${esc(s.last_error)}</div>` : ''}</td>
-        <td><button class="btn btn-secondary btn-sm" data-unsub="${esc(s.id)}" style="color:var(--danger)">${esc(t('auto.unsubscribe'))}</button></td></tr>`).join('')}
+        <td><button class="btn btn-secondary btn-sm" data-unsub="${esc(s.id)}" ${canWrite('admin') ? '' : 'hidden'} style="color:var(--danger)">${esc(t('auto.unsubscribe'))}</button></td></tr>`).join('')}
       </tbody></table></div>` : `<p class="corp-help" style="font-size:13px">${esc(t('auto.subs_empty'))}</p>`}`;
 
-  document.getElementById('autoNew').addEventListener('click', () => openForm(app, null));
+  document.getElementById('autoNew')?.addEventListener('click', () => openForm(app, null));
   body.querySelectorAll('[data-unsub]').forEach((b) => b.addEventListener('click', async () => {
     if (!confirm(t('auto.confirm_unsub'))) return;
     try { await api.delete(`/automation/subscriptions/${b.dataset.unsub}`); render(app); }
