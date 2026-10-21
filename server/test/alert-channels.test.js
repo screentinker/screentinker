@@ -137,6 +137,22 @@ test('one offline alert per outage, none before the threshold, a recovery after 
   db.prepare("DELETE FROM devices WHERE id = 'd-a'").run();
 });
 
+test('the largest allowed threshold (1440 min) still fires; a screen dark far longer is not announced', async () => {
+  // The form allows 2–1440 minutes, but the tick used to stop looking at 86400 s of darkness, so
+  // a 1440-minute channel had no window at all.
+  mkChannel('c-day', 'pagerduty', { routing_key: PD_KEY }, { minutes: 1440, events: ['device_offline'] });
+  mkDevice('d-day', 'offline', NOW - 1441 * 60);
+  mkDevice('d-old', 'offline', NOW - 3 * 86400);
+  sent = [];
+  await tick();
+  assert.equal(sent.length, 1, 'the screen past the 1440-minute threshold is reported');
+  assert.match(JSON.stringify(sent[0].body), /d-day/);
+  await tick(NOW + 60 * 60);
+  assert.equal(sent.length, 1, 'once, and the screen dark for days never');
+  db.prepare("DELETE FROM alert_channels WHERE id = 'c-day'").run();
+  db.prepare("DELETE FROM devices WHERE id IN ('d-day', 'd-old')").run();
+});
+
 test('a recovery is never sent for an outage that was never alerted', async () => {
   mkChannel('c-on', 'slack', { url: SLACK }, { events: ['device_online'] });
   mkDevice('d-b', 'online', NOW);

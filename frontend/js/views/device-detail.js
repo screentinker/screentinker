@@ -3643,8 +3643,9 @@ async function setupPlaylistActions(device) {
     const payload = (item, extras) => {
       const base = item.type === 'widget' ? { widget_id: item.id }
         : item.type === 'playlist' ? { child_playlist_id: item.id } : { content_id: item.id };
-      // A kiosk page is interactive: it stays up until skipped (duration 0 = live dwell).
-      if (item.kiosk) return { ...base, duration_sec: 0, zone_id: extras.zone_id };
+      // A kiosk page is interactive: it stays up until skipped (KIOSK_DWELL_SEC, content-picker.js),
+      // unless the operator typed a duration.
+      if (item.kiosk) return { ...base, duration_sec: extras.duration_sec ?? item.duration_sec, zone_id: extras.zone_id };
       return { ...base, ...extras };
     };
 

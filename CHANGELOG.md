@@ -21,6 +21,28 @@
   screens are still counted that way.
 - **The first Generate of a screen's trigger secret no longer asks "Rotate the shared secret?".**
   The warning is for replacing a secret, and now only shows when there is one.
+- **"Open URL" kiosk buttons work on a screen.** They called `window.open()`, which a screen never
+  honours (the page runs in the player's sandboxed frames, and a TV has no second window), so the
+  button did nothing anywhere but Preview. The address now opens inside the kiosk page, full screen
+  under a **Back** bar, in a frame sandboxed like the page itself; http(s) addresses only. A site
+  that refuses to be shown inside another page stays blank, and the bar says so. The idle timeout
+  closes it and returns to the buttons.
+- **A kiosk page stays on screen until skipped.** Adding one sent duration 0, which the server
+  stores as the 10 s default (0 is only kept for live streams), and the playlist editor sent no
+  duration at all, so in a playlist with other items the page left after 10 s, even mid-use. New
+  kiosk items get 43200 s (12 h, the longest duration kept); lower it in Duration if you want it to
+  rotate. Items already in playlists keep their duration.
+- **Saving a kiosk page updates the screens already showing it.** The save notified nobody and a
+  screen keeps a widget it is showing mounted, so the change appeared only after a player restart.
+- **The kiosk editor's address box no longer depends on the order you fill it in.** Typing the
+  address before choosing **Go to page** stored it as an Open URL address, and the button did
+  nothing. The address now follows the action when it changes.
+- **Deleting a kiosk page no longer leaves a broken widget behind.** Its "Kiosk: …" widget stayed in
+  playlists and the screen showed "Page not found". A page still in a playlist or schedule is now
+  refused, naming where it is used; once nothing plays it, its widgets are deleted with it.
+- **The kiosk editor's preview shows every row of buttons.** It drew the page at the preview box's
+  own size, where the page's fixed paddings and text sizes pushed the lower rows out of view. It now
+  draws it at 1920x1080 and scales it down, as it looks on a screen.
 - **Menu Board's Logo, Background image and item Photo buttons work.** They opened the playlist's
   Add Content dialog, so the Logo field read "[object Object]" at once and Add did nothing. They now
   open the widget image picker (with upload), and the picked image is saved.
@@ -64,6 +86,23 @@
 - **Undo works right after A.I. Generate**, even with nothing edited before it.
 - **More of the slide editor is translated**: the QR code panel, the Slide tab, + New deck, Edit,
   Delete and ▶ Play entrance.
+- **Reports' Export CSV downloads the file.** It opened a new tab that only said "Authentication
+  required", because the link carried the sign-in token in the address, which the server does not
+  read. The file is now fetched with the session and saved, like the uptime CSV.
+- **Reports' Plays per Day labels each bar with its own day.** West of UTC every label was a day
+  early. The default date range is now today and the 30 days before it in your own time zone (in
+  the evening it could start a day late and end on tomorrow), and the range covers your whole days.
+- **Reports' "Screen uptime by client" section is translated**, and the numbers over the Plays per
+  Day bars are no longer printed on top of each other when they do not fit (hover a bar for its value).
+- **A content request form's place picker shows which groups have no playlist yet** and does not
+  let you pick them. Choosing one was only refused on Save.
+- **Request dates in the content request inbox are shown in your own date format** instead of
+  2026-10-21.
+- **An offline alert set to 1440 minutes (a day) is sent.** The form allows 2 to 1440 minutes, but
+  screens dark for more than a day were never looked at, so 1440 never fired and thresholds near it
+  barely did.
+- **The Alerts page's description mentions screen problems** (blank, frozen, wrong content, panel
+  off) as well as offline and back online.
 
 ## 3.0.2
 

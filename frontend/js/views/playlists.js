@@ -2065,11 +2065,13 @@ function showAddItemModal(playlistId, opts = {}) {
   const replaceItemId = opts.replaceItemId || null;
   const toData = (item) => (item.type === 'widget' ? { widget_id: item.id }
     : item.type === 'playlist' ? { child_playlist_id: item.id } : { content_id: item.id });
+  // A kiosk page carries its stay-up dwell (content-picker.js KIOSK_DWELL_SEC); a swap keeps the row's own.
+  const toNewItem = (item) => (item.kiosk && item.duration_sec ? { ...toData(item), duration_sec: item.duration_sec } : toData(item));
   return openContentPicker({
     targetPlaylistId: playlistId,
     replaceItemId,
     slotMode: opts.slotMode || fillSlotMode(),
-    add: (item) => api.addPlaylistItem(playlistId, toData(item)),
+    add: (item) => api.addPlaylistItem(playlistId, toNewItem(item)),
     addBulk: (ids) => api.addPlaylistItemsBulk(playlistId, ids),
     // #105: PUT swaps content/widget in place; the server nulls the opposite FK and keeps
     // duration/schedule/zone.
