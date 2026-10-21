@@ -126,6 +126,47 @@ if [ -n "$DIRTY" ]; then
   exit 1
 fi
 
+SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
+# ⚠️ apt NEVER READS THE TERMINAL. Left attached it swallowed the keystroke meant for the next
+# prompt (which then waited for ever), and dpkg can stop on a config-file question mid-upgrade.
+# ⚠️ NEEDRESTART MUST NOT RESTART THE SERVER MID-UPGRADE. On Debian/Ubuntu, apt's needrestart hook
+# restarts every service whose binary apt just replaced. Installing Node 22 restarted ScreenTinker
+# while this script was still checking out and installing: the half-installed server's dependency
+# preflight then ran its own npm alongside our `npm ci`, and the two left files out of node_modules
+# (prod, 2026-10-15: stripe and apache-arrow, so billing broke). List-only mode, and suspended for
+# this apt run. The restart at the end of this script is the one that is meant to happen.
+apt_get() { $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 apt-get "$@" < /dev/null; }
+confirm() { # question
+  [ "${ST_AUTO_INSTALL_PREREQS:-0}" = "1" ] && { echo "    $1 yes (ST_AUTO_INSTALL_PREREQS=1)"; return 0; }
+  [ -t 0 ] && [ -r /dev/tty ] || return 1
+  local ans=""
+  printf '%s [Y/n] ' "$1" > /dev/tty
+  read -r ans < /dev/tty || return 1
+  case "$ans" in ""|y|Y|yes|Yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+# ⚠️ THE BACKUP NEEDS THE sqlite3 COMMAND-LINE TOOL, AND THE SERVER DOES NOT: it has its own SQLite
+# built in, so a host can run ScreenTinker for years without the shell installed. Without this check
+# the version probe below was the first thing to run it, inside an assignment under `set -e`, with
+# its stderr discarded: the script ended straight after "==> Backing up db" with no message at all,
+# and the self-hoster who hit it reasonably reported the upgrade as "stops after the backup".
+STEP="checking for the sqlite3 tool"
+if [ -f "$DB" ] && ! command -v sqlite3 >/dev/null 2>&1; then
+  echo "==> The sqlite3 command-line tool is not installed, and the database backup needs it."
+  if command -v apt-get >/dev/null 2>&1 && confirm "    Install the sqlite3 package now?"; then
+    apt_get install -y -qq sqlite3 >/dev/null || true
+    command -v sqlite3 >/dev/null 2>&1 && HOST_CHANGES="${HOST_CHANGES}installed the sqlite3 package; "
+  fi
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    echo "ERROR: sqlite3 is not installed, so the database cannot be backed up before the upgrade." >&2
+    echo "       Install it (Debian/Ubuntu: sudo apt install sqlite3) and run this again." >&2
+    echo "       Nothing has been changed." >&2
+    record refused "sqlite3 is not installed"
+    trap - ERR
+    exit 1
+  fi
+fi
+
 # Back up the db first. This copy is the ONLY way back from a bad upgrade, so it is taken with a
 # method that finishes, and it is verified before anything is changed.
 #
@@ -155,7 +196,7 @@ if [ -f "$DB" ]; then
   # source database — blaming the tool, naming a version that supports it perfectly well, and hiding
   # the actual error. A check that cannot tell "this is broken" from "I could not do it" sends you
   # to the wrong place with confidence.
-  SQLITE_VER="$(sqlite3 --version 2>/dev/null | cut -d' ' -f1)"
+  SQLITE_VER="$(sqlite3 --version 2>/dev/null | cut -d' ' -f1 || true)"
   if [ -n "$SQLITE_VER" ] && [ "$(printf '%s\n3.27.0\n' "$SQLITE_VER" | sort -V | head -1)" = "3.27.0" ]; then
     sqlite3 "$DB" "VACUUM INTO '$BK'"   # any failure here is real: let it abort and show why
   else
@@ -191,24 +232,7 @@ fi
 # the terminal is asked, and a yes installs it and carries on. Nobody is asked when there is no
 # terminal (cron, CI, a pipe): then it stops exactly as before, unless ST_AUTO_INSTALL_PREREQS=1
 # says yes in advance. Only what apt manages is touched; anything else is described, not guessed at.
-SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
-# ⚠️ apt NEVER READS THE TERMINAL. Left attached it swallowed the keystroke meant for the next
-# prompt (which then waited for ever), and dpkg can stop on a config-file question mid-upgrade.
-# ⚠️ NEEDRESTART MUST NOT RESTART THE SERVER MID-UPGRADE. On Debian/Ubuntu, apt's needrestart hook
-# restarts every service whose binary apt just replaced. Installing Node 22 restarted ScreenTinker
-# while this script was still checking out and installing: the half-installed server's dependency
-# preflight then ran its own npm alongside our `npm ci`, and the two left files out of node_modules
-# (prod, 2026-10-15: stripe and apache-arrow, so billing broke). List-only mode, and suspended for
-# this apt run. The restart at the end of this script is the one that is meant to happen.
-apt_get() { $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 apt-get "$@" < /dev/null; }
-confirm() { # question
-  [ "${ST_AUTO_INSTALL_PREREQS:-0}" = "1" ] && { echo "    $1 yes (ST_AUTO_INSTALL_PREREQS=1)"; return 0; }
-  [ -t 0 ] && [ -r /dev/tty ] || return 1
-  local ans=""
-  printf '%s [Y/n] ' "$1" > /dev/tty
-  read -r ans < /dev/tty || return 1
-  case "$ans" in ""|y|Y|yes|Yes|YES) return 0 ;; *) return 1 ;; esac
-}
+# (SUDO, apt_get and confirm are defined above the backup, which uses them for sqlite3.)
 
 # Node <major>.x from NodeSource's apt repository: what setup_<major>.x sets up, without running a
 # downloaded script. Refuses a node that apt does not own (nvm, a tarball, a custom path): upgrading

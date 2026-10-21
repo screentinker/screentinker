@@ -125,6 +125,10 @@
   keep another playlist (their own, a schedule's, a wall's or a higher-priority group's), and the
   confirmation no longer says it goes to all devices. `POST /api/groups/:id/assign-playlist`
   `devices_updated` is that count, with `devices_overridden` for the rest.
+- **`scripts/upgrade.sh` no longer stops silently on a host without the `sqlite3` tool.** The
+  server has SQLite built in, but the pre-upgrade backup uses the `sqlite3` shell; without it the
+  script ended right after "Backing up db" with no message. It now checks first, offers to install
+  the package (like it does Node), and otherwise says what to install, before changing anything.
 - **Videos on the guide pages play again.** The /guides/ pages get the dashboard's security policy,
   which only allowed youtube.com frames, so the youtube-nocookie.com embed on the Samsung TV guide
   was a blank box. Every user guide (getting started, playlists, scheduling, layouts & zones,
@@ -302,6 +306,22 @@
 
 ### Upgrade notes
 
+- **Still on 2.x and your news ticker says "Feed unavailable"? Upgrade.** Before 3.0 the ticker read
+  every feed through a third-party converter (rss2json), which rate-limits and refuses some valid
+  feeds, so a ticker can work for a while and then stop. Since 3.0 your own server reads the feed;
+  existing ticker widgets switch over by themselves.
+- **Upgrading from 2.x: run the new upgrade script, and install `sqlite3` first.** The copy of
+  `scripts/upgrade.sh` that runs is the one from the release you are leaving. Before 3.0.2 it stops
+  silently right after "Backing up db" when the `sqlite3` tool is not installed, and the 2.x copy
+  does not know that 3.0 needs Node 22. So:
+  ```
+  sudo apt install sqlite3
+  git fetch --tags origin
+  git show v3.0.2:scripts/upgrade.sh > /tmp/upgrade.sh
+  APP_DIR=/path/to/screentinker bash /tmp/upgrade.sh
+  ```
+  The new script checks for local changes, `sqlite3` and Node before it changes anything, and
+  offers to install what is missing.
 - **RSS, cloud document and BI dashboard widgets with no saved colour were black and are now
   transparent.** Full screen they look the same, over the screen's background colour (black unless one
   is set). In a layout zone over other content, that content now shows through the widget. To keep a
