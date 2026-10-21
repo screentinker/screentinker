@@ -1138,6 +1138,7 @@ setTimeout(refreshReviewsBadge, 1500);
 let firstRunChecked = false;
 async function maybeStartFirstRun(user) {
   if (firstRunChecked || !user || user.onboarded_at !== null) return; // undefined = older server
+  if (readPendingInvite()) return; // an invite is being accepted: the server marks it done, the reload decides
   firstRunChecked = true;
   const hash = window.location.hash || '#/';
   if (hash !== '#/' && hash !== '#') return;

@@ -97,6 +97,11 @@
 
 ### Fixed
 
+- **Creating an account from an invite link lands in the invited workspace.** Someone who opened
+  the link signed out and then signed up (or signed in) was added to the workspace, but the page
+  reloaded mid-switch: they started in their own workspace instead, and a new account on a hosted
+  server got its empty "Default" workspace and the setup guide. Accepting an invite now also marks
+  the first-run guide done for that account, since they're joining a workspace someone else set up.
 - **A whole-server export can no longer fill the disk** (Platform → Data & privacy). One did on our
   own server: it needed about twice the export's size, never checked free space, and when the disk
   filled it hung with its files left behind. Every 15 minutes a sweep also put the hung export back in
