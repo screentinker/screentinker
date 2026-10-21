@@ -12,6 +12,48 @@ import { t } from '../i18n.js';
 // updated" while the dropdown kept displaying a value the server refused (its revert lives only in
 // the dead catch). The shared client in api.js has always thrown on !res.ok; these local copies did
 // not. Same contract now, including the 401 session-expiry reload.
+// The viewer's own calendar day as YYYY-MM-DD. toISOString() is the UTC day, which west of UTC is
+// already tomorrow every evening.
+const localDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/*
+ * The picked dates as the viewer means them: from the start of the first day to the end of the last,
+ * in the viewer's zone. A bare date is a UTC day on the server (routes/reports.js parseRangeParam),
+ * which would leave out the last evening of the range west of UTC.
+ */
+function rangeQuery(start, end) {
+  const iso = (v, endOfDay) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v || '')) return '';
+    const [y, m, d] = v.split('-').map(Number);
+    return (endOfDay ? new Date(y, m - 1, d, 23, 59, 59, 999) : new Date(y, m - 1, d)).toISOString();
+  };
+  return `start=${encodeURIComponent(iso(start, false))}&end=${encodeURIComponent(iso(end, true))}`;
+}
+
+/*
+ * ⚠️ Fetched with the auth header and saved from a blob, never opened as a link. The API reads only
+ * an Authorization: Bearer header; a `?token=` URL answered {"error":"Authentication required"}, and
+ * putting the token in a URL would leave it in history and server logs anyway.
+ */
+async function downloadCsv(url, fallbackName) {
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+    if (res.status === 401) { localStorage.removeItem('token'); window.location.reload(); return; }
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `${res.status}`); }
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (res.headers.get('Content-Disposition') || '').match(/filename="?([^";]+)"?/)?.[1] || fallbackName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoked on a delay: some browsers abort a download whose object URL is released too early.
+    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+  } catch (e) {
+    showToast(t('report.export_failed', { error: e.message }), 'error');
+  }
+}
+
 const API = (url, opts = {}) => fetch('/api' + url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}`, ...opts.headers }, ...opts }).then(async (r) => {
   if (r.status === 401) { localStorage.removeItem('token'); window.location.reload(); throw new Error('Session expired'); }
   if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || `Request failed (${r.status})`); }
@@ -55,10 +97,10 @@ export async function render(container) {
         </select>
       </div>
       <div class="form-group" style="margin:0"><label>${t('report.start_date')}</label>
-        <input type="date" id="reportStart" class="input" value="${thirtyDaysAgo.toISOString().split('T')[0]}">
+        <input type="date" id="reportStart" class="input" value="${localDay(thirtyDaysAgo)}">
       </div>
       <div class="form-group" style="margin:0"><label>${t('report.end_date')}</label>
-        <input type="date" id="reportEnd" class="input" value="${today.toISOString().split('T')[0]}">
+        <input type="date" id="reportEnd" class="input" value="${localDay(today)}">
       </div>
       <button class="btn btn-primary btn-sm" id="loadReportBtn">${t('report.load_report')}</button>
     </div>
@@ -74,8 +116,7 @@ export async function render(container) {
     const deviceId = document.getElementById('reportDevice').value;
     const start = document.getElementById('reportStart').value;
     const end = document.getElementById('reportEnd').value;
-    const token = localStorage.getItem('token');
-    window.open(`/api/reports/export?device_id=${deviceId}&start=${start}&end=${end}&token=${token}`, '_blank');
+    downloadCsv(`/api/reports/export?device_id=${encodeURIComponent(deviceId)}&${rangeQuery(start, end)}`, 'proof-of-play.csv');
   };
 
   async function loadReport() {
@@ -87,7 +128,7 @@ export async function render(container) {
     content.innerHTML = `<div class="empty-state"><h3>${t('common.loading')}</h3></div>`;
 
     try {
-      const summary = await API(`/reports/summary?device_id=${deviceId}&start=${start}&end=${end}`);
+      const summary = await API(`/reports/summary?device_id=${encodeURIComponent(deviceId)}&${rangeQuery(start, end)}`);
 
       content.innerHTML = `
         <div class="info-grid" style="margin-bottom:24px">
@@ -176,8 +217,10 @@ export async function render(container) {
       // (or an error in it) leaves the play report above untouched.
       renderKioskSessions(deviceId, start, end).catch(() => {});
 
+      // d.day is a calendar date (the screen's own local day, lib/play-report.js), not an instant:
+      // formatted as UTC so the viewer's offset cannot move it a day back.
       renderBarChart('dailyChart', summary.by_day.map(d => ({
-        label: new Date(d.day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        label: new Date(d.day + 'T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }),
         value: d.plays
       })));
 
@@ -198,7 +241,7 @@ export async function render(container) {
 async function renderKioskSessions(deviceId, start, end) {
   const host = document.getElementById('kioskReportSection');
   if (!host) return;
-  const k = await API(`/reports/kiosk-sessions?device_id=${encodeURIComponent(deviceId || '')}&start=${encodeURIComponent(start || '')}&end=${encodeURIComponent(end || '')}`);
+  const k = await API(`/reports/kiosk-sessions?device_id=${encodeURIComponent(deviceId || '')}&${rangeQuery(start, end)}`);
   if (!k || !k.overall || !k.overall.sessions) { host.innerHTML = ''; return; }
   const th = (txt, right) => `<th style="padding:8px;text-align:${right ? 'right' : 'left'};color:var(--text-muted)">${txt}</th>`;
   const td = (txt, right) => `<td style="padding:8px${right ? ';text-align:right' : ''}">${txt}</td>`;
@@ -245,6 +288,13 @@ function renderBarChart(containerId, data) {
       <div style="font-size:8px;color:var(--text-muted);margin-top:4px;transform:rotate(-45deg);white-space:nowrap">${esc(d.label)}</div>
     </div>
   `).join('');
+
+  // Thirty bars of five-digit numbers do not fit side by side: when any value label is wider than
+  // its bar, drop them all rather than print them over each other. Each bar's tooltip keeps the value.
+  const cols = [...container.children];
+  if (cols.some((c) => c.firstElementChild && c.firstElementChild.offsetWidth > c.clientWidth)) {
+    cols.forEach((c) => { if (c.firstElementChild) c.firstElementChild.style.visibility = 'hidden'; });
+  }
 }
 
 function formatDuration(seconds) {
@@ -283,7 +333,7 @@ export async function renderUptimeReport() {
 
   host.innerHTML = `
     <div class="settings-section" style="margin-bottom:20px">
-      <h3 style="font-size:14px;margin-bottom:12px">Screen uptime by client</h3>
+      <h3 style="font-size:14px;margin-bottom:12px">${t('report.uptime.title')}</h3>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
         <!-- ⚠️ No "all clients" option. A report headed with no client name, mixing customers into
              one percentage, is the document that gets forwarded to one of those customers. -->
@@ -291,9 +341,9 @@ export async function renderUptimeReport() {
           ${uptimeState.clients.map((c) => `<option value="${esc(c.id)}" ${c.id === uptimeState.clientId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
         </select>
         <select id="upDays" class="input" style="max-width:160px">
-          ${[7, 30, 90].map((d) => `<option value="${d}" ${uptimeState.days === d ? 'selected' : ''}>Last ${d} days</option>`).join('')}
+          ${[7, 30, 90].map((d) => `<option value="${d}" ${uptimeState.days === d ? 'selected' : ''}>${t('report.uptime.last_days', { n: d })}</option>`).join('')}
         </select>
-        <button class="btn btn-secondary btn-sm" id="upCsv">Download CSV</button>
+        <button class="btn btn-secondary btn-sm" id="upCsv">${t('report.uptime.download_csv')}</button>
       </div>
       <div id="upBody"></div>
     </div>`;
@@ -316,17 +366,17 @@ function uptimeWindow() {
 async function loadUptime() {
   const body = document.getElementById('upBody');
   if (!body) return;
-  body.innerHTML = '<div style="color:var(--text-muted);font-size:13px">Building report…</div>';
+  body.innerHTML = '<div style="color:var(--text-muted);font-size:13px">' + esc(t('report.uptime.building')) + '</div>';
   const { from, to } = uptimeWindow();
   let r;
   try {
     r = await api.get(`/mesh/uptime?clientId=${encodeURIComponent(uptimeState.clientId)}&from=${from}&to=${to}`);
   } catch (e) {
-    body.innerHTML = `<div style="color:var(--text-muted)">Could not load: ${esc(e.message)}</div>`;
+    body.innerHTML = `<div style="color:var(--text-muted)">${esc(t('report.uptime.load_failed', { error: e.message }))}</div>`;
     return;
   }
   if (r.uptimePct == null) {
-    body.innerHTML = `<div style="color:var(--text-muted);font-size:13px">${esc(r.note || 'Nothing to report.')}</div>`;
+    body.innerHTML = `<div style="color:var(--text-muted);font-size:13px">${esc(r.note || t('report.uptime.nothing'))}</div>`;
     return;
   }
 
@@ -336,21 +386,21 @@ async function loadUptime() {
 
   body.innerHTML = `
     <div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:12px">
-      <div><div style="color:var(--text-muted);font-size:11px">Uptime</div>
+      <div><div style="color:var(--text-muted);font-size:11px">${t('report.uptime.uptime')}</div>
            <div style="font-size:28px">${r.uptimePct}%</div></div>
-      <div><div style="color:var(--text-muted);font-size:11px">Coverage</div>
+      <div><div style="color:var(--text-muted);font-size:11px">${t('report.uptime.coverage')}</div>
            <div style="font-size:28px;${r.coveragePct != null && r.coveragePct < 95 ? 'color:var(--warning,#f59e0b)' : ''}">${r.coveragePct == null ? '—' : r.coveragePct + '%'}</div></div>
-      <div><div style="color:var(--text-muted);font-size:11px">Screens</div>
+      <div><div style="color:var(--text-muted);font-size:11px">${t('report.uptime.screens')}</div>
            <div style="font-size:28px">${r.deviceCount}</div></div>
-      <div><div style="color:var(--text-muted);font-size:11px">Incidents</div>
+      <div><div style="color:var(--text-muted);font-size:11px">${t('report.uptime.incidents')}</div>
            <div style="font-size:28px">${r.incidentCount}</div></div>
     </div>
     <p style="color:var(--text-muted);font-size:12px">${esc(r.coverageNote || '')} ${esc(r.timezoneLabel || '')}</p>
     <div class="table-wrap">
       <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:520px">
         <thead><tr style="border-bottom:1px solid var(--border)">
-          <th style="${THs}">Screen</th><th style="${THs}">Server</th><th style="${THs}">What</th>
-          <th style="${THs}">Started</th><th style="${THs}">For</th>
+          <th style="${THs}">${t('report.uptime.col.screen')}</th><th style="${THs}">${t('report.uptime.col.server')}</th><th style="${THs}">${t('report.uptime.col.what')}</th>
+          <th style="${THs}">${t('report.uptime.col.started')}</th><th style="${THs}">${t('report.uptime.col.for')}</th>
         </tr></thead>
         <tbody>
           ${r.incidents.slice(0, 50).map((i) => `
@@ -359,39 +409,19 @@ async function loadUptime() {
               <td style="${TDs}"><span class="corp-chip" title="${esc(i.originNodeId)}" style="font-family:monospace">${esc(String(i.originNodeId).slice(0, 8))}</span></td>
               <td style="${TDs}">${esc(String(i.alertType || '').replace(/[_-]/g, ' '))}</td>
               <td style="${TDs}">${esc(new Date(i.openedAt * 1000).toLocaleString())}</td>
-              <td style="${TDs}">${i.ongoing ? '<strong>still down</strong>' : esc(mins(i.downSeconds))}</td>
+              <td style="${TDs}">${i.ongoing ? `<strong>${t('report.uptime.still_down')}</strong>` : esc(mins(i.downSeconds))}</td>
             </tr>`).join('') ||
-            '<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--text-muted)">No incidents in this period.</td></tr>'}
+            `<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--text-muted)">${t('report.uptime.no_incidents')}</td></tr>`}
         </tbody>
       </table>
     </div>
     ${r.incidents.length > 50
       // Never a silent truncation: showing 50 of 300 reads as "that was all of them".
-      ? `<p style="color:var(--text-muted);font-size:12px">Showing the 50 longest of ${r.incidents.length}. The CSV contains every one.</p>` : ''}`;
+      ? `<p style="color:var(--text-muted);font-size:12px">${t('report.uptime.truncated', { n: r.incidents.length })}</p>` : ''}`;
 }
 
-/*
- * ⚠️ Fetched with the auth header rather than linked. The API is Bearer-authenticated from
- * localStorage, so an <a href> would 401 — and it would 401 by REDIRECTING to login, which reads to
- * the user as "my session expired" rather than "that link cannot carry a token".
- */
-async function downloadUptimeCsv() {
+/* Same download path as the play export above (downloadCsv): a link could not carry the token. */
+function downloadUptimeCsv() {
   const { from, to } = uptimeWindow();
-  try {
-    const res = await fetch(
-      `/api/mesh/uptime.csv?clientId=${encodeURIComponent(uptimeState.clientId)}&from=${from}&to=${to}`,
-      { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
-    if (!res.ok) throw new Error(`Export failed (${res.status})`);
-    const blob = await res.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'uptime.csv';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    // Revoked on a delay: some browsers abort a download whose object URL is released too early.
-    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
-  } catch (e) {
-    showToast(`Could not export: ${e.message}`, 'error');
-  }
+  return downloadCsv(`/api/mesh/uptime.csv?clientId=${encodeURIComponent(uptimeState.clientId)}&from=${from}&to=${to}`, 'uptime.csv');
 }

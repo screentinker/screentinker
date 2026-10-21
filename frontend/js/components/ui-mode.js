@@ -1,13 +1,14 @@
 /*
  * 3.0: simple vs full menu.
  *
- * A new account sees about ten menu items (screens, content, playlists, schedule, templates, slides,
- * reports, members, settings, subscription) instead of twenty-five; the power-user surfaces — video
- * walls, layouts, approvals, widgets, kiosk, automation, data sources, audience... — are marked
- * `data-advanced` in index.html and hidden by `html.ui-simple`, which nav-prime.js sets from the
- * cached user before first paint so the full menu never flashes. Nothing is removed: every page
- * still opens from a link or bookmark, and the Simple | Advanced switch at the top of
- * the menu shows them all. Simple also hides power-user controls INSIDE pages (data-advanced-ui).
+ * Simple has no sidebar at all: its home is the guide-style task list in views/simple-home.js
+ * (add a screen, change what it shows, upload photos, make a sign, show news) plus the account
+ * menu, and any other page opens without the sidebar, with a bar back home. Schedules, reports,
+ * layouts, widgets and the rest are reached from Advanced (simple.help.more says so), or from a
+ * link or bookmark: nothing is removed. `html.ui-simple` (set by nav-prime.js from the cached
+ * user before first paint, so the full menu never flashes) still hides the sidebar items marked
+ * `data-advanced` in index.html. Simple also hides power-user
+ * controls INSIDE pages (data-advanced-ui).
  *
  * The choice is per ACCOUNT (users.ui_mode, via /api/auth/me), so it follows the person to a new
  * browser. Accounts that existed before 3.0 were migrated to 'advanced' and see no change. A user
