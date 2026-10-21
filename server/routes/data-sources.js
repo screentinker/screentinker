@@ -12,7 +12,7 @@ const crypto = require('crypto');
 const { db } = require('../db/database');
 const { syncDataSource, withFetchSlot, bumpDependentWidgets } = require('../lib/data-sources/service');
 const { resolveIcalData } = require('../lib/data-sources/ical-resolver');
-const { resolveWeatherData, validateWeatherConfig } = require('../lib/data-sources/weather-resolver');
+const { resolveWeatherData, validateWeatherConfig, WEATHER_TEXT } = require('../lib/data-sources/weather-resolver');
 const { requireWorkspaceWrite, canWrite } = require('../lib/permissions');
 const { parseSafeUrl } = require('../lib/ssrf-guard');
 const { makePluginFetch } = require('../lib/plugins/egress');
@@ -21,6 +21,7 @@ const pluginRegistry = require('../lib/plugins/registry');
 const { redactSecrets, mergeSecrets, encryptSecrets, decryptSecrets, fieldsForDataSource } = require('../lib/plugins/secrets');
 const { getBuiltinType } = require('../lib/data-sources/builtin-types');
 const { auditFromReq } = require('../lib/audit');
+const slugRefs = require('../lib/data-sources/slug-refs');
 
 function isSupportedDataSourceType(type) {
   return type === 'ical' || type === 'weather' || !!getBuiltinType(type) || pluginRegistry.hasDataSource(type);
@@ -57,10 +58,16 @@ function sameSecretDestination(a, b, type) {
 }
 
 // Helper to generate a clean URL-friendly slug
+// Accents are folded first, so "Café menu" is cafe_menu, not caf_menu (the dashboard's toSlug in
+// frontend/js/views/data-sources.js mirrors this). A letter with no ASCII form is still dropped.
+const SLUG_FOLD = { ß: 'ss', æ: 'ae', œ: 'oe', ø: 'o', ł: 'l', đ: 'd', ð: 'd', þ: 'th', ı: 'i' };
 function toSlug(str) {
   return String(str || '')
     .toLowerCase()
     .trim()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[ßæœøłđðþı]/g, (ch) => SLUG_FOLD[ch])
     .replace(/[^\w\s-]/g, '')
     .replace(/[\s_-]+/g, '_')
     .replace(/^_|_$/g, '') || 'source';
@@ -165,6 +172,12 @@ router.get('/', (req, res) => {
   });
 
   res.json(parsed);
+});
+
+// #667: the languages a weather source can show its words in: one per file in weather-i18n, which is not the
+// dashboard's own language list (there is a Danish weather file and no Danish dashboard).
+router.get('/weather-languages', (req, res) => {
+  res.json({ languages: Object.keys(WEATHER_TEXT).sort() });
 });
 
 router.get('/plugin-types', (req, res) => {
@@ -347,7 +360,7 @@ router.post('/', requireWorkspaceWrite, (req, res) => {
 // ─── PUT /api/data-sources/:id (Update data source) ────────────────────────────
 router.put('/:id', requireWorkspaceWrite, (req, res) => {
   const wsId = req.workspaceId;
-  const { name, config, slug: customSlug } = req.body || {};
+  const { name, config, slug: customSlug, rewrite_tags: rewriteTags } = req.body || {};
 
   const existing = db.prepare('SELECT * FROM data_sources WHERE id = ? AND workspace_id = ?').get(req.params.id, wsId);
   if (!existing) {
@@ -410,7 +423,16 @@ router.put('/:id', requireWorkspaceWrite, (req, res) => {
     WHERE id = ? AND workspace_id = ?
   `).run(cleanName, cleanSlug, configJson, nowSec, req.params.id, wsId);
 
-  auditFromReq(req, 'data_source.update', { id: req.params.id, type: existing.type, slug: cleanSlug, config_changed: plaintextChanged });
+  // A new slug: the widgets that name the old one either follow it (rewrite_tags, which the
+  // dashboard asks about first: GET /:id/references) or now resolve to '' — and either way their
+  // rev must move, or the players keep the old values in the immutable render cache.
+  let rewritten = [];
+  if (cleanSlug !== existing.slug) {
+    if (rewriteTags === true) rewritten = slugRefs.rewriteReferences(wsId, existing.slug, cleanSlug);
+    bumpDependentWidgets({ slug: rewriteTags === true ? cleanSlug : existing.slug, workspace_id: wsId }, nowSec);
+  }
+
+  auditFromReq(req, 'data_source.update', { id: req.params.id, type: existing.type, slug: cleanSlug, config_changed: plaintextChanged, ...(cleanSlug !== existing.slug ? { old_slug: existing.slug, tags_rewritten: rewritten.length } : {}) });
 
   // Trigger refresh only if the config's plaintext actually changed (encryption is non-deterministic,
   // so a ciphertext comparison would always look "changed").
@@ -433,7 +455,16 @@ router.put('/:id', requireWorkspaceWrite, (req, res) => {
     type: existing.type,
     config: sanitizeConfigForRole(parsedConfig, req, existing.type),
     data: existingData,
+    rewritten: rewritten.length,
   });
+});
+
+// ─── GET /api/data-sources/:id/references (Widgets that use this slug) ──────────
+// Asked before a slug change, so renaming a source cannot silently empty its tags.
+router.get('/:id/references', requireWorkspaceWrite, (req, res) => {
+  const row = db.prepare('SELECT slug FROM data_sources WHERE id = ? AND workspace_id = ?').get(req.params.id, req.workspaceId);
+  if (!row) return res.status(404).json({ error: 'Data source not found' });
+  res.json({ slug: row.slug, widgets: slugRefs.findReferences(req.workspaceId, row.slug) });
 });
 
 // ─── POST /api/data-sources/:id/refresh (Force refresh) ─────────────────────────

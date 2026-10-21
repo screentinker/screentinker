@@ -50,6 +50,15 @@ function slotPlayableItem(item, allowVideo) {
   return true;
 }
 
+/*
+ * A kiosk page is interactive, so it stays up until skipped. That used to be sent as duration 0,
+ * which the server turns into the 10 s default (lib/item-duration.js: 0 is only kept for a live
+ * stream, because every player special-cases live dwell 0 and would self-loop on a widget with 0),
+ * and the playlist editor sent nothing, also 10 s: the page left the screen mid-use. The longest
+ * dwell the server accepts (12 h) is the stay-up value instead; the Duration box can still lower it.
+ */
+export const KIOSK_DWELL_SEC = 43200;
+
 export async function openContentPicker(opts = {}) {
   const replaceItemId = opts.replaceItemId || null;
   const targetPlaylistId = opts.targetPlaylistId || null;
@@ -393,7 +402,7 @@ export async function openContentPicker(opts = {}) {
           config: { url: `/api/kiosk/${btn.dataset.id}/render` },
         });
         allWidgets.push(w);
-        await doAdd(btn, { type: 'widget', id: w.id, kiosk: true }, { idle: t('playlist.add_btn') });
+        await doAdd(btn, { type: 'widget', id: w.id, kiosk: true, duration_sec: KIOSK_DWELL_SEC }, { idle: t('playlist.add_btn') });
       } catch (err) {
         btn.disabled = false;
         showToast(err.message, 'error');

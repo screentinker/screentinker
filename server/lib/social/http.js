@@ -44,8 +44,9 @@ function trustedForTest(url) {
   } catch { return false; }
 }
 
+// `code`: the API's own error code when it sent one (Graph's 190 = the access token is bad).
 class ApiError extends Error {
-  constructor(message, status) { super(message); this.status = status; }
+  constructor(message, status, code) { super(message); this.status = status; if (code !== undefined) this.code = code; }
 }
 
 /** GET JSON from a social API. Throws ApiError with a message an admin can act on. */
@@ -64,7 +65,8 @@ async function getJson(url, { headers = {}, timeoutMs = 20000 } = {}) {
   if (r.status < 200 || r.status >= 300) {
     const msg = body && ((body.error && (body.error.message || body.error.error_user_msg || (typeof body.error === 'string' ? body.error : '')))
       || body.detail || body.message || body.title);
-    throw new ApiError(`${r.status}${msg ? `: ${String(msg).slice(0, 200)}` : ''}`, r.status);
+    const code = body && body.error && typeof body.error === 'object' ? body.error.code : undefined;
+    throw new ApiError(`${r.status}${msg ? `: ${String(msg).slice(0, 200)}` : ''}`, r.status, code);
   }
   if (body === null) throw new ApiError('the answer was not JSON', r.status);
   return body;

@@ -65,7 +65,22 @@ function igPost(m, author) {
   };
 }
 
+// A token Instagram cannot read (expired, revoked, or pasted incomplete): Graph's code 190, or a
+// bare "Failed to decode" / "Cannot parse access token". The card showed that raw text.
+const IG_BAD_TOKEN = 'Instagram did not accept this connection\'s token (expired, revoked or pasted incomplete). Paste a new token in Settings → Social connections.';
+const badToken = (e) => e instanceof ApiError && (e.status === 400 || e.status === 401)
+  && (e.code === 190 || /failed to decode|access token/i.test(e.message));
+
 async function instagram(source, conn, limit) {
+  try {
+    return await instagramRead(source, conn, limit);
+  } catch (e) {
+    if (badToken(e)) throw new ApiError(IG_BAD_TOKEN, e.status, e.code);
+    throw e;
+  }
+}
+
+async function instagramRead(source, conn, limit) {
   const token = secretOf(conn);
   const cfg = conn.config || {};
   if (cfg.api === 'facebook_login') {
@@ -235,14 +250,28 @@ function bskyPost(p) {
   };
 }
 
+// Bluesky's answers to the two mistakes everyone makes, in words: its search 403 has no message
+// at all (the card read just "403"), and an unknown account is a bare "400: InvalidRequest".
+async function bskyGet(url, kind) {
+  try {
+    return await getJson(url);
+  } catch (e) {
+    if (kind === 'search' && (e.status === 401 || e.status === 403)) {
+      throw new ApiError('Bluesky only lets signed-in apps search posts, so this search cannot be read. Use account sources instead.', e.status);
+    }
+    if (kind === 'account' && e.status === 400) throw new ApiError('No Bluesky account by that name.', 404);
+    throw e;
+  }
+}
+
 async function bluesky(source, _conn, limit) {
   const base = baseFor('bluesky');
   if (source.kind === 'search') {
-    const r = await getJson(`${base}/app.bsky.feed.searchPosts?q=${enc(source.value)}&limit=${limit}&sort=latest`);
+    const r = await bskyGet(`${base}/app.bsky.feed.searchPosts?q=${enc(source.value)}&limit=${limit}&sort=latest`, 'search');
     const posts = (Array.isArray(r.posts) ? r.posts : []).map(bskyPost);
     return { posts, complete: Array.isArray(r.posts) && posts.length < limit };
   }
-  const r = await getJson(`${base}/app.bsky.feed.getAuthorFeed?actor=${enc(source.value.replace(/^@/, ''))}&limit=${limit}&filter=posts_no_replies`);
+  const r = await bskyGet(`${base}/app.bsky.feed.getAuthorFeed?actor=${enc(source.value.replace(/^@/, ''))}&limit=${limit}&filter=posts_no_replies`, 'account');
   const feed = Array.isArray(r.feed) ? r.feed : [];
   // A repost is someone else's post: the wall shows the account's own.
   const posts = feed.filter((f) => !f.reason && f.post).map((f) => bskyPost(f.post));

@@ -252,9 +252,20 @@ test('a playlist hook switches screens for a while, and stop releases them', asy
   assert.equal(o.ends_at - o.starts_at, 300);
   assert.match((await post(h.url, { minutes: 5 })).body.result, /switched 1/);
   assert.equal(q('SELECT * FROM automation_overrides WHERE scope_id = ?', dev).length, 1, 'a repeat restarts the window, it does not stack');
+  // A stop hook releases the switches on the screens in ITS scope, whichever hook started them (it
+  // never starts one itself, so "only its own" released nothing): one scoped elsewhere leaves it.
+  const other = crypto.randomUUID();
+  run('INSERT INTO devices (id, user_id, workspace_id, name, pairing_code, platform) VALUES (?, ?, ?, ?, ?, ?)',
+    other, ADMIN.id, ADMIN.ws, 'Back office', crypto.randomUUID().slice(0, 6), 'android');
+  const elsewhere = await mkHook({ name: 'Back office stop', kind: 'playlist', config: { op: 'stop', scopes: [{ scope_kind: 'device', scope_id: other }] } });
+  assert.match((await post(elsewhere.url, {})).body.result, /released 0/);
+  assert.equal(q('SELECT * FROM automation_overrides WHERE scope_id = ?', dev).length, 1);
   const stop = await mkHook({ name: 'Promo stop', kind: 'playlist', config: { op: 'stop', scopes: [{ scope_kind: 'workspace' }] } });
-  // A stop hook releases only its own overrides; deleting the start hook releases its screens.
-  assert.match((await post(stop.url, {})).body.result, /released 0/);
+  assert.match((await post(stop.url, {})).body.result, /released 1/);
+  assert.equal(q('SELECT * FROM automation_overrides WHERE scope_id = ?', dev).length, 0);
+  // Deleting the start hook releases its screens too.
+  await post(h.url, { minutes: 5 });
+  assert.equal(q('SELECT * FROM automation_overrides WHERE scope_id = ?', dev).length, 1);
   await api(`/api/automation/${h.id}`, J(undefined, 'DELETE'));
   assert.equal(q('SELECT * FROM automation_overrides WHERE scope_id = ?', dev).length, 0);
 });
@@ -270,11 +281,16 @@ test('a trigger hook says what it could and could not reach', async () => {
     pi, ADMIN.id, ADMIN.ws, 'Pi', crypto.randomUUID().slice(0, 6), 'linux/arm64', 'pi', 's3cretpi');
   run('INSERT INTO devices (id, user_id, workspace_id, name, pairing_code, platform, client_type) VALUES (?, ?, ?, ?, ?, ?, ?)',
     tv, ADMIN.id, ADMIN.ws, 'TV', crypto.randomUUID().slice(0, 6), 'android', 'apk');
-  for (const d of [pi, tv]) run("INSERT INTO trigger_assignments (trigger_id, target_type, target_id) VALUES (?, 'device', ?)", tid, d);
+  // The web player handles a relayed wire too (server/player/index.html device:trigger-wire), so a
+  // browser screen is reachable (offline here), not "LAN only".
+  const web = crypto.randomUUID();
+  run('INSERT INTO devices (id, user_id, workspace_id, name, pairing_code, platform, android_version, client_type, trigger_secret) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    web, ADMIN.id, ADMIN.ws, 'Browser', crypto.randomUUID().slice(0, 6), 'web', 'Web/Chrome', 'player', 's3cretweb');
+  for (const d of [pi, tv, web]) run("INSERT INTO trigger_assignments (trigger_id, target_type, target_id) VALUES (?, 'device', ?)", tid, d);
   const h = await mkHook({ name: 'Ring', kind: 'trigger', config: { trigger_id: tid } });
   const r = await post(h.url, {});
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.match(r.body.result, /fired "Doorbell" on 0 screen\(s\); 1 offline; 1 can't be fired over the internet/);
+  assert.match(r.body.result, /fired "Doorbell" on 0 screen\(s\); 2 offline; 1 can't be fired over the internet/);
 });
 
 test('zapier: token scopes, subscriptions and polling', async () => {
@@ -346,6 +362,35 @@ test('test-fire runs the hook for real and is marked as a test', async () => {
   assert.equal(calls[0].test, true);
   await api(`/api/automation/${h.id}`, J(undefined, 'DELETE'));
   assert.equal(q1('SELECT COUNT(*) AS n FROM cap_feeds WHERE url = ? OR url LIKE ?', `hook:${h.id}`, `hook:${h.id}|%`).n, 0, 'deleting a hook removes its feeds and what they raised');
+});
+
+test('End now takes down what a test raised and leaves the hook on', async () => {
+  const h = await mkHook({ name: 'Drill 2', kind: 'emergency', config: { scopes: [{ scope_kind: 'workspace' }] } });
+  assert.match((await api(`/api/automation/${h.id}/test`, J({}))).body.outcome, /raised 1/);
+  assert.equal((await api(`/api/automation/${h.id}`, J(undefined, 'GET'))).body.live_alerts, 1);
+  const e = await api(`/api/automation/${h.id}/end`, J({}));
+  assert.equal(e.status, 200, JSON.stringify(e.body));
+  assert.equal(e.body.live_alerts, 0);
+  assert.equal(e.body.enabled, true);
+  // The hook still works afterwards.
+  assert.match((await post(h.url, { id: 'after-end', headline: 'Again' })).body.result, /raised 1/);
+  assert.equal((await api(`/api/automation/${h.id}/end`, J({}))).body.live_alerts, 0);
+});
+
+test('a test of a "Replace all rows" table hook changes nothing', async () => {
+  const ds = await api('/api/data-sources', J({ name: 'Menu', type: 'table', config: { columns: ['Item', 'Price'], rows: [['Tea', '2.00'], ['Cake', '3.00']] } }));
+  assert.equal(ds.status, 201, JSON.stringify(ds.body));
+  const h = await mkHook({ name: 'Menu feed', kind: 'data', config: { data_source_id: ds.body.id, mode: 'replace' } });
+  const before = q1('SELECT config FROM data_sources WHERE id = ?', ds.body.id).config;
+  const t = await api(`/api/automation/${h.id}/test`, J({}));
+  assert.equal(t.status, 200, JSON.stringify(t.body));
+  assert.match(t.body.outcome, /nothing changed: would replace the table with 0 row\(s\)/);
+  assert.equal(q1('SELECT config FROM data_sources WHERE id = ?', ds.body.id).config, before, 'the table is untouched');
+  assert.equal((await api(`/api/automation/${h.id}/calls`, J(undefined, 'GET'))).body[0].test, true);
+  // A real call still replaces.
+  const r = await post(h.url, [{ item: 'Latte', price: '3.50' }]);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(JSON.parse(q1('SELECT config FROM data_sources WHERE id = ?', ds.body.id).config).rows, [['Latte', '3.50']]);
 });
 
 /* ============================== review fixes ============================== */
