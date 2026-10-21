@@ -97,6 +97,13 @@
 
 ### Fixed
 
+- **A white-labelled workspace is no longer told to install an app under its own brand.** The
+  Settings Setup Guide said "Install the <Brand> APK" and the empty Screens page "Open the <Brand>
+  player on a TV", but the installed apps (Android/Fire TV, Tizen, webOS, Roku, iOS, the native Pi
+  and Windows players) are always called ScreenTinker; only the web player and what the server
+  serves are white-labelled. Those texts, the device-owner note and the remote-shell greetings now
+  say ScreenTinker in every language; the web player is still named after the brand. Saving the
+  branding also updates the brand shown under Settings → About without a reload.
 - **A whole-server export can no longer fill the disk** (Platform → Data & privacy). One did on our
   own server: it needed about twice the export's size, never checked free space, and when the disk
   filled it hung with its files left behind. Every 15 minutes a sweep also put the hung export back in
