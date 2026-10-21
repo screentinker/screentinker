@@ -102,6 +102,18 @@
   of it, so it was never seen. **Save Settings** also now sends the change to a screen that is
   already on, instead of it waiting for the screen to reconnect; that goes for orientation and
   background colour too.
+- **A web player over the plan's screen limit says so.** After a reload it showed "Nothing
+  scheduled right now" instead of "Device Limit Reached" (or "Trial Expired"): the suspension
+  arrived while the cached playlist was already playing, and that item's timer later replaced the
+  card. The suspension now stops what was playing first.
+- **Uptime Timeline agrees with Recent incidents.** A screen that dropped and came back within the
+  same 15 minutes was drawn all green at "100% uptime", right above an incident saying it was down
+  for 4 minutes. Any downtime now marks its slot red, and the percentage is worked out by time.
+- **A web player whose playlist has nothing it can play no longer spins.** A playlist made only of
+  items of a type the player does not know showed "Waiting for content..." but skipped through
+  them in a tight loop; it now retries every 15 seconds, like a single such item already did.
+- **Device clock shows "--" until a screen reports its time zone**, instead of "UTC", which was
+  only the setting's default.
 - **Creating an account from an invite link lands in the invited workspace.** Someone who opened
   the link signed out and then signed up (or signed in) was added to the workspace, but the page
   reloaded mid-switch: they started in their own workspace instead, and a new account on a hosted

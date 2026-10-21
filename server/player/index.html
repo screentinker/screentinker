@@ -1871,9 +1871,18 @@
     // data every WIDGET_SOLO_REFRESH_MS — decoupled from duration_sec, because a static
     // board re-querying the DB + re-rendering every few seconds, fleet-wide, is pure waste.
     /* How long a single-item playlist waits before retrying an item it cannot render. In a
-     * multi-item playlist an unknown type advances immediately; alone there is nothing to advance
-     * to, so it must not spin. */
+     * multi-item playlist an unknown type advances immediately when another item can play; alone
+     * (or among items that cannot play either) there is nothing to advance to, so it must not spin. */
     const UNKNOWN_ITEM_HOLD_MS = 15000;
+    // The types renderContent knows how to put on screen; anything else is skipped (see there).
+    function isRenderableItem(item) {
+      return !!(item && (
+        item.widget_id ||
+        item.mime_type === BUNDLE_MIME ||
+        item.mime_type === 'video/youtube' ||
+        (typeof item.mime_type === 'string' && (item.mime_type.startsWith('video/') || item.mime_type.startsWith('image/')))
+      ));
+    }
     /* The mime lib/html-bundle.js stamps on an uploaded HTML bundle. Deliberately matches no
      * image/ or video/ prefix, so nothing routes it as media by accident. */
     const BUNDLE_MIME = 'application/vnd.screentinker.bundle+zip';
@@ -6012,6 +6021,21 @@
       }
       // Check if device is suspended (trial expired / over limit)
       if (data.suspended) {
+        /*
+         * ⚠️ STOP what was playing, not just hide it. A reloaded screen starts its cached playlist
+         * before the server answers, so the suspension lands mid-item. Only emptying `playlist` left
+         * that item's advance timer (and any idle re-check) armed: it fired seconds later, found no
+         * items and painted "Nothing scheduled right now" over this card, so an over-limit screen
+         * never said why it was dark. Same for a campaign's step timer.
+         */
+        teardownCurrentMedia();
+        stopSlideVo();
+        stopSlideBed();
+        clearTimeout(scheduleRetryTimer);
+        clearLookahead();
+        deferredRotation = false;
+        if (deferredRotationDeadline) { clearTimeout(deferredRotationDeadline); deferredRotationDeadline = null; }
+        if (campaign) stopCampaign();
         isPlaying = false;
         playlist = [];
         document.getElementById('playerContainer').style.display = 'none';
@@ -7966,12 +7990,7 @@
 
       // Defense in depth: bail to waiting state on missing/malformed item rather
       // than fall through every branch and leave a blank container.
-      const hasRenderableType = item && (
-        item.widget_id ||
-        item.mime_type === BUNDLE_MIME ||
-        item.mime_type === 'video/youtube' ||
-        (typeof item.mime_type === 'string' && (item.mime_type.startsWith('video/') || item.mime_type.startsWith('image/')))
-      );
+      const hasRenderableType = isRenderableItem(item);
       if (!hasRenderableType) {
         /*
          * ⚠️ THIS USED TO RETURN WITHOUT ARMING ANYTHING, AND THAT STOPPED THE PLAYLIST DEAD.
@@ -7984,11 +8003,12 @@
          * body with no validation. An unknown type must be a SKIPPED ITEM, never a stopped playlist.
          *
          * A single-item playlist still holds (there is nothing to advance to), so it retries slowly
-         * rather than spinning.
+         * rather than spinning. So does a playlist where NO item is renderable: "advance at once"
+         * there was a 0 ms loop through the same dead items, a play_start each time, for ever.
          */
         showStatus('Waiting for content...');
         isPlaying = false;
-        const onlyItem = !playlist || playlist.length <= 1;
+        const onlyItem = !playlist || playlist.length <= 1 || !playlist.some((p) => p !== item && isRenderableItem(p));
         console.log('[player] skipping item with unrecognised type:', item && item.mime_type);
         scheduleAdvance(nextItem, onlyItem ? UNKNOWN_ITEM_HOLD_MS : 0);
         return;
