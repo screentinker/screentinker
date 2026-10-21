@@ -2166,10 +2166,12 @@ body {
 .ds-hl { display: flex; gap: 8px; align-items: baseline; min-width: 0; color: var(--text-primary); }
 .ds-hl em { flex: none; font-style: normal; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--ds-accent); }
 .ds-hl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ds-meta { margin: 0; display: grid; gap: 6px; font-size: 12.5px; }
-.ds-meta div { display: flex; justify-content: space-between; gap: 12px; }
-.ds-meta dt { color: var(--text-secondary); }
-.ds-meta dd { margin: 0; color: var(--text-primary); max-width: 70%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* minmax(0,1fr) + min-width:0: without them a long Source (an .ics URL) sized the row to its full
+   text, overflowed the card and pushed Last sync out of view instead of ellipsing. */
+.ds-meta { margin: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; font-size: 12.5px; }
+.ds-meta div { display: flex; justify-content: space-between; gap: 12px; min-width: 0; }
+.ds-meta dt { flex: none; color: var(--text-secondary); }
+.ds-meta dd { margin: 0; min-width: 0; color: var(--text-primary); max-width: 70%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ds-card-error { font-size: 12px; line-height: 1.45; color: #fca5a5; background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.25); padding: 8px 10px; border-radius: var(--radius); }
 .ds-vars-toggle { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 8px 12px; font: inherit; font-size: 12.5px; font-weight: 600;
   color: var(--text-primary); background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; }

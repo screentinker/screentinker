@@ -16,6 +16,12 @@ import { showToast } from '../components/toast.js';
 import { openModal } from '../components/corporate-ui.js';
 
 const when = (sec) => (sec ? new Date(sec * 1000).toLocaleString() : '');
+// A request's dates are calendar days (YYYY-MM-DD), shown in the viewer's own date format. Built
+// from the parts, not new Date('YYYY-MM-DD'), which is UTC midnight and a day early west of UTC.
+const day = (s) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '');
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString() : (s || '');
+};
 const STATUS = ['pending', 'approved', 'published', 'rejected', 'cancelled', 'all'];
 const canWrite = () => {
   try { const u = JSON.parse(localStorage.getItem('user') || 'null'); return !(u && u.current_workspace_role === 'workspace_viewer' && !u.acting_as); } catch { return true; }
@@ -68,7 +74,7 @@ async function renderInbox(body) {
         <div style="min-width:0;flex:1">
           <div style="display:flex;justify-content:space-between;gap:8px"><strong style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.title)}</strong><span class="pill" style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--bg-secondary)">${esc(t('creq.status.' + r.status))}</span></div>
           <div style="font-size:12px;color:var(--text-muted)">${esc(t('creq.from', { name: r.requester_name, email: r.requester_email }))}</div>
-          <div style="font-size:12px;color:var(--text-muted)">${esc(r.start_date)} → ${esc(r.end_date)} · ${esc(r.targets.map((x) => x.label).join(', '))}</div>
+          <div style="font-size:12px;color:var(--text-muted)">${esc(day(r.start_date))} → ${esc(day(r.end_date))} · ${esc(r.targets.map((x) => x.label).join(', '))}</div>
         </div>
       </div>`).join('') || `<div style="padding:12px;color:var(--text-muted)">${esc(t('creq.empty'))}</div>`;
     hydrateAuthImages(list);
@@ -91,7 +97,7 @@ async function renderInbox(body) {
       <div style="margin:12px 0"><img data-auth-src="/api/content/${esc(c.id || '')}/thumbnail" alt="" style="max-width:100%;max-height:240px;border-radius:8px;background:#000"></div>
       <div style="font-size:12px;color:var(--text-muted)">${esc(c.mime_type || '')}${c.width ? ` · ${esc(String(c.width))}×${esc(String(c.height))}` : ''}${c.duration_sec ? ` · ${esc(String(Math.round(c.duration_sec)))}s` : ''}</div>
       <dl style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px;margin:12px 0">
-        <dt style="color:var(--text-muted)">${esc(t('creq.dates'))}</dt><dd style="margin:0">${esc(r.start_date)} → ${esc(r.end_date)}</dd>
+        <dt style="color:var(--text-muted)">${esc(t('creq.dates'))}</dt><dd style="margin:0">${esc(day(r.start_date))} → ${esc(day(r.end_date))}</dd>
         ${r.audience ? `<dt style="color:var(--text-muted)">${esc(t('creq.audience'))}</dt><dd style="margin:0">${esc(r.audience)}</dd>` : ''}
         ${r.notes ? `<dt style="color:var(--text-muted)">${esc(t('creq.notes'))}</dt><dd style="margin:0;white-space:pre-wrap">${esc(r.notes)}</dd>` : ''}
         ${r.reason ? `<dt style="color:var(--text-muted)">${esc(t('creq.reason'))}</dt><dd style="margin:0;white-space:pre-wrap">${esc(r.reason)}</dd>` : ''}
@@ -242,7 +248,14 @@ function formCard(f) {
 
 function targetRow(opts, tg = {}) {
   const val = tg.device_id ? `device:${tg.device_id}` : tg.group_id ? `group:${tg.group_id}` : tg.playlist_id ? `playlist:${tg.playlist_id}` : '';
-  const optList = (kind, rows, label) => rows.length ? `<optgroup label="${esc(label)}">${rows.map((r) => `<option value="${kind}:${esc(r.id)}" ${val === `${kind}:${r.id}` ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</optgroup>` : '';
+  // A group with no playlist has nowhere to put a request (the server refuses it on Save), so it is
+  // shown disabled with the reason instead of being offered. One already chosen stays selectable,
+  // so an existing form still shows what it points at.
+  const noPlaylist = (kind, r) => kind === 'group' && !r.playlist_id;
+  const optList = (kind, rows, label) => rows.length ? `<optgroup label="${esc(label)}">${rows.map((r) => {
+    const sel = val === `${kind}:${r.id}`, off = noPlaylist(kind, r);
+    return `<option value="${kind}:${esc(r.id)}" data-name="${esc(r.name)}" ${sel ? 'selected' : ''} ${off && !sel ? 'disabled' : ''}>${esc(off ? t('creq.form.target_no_playlist', { name: r.name }) : r.name)}</option>`;
+  }).join('')}</optgroup>` : '';
   return `<div class="creq-target" data-tid="${esc(tg.id || '')}" style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
     <input class="input" data-label placeholder="${esc(t('creq.form.target_label'))}" value="${esc(tg.label || '')}" maxlength="80" style="flex:1;min-width:140px">
     <select class="input" data-ref style="flex:1;min-width:160px"><option value="">${esc(t('creq.form.target_pick'))}</option>
@@ -300,7 +313,7 @@ function editForm(body, f, opts) {
   targets.addEventListener('change', (e) => {
     const s = e.target.closest('[data-ref]'); if (!s) return;
     const lab = s.closest('.creq-target').querySelector('[data-label]');
-    if (!lab.value && s.selectedOptions[0]) lab.value = s.selectedOptions[0].textContent.trim();
+    if (!lab.value && s.selectedOptions[0]) lab.value = (s.selectedOptions[0].dataset.name || s.selectedOptions[0].textContent).trim();
   });
   body.querySelector('#cfCancel').addEventListener('click', () => renderForms(body));
   body.querySelector('#cfSave').addEventListener('click', async () => {
