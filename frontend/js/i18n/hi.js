@@ -3290,6 +3290,12 @@ export default {
   'review.field.enabled': 'चालू',
   'review.no_value': '(कोई नहीं)',
   'review.schedule_blocks': '{n} समय-खंड',
+  'nav.data_sources': "डेटा स्रोत",
+  'data_sources.key_column_hint': "हर पंक्ति को इस कॉलम से नाम देता है: {b} के बजाय {a}।",
+  'data_sources.status_failed': "विफल",
+  'data_sources.slug_rewrite_confirm': "{n} स्लाइड या विजेट {old} टैग इस्तेमाल करते हैं। स्लग बदलने पर वे {new} में अपडेट हो जाएंगे। जारी रखें?",
+  'data_sources.saved_rewritten': "डेटा स्रोत सहेजा गया; {n} स्लाइड या विजेट में टैग अपडेट हुए",
+  'social.max_sources': "एक फ़ीड में अधिकतम {n} स्रोत हो सकते हैं।",
   // Slide editor (guide fixes)
   'slides.tpl_room.room_name': "मीटिंग रूम",
   'slides.tpl_room.next_meeting': "अगली मीटिंग: {title} ({time})",

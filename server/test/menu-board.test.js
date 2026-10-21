@@ -151,3 +151,14 @@ test('a menu bound to a data source renders that source\'s rows', async () => {
   const html = await (await fetch(`${base}/api/widgets/${WD}/render`, { headers: { Authorization: `Bearer ${tokenOf(U)}` } })).text();
   assert.ok(html.includes('Specials') && html.includes('Soup of the day') && html.includes('$6.00'));
 });
+
+// The Logo / Background / item Photo buttons need the widget IMAGE picker (resolves to a URL), not
+// the playlist "+ Add Content" picker (returns {modal, close} at once): with that one the Logo field
+// read "[object Object]" and the picker's Add did nothing.
+test('the menu editor picks images with the widget image picker', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../../frontend/js/components/menu-board-editor.js'), 'utf8');
+  assert.doesNotMatch(src, /from '\.\/content-picker\.js'/);
+  assert.match(src, /import\('\.\.\/views\/widgets\.js'\)\)\.openContentPicker\(/);
+  const widgets = require('node:fs').readFileSync(require('node:path').join(__dirname, '../../frontend/js/views/widgets.js'), 'utf8');
+  assert.match(widgets, /export function openContentPicker\(\{ multiple = false, title, returnItem = false \} = \{\}\) \{\n  return new Promise/);
+});

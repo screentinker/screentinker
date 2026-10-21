@@ -4560,6 +4560,11 @@ export default {
   'review.field.enabled': 'Aktiviert',
   'review.no_value': '(keine)',
   'review.schedule_blocks': '{n} Zeitblock/-blöcke',
+  'data_sources.key_column_hint': "Benennt jede Zeile nach dieser Spalte: {a} statt {b}.",
+  'data_sources.status_failed': "Fehlgeschlagen",
+  'data_sources.slug_rewrite_confirm': "{n} Folie(n) oder Widget(s) verwenden {old}-Tags. Wenn du den Slug änderst, werden sie auf {new} umgestellt. Fortfahren?",
+  'data_sources.saved_rewritten': "Datenquelle gespeichert; Tags in {n} Folie(n) oder Widget(s) aktualisiert",
+  'social.max_sources': "Ein Feed kann höchstens {n} Quellen haben.",
   // Slide editor (guide fixes)
   'slides.tpl_room.room_name': "Besprechungsraum",
   'slides.tpl_room.next_meeting': "Nächstes Meeting: {title} ({time})",

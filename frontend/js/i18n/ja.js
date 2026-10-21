@@ -5187,6 +5187,12 @@ export default {
   'review.field.enabled': '有効',
   'review.no_value': '（なし）',
   'review.schedule_blocks': '{n} 件の時間帯',
+  'nav.data_sources': "データソース",
+  'data_sources.key_column_hint': "各行にこの列の値で名前を付けます: {b} ではなく {a}。",
+  'data_sources.status_failed': "失敗",
+  'data_sources.slug_rewrite_confirm': "{n} 件のスライドまたはウィジェットが {old} タグを使用しています。スラッグを変更すると {new} に更新されます。続行しますか？",
+  'data_sources.saved_rewritten': "データソースを保存しました。{n} 件のスライドまたはウィジェットのタグを更新しました",
+  'social.max_sources': "1 つのフィードに追加できるソースは最大 {n} 件です。",
   // Slide editor (guide fixes)
   'slides.tpl_room.room_name': "会議室",
   'slides.tpl_room.next_meeting': "次の会議: {title}（{time}）",

@@ -4434,6 +4434,12 @@ export default {
   'review.field.enabled': 'Attivo',
   'review.no_value': '(nessuno)',
   'review.schedule_blocks': '{n} fascia/e oraria/e',
+  'nav.data_sources': "Origini dati",
+  'data_sources.key_column_hint': "Dà a ogni riga il nome di questa colonna: {a} invece di {b}.",
+  'data_sources.status_failed': "Non riuscito",
+  'data_sources.slug_rewrite_confirm': "{n} slide o widget usano tag {old}. Cambiando lo slug verranno aggiornati a {new}. Continuare?",
+  'data_sources.saved_rewritten': "Origine dati salvata; tag aggiornati in {n} slide o widget",
+  'social.max_sources': "Un feed può avere al massimo {n} origini.",
   // Slide editor (guide fixes)
   'slides.tpl_room.room_name': "Sala riunioni",
   'slides.tpl_room.next_meeting': "Prossima riunione: {title} ({time})",
