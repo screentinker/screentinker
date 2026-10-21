@@ -108,6 +108,31 @@ test('PUT /api/admin/branding creates then updates the single platform-default r
   assert.equal(resolveBranding(db, { workspaceId: 'whatever' }).brand_name, 'Acme Displays');
 });
 
+test('PUT /api/admin/branding keeps an empty brand name empty (not "ScreenTinker", not a 500)', async () => {
+  const put = (body) => fetch(base + '/api/admin/branding', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens.admin}` }, body: JSON.stringify(body),
+  });
+  const get = async () => (await fetch(base + '/api/admin/branding', { headers: { Authorization: `Bearer ${tokens.admin}` } })).json();
+  const { playerBrand } = require('../lib/branding');
+  // Update path (the row exists from the test above).
+  let res = await put({ brand_name: '', hide_branding: true });
+  assert.equal(res.status, 200);
+  assert.equal((await get()).brand_name, '', 'the field reads empty after a reload');
+  assert.deepEqual(playerBrand(resolveBranding(db, { workspaceId: 'whatever' })), { name: '', hidden: true }, 'Hide + no name = no product name on screens');
+  // Insert path.
+  db.prepare('DELETE FROM white_labels').run();
+  res = await put({ brand_name: '   ', hide_branding: false });
+  assert.equal(res.status, 200);
+  assert.equal((await get()).brand_name, '');
+  assert.deepEqual(playerBrand(resolveBranding(db, {})), { name: 'ScreenTinker', hidden: false }, 'not hidden: screens still say the product name');
+  // A PUT that does not mention the name leaves it alone; one without a row still defaults it.
+  res = await put({ primary_color: '#000000' });
+  assert.equal((await get()).brand_name, '');
+  db.prepare('DELETE FROM white_labels').run();
+  res = await put({ primary_color: '#000000' });
+  assert.equal((await get()).brand_name, 'ScreenTinker');
+});
+
 test('branding endpoints are platform-admin only (403 for a regular user)', async () => {
   const get = await fetch(base + '/api/admin/branding', { headers: { Authorization: `Bearer ${tokens.reg}` } });
   assert.equal(get.status, 403);

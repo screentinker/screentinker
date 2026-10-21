@@ -456,7 +456,9 @@ function formatUptime(seconds) {
 // server's receipt time; a gap > 2 min means the device clock is wrong, so per-item
 // schedules will fire at the wrong local time — surface it instead of a support mystery.
 function renderDeviceClock(device) {
-  const tz = device.reported_timezone || device.timezone || '--';
+  // 'UTC' in `timezone` is the column's default, not a choice (server lib/device-timezone.js treats
+  // it as unset), so a screen that has not reported its zone yet shows "--", not a made-up "UTC".
+  const tz = device.reported_timezone || (device.timezone && device.timezone !== 'UTC' ? device.timezone : null) || '--';
   if (!device.reported_utc || !device.reported_at) return tz;
   const skewSec = Math.abs(Math.round(device.reported_utc / 1000) - device.reported_at);
   let local = '';
@@ -3923,14 +3925,38 @@ function renderUptimeTimeline(uptimeData, statusLog = []) {
     }
   }
 
+  // Third pass: the offline periods, by the same rule as Recent incidents (offline row -> next
+  // online row, or now). The passes above leave a slot with the colour of its LAST event, so a
+  // drop and recovery inside one 15-minute slot was drawn all green and counted as 100% uptime,
+  // right above an incident that said "down 4m". Any downtime in a slot now marks it, and the
+  // percentage is time-weighted, not a count of slots.
+  const slotOfflineSec = new Array(slots).fill(0);
+  for (const p of offlinePeriods(statusLog, now)) {
+    const from = Math.max(p.start, dayAgo), to = Math.min(p.end, now);
+    if (to <= from) continue;
+    for (let s = Math.floor((from - dayAgo) / slotDuration); s < slots && dayAgo + s * slotDuration < to; s++) {
+      if (s < 0) continue;
+      const a = Math.max(from, dayAgo + s * slotDuration), b = Math.min(to, dayAgo + (s + 1) * slotDuration);
+      if (b <= a) continue;
+      slotOfflineSec[s] += b - a;
+      slotStatus[s] = 'offline';
+      slotReason[s] = { reason: p.reason, detail: p.detail };
+    }
+  }
+
   // Mark future slots as unknown
   const nowSlot = Math.floor((now - dayAgo) / slotDuration);
   for (let i = nowSlot + 1; i < slots; i++) slotStatus[i] = 'unknown';
 
-  // Calculate uptime percentage (only over known slots)
+  // Calculate uptime percentage (only over known slots, by time; the current slot counts up to now)
   const knownSlots = slotStatus.filter(s => s !== 'unknown').length;
-  const onlineSlots = slotStatus.filter(s => s === 'online').length;
-  const uptimePct = knownSlots > 0 ? Math.round((onlineSlots / knownSlots) * 100) : 0;
+  let knownSec = 0, offlineSec = 0;
+  for (let i = 0; i < slots; i++) {
+    if (slotStatus[i] === 'unknown') continue;
+    knownSec += Math.max(0, Math.min(slotDuration, now - (dayAgo + i * slotDuration)));
+    offlineSec += slotOfflineSec[i];
+  }
+  const uptimePct = knownSec > 0 ? Math.round((Math.max(0, knownSec - offlineSec) / knownSec) * 100) : 0;
   if (percentEl) {
     percentEl.textContent = knownSlots > 0
       ? t('device.timeline.uptime_pct_tracked', { pct: uptimePct, n: knownSlots * 15 })
@@ -4001,6 +4027,32 @@ function relTime(tsSec, nowSec = Math.floor(Date.now() / 1000)) {
   return d + 'd ago';
 }
 
+// Offline periods from the status log: one starts on each offline transition and closes at the
+// next 'online' row (or now, if it has not come back). Shared by the Uptime Timeline and Recent
+// incidents so the two can never disagree about when a screen was down.
+function offlinePeriods(statusLog, nowSec) {
+  const out = [];
+  const log = (statusLog || []).slice().sort((a, b) => a.timestamp - b.timestamp);
+  for (let i = 0; i < log.length; i++) {
+    const ev = log[i];
+    if (ev.status === 'online') continue;
+    // Collapse a repeated offline row (e.g. offline followed by offline_timeout).
+    if (i > 0 && log[i - 1].status !== 'online') continue;
+    let end = null;
+    for (let j = i + 1; j < log.length; j++) {
+      if (log[j].status === 'online') { end = log[j].timestamp; break; }
+    }
+    out.push({
+      start: ev.timestamp,
+      end: end != null ? end : nowSec,
+      ongoing: end == null,
+      reason: ev.reason || null,
+      detail: ev.detail || null,
+    });
+  }
+  return out;
+}
+
 // "Recent incidents" panel: a newest-first, time-sorted merge of typed device_events
 // (display sleep, crash, reboot, network, app_error) with offline→online periods
 // derived from the status log (so a device with only server-side offline data still
@@ -4012,25 +4064,15 @@ function renderIncidents(deviceEvents = [], statusLog = []) {
   const nowSec = Math.floor(Date.now() / 1000);
   const incidents = [];
 
-  // Offline periods from the status log (server-side ground truth). Start a period
-  // on each offline transition and close it at the next 'online' row.
-  const log = (statusLog || []).slice().sort((a, b) => a.timestamp - b.timestamp);
-  for (let i = 0; i < log.length; i++) {
-    const ev = log[i];
-    if (ev.status === 'online') continue;
-    // Collapse a repeated offline row (e.g. offline followed by offline_timeout).
-    if (i > 0 && log[i - 1].status !== 'online') continue;
-    let end = null;
-    for (let j = i + 1; j < log.length; j++) {
-      if (log[j].status === 'online') { end = log[j].timestamp; break; }
-    }
+  // Offline periods from the status log (server-side ground truth).
+  for (const p of offlinePeriods(statusLog, nowSec)) {
     incidents.push({
       type: 'offline',
-      reason: ev.reason || null,
-      detail: ev.detail || null,
-      timestamp: ev.timestamp,
-      durationSec: (end != null ? end : nowSec) - ev.timestamp,
-      ongoing: end == null,
+      reason: p.reason,
+      detail: p.detail,
+      timestamp: p.start,
+      durationSec: p.end - p.start,
+      ongoing: p.ongoing,
     });
   }
 

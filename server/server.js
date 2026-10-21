@@ -155,7 +155,8 @@ const DASHBOARD_CSP = {
     // 'wss:'/'ws:' keep the dashboard's socket.io connection working; the CF entry lets the beacon report.
     connectSrc: ["'self'", 'wss:', 'ws:', 'https:', 'https://cloudflareinsights.com'],
     fontSrc: ["'self'", 'data:'],
-    frameSrc: ["'self'", 'https://www.youtube.com', 'https://youtube.com'],
+    // youtube-nocookie.com: the video embeds on the /guides/ pages (they get this policy too).
+    frameSrc: ["'self'", 'https://www.youtube.com', 'https://youtube.com', 'https://www.youtube-nocookie.com'],
     objectSrc: ["'none'"],
     baseUri: ["'self'"],
     formAction: ["'self'"],

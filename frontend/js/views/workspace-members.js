@@ -11,7 +11,7 @@
 import { api } from '../api.js';
 import { t, tn } from '../i18n.js';
 import { showToast } from '../components/toast.js';
-import { openInviteMemberModal } from '../components/workspace-members-invite-modal.js';
+import { openInviteMemberModal, openInviteLinkModal } from '../components/workspace-members-invite-modal.js';
 import { openAddUserModal } from '../components/workspace-members-add-user-modal.js';
 import { renderApprovalSettings } from '../components/approval-settings.js';
 import { renderLiveVideoSettings } from '../components/live-video-settings.js';
@@ -82,7 +82,9 @@ export async function render(container, workspaceId) {
     document.getElementById('inviteMemberBtn').addEventListener('click', () => {
       openInviteMemberModal({ id: workspaceId, name: workspaceName }, {
         onSuccess: (result) => {
-          showToast(t('members.success.invite_sent', { email: result.email }), 'success');
+          // "Invite sent" only when an email really went out; otherwise the link to pass on.
+          if (result && result.email_sent === false && result.accept_url) openInviteLinkModal({ id: workspaceId, name: workspaceName }, result);
+          else showToast(t('members.success.invite_sent', { email: result.email }), 'success');
           render(container, workspaceId);
         },
         mapError: mapMutationError,

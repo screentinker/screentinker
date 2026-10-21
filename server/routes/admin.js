@@ -518,7 +518,9 @@ router.put('/branding', requirePlatformAdmin, (req, res) => {
     for (const f of BRANDING_FIELDS) {
       if (req.body[f] !== undefined) {
         updates.push(`${f} = ?`);
-        values.push(f === 'hide_branding' ? (req.body[f] ? 1 : 0) : (req.body[f] || null));
+        // brand_name is NOT NULL, and an EMPTY name is meaningful: with Hide platform branding it is
+        // what leaves screens with no product name (lib/branding.js playerBrand). Store it as ''.
+        values.push(f === 'hide_branding' ? (req.body[f] ? 1 : 0) : f === 'brand_name' ? String(req.body[f] ?? '').trim() : (req.body[f] || null));
       }
     }
     if (updates.length) {
@@ -534,7 +536,7 @@ router.put('/branding', requirePlatformAdmin, (req, res) => {
       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       PLATFORM_DEFAULT_ID, req.user.id,
-      req.body.brand_name || 'ScreenTinker',
+      req.body.brand_name !== undefined ? String(req.body.brand_name ?? '').trim() : 'ScreenTinker',
       req.body.logo_url || null, req.body.favicon_url || null,
       req.body.primary_color || '#3B82F6', req.body.secondary_color || '#1E293B', req.body.bg_color || '#111827',
       req.body.custom_css || null, req.body.hide_branding ? 1 : 0
