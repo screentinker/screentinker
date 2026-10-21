@@ -1975,6 +1975,8 @@ body {
 }
 .sched-block .who { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sched-block .what { opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The schedule's name wraps instead of ending at "Past…" when overlaps make the block narrow. */
+.sched-block .what.lbl { white-space: normal; overflow-wrap: anywhere; }
 .sched-block.continues { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 .sched-block.continued { border-top-left-radius: 0; border-top-right-radius: 0; }
 .sched-resize-grip { position: absolute; left: 0; right: 0; bottom: 0; height: 10px; cursor: ns-resize; background: linear-gradient(to bottom, transparent, rgba(0,0,0,.28)); }

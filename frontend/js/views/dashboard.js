@@ -789,7 +789,16 @@ export function render(container) {
   noStorageBox?.addEventListener('change', syncMode);
   syncMode();
 
+  /*
+   * One error at a time. A refusal answers the attempt that was just made; the previous attempt's
+   * toast ("Enter a valid 6-digit pairing code") is still on screen for 4 s, and stacking the two
+   * reads as two problems with the code now in the box.
+   */
+  let pairErrorToast = null;
+  const showPairError = (msg) => { pairErrorToast?.remove(); pairErrorToast = showToast(msg, 'error'); };
+
   pairBtn.onclick = async () => {
+    pairErrorToast?.remove();
     const name = document.getElementById('deviceNameInput').value.trim();
 
     if (noStorageBox?.checked) {
@@ -799,14 +808,14 @@ export function render(container) {
         loadDashboard();
       } catch (err) {
         if (err.planPromptShown) { document.getElementById('addDeviceModal').style.display = 'none'; return; }
-        showToast(err.message, 'error');
+        showPairError(err.message);
       }
       return;
     }
 
     const code = document.getElementById('pairingCodeInput').value.trim();
     if (!code || code.length !== 6) {
-      showToast(t('dashboard.error_pairing_code'), 'error');
+      showPairError(t('dashboard.error_pairing_code'));
       return;
     }
     try {
@@ -819,7 +828,7 @@ export function render(container) {
     } catch (err) {
       // A plan limit is answered by the upgrade prompt (plan-nudges.js); the dialog gets out of its way.
       if (err.planPromptShown) { document.getElementById('addDeviceModal').style.display = 'none'; return; }
-      showToast(err.message, 'error');
+      showPairError(err.message);
     }
   };
 

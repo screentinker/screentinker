@@ -22,10 +22,13 @@ function isOrphanZone(zoneId, layoutId) {
   return !!zoneId && !zoneInLayout(zoneId, layoutId);
 }
 
-/** Zones (id+name) of a layout, for populating reassign dropdowns. [] if none. */
+/**
+ * Zones of a layout, for populating reassign dropdowns. [] if none. is_main + size let the
+ * dashboard name the main zone (where zone-less items play) the way the playlist editor does.
+ */
 function layoutZones(layoutId) {
   if (!layoutId) return [];
-  return db.prepare('SELECT id, name FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(layoutId);
+  return db.prepare('SELECT id, name, is_main, width_percent, height_percent FROM layout_zones WHERE layout_id = ? ORDER BY sort_order').all(layoutId);
 }
 
 /**

@@ -41,4 +41,11 @@ function isCodeExpired(lastSeenSec, now = Date.now()) {
   return Math.floor(now / 1000) - lastSeenSec > PAIRING_TTL_SEC;
 }
 
-module.exports = { isLocked, recordFailure, reset, isCodeExpired, MAX_FAILS, LOCKOUT_MS, PAIRING_TTL_SEC };
+// What the operator is told when a code is refused as expired. It says what actually helps: the
+// code comes back to life as soon as its screen checks in again. It used to say "restart the
+// display to get a new code", which cannot work — a restart re-registers with the same stored
+// identity and shows the same code.
+const CODE_EXPIRED_MESSAGE = 'Pairing code expired - this screen has not been online for over 15 minutes. '
+  + 'Make sure it is on and connected to the internet, then type the code again';
+
+module.exports = { isLocked, recordFailure, reset, isCodeExpired, MAX_FAILS, LOCKOUT_MS, PAIRING_TTL_SEC, CODE_EXPIRED_MESSAGE };
