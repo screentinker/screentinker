@@ -206,7 +206,8 @@ function sourceSummary(ds) {
 
 function renderDataSourceCard(ds) {
   const st = ds.last_status === 'ok' ? 'ok' : ds.last_status === 'pending' ? 'pending' : 'error';
-  const stLabel = st === 'ok' ? t('data_sources.status_live') : st === 'pending' ? t('common.pending') : t('common.error');
+  // A short state word; the real error is in the box under the meta rows (and the pill's tooltip).
+  const stLabel = st === 'ok' ? t('data_sources.status_live') : st === 'pending' ? t('common.pending') : t('data_sources.status_failed');
   const data = ds.data && typeof ds.data === 'object' ? ds.data : {};
   const nVars = Object.keys(data).length;
   const headline = cardHeadline(ds.type, data);
@@ -218,7 +219,7 @@ function renderDataSourceCard(ds) {
           <h3 title="${esc(ds.name)}">${esc(ds.name)}</h3>
           <div class="ds-card-sub">${esc(typeLabel(ds.type))} · <code>${esc(ds.slug)}</code></div>
         </div>
-        <span class="ds-status ds-status-${st}"><i></i>${esc(stLabel)}</span>
+        <span class="ds-status ds-status-${st}"${st === 'error' && ds.last_error ? ` title="${esc(ds.last_error)}"` : ''}><i></i>${esc(stLabel)}</span>
       </div>
       ${headline ? `<div class="ds-headline">${headline}</div>` : ''}
       <dl class="ds-meta">
@@ -252,6 +253,17 @@ function cardHeadline(type, d) {
 
 // ─── variables list: real keys, real values, click to copy ────────────────────
 function tagFor(slug, key) { return `{{ds:${slug || 'slug'}.${key}}}`; }
+// The key-column hint, in this source's own slug ("menu" until there is one).
+function keyHint(slug) { return t('data_sources.key_column_hint', { a: tagFor(slug || 'menu', 'latte_price'), b: tagFor(slug || 'menu', 'row3_price') }); }
+
+// Mirrors toSlug() in server/routes/data-sources.js. Accents are folded first ("Café" → cafe,
+// not caf); a letter with no ASCII form is still dropped, and the server falls back to "source".
+const FOLD = { ß: 'ss', æ: 'ae', œ: 'oe', ø: 'o', ł: 'l', đ: 'd', ð: 'd', þ: 'th', ı: 'i' };
+function toSlug(str) {
+  return String(str || '').toLowerCase().trim()
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[ßæœøłđðþı]/g, (ch) => FOLD[ch])
+    .replace(/[^\w\s-]/g, '').replace(/[\s_-]+/g, '_').replace(/^_|_$/g, '');
+}
 
 function mountVariables(host, slug, data, type, hasKey) {
   const keys = Object.keys(data || {});
@@ -392,7 +404,7 @@ function formHtml(type, cfg, isEdit) {
         <span class="ds-spacer"></span>
         <span class="ds-muted" id="f_gridsize"></span>
       </div>
-      ${field(esc(t('data_sources.key_column')), `<select id="f_key" class="input"></select>`, esc(t('data_sources.key_column_hint')))}`;
+      ${field(esc(t('data_sources.key_column')), `<select id="f_key" class="input"></select>`, `<span class="ds-key-hint">${esc(keyHint())}</span>`)}`;
     case 'square': return `
       <div class="ds-callout">
         <b>${esc(t('pos.square_steps_title'))}</b>
@@ -471,7 +483,7 @@ function tableOptions(cfg, intervals, restShape = false) {
     <details class="ds-adv" ${cfg.key_column || cfg.header_row === false || cfg.max_rows ? 'open' : ''}>
       <summary>${esc(t('data_sources.table_options'))}</summary>
       <div class="ds-adv-body">
-        ${field(esc(t('data_sources.key_column')), `<input id="f_key" class="input" list="f_key_list" autocomplete="off" placeholder="${esc(t('data_sources.key_column_ph'))}" value="${esc(cfg.key_column || '')}"><datalist id="f_key_list"></datalist>`, esc(t('data_sources.key_column_hint')))}
+        ${field(esc(t('data_sources.key_column')), `<input id="f_key" class="input" list="f_key_list" autocomplete="off" placeholder="${esc(t('data_sources.key_column_ph'))}" value="${esc(cfg.key_column || '')}"><datalist id="f_key_list"></datalist>`, `<span class="ds-key-hint">${esc(keyHint())}</span>`)}
         <div class="ds-row3">
           ${restShape
             ? field(esc(t('data_sources.shape')), `<select id="f_shape" class="input">${opt('auto', t('data_sources.shape_auto'), cfg.shape || 'auto')}${opt('table', t('data_sources.shape_table'), cfg.shape)}${opt('object', t('data_sources.shape_object'), cfg.shape)}</select>`)
@@ -620,10 +632,11 @@ function openEditModal(ds, presetType, opts = {}) {
     const paintSlug = () => {
       const tag = tagFor(slugInput.value.trim() || 'slug', 'key');
       slugHint.textContent = t('data_sources.slug_used_as', { tag });
+      overlay.querySelectorAll('.ds-key-hint').forEach((el) => { el.textContent = keyHint(toSlug(slugInput.value)); });
     };
     slugInput.oninput = () => { slugTouched = true; paintSlug(); };
     nameInput.oninput = () => {
-      if (!slugTouched) slugInput.value = nameInput.value.toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/[\s_-]+/g, '_').replace(/^_|_$/g, '');
+      if (!slugTouched) slugInput.value = toSlug(nameInput.value);
       paintSlug();
     };
     paintSlug();
@@ -931,8 +944,24 @@ function openEditModal(ds, presetType, opts = {}) {
     try {
       const payload = { name, slug: slug || undefined, type, config: c };
       if (isEdit) {
-        await api.updateDataSource(ds.id, payload);
-        showToast(t('data_sources.saved_ok'), 'success');
+        // A new slug empties every {{ds:old.…}} tag still naming the old one: say so, and
+        // rewrite them (server: lib/data-sources/slug-refs.js) unless the operator backs out.
+        const newSlug = slug ? toSlug(slug) || 'source' : ds.slug;
+        if (newSlug !== ds.slug) {
+          const refs = await api.getDataSourceReferences(ds.id).catch(() => null);
+          const n = refs && Array.isArray(refs.widgets) ? refs.widgets.length : 0;
+          if (n) {
+            const names = refs.widgets.slice(0, 5).map((w) => `• ${w.name || w.id}`).join('\n') + (n > 5 ? '\n…' : '');
+            if (!confirm(t('data_sources.slug_rewrite_confirm', { n, old: tagFor(ds.slug, '…'), new: tagFor(newSlug, '…') }) + '\n\n' + names)) {
+              saveBtn.disabled = false;
+              saveBtn.textContent = t('common.save');
+              return;
+            }
+            payload.rewrite_tags = true;
+          }
+        }
+        const saved = await api.updateDataSource(ds.id, payload);
+        showToast(saved && saved.rewritten ? t('data_sources.saved_rewritten', { n: saved.rewritten }) : t('data_sources.saved_ok'), 'success');
       } else {
         const created = await api.createDataSource(payload);
         showToast(t('data_sources.created_ok'), 'success');

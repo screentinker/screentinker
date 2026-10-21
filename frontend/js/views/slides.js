@@ -6,6 +6,7 @@ import { renderApprovalBar } from '../components/approval-actions.js';
 import { mountHostedPicker } from '../components/ai-hosted-picker.js';
 import { confirmAccessibility } from '../components/accessibility.js';
 import { snapMove, snapResize } from '../components/snap.js';
+import { isPrivateHost, urlHost } from '../components/private-host.js';
 import {
   resizeRect, boundsOf, alignRects, distributeRects, reorder, repairSlots,
   copyElements, pasteElements, createHistory,
@@ -121,6 +122,20 @@ function resolveInterpolatedText(str) {
     }
     return '';
   });
+}
+
+/*
+ * The keys a data source can fill, from its last sync — what the Data Sources page lists. Only the
+ * keys a {{ds:slug.key}} tag can name (the renderer's pattern), capped so a 500-row sheet does not
+ * become a 1000-option dropdown.
+ */
+function dataSourceKeys(ds, cap = 150) {
+  let data = ds && ds.data;
+  if (!data && ds && ds.cached_data) {
+    try { data = typeof ds.cached_data === 'string' ? JSON.parse(ds.cached_data) : ds.cached_data; } catch (_) { data = null; }
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+  return Object.keys(data).filter((k) => /^[a-zA-Z0-9_]+$/.test(k)).slice(0, cap);
 }
 
 const uid = (p) => `${p}_${Math.random().toString(36).slice(2, 9)}`;
@@ -298,7 +313,7 @@ function newSlide(name = 'Untitled slide') {
   };
 }
 
-function buildRoomSignSlide(slug = 'room') {
+function buildRoomSignSlide(slug = null) {
   const head = {
     id: uid('el'), kind: 'head', slot: 'room_name',
     box: { x: 5, y: 8, w: 60, h: null },
@@ -344,15 +359,19 @@ function buildRoomSignSlide(slug = 'room') {
       elements: [head, clock, rule, stat, detail, nextMeet],
     },
     fields: {
-      room_name: 'Konferenzraum Berlin',
-      status_badge: `{{ds:${slug}.status}}`,
-      status_detail: `{{ds:${slug}.status_detail}}`,
-      next_meeting: `Nächstes Meeting: {{ds:${slug}.next_title}} ({{ds:${slug}.next_time}})`,
+      room_name: t('slides.tpl_room.room_name'),
+      // No calendar connected: sample words in the dashboard's language, never a tag pointing at a
+      // source that does not exist (it would render as empty text on the screen).
+      status_badge: slug ? `{{ds:${slug}.status}}` : t('slides.tpl_room.sample_status'),
+      status_detail: slug ? `{{ds:${slug}.status_detail}}` : t('slides.tpl_room.sample_detail'),
+      next_meeting: t('slides.tpl_room.next_meeting', slug
+        ? { title: `{{ds:${slug}.next_title}}`, time: `{{ds:${slug}.next_time}}` }
+        : { title: t('slides.tpl_room.sample_title'), time: t('slides.tpl_room.sample_time') }),
     }
   };
 }
 
-function buildWasteCalendarSlide(slug = 'abfall') {
+function buildWasteCalendarSlide(slug = null) {
   const head = {
     id: uid('el'), kind: 'head', slot: 'headline',
     box: { x: 6, y: 10, w: 88, h: null },
@@ -386,10 +405,10 @@ function buildWasteCalendarSlide(slug = 'abfall') {
       elements: [head, stat, date, sub],
     },
     fields: {
-      headline: '🗑️ Nächste Müllabfuhr',
-      waste_type: `{{ds:${slug}.next_title}}`,
-      waste_date: `Termin: {{ds:${slug}.next_time}}`,
-      waste_note: 'Bitte die Tonne bis spätestens 06:00 Uhr am Straßenrand bereitstellen.',
+      headline: t('slides.tpl_waste.headline'),
+      waste_type: slug ? `{{ds:${slug}.next_title}}` : t('slides.tpl_waste.sample_type'),
+      waste_date: t('slides.tpl_waste.date', { time: slug ? `{{ds:${slug}.next_time}}` : t('slides.tpl_waste.sample_time') }),
+      waste_note: t('slides.tpl_waste.note'),
     }
   };
 }
@@ -399,8 +418,11 @@ async function openNewDeckModal(container) {
     try { DATA_SOURCES_LIST = await api.getDataSources(); } catch (_) { DATA_SOURCES_LIST = []; }
   }
 
-  const defaultRoomSlug = DATA_SOURCES_LIST[0]?.slug || 'testraum';
-  const defaultWasteSlug = DATA_SOURCES_LIST.find(x => x.slug.includes('abfall') || x.slug.includes('waste'))?.slug || DATA_SOURCES_LIST[0]?.slug || 'abfall';
+  // Both templates read calendar keys (status, next_title, next_time), so only a calendar source
+  // will do; with none, the templates fill sample text instead of tags for a made-up slug.
+  const calendars = (DATA_SOURCES_LIST || []).filter((x) => x.type === 'ical' || (x.data && 'next_title' in x.data));
+  const defaultRoomSlug = calendars[0]?.slug || null;
+  const defaultWasteSlug = calendars.find((x) => /abfall|waste|trash|bin|garbage|recycl/i.test(x.slug))?.slug || defaultRoomSlug;
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -508,7 +530,7 @@ export async function render(container) {
       <!-- 3.0 Private AI: a starter set from one sentence, and translations of any deck. -->
       <a class="btn btn-secondary" href="#/ai-setup">${esc(t('ai_setup.short'))}</a>
       <a class="btn btn-secondary" href="#/translate">${esc(t('translate.title'))}</a>
-      <button class="btn btn-primary" id="newDeck">+ New deck</button></div></div>
+      <button class="btn btn-primary" id="newDeck">${esc(t('slides.new_deck'))}</button></div></div>
     <div id="deckArea"><p style="color:var(--text-muted)">Loading…</p></div>`;
 
   container.querySelector('#newDeck').addEventListener('click', () => openNewDeckModal(container));
@@ -554,8 +576,8 @@ function renderList(container) {
             ${d.slide_count} slide${d.slide_count === 1 ? '' : 's'} · ${(d.total_sec || 0)}s total
             ${d.playlist_id ? '· published' : '· not published yet'}</div>
         </div>
-        <button class="btn btn-secondary btn-sm" data-open="${esc(d.id)}">Edit</button>
-        <button class="btn btn-secondary btn-sm" data-del="${esc(d.id)}">Delete</button>
+        <button class="btn btn-secondary btn-sm" data-open="${esc(d.id)}">${esc(t('common.edit'))}</button>
+        <button class="btn btn-secondary btn-sm" data-del="${esc(d.id)}">${esc(t('common.delete'))}</button>
       </div>`).join('')}
   </div>`;
   host.querySelectorAll('[data-open]').forEach((b) =>
@@ -666,7 +688,7 @@ function renderEditor(container) {
         <!-- aspect-ratio here is only the pre-load default: it is re-set from the deck on every
              paint, because this markup is built before the deck has arrived -->
         <div style="display:flex;gap:9px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
-          <button class="btn btn-secondary btn-sm" id="playBtn">▶ Play entrance</button>
+          <button class="btn btn-secondary btn-sm" id="playBtn">${esc(t('slides.play_entrance'))}</button>
           <!--
             The canvas shape. Editor-only: the renderer fills whatever container a screen gives it,
             so this changes what you DESIGN against, not what ships. A portrait screen laid out on a
@@ -807,6 +829,9 @@ function renderEditor(container) {
   container.querySelector('#tools').addEventListener('click', (ev) => {
     const b = ev.target.closest('[data-add]'); if (!b) return;
     const s = slide(); if (!s) return;
+    // The same cap paste keeps: the renderer drops anything past it, so an element added here would
+    // show in the editor and silently vanish from the screen.
+    if (elementsOf(s).length >= MAX_ELEMENTS) { showToast(t('slides.edit.too_many', { max: MAX_ELEMENTS }), 'error'); return; }
     const e = newElement(b.dataset.add);
     s.template.elements.push(e);
     if (TEXT_KINDS.includes(e.kind)) {
@@ -2012,47 +2037,42 @@ function renderProps(container) {
     const bgVid = s.template.background_video_content_id || '';
     const dim = s.template.background_dim == null ? 0 : s.template.background_dim;
     host.innerHTML =
-      `<div class="sl-group"><p class="sl-legend">Slide</p>
-         <div class="sl-row"><label for="sName">Name</label>
+      `<div class="sl-group"><p class="sl-legend">${esc(t('slides.tab_slide'))}</p>
+         <div class="sl-row"><label for="sName">${esc(t('slides.slide.name'))}</label>
            <input class="input" id="sName" value="${esc(s.name)}"></div>
-         <div class="sl-row"><label for="sDwell">Dwell</label>
+         <div class="sl-row"><label for="sDwell">${esc(t('slides.slide.dwell'))}</label>
            <div class="sl-slide"><input type="range" id="sDwell" min="1" max="60" step="1" value="${s.dwell_sec}">
              <input type="number" class="sl-num" id="sDwelln" min="1" max="60" step="1" value="${s.dwell_sec}"></div></div>
        </div>`
-      + `<div class="sl-group"><p class="sl-legend">Voiceover</p>
-           <div class="sl-row"><label for="sVo">Track</label>
-             <select class="input" id="sVo"><option value="">— none —</option>${
+      + `<div class="sl-group"><p class="sl-legend">${esc(t('slides.slide.voiceover'))}</p>
+           <div class="sl-row"><label for="sVo">${esc(t('slides.slide.track'))}</label>
+             <select class="input" id="sVo"><option value="">${esc(t('slides.none_option'))}</option>${
                audioContent().map((c) => `<option value="${esc(c.id)}" ${
                  c.id === voId ? 'selected' : ''}>${esc(c.filename)}</option>`).join('')}</select></div>
-           ${voId ? `<div class="sl-row"><label for="sVoVol">Volume</label>
+           ${voId ? `<div class="sl-row"><label for="sVoVol">${esc(t('slides.slide.volume'))}</label>
              <div class="sl-slide"><input type="range" id="sVoVol" min="0" max="1" step="0.05" value="${voVol}">
                <input type="number" class="sl-num" id="sVoVoln" min="0" max="1" step="0.05" value="${voVol.toFixed(2)}"></div></div>
-             <p class="sl-note">Plays while this slide is up and stops when it changes — so a track
-                longer than the dwell above is cut off. Screens are muted unless the display is set
-                to allow audio.</p>` : ''}
+             <p class="sl-note">${esc(t('slides.slide.vo_note'))}</p>` : ''}
          </div>`
-      + `<div class="sl-group"><p class="sl-legend">Background</p>
-           <div class="sl-row"><label for="sBg">Colour</label>
+      + `<div class="sl-group"><p class="sl-legend">${esc(t('slides.slide.background'))}</p>
+           <div class="sl-row"><label for="sBg">${esc(t('slides.slide.colour'))}</label>
              <input type="color" class="sl-colour" id="sBg" value="${esc(s.template.background || '#000000')}"></div>
-           <div class="sl-row"><label for="sBgImg">Photo</label>
-             <select class="input" id="sBgImg"><option value="">— none —</option>${
+           <div class="sl-row"><label for="sBgImg">${esc(t('slides.slide.photo'))}</label>
+             <select class="input" id="sBgImg"><option value="">${esc(t('slides.none_option'))}</option>${
                imageContent().map((c) => `<option value="${esc(c.id)}" ${
                  c.id === bgId ? 'selected' : ''}>${esc(c.filename)}</option>`).join('')}</select></div>
-           <div class="sl-row"><label for="sBgVid">Video</label>
-             <select class="input" id="sBgVid"><option value="">— none —</option>${
+           <div class="sl-row"><label for="sBgVid">${esc(t('slides.slide.video'))}</label>
+             <select class="input" id="sBgVid"><option value="">${esc(t('slides.none_option'))}</option>${
                videoContent().map((c) => `<option value="${esc(c.id)}" ${
                  c.id === bgVid ? 'selected' : ''}>${esc(c.filename)}</option>`).join('')}</select></div>
-           ${bgVid ? `<p class="sl-note">The photo above becomes the poster — it shows while the
-              video loads, and stays on any panel that cannot decode it. Background video is always
-              silent; the playlist decides which zone has audio.</p>` : ''}
-           ${(bgId || bgVid) ? `<div class="sl-row"><label for="sDim">Dim</label>
+           ${bgVid ? `<p class="sl-note">${esc(t('slides.slide.poster_note'))}</p>` : ''}
+           ${(bgId || bgVid) ? `<div class="sl-row"><label for="sDim">${esc(t('slides.slide.dim'))}</label>
              <div class="sl-slide"><input type="range" id="sDim" min="0" max="0.9" step="0.05" value="${dim}">
                <input type="number" class="sl-num" id="sDimn" min="0" max="0.9" step="0.05" value="${dim.toFixed(2)}"></div></div>
-             <p class="sl-note">Darkens what is behind the text. A bright picture and white words is
-                unreadable from across a room — this fixes that without editing the image.</p>` : ''}
-           <p class="sl-note">The colour shows while the photo loads, and stays if it never arrives.</p>
+             <p class="sl-note">${esc(t('slides.slide.dim_note'))}</p>` : ''}
+           <p class="sl-note">${esc(t('slides.slide.colour_note'))}</p>
          </div>`
-      + `<div class="sl-group"><button class="btn btn-secondary btn-sm" id="delSlide">Delete this slide</button></div>`;
+      + `<div class="sl-group"><button class="btn btn-secondary btn-sm" id="delSlide">${esc(t('slides.slide.delete'))}</button></div>`;
 
     host.querySelector('#sName').oninput = (e) => { s.name = e.target.value; touchValue(container); };
     host.querySelector('#sBg').oninput = (e) => { s.template.background = e.target.value; touchValue(container); };
@@ -2093,7 +2113,7 @@ function renderProps(container) {
     bindSlidePair('sDwell', (v) => { s.dwell_sec = Math.round(v); }, 0);
     bindSlidePair('sDim', (v) => { s.template.background_dim = v; }, 2);
     host.querySelector('#delSlide').onclick = () => {
-      if (state.deck.doc.slides.length === 1) { showToast('A deck needs at least one slide', 'error'); return; }
+      if (state.deck.doc.slides.length === 1) { showToast(t('slides.slide.last_one'), 'error'); return; }
       state.deck.doc.slides.splice(state.si, 1);
       state.si = Math.max(0, state.si - 1); state.ei = 0; state.sel = []; touch(container);
     };
@@ -2103,7 +2123,7 @@ function renderProps(container) {
   const e = elementsOf(s)[state.ei];
   if (!e) {
     host.innerHTML = `<p style="font-size:12px;color:var(--text-muted)">${esc(elementsOf(s).length
-      ? t('slides.edit.nothing_selected') : 'Add an element from the toolbar.')}</p>`;
+      ? t('slides.edit.nothing_selected') : t('slides.edit.add_hint'))}</p>`;
     return;
   }
   const isText = TEXT_KINDS.includes(e.kind);
@@ -2111,22 +2131,17 @@ function renderProps(container) {
   if (state.tab === 'content') {
     host.innerHTML =
       (e.kind === 'qr'
-        ? row('Tracked link', `<select class="input" id="pQrLink"><option value="">Not tracked</option>${(qrLinksCache || []).map((l) =>
+        ? row(esc(t('slides.qr.tracked_link')), `<select class="input" id="pQrLink"><option value="">${esc(t('slides.qr.not_tracked'))}</option>${(qrLinksCache || []).map((l) =>
               `<option value="${esc(l.id)}" ${s.fields[e.slot] === qrShortUrl(l) ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>`)
-          + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
-               Pick a link from QR codes to count scans. The code then holds its short address, so the
-               link's destination can change later without changing this slide.</p>`
-          + row('Encodes', `<textarea class="input" id="pText" rows="2" style="resize:vertical">${esc(s.fields[e.slot] || '')}</textarea>`)
-          + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
-               A URL, phone number or plain text. The code is drawn on the server, so it works with
-               no network at the panel.</p>`
-          + row('Error correction', `<select class="input" id="pQrEc">${QR_LEVELS.map(([v, lbl]) =>
+          + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">${esc(t('slides.qr.tracked_help'))}</p>`
+          + row(esc(t('slides.qr.encodes')), `<textarea class="input" id="pText" rows="2" style="resize:vertical">${esc(s.fields[e.slot] || '')}</textarea>`)
+          + `<p id="pQrPrivate" style="font-size:11.5px;color:#ca8a04;grid-column:1/-1;margin:0" hidden></p>`
+          + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">${esc(t('slides.qr.encodes_help'))}</p>`
+          + row(esc(t('slides.qr.error_correction')), `<select class="input" id="pQrEc">${QR_LEVELS.map(([v, lbl]) =>
               `<option value="${v}" ${(e.qr_ec || 'M') === v ? 'selected' : ''}>${esc(lbl)}</option>`).join('')}</select>`)
-          + row('Modules', `<input type="color" class="input" id="pQrFg" value="${esc(e.qr_fg || '#000000')}">`)
-          + row('Code background', `<input type="color" class="input" id="pQrBg" value="${esc(e.qr_bg || '#FFFFFF')}">`)
-          + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
-               Keep a light panel behind the code — a camera reads it by contrast, and over a photo
-               it often will not scan at all.</p>`
+          + row(esc(t('slides.qr.modules')), `<input type="color" class="input" id="pQrFg" value="${esc(e.qr_fg || '#000000')}">`)
+          + row(esc(t('slides.qr.code_background')), `<input type="color" class="input" id="pQrBg" value="${esc(e.qr_bg || '#FFFFFF')}">`)
+          + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">${esc(t('slides.qr.contrast_help'))}</p>`
         : e.kind === 'clock'
         ? row('Format', `<select class="input" id="pFmt">${CLOCK_FORMATS.map(([v, lbl]) =>
               `<option value="${v}" ${(e.clock_format || '24') === v ? 'selected' : ''}>${esc(lbl)}</option>`).join('')}</select>`)
@@ -2154,26 +2169,27 @@ function renderProps(container) {
                are what a regenerate is asked for. <strong>The picture will not change until you
                generate it again.</strong> Check the artwork actually spells them.</p>`
         : isText
-        ? row('Text', `
-            <textarea class="input" id="pText" rows="3" style="resize:vertical">${esc(s.fields[e.slot] || '')}</textarea>
+        /*
+         * ⚠️ ONE grid cell. .sl-row is a two-column grid (label | control), so a picker placed as a
+         * second child dropped into the 56px label column of the next row ("⚡ Ins▾").
+         *
+         * And the keys are the ones each source ACTUALLY has, read from its last sync — the same
+         * list the Data Sources page shows. A fixed calendar list offered status / next_title for
+         * a Sheet or a Weather source, which have no such keys, and the tag then showed nothing.
+         */
+        ? row(esc(t('slides.text')), `<div style="min-width:0">
+            <textarea class="input" id="pText" rows="3" style="resize:vertical;width:100%">${esc(s.fields[e.slot] || '')}</textarea>
             ${DATA_SOURCES_LIST && DATA_SOURCES_LIST.length > 0 ? `
-              <div style="margin-top:6px">
-                <select class="input" id="pDsVarPicker" style="font-size:11px;padding:3px 6px;margin:0;width:100%">
-                  <option value="">⚡ Insert Variable...</option>
-                  ${DATA_SOURCES_LIST.map(ds => `
-                    <optgroup label="${esc(ds.name)} ({{ds:${esc(ds.slug)}}})">
-                      <option value="{{ds:${esc(ds.slug)}.status}}">Status (${esc(ds.slug)}.status)</option>
-                      <option value="{{ds:${esc(ds.slug)}.status_detail}}">Status Detail (${esc(ds.slug)}.status_detail)</option>
-                      <option value="{{ds:${esc(ds.slug)}.current_title}}">Current Event (${esc(ds.slug)}.current_title)</option>
-                      <option value="{{ds:${esc(ds.slug)}.next_title}}">Next Event (${esc(ds.slug)}.next_title)</option>
-                      <option value="{{ds:${esc(ds.slug)}.next_time}}">Next Time (${esc(ds.slug)}.next_time)</option>
-                      <option value="{{ds:${esc(ds.slug)}.agenda_text}}">Agenda Text (${esc(ds.slug)}.agenda_text)</option>
-                    </optgroup>
-                  `).join('')}
-                </select>
-              </div>
-            ` : ''}
-          `)
+              <select class="input" id="pDsVarPicker" style="font-size:11px;padding:3px 6px;margin:6px 0 0;width:100%">
+                <option value="">${esc(t('slides.insert_var'))}</option>
+                ${DATA_SOURCES_LIST.map((ds) => {
+                  const keys = dataSourceKeys(ds);
+                  return `<optgroup label="${esc(ds.name)} (${esc(ds.slug)})">${keys.length
+                    ? keys.map((k) => `<option value="${esc(`{{ds:${ds.slug}.${k}}}`)}">${esc(k)}</option>`).join('')
+                    : `<option value="" disabled>${esc(t('slides.ds_no_data'))}</option>`}</optgroup>`;
+                }).join('')}
+              </select>
+            ` : ''}</div>`)
         : e.kind === 'image'
           ? row('Photo', `<select class="input" id="pImg"><option value="">— none —</option>${
               imageContent().map((c) => `<option value="${esc(c.id)}" ${
@@ -2233,13 +2249,42 @@ function renderProps(container) {
     };
     bindCfg('#pQrEc', (v) => { e.qr_ec = v; });
     // A tracked link fills the encoded text with its short address (views/qr-codes.js).
+    /*
+     * A code that holds a private address (the dashboard was open at localhost, a LAN IP or a .local
+     * name when the link was picked, or one was typed) scans to nothing on a visitor's phone. Same
+     * rule as the QR codes page (components/private-host.js).
+     */
+    const qrWarn = host.querySelector('#pQrPrivate');
+    const paintQrWarn = () => {
+      if (!qrWarn) return;
+      const h = urlHost(s.fields[e.slot]);
+      qrWarn.hidden = !(h && isPrivateHost(h));
+      qrWarn.textContent = qrWarn.hidden ? '' : t('slides.qr.private_address', { host: h });
+    };
+    paintQrWarn();
+    if (qrWarn) host.querySelector('#pText').addEventListener('input', paintQrWarn);
     const qrLinkSel = host.querySelector('#pQrLink');
     if (qrLinkSel) qrLinkSel.onchange = () => {
-      const l = (qrLinksCache || []).find((x) => x.id === qrLinkSel.value);
-      if (!l) return;
-      s.fields[e.slot] = qrShortUrl(l);
+      const links = qrLinksCache || [];
+      const l = links.find((x) => x.id === qrLinkSel.value);
+      if (l) {
+        s.fields[e.slot] = qrShortUrl(l);
+      } else {
+        /*
+         * "Not tracked": the code goes back to the link's own destination, so it still opens the
+         * same page but no longer counts scans. Matched on the path, so a short address picked at
+         * another dashboard address (LAN vs public) is recognised too. Text that is not a short
+         * address is left alone — there is nothing to untrack.
+         */
+        let path = '';
+        try { path = new URL(String(s.fields[e.slot] || '')).pathname; } catch (_) { path = ''; }
+        const was = path && links.find((x) => x.path === path);
+        if (!was) return;
+        s.fields[e.slot] = was.target_url || '';
+      }
       const textEl = host.querySelector('#pText');
       if (textEl) textEl.value = s.fields[e.slot];
+      paintQrWarn();
       touchValue(container);
     };
     if (e.kind === 'qr' && qrLinksCache === null) {
@@ -2878,8 +2923,9 @@ async function aiGenerate(container) {
     }
     s2.fields = out.fields || {};
     state.ei = 0; state.sel = [];
-    state.dirty = true;
-    paintAll(container);
+    // touch(), not a bare repaint: it records the step, so Undo brings the old slide back even
+    // when nothing was edited before (a fresh history had no step to undo).
+    touch(container);
     say(t('slides.ai.done', { n: out.elements != null ? out.elements : elementsOf(s2).length }));
   } catch (err) {
     // The server distinguishes "AI is not configured" from "timed out" from "returned nonsense",
