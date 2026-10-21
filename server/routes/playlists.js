@@ -1097,8 +1097,15 @@ function addLayoutItem(req, res) {
   res.status(201).json(decorateLayoutItems([item])[0]);
 }
 
-// Get single playlist with items
-router.get('/:id', requirePlaylistRead, (req, res) => {
+/*
+ * The editor's view of one playlist: GET /:id, and what publish and discard answer with.
+ * ⚠️ One builder on purpose: publish/discard used to answer with the bare row + items, and the
+ * editor redrew from that — no layout, no item schedules — so after Publish the Layout row said
+ * "Each screen's own layout", the zone pickers vanished and the schedule chips were gone until a
+ * reload. Anything that redraws the editor must get this exact shape.
+ */
+function editorPlaylistPayload(playlist) {
+  const playlistId = playlist.id;
   // c.video_prerotated: 3.0 TV-safe video — the editor shows the content's "already rotated for
   // portrait screens" switch on a video row (it is the content's flag, so it reads the content's).
   const items = db.prepare(`
@@ -1113,21 +1120,21 @@ router.get('/:id', requirePlaylistRead, (req, res) => {
     LEFT JOIN playlists cp ON pi.child_playlist_id = cp.id
     WHERE pi.playlist_id = ?
     ORDER BY pi.sort_order ASC
-  `).all(req.params.id);
+  `).all(playlistId);
   // Resolved, so the count matches the screens that actually play it, inherited ones included.
-  const displayCount = db.prepare('SELECT COUNT(*) as count FROM device_resolved_playlist WHERE playlist_id = ?').get(req.params.id).count;
+  const displayCount = db.prepare('SELECT COUNT(*) as count FROM device_resolved_playlist WHERE playlist_id = ?').get(playlistId).count;
   for (const it of items) it.schedules = schedulesForItem(it.id); // #156: editor read-path needs the blocks (mirror :351)
   // #104's layout derivation, reused so the editor can SHOW where each item lands. A playlist
   // has no intrinsic layout — it is inferred from its own zone-bound items — so without this
   // the page lists a zone NAME with no sense of where that zone sits on the screen. Null (no
   // zoned items) means fullscreen, which the UI draws as a single frame.
   let layout = null;
-  try { layout = playlistPreviewLayout(req.playlist, items); } catch (e) { layout = null; }
+  try { layout = playlistPreviewLayout(playlist, items); } catch (e) { layout = null; }
   // A smart playlist shows what its rules select right now, so the editor never has to guess.
   let smart = null;
-  if (req.playlist.smart_rules) {
-    const rules = smartPlaylist.parseRules(req.playlist.smart_rules);
-    const rows = rules ? smartPlaylist.matchContent(db, req.playlist, rules) : [];
+  if (playlist.smart_rules) {
+    const rules = smartPlaylist.parseRules(playlist.smart_rules);
+    const rows = rules ? smartPlaylist.matchContent(db, playlist, rules) : [];
     smart = {
       rules,
       count: rows.length,
@@ -1137,7 +1144,7 @@ router.get('/:id', requirePlaylistRead, (req, res) => {
       })),
     };
   }
-  const pausedCount = require('../lib/corporate/resolve').pausedCounts(db, req.playlist.workspace_id).get(req.params.id) || 0;
+  const pausedCount = require('../lib/corporate/resolve').pausedCounts(db, playlist.workspace_id).get(playlistId) || 0;
   // Corporate: slot rows carry their slot (name, limits, fallback) so the editor can draw them as
   // slots; store slot content says which slot it fills.
   const slotIds = [...new Set(items.map((it) => it.slot_id).filter(Boolean))];
@@ -1145,7 +1152,7 @@ router.get('/:id', requirePlaylistRead, (req, res) => {
     const slots = new Map(db.prepare(`SELECT * FROM corporate_slots WHERE id IN (${slotIds.map(() => '?').join(',')})`).all(...slotIds).map((r) => [r.id, r]));
     for (const it of items) if (it.slot_id && slots.has(it.slot_id)) it.slot = slots.get(it.slot_id);
   }
-  const corporateSlot = fillInfoByPlaylist(req.playlist.workspace_id).get(req.params.id) || null;
+  const corporateSlot = fillInfoByPlaylist(playlist.workspace_id).get(playlistId) || null;
   /*
    * 3.0 campaigns: which screens playing this playlist will see the whole campaign, and which the
    * simplified fallback (a player that does not declare layout.campaign, or a wall member) — so the
@@ -1156,10 +1163,15 @@ router.get('/:id', requirePlaylistRead, (req, res) => {
     const caps = require('../lib/player-capabilities');
     campaignScreens = db.prepare(`SELECT d.* FROM device_resolved_playlist r JOIN devices d ON d.id = r.device_id
                                    WHERE r.playlist_id = ? AND IFNULL(r.source, '') != 'corporate' ORDER BY d.name COLLATE NOCASE LIMIT 500`)
-      .all(req.params.id)
+      .all(playlistId)
       .map((d) => ({ id: d.id, name: d.name, full: !d.wall_id && caps.supports(d, 'layout.campaign') }));
   }
-  res.json({ ...req.playlist, ...(campaignScreens ? { campaign_screens: campaignScreens } : {}), items: decorateEditorItems(items), item_count: items.length, display_count: displayCount, paused_count: pausedCount, layout, smart, ...(corporateSlot ? { corporate_slot: corporateSlot } : {}) });
+  return { ...playlist, ...(campaignScreens ? { campaign_screens: campaignScreens } : {}), items: decorateEditorItems(items), item_count: items.length, display_count: displayCount, paused_count: pausedCount, layout, smart, ...(corporateSlot ? { corporate_slot: corporateSlot } : {}) };
+}
+
+// Get single playlist with items
+router.get('/:id', requirePlaylistRead, (req, res) => {
+  res.json(editorPlaylistPayload(req.playlist));
 });
 
 /*
@@ -1434,26 +1446,12 @@ router.post('/:id/publish', requirePlaylistWrite, (req, res) => {
     if (e && e.name === 'ReleaseError') return res.status(e.status || 409).json({ error: e.message, code: e.code });
     throw e;
   }
-  // UI response shape must include pi.id so the post-publish render can wire
-  // per-row delete/duration listeners. TODO: refactor to share this SELECT
-  // with GET /:id (also duplicated in /discard and POST /:id/items/reorder).
-  const items = db.prepare(`
-    SELECT pi.*,
-           COALESCE(c.filename, w.name) as filename, cp.name as child_playlist_name,
-           c.mime_type, c.filepath, c.thumbnail_path,
-           c.duration_sec as content_duration, c.file_size, c.remote_url,
-           w.name as widget_name, w.widget_type, w.config as widget_config, w.updated_at as widget_rev
-    FROM playlist_items pi
-    LEFT JOIN content c ON pi.content_id = c.id
-    LEFT JOIN widgets w ON pi.widget_id = w.id
-    LEFT JOIN playlists cp ON pi.child_playlist_id = cp.id
-    WHERE pi.playlist_id = ?
-    ORDER BY pi.sort_order ASC
-  `).all(req.params.id);
+  // The editor redraws from this, so it is GET /:id's shape (editorPlaylistPayload), never the bare row.
   const published = db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id);
+  const payload = editorPlaylistPayload(published);
   // Zapier-style subscribers (lib/automation/events.js): a playlist went out to screens.
-  require('../lib/automation/events').emit(db, published.workspace_id, 'playlist_published', { playlist_id: published.id, playlist_name: published.name, items: items.length });
-  res.json({ ...published, items: decorateEditorItems(items) });
+  require('../lib/automation/events').emit(db, published.workspace_id, 'playlist_published', { playlist_id: published.id, playlist_name: published.name, items: payload.items.length });
+  res.json(payload);
 });
 
 // Discard draft — revert playlist_items to match published_snapshot
@@ -1552,20 +1550,8 @@ router.post('/:id/discard', requirePlaylistWrite, (req, res) => {
   transaction();
   require('../lib/revisions').recordCurrent(db, 'playlist', req.params.id, { actor: require('../lib/releases').actorOf(req), summary: 'Draft discarded' });
 
-  const items = db.prepare(`
-    SELECT pi.*,
-           COALESCE(c.filename, w.name) as filename, cp.name as child_playlist_name,
-           c.mime_type, c.filepath, c.thumbnail_path,
-           c.duration_sec as content_duration, c.file_size, c.remote_url,
-           w.name as widget_name, w.widget_type, w.config as widget_config, w.updated_at as widget_rev
-    FROM playlist_items pi
-    LEFT JOIN content c ON pi.content_id = c.id
-    LEFT JOIN widgets w ON pi.widget_id = w.id
-    LEFT JOIN playlists cp ON pi.child_playlist_id = cp.id
-    WHERE pi.playlist_id = ?
-    ORDER BY pi.sort_order ASC
-  `).all(req.params.id);
-  res.json({ ...db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id), items: decorateEditorItems(items) });
+  // Same shape as GET /:id: the editor redraws from it (see editorPlaylistPayload).
+  res.json(editorPlaylistPayload(db.prepare('SELECT * FROM playlists WHERE id = ?').get(req.params.id)));
 });
 
 // Delete playlist

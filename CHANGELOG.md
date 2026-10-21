@@ -102,6 +102,11 @@
   of it, so it was never seen. **Save Settings** also now sends the change to a screen that is
   already on, instead of it waiting for the screen to reconnect; that goes for orientation and
   background colour too.
+- **The playlist editor no longer looks as if Publish lost your work.** After **Publish** (or
+  **Discard changes**) the editor redrew from a shorter answer than a page load gets, so until a
+  reload the Layout row said "Each screen's own layout", the Default zone row and every Zone picker
+  were gone, and items lost their schedule chip and clock icon. Screens and the saved playlist were
+  always fine. Publish and discard now answer with exactly what `GET /api/playlists/:id` returns.
 - **A white-labelled workspace is no longer told to install an app under its own brand.** The
   Settings Setup Guide said "Install the <Brand> APK" and the empty Screens page "Open the <Brand>
   player on a TV", but the installed apps (Android/Fire TV, Tizen, webOS, Roku, iOS, the native Pi
@@ -188,6 +193,10 @@
 - A stream added without a name was named from the end of its URL, which for `rtsp://user:pass@host`
   was the user name and password. It is now named from the path or the host, and never after a share
   token.
+- **Simple view: "Replace what it shows now" added instead of replacing on a screen whose group has
+  a playlist.** The screen made its own copy of the group's playlist and the new photo was added to
+  the end, so it played the group's items too. Now only the chosen photos and videos play on that
+  screen. The group's playlist and the other screens in the group don't change.
 
 ### Security
 
