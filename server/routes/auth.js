@@ -928,7 +928,11 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
   }
 
   const currentOrg = req.organizationId
-    ? db.prepare('SELECT id, name, COALESCE(widget_sandbox_isolation_disabled, 0) AS widget_sandbox_isolation_disabled FROM organizations WHERE id = ?').get(req.organizationId)
+    // owner_plan_id: plans belong to the person who pays, the org owner. A workspace admin invited
+    // into an Enterprise organization has a plan of their own (often free), so a check on their
+    // plan alone hid Enterprise features such as white-label branding from them.
+    ? db.prepare(`SELECT o.id, o.name, COALESCE(o.widget_sandbox_isolation_disabled, 0) AS widget_sandbox_isolation_disabled, u.plan_id AS owner_plan_id
+        FROM organizations o LEFT JOIN users u ON u.id = o.owner_user_id WHERE o.id = ?`).get(req.organizationId)
     : null;
 
   res.json({

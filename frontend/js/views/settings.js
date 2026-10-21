@@ -32,6 +32,11 @@ export async function render(container) {
   // org/workspace membership, gated in the members views, not users.role.)
   const isAdmin = isSuperAdmin;
   const canManageOrgSecurity = isSuperAdmin || user.current_org_role === 'org_owner' || user.current_org_role === 'org_admin';
+  // Branding belongs to the workspace: the server lets its admins save it (routes/white-label.js,
+  // requireWorkspaceAdmin). The section used to sit inside the platform-admin block, so on hosted
+  // an Enterprise customer's own admins never saw it and only the platform team could brand them.
+  const canBrandWorkspace = isSuperAdmin || (!!user.current_workspace_id
+    && (user.current_org_role === 'org_owner' || user.current_org_role === 'org_admin' || user.current_workspace_role === 'workspace_admin'));
   const widgetIsolationDisabled = !!user.current_organization?.widget_sandbox_isolation_disabled;
   const WIDGET_ISOLATION_CONFIRM_PHRASE = 'I understand I am enabling a security hole';
 
@@ -307,7 +312,9 @@ export async function render(container) {
       <a class="btn btn-secondary btn-sm" href="#/platform/users">${t('settings.platform_moved_users')} &rarr;</a>
       <a class="btn btn-secondary btn-sm" href="#/platform/overview" style="margin-left:6px">${t('settings.platform_moved_overview')} &rarr;</a>
     </div>
+    ` : ''}
 
+    ${canBrandWorkspace ? `
     <div class="settings-section" id="whiteLabelSection">
       <h3>${t('settings.white_label')}</h3>
       <div id="whiteLabelForm">
@@ -435,8 +442,8 @@ export async function render(container) {
 
   loadAiCredits();
 
+  if (canBrandWorkspace) loadWhiteLabel();
   if (isAdmin) {
-    loadWhiteLabel();
     loadTelemetry();
 
     loadSupportAccess();
@@ -1950,11 +1957,13 @@ async function loadWhiteLabel() {
   const token = localStorage.getItem('token');
   const headers = { Authorization: `Bearer ${token}` };
 
-  // Only show white-label for enterprise plans or platform admins.
+  // Only show white-label for enterprise plans or platform admins. The plan that counts is the
+  // organization's (its owner's, who pays), not only the signed-in admin's own.
   // Use the fresh user cached by render() above, which called api.getMe().
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const section = document.getElementById('whiteLabelSection');
-  if (section && user.plan_id !== 'enterprise' && !isPlatformAdmin(user)) {
+  const enterprise = user.plan_id === 'enterprise' || user.current_organization?.owner_plan_id === 'enterprise';
+  if (section && !enterprise && !isPlatformAdmin(user)) {
     section.innerHTML = `
       <h3>${t('settings.white_label')}</h3>
       <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px;text-align:center">
