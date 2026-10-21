@@ -417,7 +417,7 @@ export async function render(container) {
     <div class="settings-section">
       <h3>${t('settings.about')}</h3>
       <div style="color:var(--text-secondary);font-size:13px">
-        <p><strong>${esc(window.__ST_BRAND_NAME || 'ScreenTinker')}</strong>${appVersion ? ` v${esc(appVersion)}` : ''}</p>
+        <p><strong id="aboutBrandName">${esc(window.__ST_BRAND_NAME || 'ScreenTinker')}</strong>${appVersion ? ` v${esc(appVersion)}` : ''}</p>
         <p style="margin-top:4px">${t('settings.about_tagline')}</p>
         ${user.self_hosted ? `<p style="margin-top:8px"><a href="${SPONSOR_URL}" target="_blank" rel="noopener" style="color:var(--accent)">&#9829; ${t('sponsor.about_link')}</a></p>` : ''}
         <!-- The permanent home for the release notes the dashboard panel links to. Populated
@@ -2029,6 +2029,9 @@ async function loadWhiteLabel() {
         throw new Error(err.error || t('settings.toast.branding_save_failed'));
       }
       await resetBranding();
+      // This page was rendered with the brand it had on arrival; show the saved one without a reload.
+      const about = document.getElementById('aboutBrandName');
+      if (about) about.textContent = window.__ST_BRAND_NAME || 'ScreenTinker';
       showToast(t('settings.toast.branding_saved'), 'success');
     } catch (err) {
       showToast(err.message, 'error');
