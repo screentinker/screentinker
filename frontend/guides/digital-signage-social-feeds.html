@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Social media feeds on your screens | ScreenTinker</title>
+  <meta name="description" content="Show posts from Instagram, Facebook, YouTube, X, Bluesky and Mastodon on your screens, and approve each one first if you like. How social feeds work.">
+  <meta name="keywords" content="digital signage social media wall, social wall, instagram feed digital signage, hashtag wall, social media display screen, bluesky mastodon signage, screentinker social feeds">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/digital-signage-social-feeds.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/digital-signage-social-feeds.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/digital-signage-social-feeds.html">
+  <meta property="og:title" content="Social media feeds on your screens">
+  <meta property="og:description" content="Show posts from Instagram, Facebook, YouTube, X, Bluesky and Mastodon on your screens, and approve each one first if you like. How social feeds work.">
+  <meta property="og:image" content="https://screentinker.com/assets/guides/social-feeds/queue-waiting.webp">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Social media feeds on your screens">
+  <meta name="twitter:description" content="Show posts from Instagram, Facebook, YouTube, X, Bluesky and Mastodon on your screens, and approve each one first if you like. How social feeds work.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/guides/social-feeds/queue-waiting.webp">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/guides/">Guides</a>
+      <span>/</span>
+      <span>Social feeds</span>
+    </nav>
+
+    <h1>Social media feeds on your screens</h1>
+    <p class="lead">A social wall shows what people post about you: your own Instagram posts, a hashtag your customers use, the latest videos from your YouTube channel. In ScreenTinker you collect those posts in a <strong>social feed</strong>, check them if you want to, and show them on your screens with a <strong>Social wall</strong> widget.</p>
+
+    <p>This guide covers which networks need what, how to create a feed, how to approve or hide posts before they reach a screen, and how to put the wall on a screen. It works with Instagram, Facebook Pages, YouTube, X, Bluesky and Mastodon.</p>
+
+    <h2 id="before">Before you start</h2>
+    <ul>
+      <li><strong>Social feeds is in Advanced view.</strong> New accounts start in Simple view. Switch with the <strong>Simple / Advanced</strong> buttons at the top of the menu. <strong>Social feeds</strong> is under <strong>Create</strong> in the sidebar.</li>
+      <li><strong>You need to be an Editor or an Admin of the workspace</strong> to create feeds and approve posts. A Viewer can open the page and look at the posts, but can't change anything.</li>
+      <li><strong>Bluesky and Mastodon need no setup.</strong> Instagram, Facebook, YouTube and X need a connection first (next section).</li>
+    </ul>
+
+    <h2 id="connections">Connections: which networks need what</h2>
+    <p>Instagram, Facebook, YouTube and X only let an app read posts with a key or a token. That access belongs to your organization, so an <strong>organization owner or admin</strong> adds it once in <strong>Settings</strong> → <strong>Social connections</strong>. Everyone in your workspaces can then pick it when they build a feed, but nobody can see the token again.</p>
+    <figure>
+      <img src="/assets/guides/social-feeds/connections.webp" width="1440" height="280" loading="lazy" decoding="async" alt="The Social connections section of Settings. It says the organization's own access to Instagram, Facebook, YouTube and X is used for social walls, that Bluesky and Mastodon need none, and that tokens are stored encrypted. Two connections are listed: Larkspur Café Instagram and Larkspur YouTube key, each with Test, Edit and Delete buttons. Below is Add a connection.">
+      <figcaption>Two connections, one for Instagram and one for YouTube. <strong>Test</strong> reads one post to prove the token works.</figcaption>
+    </figure>
+    <ol class="steps">
+      <li>In <strong>Settings</strong>, find <strong>Social connections</strong> and open <strong>Add a connection</strong>.</li>
+      <li>Choose the <strong>Network</strong> and give the connection a <strong>Name</strong>.</li>
+      <li>Paste what that network needs:
+        <ul>
+          <li><strong>Instagram</strong>: a professional (business or creator) account, through your own Meta app. Choose the <strong>Instagram API</strong>: <strong>Instagram Login (own posts)</strong>, or <strong>Facebook Login (own posts and hashtags)</strong> plus the <strong>Instagram account id</strong>. Then the <strong>Long-lived access token</strong>.</li>
+          <li><strong>Facebook Page</strong>: the <strong>Page id</strong> and a <strong>Page access token</strong>.</li>
+          <li><strong>YouTube</strong>: an <strong>API key</strong> for the YouTube Data API v3 from Google Cloud.</li>
+          <li><strong>X (Twitter)</strong>: your own <strong>Bearer token</strong>. X charges for API access, so check your plan's read limits.</li>
+        </ul>
+      </li>
+      <li>Press <strong>Add connection</strong>, then <strong>Test</strong> on its row.</li>
+    </ol>
+    <p>To replace a token later, choose <strong>Edit</strong> and paste the new one. Leave the field empty to keep the stored one. Instagram Login tokens renew by themselves before they expire.</p>
+
+    <h2 id="create">Create a feed</h2>
+    <p>Open <strong>Social feeds</strong> in the sidebar. Each feed is a card that lists its sources and how many posts are shown, waiting or hidden.</p>
+    <figure>
+      <img src="/assets/guides/social-feeds/feeds.webp" width="1440" height="520" loading="lazy" decoding="async" alt="The Social feeds page with a New feed button and two feed cards. Counter ticker shows new posts automatically from a Bluesky search for #larkspurcafe and has 3 posts shown. Lobby wall approves each post first, reads Instagram own posts, the Bluesky account larkspurcafe.bsky.social and the Mastodon hashtag larkspurcafe on mastodon.social, and has 4 posts shown, 3 waiting for approval and 2 hidden. Each card has Posts, Fetch now, Edit and Delete buttons.">
+      <figcaption>Two feeds. Lobby wall has 3 posts waiting for approval.</figcaption>
+    </figure>
+    <ol class="steps">
+      <li>Press <strong>New feed</strong> and give it a <strong>Name</strong>, such as "Lobby wall".</li>
+      <li>Under <strong>Sources</strong>, pick a network, then what to read from it, then type the account, hashtag or channel. Use <strong>Add a source</strong> for more, up to 10. The choices are:
+        <ul>
+          <li><strong>Instagram</strong>: <strong>Own posts</strong> or <strong>Hashtag</strong> (hashtags need a Facebook Login connection).</li>
+          <li><strong>Facebook Page</strong>: <strong>Page posts</strong>. Leave the box empty to read the connection's own Page.</li>
+          <li><strong>YouTube</strong>: <strong>Channel</strong> (its @handle) or <strong>Playlist</strong>.</li>
+          <li><strong>X (Twitter)</strong>, <strong>Bluesky</strong>: <strong>Account</strong> or <strong>Search</strong>.</li>
+          <li><strong>Mastodon</strong>: <strong>Account</strong> or <strong>Hashtag</strong>, plus the server, for example mastodon.social.</li>
+        </ul>
+      </li>
+      <li><strong>New posts</strong>: <strong>Show new posts automatically</strong>, or <strong>Approve each post first</strong> if nothing should reach a screen before someone has looked at it.</li>
+      <li>Set the limits: <strong>Posts to show (max 50)</strong>, <strong>Hide posts older than (days, 0 = never)</strong> and <strong>Check for new posts every (minutes)</strong>, from 5 minutes to 1,440 (a day). The default is every 10 minutes.</li>
+      <li>Optional filters: <strong>Hide posts containing these words</strong> (separate them with commas) and <strong>Only show posts with a picture</strong>.</li>
+      <li>Press <strong>Save</strong>. ScreenTinker fetches the feed straight away.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/social-feeds/edit-feed.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Edit feed window for Lobby wall. Sources: Instagram, Own posts, using the connection Larkspur Café Instagram; Bluesky, Account, larkspurcafe.bsky.social; Mastodon, Hashtag, server mastodon.social, larkspurcafe. Below are Add a source, New posts set to Approve each post first, Posts to show 20, Hide posts older than 30 days, Check for new posts every 10 minutes, and Hide posts containing these words: spam, giveaway.">
+      <figcaption>One feed can mix networks: here Instagram, Bluesky and a Mastodon hashtag.</figcaption>
+    </figure>
+    <p>On the card, <strong>Fetch now</strong> checks for new posts straight away instead of waiting. If a source fails, its error shows in red on the card and the other sources keep working. <strong>Edit</strong> also has <strong>Keep this feed updated</strong>: untick it to pause the feed.</p>
+    <div class="callout warn">
+      <span class="callout-title">Bluesky search can fail</span>
+      <p>Bluesky's public service sometimes asks for a sign-in before it allows a search. If a Bluesky <strong>Search</strong> source shows an error (such as 403) on the card, use <strong>Account</strong> sources instead. Some Mastodon servers also turn off public hashtag pages; follow an account on a server that allows it.</p>
+    </div>
+
+    <h2 id="moderate">Approve and hide posts</h2>
+    <p>Press <strong>Posts</strong> on a feed card. The posts open under the card in three tabs: <strong>Waiting</strong>, <strong>Shown</strong> and <strong>Hidden</strong>, each with a count.</p>
+    <figure>
+      <img src="/assets/guides/social-feeds/queue-waiting.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Lobby wall card with its posts open on the Waiting tab, which has 3 posts. Tom Becker on Mastodon: Ten stamps! Free coffee at #larkspurcafe today, with a picture of a stamp card. Ana Ruiz on Mastodon: Birthday brunch at #larkspurcafe, thank you to the whole team, with a picture of cinnamon buns. Larkspur Café on Bluesky: Live music this Friday from 6 pm, with a picture of a coffee cup. Each post has Approve and Hide buttons.">
+      <figcaption>Three posts waiting. Nothing here is on a screen until you press <strong>Approve</strong>.</figcaption>
+    </figure>
+    <ul>
+      <li><strong>Approve</strong> puts a waiting post on the wall. <strong>Hide</strong> takes a post off, or stops it ever appearing.</li>
+      <li><strong>A hidden post stays hidden.</strong> Fetching again never brings it back. Only <strong>Show again</strong>, on the <strong>Hidden</strong> tab, does.</li>
+      <li><strong>Edited posts come back for review.</strong> On a feed that approves each post, a post whose author changes its text or pictures goes back to <strong>Waiting</strong>.</li>
+      <li><strong>Deleted posts go.</strong> When the author deletes a post or makes it private, it leaves the wall on the next fetch.</li>
+      <li><strong>Blocked words</strong> also check the author's name and handle, ignore upper and lower case, and match whole words, so "roast" also catches #roast but not "roasted". A blocked post is hidden as soon as it arrives, and its text isn't kept: the Hidden tab says "(hidden by the blocklist — its text was not kept)".</li>
+    </ul>
+    <p>Reposts and replies are always left out. So are Mastodon posts with a content warning or marked sensitive.</p>
+
+    <h2 id="wall">Show the feed on a screen</h2>
+    <p>A feed on its own shows nothing. To put it on a screen, make a <strong>Social wall</strong> widget:</p>
+    <ol class="steps">
+      <li>Open <strong>Widgets</strong> in the sidebar, press <strong>New Widget</strong> and choose <strong>Social wall</strong>.</li>
+      <li>Pick the <strong>Social feed</strong>.</li>
+      <li>Choose a <strong>Layout</strong>: <strong>One post at a time</strong> (large, good on a portrait lobby screen), <strong>Grid</strong> (a page of cards that rotates) or <strong>Ticker</strong> (one scrolling line, for a strip zone).</li>
+      <li>Set <strong>Seconds per post or page</strong>, the <strong>Theme</strong>, an <strong>Accent colour</strong> and an optional <strong>Heading</strong>, such as your hashtag. The tick boxes choose whether to show the author, the post text and how long ago it was posted.</li>
+      <li>Press <strong>Save</strong>, then add the widget to a playlist or to a zone of a layout like any other widget, and publish the playlist.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/social-feeds/widget.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Edit Social wall window: Widget Name Lobby social wall, Social feed Lobby wall, Layout Grid, Seconds per post or page 10, Grid columns 0 for automatic, Theme Dark, a gold Accent colour, Heading #larkspurcafe, and ticked boxes for Show the author, Show the post text, Mark videos with a play icon and Show how long ago it was posted. Buttons: Cancel, Preview and Save.">
+      <figcaption>The Social wall widget. <strong>Preview</strong> shows it before you save.</figcaption>
+    </figure>
+    <figure>
+      <img src="/assets/guides/social-feeds/wall.webp" width="1440" height="810" loading="lazy" decoding="async" alt="A social wall on a screen in the Grid layout, under the heading #larkspurcafe. Four cards, each with the author's name, handle and a network badge: Larkspur Café on Instagram with cinnamon buns, Priya N. on Mastodon saying Best flat white in town, Larkspur Café on Bluesky with a coffee cup and Oat milk at no extra cost, and Larkspur Café on Instagram with a new matcha and pistachio swirl. Each card says how long ago it was posted.">
+      <figcaption>The wall on a screen: only the four approved posts, each with its author and network.</figcaption>
+    </figure>
+    <p>Learn more about widgets, playlists and zones in <a href="/guides/digital-signage-widgets-layouts-transitions.html">Widgets, layouts and transitions</a>.</p>
+
+    <h2 id="updates">How often the wall changes</h2>
+    <ul>
+      <li>ScreenTinker checks each feed on its own schedule (every 10 minutes unless you change it). If every source fails, it waits longer between tries and keeps what it had.</li>
+      <li>A screen asks for the wall's posts every two minutes. A post you approve or hide shows up, or goes, on that next check.</li>
+      <li><strong>Screens never talk to a social network.</strong> Your ScreenTinker server fetches the posts and keeps its own copy of the pictures. If the internet drops, a wall that is already showing keeps its last posts.</li>
+      <li>A wall never plays videos. YouTube videos show as a picture with their title. To play a video, add it to a playlist as its own item.</li>
+    </ul>
+
+    <div class="callout self-hosted">
+      <span class="callout-title">On a self-hosted server</span>
+      <p>Your server does the fetching, so it needs to reach the networks over the internet (HTTPS), plus the sites they keep pictures on. It refuses addresses on your own network, so it can't read a Mastodon server that only runs on your local network. The pictures are kept in your data folder. Tokens are encrypted with a key made from your server's <code>JWT_SECRET</code>: if you change that secret, paste every connection's token again.</p>
+    </div>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>The wall says "No posts to show yet."</h3>
+    <p>Nothing is approved yet, or your filters hide everything. Open <strong>Posts</strong> on the feed and look under <strong>Waiting</strong>, then check <strong>Hide posts older than</strong> and <strong>Only show posts with a picture</strong> in <strong>Edit</strong>.</p>
+    <h3>I can't find Social connections in Settings.</h3>
+    <p>Only an organization owner or admin sees it. Ask them to add the connection; you can then choose it in your feed.</p>
+    <h3>Can I show LinkedIn, TikTok or Threads posts?</h3>
+    <p>No. The networks you can use are Instagram, Facebook Pages, YouTube, X, Bluesky and Mastodon. Facebook groups and personal profiles aren't available either.</p>
+    <h3>Does hiding a post delete it from Instagram or Mastodon?</h3>
+    <p>No. Hiding only keeps it off your screens. The post stays on the network.</p>
+
+    <div class="cta">
+      <h2>Try it on your own screens</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/digital-signage-widgets-layouts-transitions.html">Widgets, layouts and transitions</a></li>
+        <li><a href="/guides/digital-signage-content-playlists.html">Content and playlists</a></li>
+        <li><a href="/guides/digital-signage-layouts-zones.html">Layouts and zones</a></li>
+        <li><a href="/guides/digital-signage-users-roles.html">Users, roles and workspaces</a></li>
+        <li><a href="/guides/">All guides</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="/guides/">Guides</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Guides",
+      "item": "https://screentinker.com/guides/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Social feeds",
+      "item": "https://screentinker.com/guides/digital-signage-social-feeds.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Social media feeds on your screens",
+  "description": "Show posts from Instagram, Facebook, YouTube, X, Bluesky and Mastodon on your screens, and approve each one first if you like. How social feeds work.",
+  "image": "https://screentinker.com/assets/guides/social-feeds/queue-waiting.webp",
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Add a connection if you need one",
+      "text": "For Instagram, Facebook, YouTube or X, an organization owner or admin adds a connection in Settings → Social connections. Bluesky and Mastodon need none.",
+      "url": "https://screentinker.com/guides/digital-signage-social-feeds.html#connections"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Create a feed",
+      "text": "Switch to Advanced view, open Social feeds and choose New feed. Name it, add sources, choose whether new posts show automatically or wait for approval, then Save.",
+      "url": "https://screentinker.com/guides/digital-signage-social-feeds.html#create"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Approve posts",
+      "text": "Choose Posts on the feed card. Approve or Hide each post under Waiting; Show again brings back a hidden one.",
+      "url": "https://screentinker.com/guides/digital-signage-social-feeds.html#moderate"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 4,
+      "name": "Show it on a screen",
+      "text": "In Widgets, choose New Widget, then Social wall. Pick the feed and a layout, save, and add the widget to a playlist or a layout zone.",
+      "url": "https://screentinker.com/guides/digital-signage-social-feeds.html#wall"
+    }
+  ]
+}
+  </script>
+</body>
+</html>
