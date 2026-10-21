@@ -20,6 +20,7 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const { start, packageApp, REPO } = require('./lib/st-server');
+const { fixEngineSource } = require('./lib/brs-fixes');   // unique roUrlTransfer identities
 
 const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : d; };
 const OUT = path.resolve(arg('out', path.join(os.tmpdir(), 'st-roku-shots')));
@@ -52,7 +53,7 @@ function staticServer(zip, target) {
   const files = {
     '/index.html': [Buffer.from(PAGE), 'text/html'],
     '/lib/brs.api.js': [fs.readFileSync(path.join(NM, 'brs-engine/lib/brs.api.js')), 'text/javascript'],
-    '/lib/brs.worker.js': [fs.readFileSync(path.join(NM, 'brs-engine/lib/brs.worker.js')), 'text/javascript'],
+    '/lib/brs.worker.js': [fixEngineSource(fs.readFileSync(path.join(NM, 'brs-engine/lib/brs.worker.js'), 'utf8'), 'brs.worker.js'), 'text/javascript'],
     '/lib/brs-sg.js': [fs.readFileSync(path.join(NM, 'brs-scenegraph/lib/brs-sg.js')), 'text/javascript'],
     // SceneGraph needs its own common.zip (fonts, locale data) in place of the core one
     '/lib/assets/common.zip': [fs.readFileSync(path.join(NM, 'brs-scenegraph/assets/common.zip')), 'application/zip'],

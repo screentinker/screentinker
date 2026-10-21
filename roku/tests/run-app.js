@@ -24,6 +24,9 @@
  * 2026-10-12/13: the server creates the unclaimed row, the app's 15 s post timeout rebuilds the
  * session, and the re-register is ADOPTED by the server (same pairing code + fingerprint) with
  * status 'online' and deliberately no device:paired. The app must still show its pairing code.
+ *
+ * RUN_APP_DEBUG=1 adds debug=1 to the deep link: SocketTask then logs every poll/POST start and
+ * every roUrlEvent ("[st] eio: ..."), which is what showed the identity collision in lib/brs-fixes.js.
  */
 
 const fs = require('fs');
@@ -32,6 +35,7 @@ const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
 const { start, packageApp, REPO } = require('./lib/st-server');
+const { fixBrsNode } = require('./lib/brs-fixes');
 
 const ROKU = path.join(REPO, 'roku');
 const BRS_CLI = process.env.BRS_CLI || path.join(ROKU, 'node_modules/brs-node/bin/brs.cli.js');
@@ -97,9 +101,10 @@ function dropFirstRegisterProxy(target) {
     console.log(`content: image ${img.id}, video ${vid.id}, clock widget ${clock.id}`);
 
     const zip = packageApp(work);
+    fixBrsNode(BRS_CLI);   // unique roUrlTransfer identities, as on a Roku (lib/brs-fixes.js)
     if (DROP_FIRST_REGISTER) proxy = await dropFirstRegisterProxy(srv.base);
     const appServer = proxy ? proxy.base : srv.base;
-    brs = spawn(process.execPath, [BRS_CLI, '-c', '0', '-g', 'warning', '-e', '-k', `server=${appServer}`, zip], { cwd: work, stdio: ['ignore', 'pipe', 'pipe'] });
+    brs = spawn(process.execPath, [BRS_CLI, '-c', '0', '-g', 'warning', '-e', '-k', `server=${appServer}${process.env.RUN_APP_DEBUG ? ',debug=1' : ''}`, zip], { cwd: work, stdio: ['ignore', 'pipe', 'pipe'] });
     let deviceId = null;
     let pairing = false;
     let pressedAt = -1;
