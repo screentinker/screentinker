@@ -2278,7 +2278,7 @@ function renderPlaylist(assignments) {
         <div class="playlist-item-name">${esc(a.filename || a.widget_name || t('common.unknown'))}</div>
         <div class="playlist-item-meta">
           ${a.child_playlist_id ? esc(tn('device.pl_item.playlist_with_count', a.child_item_count || 0)) : a.widget_id && !a.content_id ? t('device.pl_item.widget_with_type', { type: a.widget_type || 'custom' }) : a.mime_type === 'video/youtube' ? t('device.pl_item.youtube') : a.mime_type?.startsWith('video/') ? t('device.pl_item.video') : t('device.pl_item.image')}
-          ${a.zone_id ? ` &middot; <span style="color:var(--accent)">${t('device.pl_item.zone_label', { id: a.zone_id.slice(0,8) })}</span>` : ''}
+          ${a.zone_id ? ` &middot; <span class="pl-zone-label" data-zone-id="${esc(a.zone_id)}" style="color:var(--accent)">${t('device.pl_item.zone_label', { id: a.zone_id.slice(0,8) })}</span>` : ''}
           ${a.content_duration ? ` &middot; ${Math.floor(a.content_duration / 60)}:${String(Math.floor(a.content_duration % 60)).padStart(2, '0')}` : ''}
           ${!a.content_duration && !a.mime_type?.startsWith('video/') && a.duration_sec ? ` &middot; ${a.duration_sec}s` : ''}
           ${a.schedule_start ? ` &middot; ${a.schedule_start}-${a.schedule_end}` : ''}
@@ -3716,6 +3716,18 @@ function layoutSourceNote(device) {
   return `<div id="layoutSourceNote" style="font-size:12px;color:var(--text-muted);margin-top:4px">${esc(t(key, { name: r.name || '' }))}</div>`;
 }
 
+/*
+ * The zone items without a zone play in: the one marked main, else the largest (the first of equal
+ * ones). Same rule as server/lib/playlist-layout.js mainZone and every player's orphan fallback.
+ */
+function mainZoneOf(zones) {
+  if (!Array.isArray(zones) || !zones.length) return null;
+  const marked = zones.find(z => Number(z.is_main) === 1);
+  if (marked) return marked;
+  const area = z => (Number(z.width_percent) || 0) * (Number(z.height_percent) || 0);
+  return zones.reduce((a, b) => (area(b) > area(a) ? b : a), zones[0]);
+}
+
 function attachRemoveHandlers(device) {
   // Populate zone selectors if device has a layout. The current zone_id for
   // each assignment is read from data-current-zone-id on the .zone-select
@@ -3740,9 +3752,18 @@ function attachRemoveHandlers(device) {
 
     const populateZoneSelects = (zones) => {
       const activeIds = new Set((zones || []).map(z => z.id));
+      // Name things the way the playlist editor does: the empty choice is "Main zone (<name>)"
+      // and an item's zone shows its name, not the first 8 characters of its id.
+      const main = mainZoneOf(zones);
+      const byId = new Map((zones || []).map(z => [z.id, z]));
+      document.querySelectorAll('.pl-zone-label').forEach(el => {
+        const z = byId.get(el.dataset.zoneId);
+        if (z) el.textContent = t('device.pl_item.zone_label', { id: z.name });
+      });
       document.querySelectorAll('.zone-select').forEach(select => {
         select.style.display = '';
         while (select.options.length > 1) select.remove(1); // keep the "no zone" placeholder, drop stale options
+        if (main) select.options[0].textContent = t('layoutpl.zone_main_auto', { name: main.name });
         const assignmentId = select.dataset.assignmentId;
         const currentZoneId = select.dataset.currentZoneId || '';
         (zones || []).forEach(z => {

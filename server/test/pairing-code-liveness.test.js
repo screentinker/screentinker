@@ -106,6 +106,10 @@ test('a screen that has been gone longer than the TTL is refused', async () => {
   const r = await pair(d.code);
   assert.equal(r.status, 410, 'an abandoned code must expire');
   assert.match(r.body.error, /expired/i);
+  // ...and says what helps. A restart cannot produce a new code (same stored identity, same code);
+  // the code works again once the screen is back online.
+  assert.doesNotMatch(r.body.error, /restart the display|get a new code/i);
+  assert.match(r.body.error, /online|connected/i);
 });
 
 test('a device that never checked in falls back to its creation time', async () => {
