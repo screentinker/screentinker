@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { esc } from '../utils.js';
+import { esc, canWrite, readOnlyNote } from '../utils.js';
 import { t, tn } from '../i18n.js';
 
 /*
@@ -64,10 +64,10 @@ function card(c) {
         <div style="font-size:12px;color:var(--text-secondary);margin-top:6px">${esc(tn('sitecache.screens_n', c.screens))} — ${esc(assignedSummary(c))}</div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start">
-        <button class="btn btn-secondary btn-sm" data-act="assign">${esc(t('sitecache.assign'))}</button>
-        <button class="btn btn-secondary btn-sm" data-act="edit">${esc(t('common.edit'))}</button>
-        <button class="btn btn-secondary btn-sm" data-act="rotate">${esc(t('sitecache.rotate'))}</button>
-        <button class="btn btn-secondary btn-sm" data-act="del" style="color:var(--danger)">${esc(t('common.delete'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="assign" ${canWrite('admin') ? '' : 'hidden'}>${esc(t('sitecache.assign'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="edit" ${canWrite('admin') ? '' : 'hidden'}>${esc(t('common.edit'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="rotate" ${canWrite('admin') ? '' : 'hidden'}>${esc(t('sitecache.rotate'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="del" ${canWrite('admin') ? '' : 'hidden'} style="color:var(--danger)">${esc(t('common.delete'))}</button>
       </div>
     </div>
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px">
@@ -94,10 +94,10 @@ export async function render(app) {
       groups: Array.isArray(grps) ? grps : (grps.groups || []),
     };
   } catch (e) { body.innerHTML = `<p class="corp-notice corp-notice-danger">${esc((e && e.message) || t('common.error'))}</p>`; return; }
-  body.innerHTML = `<div class="corp-toolbar"><button class="btn btn-primary" id="scNew">${esc(t('sitecache.new'))}</button></div>
+  body.innerHTML = `${canWrite('admin') ? `<div class="corp-toolbar"><button class="btn btn-primary" id="scNew">${esc(t('sitecache.new'))}</button></div>` : readOnlyNote('admin')}
     ${cache.caches.length ? cache.caches.map(card).join('') : `<div class="corp-empty">${esc(t('sitecache.empty'))}</div>`}
     <p class="corp-help" style="font-size:12px;margin-top:16px">${esc(t('sitecache.how'))}</p>`;
-  document.getElementById('scNew').addEventListener('click', () => openForm(app, null));
+  document.getElementById('scNew')?.addEventListener('click', () => openForm(app, null));
   body.querySelectorAll('.corp-card[data-id]').forEach((el) => {
     const c = cache.caches.find((x) => x.id === el.dataset.id);
     el.querySelector('[data-act="edit"]').addEventListener('click', () => openForm(app, c));

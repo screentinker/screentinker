@@ -993,6 +993,8 @@ export default {
   'common.cancel': 'Cancel',
   'common.delete': 'Delete',
   'common.edit': 'Edit',
+  'common.read_only_note': 'You have view-only access to this workspace, so you can look but not change anything here.',
+  'common.admin_only_note': 'Only a workspace admin can change this. You can look at it.',
   'common.create': 'Create',
   'common.status': 'Status',
   'common.pending': 'Pending',

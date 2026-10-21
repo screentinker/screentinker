@@ -1,6 +1,6 @@
 import { api, assertLocalCallAllowed } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { esc } from '../utils.js';
+import { esc, canWrite, readOnlyNote } from '../utils.js';
 import { t } from '../i18n.js';
 
 // Background swatches: ids resolve to translated names; values are the actual
@@ -44,9 +44,10 @@ export function render(container, widgetId) {
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" id="loadDesignBtn">${t('designer.load_design')}</button>
         <button class="btn btn-secondary" id="exportPngBtn">${t('designer.export_png')}</button>
-        <button class="btn btn-primary" id="publishBtn">${t('designer.publish')}</button>
+        <button class="btn btn-primary" id="publishBtn" ${canWrite() ? '' : 'hidden'}>${t('designer.publish')}</button>
       </div>
     </div>
+    ${readOnlyNote()}
     <div style="display:flex;gap:20px">
       <!-- Preview -->
       <div style="flex:1">

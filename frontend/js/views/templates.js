@@ -6,7 +6,7 @@ import {
   STATUS_FILTERS, KIND_FILTERS, ORIENTATION_FILTERS, matchesFilters, allTags, isActionable, orientationsOf,
   selectionToInstall, updatesOf, installSequentially,
 } from '../lib/template-library-filter.js';
-import { esc, isPlatformAdmin, hydrateAuthImages } from '../utils.js';
+import { esc, isPlatformAdmin, hydrateAuthImages, canWrite, readOnlyNote } from '../utils.js';
 import { openContentPicker } from './widgets.js';
 
 /*
@@ -166,6 +166,7 @@ export async function render(container) {
       </div>` : ''}
     </div>
     <p class="tpl-meta" style="margin:-6px 0 14px">${esc(t('templates.builtin_note'))} <a href="#/signs">${esc(t('signs.new_from_template'))} &rarr;</a></p>
+    ${readOnlyNote()}
     <div class="tabs" role="tablist">
       <div class="tab" data-tab="installed" role="tab">${esc(t('templates.tab_installed'))}</div>
       <div class="tab" data-tab="library" role="tab">${esc(t('templates.tab_library'))} <span id="tplNewCount"></span></div>
@@ -262,7 +263,7 @@ function installedCard(tpl, admin, used = 0) {
       </div>
       <div class="content-item-actions">
         ${admin ? `<button class="btn btn-danger btn-sm" data-uninstall="${esc(tpl.key)}">${esc(t('templates.uninstall'))}</button>` : ''}
-        <button class="btn btn-primary btn-sm" data-use="${esc(tpl.key)}" ${tpl.usable ? '' : `disabled title="${esc(tpl.unusable_reason || '')}"`}>${esc(t('templates.use'))}</button>
+        ${canWrite() ? `<button class="btn btn-primary btn-sm" data-use="${esc(tpl.key)}" ${tpl.usable ? '' : `disabled title="${esc(tpl.unusable_reason || '')}"`}>${esc(t('templates.use'))}</button>` : ''}
       </div>
     </div>`;
 }

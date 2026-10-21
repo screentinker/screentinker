@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.0.3
+
+### Fixed
+
+- **Viewers no longer see buttons that only answer "Read-only access".** A workspace Viewer was
+  offered create, edit and delete buttons on Templates ("Use…"), QR codes, Data Sources (Connect
+  data, Sync Now, Edit, Delete), Kiosk, Widgets, Slides, Playlists, Layouts, Schedule, Triggers,
+  Video Walls, the Designer's Publish and the dashboard's Add, and the server refused every one.
+  Those pages now hide them and say the access is view-only. Alerts, Automation, Emergency feeds
+  and Site caches, which need a workspace admin, hide their changes from editors too. What the
+  server allows is unchanged.
+
 ## 3.0.2
 
 ### Upgrade notes

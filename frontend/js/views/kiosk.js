@@ -1,6 +1,6 @@
 import { showToast } from '../components/toast.js';
 import { t } from '../i18n.js';
-import { esc } from '../utils.js';
+import { esc, canWrite, readOnlyNote } from '../utils.js';
 
 // A refused request must reject, not resolve.
 //
@@ -41,11 +41,12 @@ async function renderList(container) {
   container.innerHTML = `
     <div class="page-header">
       <div><h1>${t('kiosk.title')} <span class="help-tip" data-tip="${t('kiosk.help_tip')}">?</span></h1><div class="subtitle">${t('kiosk.subtitle')}</div></div>
-      <button class="btn btn-primary" id="newKioskBtn">
+      <button class="btn btn-primary" id="newKioskBtn" ${canWrite() ? '' : 'hidden'}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         ${t('kiosk.new_page')}
       </button>
     </div>
+    ${readOnlyNote()}
     <div class="content-grid" id="kioskGrid"></div>
   `;
 
@@ -74,7 +75,7 @@ async function renderList(container) {
         </div>
         <div class="content-item-actions">
           <a href="/api/kiosk/${p.id}/render" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none" onclick="event.stopPropagation()">${t('kiosk.preview')}</a>
-          <button class="btn btn-danger btn-sm" data-delete-kiosk="${esc(p.id)}" data-kiosk-name="${esc(p.name)}" onclick="event.stopPropagation()">${t('common.delete')}</button>
+          <button class="btn btn-danger btn-sm" ${canWrite() ? '' : 'hidden'} data-delete-kiosk="${esc(p.id)}" data-kiosk-name="${esc(p.name)}" onclick="event.stopPropagation()">${t('common.delete')}</button>
         </div>
       </div>
     `).join('');
@@ -117,7 +118,7 @@ async function renderEditor(container, rawPageId) {
       <h1>${esc(page.name)}</h1>
       <div style="display:flex;gap:8px">
         <a href="/api/kiosk/${pageId}/render" target="_blank" class="btn btn-secondary" style="text-decoration:none">${t('kiosk.preview')}</a>
-        <button class="btn btn-primary" id="saveKioskBtn">${t('common.save')}</button>
+        <button class="btn btn-primary" id="saveKioskBtn" ${canWrite() ? '' : 'hidden'}>${t('common.save')}</button>
       </div>
     </div>
     <div style="display:flex;gap:20px">

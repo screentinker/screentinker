@@ -4,7 +4,7 @@ import { plansVisible } from '../components/plan-nudges.js';
 import { on, off, requestScreenshot, startGroupTalk, stopGroupTalk } from '../socket.js';
 import { BroadcastTalkClient } from '../lib/talk-client.js';
 import { showToast } from '../components/toast.js';
-import { esc, livenessBadge, isPlatformAdmin, screenshotUrl, compareVersions } from '../utils.js';
+import { esc, livenessBadge, isPlatformAdmin, screenshotUrl, compareVersions, canWrite } from '../utils.js';
 import { mountWallLive } from '../components/wall-live.js';
 import { t, tn } from '../i18n.js';
 import * as gettingStarted from '../components/getting-started.js';
@@ -627,7 +627,7 @@ export function render(container) {
              a workspace admin (server also enforces it); opens a warning + type-to-commit modal.
              Each panel verifies-then-commits and rolls back an unreachable address. -->
         ${currentWorkspaceCanAdmin() ? `<button class="btn btn-secondary" id="wsSetServerUrlBtn" data-advanced-ui title="${t('dashboard.ws_set_server_url_tip')}">🔗 ${t('dashboard.ws_set_server_url')}</button>` : ''}
-        <button class="btn btn-primary" id="addDeviceBtn">
+        <button class="btn btn-primary" id="addDeviceBtn" ${canWrite() ? '' : 'hidden'}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
           </svg>

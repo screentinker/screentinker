@@ -164,6 +164,8 @@ export default {
   'common.cancel': "Annuler",
   'common.delete': "Supprimer",
   'common.edit': "Modifier",
+  'common.read_only_note': 'Vous avez un accès en lecture seule à cet espace de travail : vous pouvez tout consulter, mais rien modifier.',
+  'common.admin_only_note': 'Seul un administrateur de l’espace de travail peut modifier ceci. Vous pouvez le consulter.',
   'common.done': "Terminé",
   'common.saving': "Enregistrement...",
   'common.deleting': "Suppression...",

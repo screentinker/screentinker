@@ -92,6 +92,28 @@ export function openOutsideApp(path) {
   return false;
 }
 
+// Can the signed-in user change things in the active workspace? The same rules the server applies
+// (server/lib/tenancy.js): platform staff or an org admin acting-as may always; otherwise
+// level 'editor' (the default, denyReadOnly) refuses only a workspace_viewer, and level 'admin'
+// (alert channels, automation, emergency feeds) needs a workspace_admin. The server enforces every
+// write; this only hides the controls the user could not use, so they are not offered a button
+// that answers 403.
+export function canWrite(level = 'editor') {
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || 'null');
+    if (!u || u.acting_as || !('current_workspace_role' in u)) return true;
+    if (level === 'admin') return u.current_workspace_role === 'workspace_admin';
+    return u.current_workspace_role !== 'workspace_viewer';
+  } catch (_) { return true; }
+}
+
+// A short "you can look but not change" note for the top of a page, or '' when canWrite(level).
+export function readOnlyNote(level = 'editor') {
+  if (canWrite(level)) return '';
+  const key = level === 'admin' && canWrite() ? 'common.admin_only_note' : 'common.read_only_note';
+  return `<p class="corp-notice">${esc(t(key))}</p>`;
+}
+
 export function isPlatformAdmin(user) {
   return !!(user && (user.role === 'superadmin' || user.role === 'platform_admin'));
 }

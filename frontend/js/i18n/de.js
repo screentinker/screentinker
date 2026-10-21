@@ -207,6 +207,8 @@ export default {
   'common.cancel': 'Abbrechen',
   'common.delete': 'Löschen',
   'common.edit': 'Bearbeiten',
+  'common.read_only_note': 'Sie haben in diesem Arbeitsbereich nur Lesezugriff: Sie können alles ansehen, aber nichts ändern.',
+  'common.admin_only_note': 'Nur ein Arbeitsbereich-Admin kann dies ändern. Sie können es ansehen.',
   'common.done': 'Fertig',
   'common.loading': 'Wird geladen...',
   'common.connected': 'Verbunden',

@@ -407,6 +407,9 @@ body {
   gap: 6px;
 }
 
+/* .btn's display beats the UA [hidden] rule; a hidden button must stay hidden (read-only views). */
+.btn[hidden] { display: none; }
+
 .btn-primary {
   background: var(--accent);
   color: white;

@@ -345,6 +345,8 @@ export default {
     'common.cancel': 'Annuleren',
     'common.delete': 'Verwijderen',
     'common.edit': 'Bewerken',
+    'common.read_only_note': 'Je hebt alleen-lezen toegang tot deze werkruimte: je kunt alles bekijken, maar niets wijzigen.',
+    'common.admin_only_note': 'Alleen een werkruimtebeheerder kan dit wijzigen. Je kunt het wel bekijken.',
     'common.create': 'Aanmaken',
     'common.status': 'Status',
     'common.pending': 'In behandeling',

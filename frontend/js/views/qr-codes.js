@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { esc } from '../utils.js';
+import { esc, canWrite, readOnlyNote } from '../utils.js';
 import { t, tn } from '../i18n.js';
 
 /*
@@ -31,8 +31,8 @@ function card(l) {
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start">
         <button class="btn btn-secondary btn-sm" data-act="stats">${esc(t('qr.stats'))}</button>
         <button class="btn btn-secondary btn-sm" data-act="svg">${esc(t('qr.download'))}</button>
-        <button class="btn btn-secondary btn-sm" data-act="edit">${esc(t('common.edit'))}</button>
-        <button class="btn btn-secondary btn-sm" data-act="del" style="color:var(--danger)">${esc(t('common.delete'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="edit" ${canWrite() ? '' : 'hidden'}>${esc(t('common.edit'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="del" ${canWrite() ? '' : 'hidden'} style="color:var(--danger)">${esc(t('common.delete'))}</button>
       </div>
     </div>
     <div class="qr-stats" hidden></div>
@@ -43,10 +43,10 @@ export async function render(app) {
   app.innerHTML = `<div class="page-header"><div><h1>${esc(t('nav.qr_codes'))}</h1><div class="subtitle">${esc(t('qr.intro'))}</div></div></div><div id="qrBody"></div>`;
   const body = document.getElementById('qrBody');
   try { links = await api.get('/qr-links'); } catch (e) { body.innerHTML = `<p class="corp-notice corp-notice-danger">${esc(e.message)}</p>`; return; }
-  body.innerHTML = `<div class="corp-toolbar"><button class="btn btn-primary" id="qrNew">${esc(t('qr.new'))}</button></div>
+  body.innerHTML = `${canWrite() ? `<div class="corp-toolbar"><button class="btn btn-primary" id="qrNew">${esc(t('qr.new'))}</button></div>` : readOnlyNote()}
     ${links.length ? links.map(card).join('') : `<div class="corp-empty">${esc(t('qr.empty'))}</div>`}
     ${/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname) ? `<p style="font-size:12px;color:#ca8a04;margin-top:12px">${esc(t('qr.private_origin', { origin: location.origin }))}</p>` : ''}`;
-  document.getElementById('qrNew').addEventListener('click', () => openForm(app, null));
+  document.getElementById('qrNew')?.addEventListener('click', () => openForm(app, null));
   body.querySelectorAll('.corp-card[data-id]').forEach((el) => {
     const l = links.find((x) => x.id === el.dataset.id);
     el.querySelector('[data-act="copy"]').addEventListener('click', async () => {

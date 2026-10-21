@@ -46,7 +46,7 @@ function dateFormatLabel(format) {
  * opened at all. A syntax check passes, every view still renders, and 2600 tests stayed green —
  * the calls only run on a click. See test/frontend-shared-helpers.test.js.
  */
-import { esc, hydrateAuthImages } from '../utils.js';
+import { esc, hydrateAuthImages, canWrite, readOnlyNote } from '../utils.js';
 import { pluginFieldsHtml, readPluginFields } from '../lib/plugin-fields.js';
 import { mountMenuEditor, readMenuConfig } from '../components/menu-board-editor.js';
 import { mountBiEditor, readBiConfig } from '../components/bi-dashboard-editor.js';
@@ -512,7 +512,7 @@ export async function render(container) {
   container.innerHTML = `
     <div class="page-header">
       <div><h1>${t('widget.title')} <span class="help-tip" data-tip="${t('widget.help_tip')}">?</span></h1><div class="subtitle">${t('widget.subtitle')}</div></div>
-      <button class="btn btn-primary" id="newWidgetBtn">
+      <button class="btn btn-primary" id="newWidgetBtn" ${canWrite() ? '' : 'hidden'}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         ${t('widget.new_widget')}
       </button>
@@ -528,6 +528,7 @@ export async function render(container) {
         </div>
       `).join('')}
     </div>
+    ${readOnlyNote()}
     <div class="content-grid" id="widgetGrid"></div>
     <div id="pluginSubmitCard" style="display:none;margin-top:32px" class="corp-card"></div>
 
@@ -543,7 +544,7 @@ export async function render(container) {
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="document.getElementById('widgetModal').style.display='none'">${t('common.cancel')}</button>
           <button class="btn btn-secondary" id="previewWidgetBtn">${t('widget.preview')}</button>
-          <button class="btn btn-primary" id="saveWidgetBtn">${t('common.save')}</button>
+          <button class="btn btn-primary" id="saveWidgetBtn" ${canWrite() ? '' : 'hidden'}>${t('common.save')}</button>
         </div>
       </div>
     </div>
@@ -1592,9 +1593,9 @@ export async function render(container) {
           </div>
           <div class="content-item-actions">
             <button class="btn btn-secondary btn-sm" data-edit-widget="${escAttr(w.id)}">${t('common.edit')}</button>
-            <button class="btn btn-secondary btn-sm btn-icon-only" data-duplicate-widget="${escAttr(w.id)}" title="${escAttr(t('widget.duplicate_hint'))}" aria-label="${escAttr(t('widget.duplicate'))}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+            <button class="btn btn-secondary btn-sm btn-icon-only" ${canWrite() ? '' : 'hidden'} data-duplicate-widget="${escAttr(w.id)}" title="${escAttr(t('widget.duplicate_hint'))}" aria-label="${escAttr(t('widget.duplicate'))}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
             <button class="btn btn-secondary btn-sm btn-icon-only" data-history-widget="${escAttr(w.id)}" title="${t('history.button')}" aria-label="${t('history.button')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg></button>
-            <button class="btn btn-danger btn-sm btn-icon-only" data-delete-widget="${escAttr(w.id)}" title="${t('common.delete')}" aria-label="${t('common.delete')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+            <button class="btn btn-danger btn-sm btn-icon-only" ${canWrite() ? '' : 'hidden'} data-delete-widget="${escAttr(w.id)}" title="${t('common.delete')}" aria-label="${t('common.delete')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
           </div>
           <div data-approval-widget="${escAttr(w.id)}" style="padding:0 12px 10px"></div>
         </div>
