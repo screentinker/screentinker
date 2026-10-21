@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Automation: let other systems control your screens | ScreenTinker</title>
+  <meta name="description" content="Let a fire panel, a till, Zapier, Make or n8n change what your screens show, with a secret web address that raises an alert or switches a playlist.">
+  <meta name="keywords" content="digital signage automation, digital signage webhook, digital signage zapier, emergency alert digital signage, mass notification signage, screentinker automation">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/digital-signage-automation.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/digital-signage-automation.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/digital-signage-automation.html">
+  <meta property="og:title" content="Automation: let other systems control your screens">
+  <meta property="og:description" content="Let a fire panel, a till, Zapier, Make or n8n change what your screens show, with a secret web address that raises an alert or switches a playlist.">
+  <meta property="og:image" content="https://screentinker.com/assets/guides/automation/hooks.webp">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Automation: let other systems control your screens">
+  <meta name="twitter:description" content="Let a fire panel, a till, Zapier, Make or n8n change what your screens show, with a secret web address that raises an alert or switches a playlist.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/guides/automation/hooks.webp">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/guides/">Guides</a>
+      <span>/</span>
+      <span>Automation</span>
+    </nav>
+
+    <h1>Automation: let other systems control your screens</h1>
+    <p class="lead">Sometimes the thing that should change your screens isn't a person at the dashboard. The fire panel goes off and every screen should say "Leave the building". The till starts happy hour and the bar screens should switch to the drinks menu. A Zap updates today's specials. The Automation page gives each of these a secret web address, called a hook. When the other system calls it, your screens react.</p>
+
+    <p>This guide covers the five kinds of hook, how to make one, the address that is shown only once, how to test a hook and read its calls, and the Zapier, Make and n8n section at the bottom of the page.</p>
+
+    <h2 id="before">Before you start</h2>
+    <ul>
+      <li><strong>The page is in Advanced view.</strong> New accounts start in Simple view. Switch with the <strong>Simple</strong> / <strong>Advanced</strong> buttons at the top of the menu, then choose <strong>Automation</strong> under <strong>Automate</strong>.</li>
+      <li><strong>Only a workspace admin can make changes.</strong> Everyone in the workspace can open the page and read the calls, but making, editing, testing and deleting hooks needs the <strong>Admin</strong> role. Editors and viewers still see the buttons, but the server refuses them.</li>
+      <li><strong>Have the thing to show ready.</strong> A playlist switch needs a playlist that has been published. A table update needs a <strong>Manual table</strong> made on the Data Sources page. A trigger hook needs a trigger.</li>
+    </ul>
+
+    <h2 id="page">The Automation page</h2>
+    <p>Each hook is a card. It shows the hook's name and what kind it is, a one-line summary (which screens, which playlist, how long), the start of its address, and when it was last called. A red edge and a red note such as <strong>1 screen switched</strong> mean the hook is changing screens right now.</p>
+    <figure>
+      <img src="/assets/guides/automation/hooks.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Automation page with three hooks. Fire panel, an Emergency alert for all screens that shows the alert card and ends after 60 minutes, last called 2 calls. Happy hour from the till, a Switch to a playlist hook with a red edge and the note 1 screen switched, showing Lunch menu on the group Front of house for 60 minutes. Specials from the till, an Update a table hook writing to Today's specials by key. Each card has Test, Calls, New address, Edit and Delete buttons. Below is the Zapier, Make and n8n section with the API address and a Who is listening table.">
+      <figcaption>Three hooks for a café. The happy hour hook has switched one screen right now.</figcaption>
+    </figure>
+
+    <h2 id="kinds">What a hook can do</h2>
+    <p>When you make a hook, <strong>What it does</strong> offers five kinds. You can't change the kind later; make a new hook instead.</p>
+    <ul>
+      <li><strong>Emergency alert</strong>: shows an alert on screens, the same way an emergency feed does. It can raise the alert, clear it, or do either depending on a field in the request.</li>
+      <li><strong>Mass notification (Alertus, InformaCast, CAP)</strong>: the same, for mass notification systems. It reads CAP 1.2 alerts and the JSON that Alertus, InformaCast and similar systems send, and finds the headline and message by itself.</li>
+      <li><strong>Fire a trigger</strong>: fires or clears one of your triggers on the screens it is assigned to.</li>
+      <li><strong>Update a table</strong>: writes the rows it receives into a <strong>Manual table</strong> data source, so the slides and menu boards that use it update.</li>
+      <li><strong>Switch to a playlist</strong>: switches screens to a playlist for a number of minutes. Then they go back by themselves.</li>
+    </ul>
+
+    <h2 id="create">Make a hook</h2>
+    <ol class="steps">
+      <li>Press <strong>New hook</strong>.</li>
+      <li><strong>Name</strong>: something you'll recognise in the list, such as "Fire panel".</li>
+      <li><strong>What it does</strong>: pick one of the five kinds. The form below changes to match.</li>
+      <li>Fill in the kind's fields (see <a href="#fields">the fields for each kind</a>).</li>
+      <li><strong>Show on</strong>: <strong>All screens in this workspace</strong>, <strong>Screens in these groups</strong>, <strong>These screens</strong> or <strong>Screens with a tag</strong>. Tick the groups or screens, or type the tag.</li>
+      <li>Leave <strong>Enabled</strong> ticked and press <strong>Save</strong>.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/automation/new-hook.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The New hook form with an empty Name box, What it does set to Emergency alert, and its fields: Action set to Raise an alert, Headline {{body.headline}}, Message {{body.message}}, What to do (optional) empty, Alert id {{body.id}}, Clear when this field says cleared, ended or cancelled {{body.status}}, and Severity.">
+      <figcaption>A new Emergency alert hook. The fields start filled with sensible templates.</figcaption>
+    </figure>
+
+    <h3 id="templates">Text from the request</h3>
+    <p>Fields like <strong>Headline</strong> can hold plain text, or a field from the request in double curly brackets. If the fire panel sends <code>{"headline": "Fire alarm", "message": "Please leave now"}</code>, then <code>{{body.headline}}</code> becomes "Fire alarm". A field that isn't in the request becomes empty text. You can mix both: <code>Alarm in {{body.zone}}</code>.</p>
+
+    <h2 id="address">Copy the address: it is shown only once</h2>
+    <p>When you save a new hook, a box called <strong>Web address for</strong> (and the hook's name) opens with the full address. Press <strong>Copy</strong>, paste it into the system that will call it, then press <strong>Done</strong>.</p>
+    <div class="callout warn">
+      <span class="callout-title">You can't see it again</span>
+      <p>ScreenTinker keeps only a fingerprint of the address, so the card shows just its start, ending in "…". If you lose it, press <strong>New address</strong> on the card. That makes a new address and the old one stops working straight away, so update the other system too.</p>
+    </div>
+    <p>Treat the address like a key: anyone who has it can call the hook. A wrong or old address gets the same "Not found" answer as a hook that doesn't exist. Each hook takes at most 30 calls a minute.</p>
+
+    <h2 id="fields">The fields for each kind</h2>
+    <h3>Emergency alert</h3>
+    <ul>
+      <li><strong>Action</strong>: <strong>Raise an alert</strong>, <strong>Clear alerts</strong>, or <strong>Raise or clear, depending on a field</strong>. The last one lets a single address do both: it clears when the field named in <strong>Clear when this field says cleared, ended or cancelled</strong> says so, and raises otherwise.</li>
+      <li><strong>Headline</strong>, <strong>Message</strong> and <strong>What to do (optional)</strong>: the text on the alert card.</li>
+      <li><strong>Alert id</strong>: the same id sent twice is still one alert, and a clear with that id ends it. A clear with no id ends every alert this hook raised.</li>
+      <li><strong>Severity</strong> and <strong>End automatically after (minutes)</strong>: 60 minutes unless you change it, so a forgotten alert doesn't stay up forever.</li>
+      <li><strong>What screens show</strong>: <strong>The alert card (headline, area, what to do, until when)</strong>, or one of your playlists.</li>
+    </ul>
+    <h3>Mass notification (Alertus, InformaCast, CAP)</h3>
+    <p>Point your mass notification system at the address. The headline, message, alert id and "cleared" status are found by themselves. If your sender uses other field names, open <strong>Field mapping (optional)</strong> and fill in <strong>Alert id field</strong>, <strong>Headline field</strong>, <strong>Message field</strong> or <strong>Clear / status field</strong>. <strong>Severity when the sender does not say</strong> and <strong>End automatically after (minutes)</strong> (120 unless you change it) fill the gaps. CAP test and exercise messages never take over a screen.</p>
+    <h3>Fire a trigger</h3>
+    <p>Pick the <strong>Trigger</strong> and the <strong>Action</strong>, <strong>Fire</strong> or <strong>Clear</strong>. Over the internet this only reaches Raspberry Pi and Windows screens. Other screens can still fire the trigger from their own network.</p>
+    <h3>Update a table</h3>
+    <ul>
+      <li><strong>Table</strong>: one of your <strong>Manual table</strong> data sources.</li>
+      <li><strong>How rows are written</strong>: <strong>Replace all rows</strong>, <strong>Update or add rows by key</strong> (fill in <strong>Key column</strong>, such as "Item"), or <strong>Add rows</strong>.</li>
+      <li><strong>Rows</strong>: where the rows are in the request, such as <code>{{body.items}}</code>. Each row's fields are matched to the table's columns by name, so <code>{"item": "Flat white", "price": "3.60"}</code> fills the Item and Price columns.</li>
+    </ul>
+    <h3>Switch to a playlist</h3>
+    <figure>
+      <img src="/assets/guides/automation/edit-playlist.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Edit Happy hour from the till form: Action Switch screens, Playlist Lunch menu, For how many minutes 60, Or take the minutes from a field (optional) empty, Show on Screens in these groups with Front of house ticked, a folded Request signing (optional) section, Enabled ticked, and Also accept GET requests (query parameters) unticked, with Cancel and Save.">
+      <figcaption>A playlist switch for one group, for an hour each time the till calls it.</figcaption>
+    </figure>
+    <ul>
+      <li><strong>Playlist</strong>: it must be published. A draft that has never been published is refused.</li>
+      <li><strong>For how many minutes</strong> (1 to 1440), or <strong>Or take the minutes from a field (optional)</strong>, such as <code>{{body.minutes}}</code>.</li>
+      <li>Calling the hook again starts the time again from that call; it doesn't add up.</li>
+      <li>It never changes a screen that is on a head office playlist, and an emergency alert still comes first.</li>
+    </ul>
+    <div class="callout warn">
+      <span class="callout-title">Ending a switch early</span>
+      <p>The <strong>Action</strong> list also has <strong>Switch screens back</strong>, but in this version a separate hook set to it does not end another hook's switch. To send the screens back early, open the switching hook with <strong>Edit</strong>, untick <strong>Enabled</strong> and press <strong>Save</strong>, then tick it again when you next need it.</p>
+    </div>
+
+    <h2 id="security">Signing and GET requests</h2>
+    <ul>
+      <li><strong>Request signing (optional)</strong>: if the sending system can sign its requests with a shared secret (HMAC-SHA256), enter the secret here (16 characters or more). Unsigned requests are then refused, and the card shows <strong>signed</strong>.</li>
+      <li><strong>Also accept GET requests (query parameters)</strong> is off on purpose. Chat apps that preview links and email scanners open any address they see, which would call the hook. Turn it on only for a sender that can't send a POST request.</li>
+    </ul>
+
+    <h2 id="calls">Test a hook and read its calls</h2>
+    <p><strong>Test</strong> runs the hook with a sample request and shows the result in a message. It is not a rehearsal: an emergency test puts a "Test alert" on your screens, and a playlist test switches them. The page asks first for those kinds.</p>
+    <div class="callout warn">
+      <span class="callout-title">Test runs for real</span>
+      <p>To take a test alert or switch off the screens, untick <strong>Enabled</strong> on the hook and <strong>Save</strong>: switching a hook off ends everything it is showing. Don't press <strong>Test</strong> on an <strong>Update a table</strong> hook set to <strong>Replace all rows</strong>: the sample is empty, so it empties your table, and the page doesn't ask first.</p>
+    </div>
+    <p><strong>Calls</strong> opens the hook's recent calls: <strong>When</strong>, <strong>Status</strong> (200 means it worked) and <strong>Result</strong>, such as "raised 1 on 1 screen(s)" or "switched 1 screen(s) for 60 minute(s)". Tests are marked "(test)". A refused call says why, for example a missing signature or too many calls.</p>
+    <figure>
+      <img src="/assets/guides/automation/calls.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Fire panel hook with its Calls list open: two calls with status 200, one with the result raised 1 on 1 screen(s) and a later one with cleared 1 on 1 screen(s).">
+      <figcaption>A fire drill: one call raised the alert, the next one cleared it.</figcaption>
+    </figure>
+    <p><strong>Delete</strong> removes a hook. Anything it is showing on screens ends, and its address stops working.</p>
+
+    <h2 id="zapier">Zapier, Make and n8n</h2>
+    <p>At the bottom of the page, <strong>Zapier, Make and n8n</strong> gives the <strong>API address to give Zapier:</strong>. These tools connect with an API token, which you make in <strong>Settings</strong> under <strong>API Tokens</strong>: <strong>Read &amp; write</strong> for events and tables, <strong>Full (incl. device commands)</strong> for actions that take over screens. For a single action, a Make or n8n scenario can also just call a hook's address, which needs no token.</p>
+    <p><strong>Who is listening</strong> lists every outside service that has asked to be told about events here, such as <strong>Screen went offline</strong> or <strong>Playlist published</strong>, with how many messages were <strong>delivered</strong>, <strong>failed</strong> or are <strong>waiting</strong>. Press <strong>Remove</strong> to stop sending one. The services sign up from their side; there is nothing to add on this page.</p>
+    <div class="callout">
+      <span class="callout-title">Zapier needs the ScreenTinker app</span>
+      <p>The ScreenTinker integration for Zapier is a private Zapier app that you add to your own Zapier account; it is not in Zapier's public app list. Make, n8n and your own scripts can call the API address or a hook directly.</p>
+    </div>
+
+    <div class="callout self-hosted">
+      <span class="callout-title">On a self-hosted server</span>
+      <p>The address a hook gets starts with your server's public address if one is set (APP_URL), or else with the address you opened the dashboard at. If you opened it as localhost or a local network address, that is what the hook address says, and outside services such as Zapier can't reach it. A fire panel on the same network can. Event messages to Zapier, Make or n8n only go to public https addresses. Hooks aren't available in a workspace that is copied to other servers over the mesh.</p>
+    </div>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>I lost a hook's address. Can I see it again?</h3>
+    <p>No. Press <strong>New address</strong> on the card, copy the new one, and give it to the other system. The old address stops working at once.</p>
+    <h3>The fire panel sent the same alarm three times. Will screens show three alerts?</h3>
+    <p>No. Calls with the same <strong>Alert id</strong> are one alert. Without an id, an exact repeat of the same request also counts as one.</p>
+    <h3>What happens when a hook's time runs out?</h3>
+    <p>An alert ends after its <strong>End automatically after (minutes)</strong>, and a playlist switch after its minutes. The screens go back to what they would normally show, including any schedule.</p>
+    <h3>Can an editor make hooks?</h3>
+    <p>No. A hook can take over every screen in the workspace, so only an admin of the workspace can make, change, test or delete one.</p>
+
+    <div class="cta">
+      <h2>Try it on your own screens</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/digital-signage-data-sources.html">Live data: Data Sources</a></li>
+        <li><a href="/guides/digital-signage-content-playlists.html">Content and playlists</a></li>
+        <li><a href="/guides/digital-signage-users-roles.html">Users and roles</a></li>
+        <li><a href="/guides/digital-signage-groups-video-walls.html">Groups and video walls</a></li>
+        <li><a href="/guides/">All guides</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="/guides/">Guides</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Guides",
+      "item": "https://screentinker.com/guides/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Automation",
+      "item": "https://screentinker.com/guides/digital-signage-automation.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Automation: let other systems control your screens",
+  "description": "Let a fire panel, a till, Zapier, Make or n8n change what your screens show, with a secret web address that raises an alert or switches a playlist.",
+  "image": "https://screentinker.com/assets/guides/automation/hooks.webp",
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Open Automation",
+      "text": "Switch to Advanced view and choose Automation in the sidebar, under Automate. You need to be a workspace admin to make changes.",
+      "url": "https://screentinker.com/guides/digital-signage-automation.html#page"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Make a hook",
+      "text": "Press New hook, give it a name, choose what it does and which screens it reaches, then Save.",
+      "url": "https://screentinker.com/guides/digital-signage-automation.html#create"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Copy the address",
+      "text": "Copy the web address that appears. It is shown only once. Paste it into the system that will call it.",
+      "url": "https://screentinker.com/guides/digital-signage-automation.html#address"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 4,
+      "name": "Check the calls",
+      "text": "Press Calls on the hook to see each call, its status and what it did.",
+      "url": "https://screentinker.com/guides/digital-signage-automation.html#calls"
+    }
+  ]
+}
+  </script>
+</body>
+</html>
