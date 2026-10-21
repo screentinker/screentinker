@@ -5330,6 +5330,33 @@
     // covers unconditionally, so a partial device_info does not "patch" a row — it nulls
     // android_version and the screen dimensions and resets ota_status/tier/the flag columns.
     // device:register and device:info both land there, so both must send the full thing.
+    // The surface this player draws on, in device pixels: what the wall editor sizes a fresh tile
+    // from (render_width/render_height, the same fields Android, the native player and Roku send).
+    // Without it every web-player panel -- browser, Tizen, webOS, BrightSign, Vega -- came out as the
+    // editor's 320x180 placeholder. A CSS quarter-turn lays the stage out sideways, so portrait
+    // swaps the two, as Android's rotated surface does. A host-rotated output (BrightSign) already
+    // turns the viewport itself, so there is nothing to swap.
+    function renderSize() {
+      const dpr = window.devicePixelRatio || 1;
+      let w = Math.round((window.innerWidth || 0) * dpr), h = Math.round((window.innerHeight || 0) * dpr);
+      if (cssQuarterTurn === 90 || cssQuarterTurn === 270) { const t = w; w = h; h = t; }
+      return w > 0 && h > 0 ? { w, h } : null;
+    }
+    let reportedRenderKey = '';
+    // Re-send device:info when the drawn size changes after registration (an orientation change,
+    // a resized browser window). Same full blob as register, per the warning below.
+    function maybeReportRenderSize() {
+      const r = renderSize();
+      const key = r ? r.w + 'x' + r.h : '';
+      if (!key || key === reportedRenderKey || !socket || !socket.connected || !config.deviceId) return;
+      socket.emit('device:info', { device_id: config.deviceId, device_info: buildDeviceInfo() });
+    }
+    let renderSizeTimer = null;
+    window.addEventListener('resize', () => {
+      clearTimeout(renderSizeTimer);
+      renderSizeTimer = setTimeout(maybeReportRenderSize, 2000);
+    });
+
     function buildDeviceInfo() {
       const info = {
         android_version: 'Web/' + navigator.userAgent.split(' ').pop(),
@@ -5343,6 +5370,8 @@
         screen_width: screen.width,
         screen_height: screen.height,
       };
+      const r = renderSize();
+      if (r) { info.render_width = r.w; info.render_height = r.h; reportedRenderKey = r.w + 'x' + r.h; }
       // Additive. applyDeviceInfo ignores unknown keys; applyHardwareIdentity reads these and
       // leaves a column alone when the key is absent, so a browser register does not wipe a
       // model that a previous Vega register stored... it can't, a browser has a different row.
@@ -6134,6 +6163,7 @@
               el.style.left = st.left;
             });
         }
+        maybeReportRenderSize();
       }
 
       // Apply (or clear) wall mode. Force re-render when wall config changes

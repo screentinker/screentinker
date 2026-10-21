@@ -4464,6 +4464,28 @@ function hostPackageVersion() {
     return null;
   }
 }
+function renderSize() {
+  const dpr = window.devicePixelRatio || 1;
+  let w = Math.round((window.innerWidth || 0) * dpr), h = Math.round((window.innerHeight || 0) * dpr);
+  if (cssQuarterTurn === 90 || cssQuarterTurn === 270) {
+    const t = w;
+    w = h;
+    h = t;
+  }
+  return w > 0 && h > 0 ? { w, h } : null;
+}
+let reportedRenderKey = "";
+function maybeReportRenderSize() {
+  const r = renderSize();
+  const key = r ? r.w + "x" + r.h : "";
+  if (!key || key === reportedRenderKey || !socket || !socket.connected || !config.deviceId) return;
+  socket.emit("device:info", { device_id: config.deviceId, device_info: buildDeviceInfo() });
+}
+let renderSizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(renderSizeTimer);
+  renderSizeTimer = setTimeout(maybeReportRenderSize, 2e3);
+});
 function buildDeviceInfo() {
   const info = {
     android_version: "Web/" + navigator.userAgent.split(" ").pop(),
@@ -4477,6 +4499,12 @@ function buildDeviceInfo() {
     screen_width: screen.width,
     screen_height: screen.height
   };
+  const r = renderSize();
+  if (r) {
+    info.render_width = r.w;
+    info.render_height = r.h;
+    reportedRenderKey = r.w + "x" + r.h;
+  }
   try {
     if (typeof HOST !== "undefined" && HOST && HOST.info) {
       if (HOST.info.version) info.app_version = String(HOST.info.version);
@@ -5102,6 +5130,7 @@ function handlePlaylistUpdate(data) {
         el.style.left = st.left;
       });
     }
+    maybeReportRenderSize();
   }
   function wallKey(c) {
     if (!c) return "";

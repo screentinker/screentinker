@@ -97,6 +97,10 @@
 
 ### Fixed
 
+- **Video wall tiles for web players start at the panel's real size.** The web player (browsers,
+  Tizen, webOS, BrightSign, Vega) never reported the size it draws at, so the wall editor gave
+  every such panel a 320x180 placeholder tile. It now reports it, and again after an
+  orientation change or window resize. Walls already saved keep their tile sizes.
 - **A group's Sync line names the protocol the way the Sync menu does.** With **Sync: Auto** it
   read "screentinker — mixed fleet", printing the internal id, and called three identical web
   players a mixed fleet. It now says "Standard — not every screen is a BrightSign" (or the reason
