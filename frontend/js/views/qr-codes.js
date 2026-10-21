@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
 import { esc, canWrite, readOnlyNote } from '../utils.js';
 import { t, tn } from '../i18n.js';
+import { isPrivateHost } from '../components/private-host.js';
 
 /*
  * QR codes — tracked short links (server: lib/qr-links.js). The short address is this dashboard's
@@ -45,7 +46,7 @@ export async function render(app) {
   try { links = await api.get('/qr-links'); } catch (e) { body.innerHTML = `<p class="corp-notice corp-notice-danger">${esc(e.message)}</p>`; return; }
   body.innerHTML = `${canWrite() ? `<div class="corp-toolbar"><button class="btn btn-primary" id="qrNew">${esc(t('qr.new'))}</button></div>` : readOnlyNote()}
     ${links.length ? links.map(card).join('') : `<div class="corp-empty">${esc(t('qr.empty'))}</div>`}
-    ${/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname) ? `<p style="font-size:12px;color:#ca8a04;margin-top:12px">${esc(t('qr.private_origin', { origin: location.origin }))}</p>` : ''}`;
+    ${isPrivateHost(location.hostname) ? `<p style="font-size:12px;color:#ca8a04;margin-top:12px">${esc(t('qr.private_origin', { origin: location.origin }))}</p>` : ''}`;
   document.getElementById('qrNew')?.addEventListener('click', () => openForm(app, null));
   body.querySelectorAll('.corp-card[data-id]').forEach((el) => {
     const l = links.find((x) => x.id === el.dataset.id);
