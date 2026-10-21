@@ -100,7 +100,7 @@
 - **Videos on the guide pages play again.** The /guides/ pages get the dashboard's security policy,
   which only allowed youtube.com frames, so the youtube-nocookie.com embed on the Samsung TV guide
   was a blank box. The getting-started, playlists, scheduling, screen groups, layouts &
-  zones and troubleshooting guides now embed their videos too.
+  zones, users & roles and troubleshooting guides now embed their videos too.
 - **A screen's Default Content now shows on the web player** (Device Info → Settings → Default
   Content). The picture was put on the page but the "Waiting for content..." card stayed on top
   of it, so it was never seen. **Save Settings** also now sends the change to a screen that is
