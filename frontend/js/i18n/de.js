@@ -1664,7 +1664,7 @@ export default {
   'simple.done.review_hint': 'In Ihrem Arbeitsbereich werden Änderungen geprüft, bevor sie auf die Bildschirme gelangen. Bis dahin ändert sich auf dem Bildschirm nichts.',
   'simple.upload.review_on_one': 'Zur Prüfung eingereicht. Es erscheint auf 1 Bildschirm, sobald es freigegeben wurde.',
   'simple.upload.review_on_other': 'Zur Prüfung eingereicht. Es erscheint auf {n} Bildschirmen, sobald es freigegeben wurde.',
-  'simple.done.seconds': 'Die Bildschirme aktualisieren sich innerhalb weniger Sekunden.',
+  'simple.done.seconds': 'Die Bildschirme erhalten die Änderung innerhalb weniger Sekunden. Ein neuer Inhalt erscheint, sobald er in der Schleife an der Reihe ist.',
   'simple.done.home': 'Zurück zur Startseite',
   'simple.upload.title': 'Wählen Sie Ihre Fotos und Videos',
   'simple.upload.where_title_one': 'Auf welchen Bildschirmen soll es laufen?',

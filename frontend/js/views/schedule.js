@@ -179,6 +179,8 @@ const API = (url, opts = {}) => {
 const cleanupFns = [];
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const DEFAULT_SCROLL_HOUR = 8;
+// The Color every schedule is saved with unless someone picks another (server: routes/schedules.js).
+const DEFAULT_SCHEDULE_COLOR = '#3B82F6';
 // Below this a seven-column week is unusable (~50px a column), so the time grid shows ONE day and
 // the month view compresses its pills to bars. The width, not the device, decides.
 const NARROW_PX = 700;
@@ -496,7 +498,11 @@ export async function render(container) {
     if (ev.group_id) return { key: 'g:' + ev.group_id, name: ev.group_name || t('schedule.target_group'), isGroup: true };
     return { key: 'd:' + (ev.device_id || '?'), name: ev.device_name || t('schedule.target_device'), isGroup: false };
   }
-  const colorOf = (ev) => { const tg = targetOf(ev); return (calendarByKey.get(tg.key) || {}).color || ev.group_color || hashColor(tg.key); };
+  const targetColorOf = (ev) => { const tg = targetOf(ev); return (calendarByKey.get(tg.key) || {}).color || ev.group_color || hashColor(tg.key); };
+  // A schedule's own Color wins when someone picked one; the untouched default (#3B82F6, which
+  // every schedule is saved with) keeps the screen/group calendar colour, so blocks stay told apart.
+  const ownColorOf = (ev) => (ev.color && String(ev.color).toUpperCase() !== DEFAULT_SCHEDULE_COLOR ? ev.color : null);
+  const colorOf = (ev) => ownColorOf(ev) || targetColorOf(ev);
   const labelOf = (ev) => ev.title || ev.playlist_name || ev.content_name || ev.widget_name || t('schedule.scheduled_label');
   const evStart = (ev) => new Date(ev.instance_start || ev.start_time);
   const evEnd = (ev) => new Date(ev.instance_end || ev.end_time);
@@ -725,14 +731,15 @@ export async function render(container) {
         block.style.left = `calc(${width * seg.col}% + ${gap}px)`;
         block.style.width = `calc(${width}% - ${gap * 2}px)`;
         block.style.background = colorOf(ev);
-        block.style.borderLeftColor = ev.color || 'rgba(0,0,0,.25)';
+        // The edge carries the screen/group colour when the fill is the schedule's own.
+        block.style.borderLeftColor = ownColorOf(ev) ? targetColorOf(ev) : 'rgba(0,0,0,.25)';
         const target = targetOf(ev);
         if (durationPx >= 34) {
           const extras = itemsOf(ev).filter((it) => it.play_from || it.play_until || (it.schedules && it.schedules.length)).slice(0, 3);
           const extraHtml = (extras.length && durationPx >= 56)
             ? extras.map((it) => `<div class="what" style="opacity:.85">${esc(it.filename || it.widget_name || 'item')} · ${esc(itemWindowLabel(it))}</div>`).join('')
             : '';
-          block.innerHTML = `<div class="who">${esc(target.name)}</div><div class="what">${esc(labelOf(ev))}</div>${corpShadowed.has(ev.id) ? `<div class="what">${esc(t('corp.sched.paused'))}</div>` : ''}${extraHtml}`;
+          block.innerHTML = `<div class="who">${esc(target.name)}</div><div class="what lbl">${esc(labelOf(ev))}</div>${corpShadowed.has(ev.id) ? `<div class="what">${esc(t('corp.sched.paused'))}</div>` : ''}${extraHtml}`;
         } else {
           block.textContent = `${target.name} · ${labelOf(ev)}`;
         }
@@ -997,7 +1004,7 @@ export async function render(container) {
       const data = {
         title: f.title, playlist_id: f.playlistId || null,
         start_time: toLocalStamp(dayDate, f.startMin), end_time: toLocalStamp(dayDate, f.endMin),
-        recurrence: null, recurrence_end: null, priority: 0, color: '#3B82F6',
+        recurrence: null, recurrence_end: null, priority: 0, color: DEFAULT_SCHEDULE_COLOR,
       };
       if (f.isWall) data.wall_id = f.targetId; else if (f.isGroup) data.group_id = f.targetId; else data.device_id = f.targetId;
       try {
@@ -1268,7 +1275,7 @@ export async function render(container) {
         device_id: ev.device_id || null, group_id: ev.group_id || null, ...(ev.wall_id ? { wall_id: ev.wall_id } : {}),
         content_id: ev.content_id || null, playlist_id: ev.playlist_id || null, layout_id: ev.layout_id || null,
         title: ev.title ? `${ev.title} (copy)` : null, start_time: ev.start_time, end_time: ev.end_time,
-        recurrence: ev.recurrence || null, recurrence_end: ev.recurrence_end || null, priority: ev.priority || 0, color: ev.color || '#3B82F6',
+        recurrence: ev.recurrence || null, recurrence_end: ev.recurrence_end || null, priority: ev.priority || 0, color: ev.color || DEFAULT_SCHEDULE_COLOR,
       }) });
       showToast(t('schedule.toast.saved'), 'success');
     } catch (err) { showToast(err.message, 'error'); }
@@ -1318,7 +1325,7 @@ export async function render(container) {
     if (endEl) endEl.value = (ev.recurrence_end || '').slice(0, 10);
     applyRecurrence(ev.recurrence);
     document.getElementById('schedPriority').value = ev.priority || 0;
-    document.getElementById('schedColor').value = ev.color || '#3B82F6';
+    document.getElementById('schedColor').value = ev.color || DEFAULT_SCHEDULE_COLOR;
     if (ev.wall_id) { wallRadio.checked = true; wallSelect.value = ev.wall_id; }
     else if (ev.group_id) { groupRadio.checked = true; groupSelect.value = ev.group_id; }
     else { deviceRadio.checked = true; deviceSelect.value = ev.device_id || (devices[0] && devices[0].id) || ''; }

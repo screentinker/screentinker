@@ -2297,7 +2297,7 @@ export default {
   'simple.done.review_hint': 'Votre espace de travail valide les modifications avant qu’elles n’arrivent sur les écrans. Rien ne change à l’écran d’ici là.',
   'simple.upload.review_on_one': 'Envoyé pour validation. Il s’affichera sur 1 écran dès qu’un relecteur l’aura approuvé.',
   'simple.upload.review_on_other': 'Envoyé pour validation. Il s’affichera sur {n} écrans dès qu’un relecteur l’aura approuvé.',
-  'simple.done.seconds': 'Les écrans se mettent à jour en quelques secondes.',
+  'simple.done.seconds': "Les écrans reçoivent la modification en quelques secondes. Un nouvel élément s'affiche quand vient son tour dans la boucle.",
   'simple.done.home': 'Retour à l’accueil',
   'simple.upload.title': 'Choisissez vos photos et vidéos',
   'simple.upload.where_title_one': 'Quels écrans doivent l’afficher ?',

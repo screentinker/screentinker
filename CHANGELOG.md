@@ -97,6 +97,21 @@
 
 ### Fixed
 
+- **A screen's Playlist tab names zones like the playlist editor.** Items without a zone said
+  "No zone" there but "Main zone (Main)" in the editor, and an item's zone showed as the start of
+  its id ("Zone: b8daf522"). Both now show the zone's name. `GET /api/devices/:id`
+  `active_layout_zones[]` gains `is_main`, `width_percent` and `height_percent`.
+- **The playlist editor shows item names on a 1280 px laptop.** The row's controls (Duration,
+  From/To and the rest) took the whole width and the name disappeared; they now wrap onto a second
+  line instead.
+- **The schedule calendar uses a schedule's Color.** Blocks were always filled with the screen's or
+  group's calendar colour and the chosen Color was only a thin left edge, so it looked as if it
+  hadn't saved. A Color other than the default now fills the block (the edge keeps the screen's
+  colour); a schedule left on the default looks as before. A long schedule name in a narrow block
+  (two schedules side by side in Week view) now wraps instead of ending at "Past…".
+- **"It's live!" no longer promises the screen changes in a few seconds.** Screens get the change
+  that fast, but a screen keeps playing what's on and shows a new item when its turn comes in the
+  loop (about 25 s in one test). The text now says so.
 - **A screen's Default Content now shows on the web player** (Device Info → Settings → Default
   Content). The picture was put on the page but the "Waiting for content..." card stayed on top
   of it, so it was never seen. **Save Settings** also now sends the change to a screen that is

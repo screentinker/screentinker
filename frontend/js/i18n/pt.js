@@ -910,7 +910,7 @@ export default {
   'simple.done.review_hint': 'Seu espaço de trabalho revisa as mudanças antes de chegarem às telas. Nada muda na tela até lá.',
   'simple.upload.review_on_one': 'Enviado para revisão. Vai aparecer em 1 tela quando um revisor aprovar.',
   'simple.upload.review_on_other': 'Enviado para revisão. Vai aparecer em {n} telas quando um revisor aprovar.',
-  'simple.done.seconds': 'As telas se atualizam em poucos segundos.',
+  'simple.done.seconds': 'As telas recebem a alteração em poucos segundos. Um item novo aparece quando chega a vez dele no loop.',
   'simple.done.home': 'Voltar ao início',
   'simple.upload.title': 'Escolha suas fotos e vídeos',
   'simple.upload.where_title_one': 'Quais telas devem mostrá-lo?',

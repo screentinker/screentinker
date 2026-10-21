@@ -3271,7 +3271,7 @@ export default {
   'simple.done.review_hint': 'In je werkruimte worden wijzigingen beoordeeld voordat ze op de schermen komen. Tot dan verandert er niets op het scherm.',
   'simple.upload.review_on_one': 'Ingediend ter beoordeling. Het verschijnt op 1 scherm zodra een beoordelaar het goedkeurt.',
   'simple.upload.review_on_other': 'Ingediend ter beoordeling. Het verschijnt op {n} schermen zodra een beoordelaar het goedkeurt.',
-  'simple.done.seconds': 'Schermen worden binnen enkele seconden bijgewerkt.',
+  'simple.done.seconds': 'Schermen krijgen de wijziging binnen enkele seconden. Een nieuw item verschijnt zodra het in de lus aan de beurt is.',
   'simple.done.home': 'Terug naar start',
   'simple.upload.title': 'Kies je foto\'s en video\'s',
   'simple.upload.where_title_one': 'Op welke schermen moet het komen?',

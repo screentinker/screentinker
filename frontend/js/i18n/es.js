@@ -1618,7 +1618,7 @@ export default {
   'simple.done.review_hint': 'Tu espacio de trabajo revisa los cambios antes de que lleguen a las pantallas. Hasta entonces, nada cambia en la pantalla.',
   'simple.upload.review_on_one': 'Enviado a revisión. Se mostrará en 1 pantalla cuando un revisor lo apruebe.',
   'simple.upload.review_on_other': 'Enviado a revisión. Se mostrará en {n} pantallas cuando un revisor lo apruebe.',
-  'simple.done.seconds': 'Las pantallas se actualizan en unos segundos.',
+  'simple.done.seconds': 'Las pantallas reciben el cambio en unos segundos. Un elemento nuevo aparece cuando le llega su turno en el bucle.',
   'simple.done.home': 'Volver al inicio',
   'simple.upload.title': 'Elige tus fotos y videos',
   'simple.upload.where_title_one': '¿Qué pantallas deben mostrarlo?',

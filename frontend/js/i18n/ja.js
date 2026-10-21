@@ -2297,7 +2297,7 @@ export default {
   'simple.done.review_hint': 'このワークスペースでは、変更が画面に反映される前にレビューが行われます。承認されるまで画面の表示は変わりません。',
   'simple.upload.review_on_one': 'レビューに提出しました。レビュー担当者が承認すると1台の画面に表示されます。',
   'simple.upload.review_on_other': 'レビューに提出しました。レビュー担当者が承認すると{n}台の画面に表示されます。',
-  'simple.done.seconds': '画面は数秒以内に更新されます。',
+  'simple.done.seconds': '変更は数秒以内に画面に届きます。新しい項目はループ内で順番が来たときに表示されます。',
   'simple.done.home': 'ホームに戻る',
   'simple.upload.title': '写真と動画を選択',
   'simple.upload.where_title_one': 'どの画面に表示しますか？',

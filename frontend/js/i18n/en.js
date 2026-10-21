@@ -907,7 +907,7 @@ export default {
   'simple.done.review_hint': 'Your workspace reviews changes before they reach the screens. Nothing changes on the screen until then.',
   'simple.upload.review_on_one': 'Submitted for review. It will show on 1 screen once a reviewer approves it.',
   'simple.upload.review_on_other': 'Submitted for review. It will show on {n} screens once a reviewer approves it.',
-  'simple.done.seconds': 'Screens update within a few seconds.',
+  'simple.done.seconds': 'Screens get the change within a few seconds. A new item shows when its turn comes in the loop.',
   'simple.done.home': 'Back to home',
   'simple.upload.title': 'Choose your photos and videos',
   'simple.upload.where_title_one': 'Which screens should show it?',

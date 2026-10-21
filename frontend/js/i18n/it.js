@@ -1537,7 +1537,7 @@ export default {
   'simple.done.review_hint': 'La tua area di lavoro verifica le modifiche prima che arrivino agli schermi. Fino ad allora sullo schermo non cambia nulla.',
   'simple.upload.review_on_one': 'Inviato per l\'approvazione. Verrà mostrato su 1 schermo quando un revisore lo approva.',
   'simple.upload.review_on_other': 'Inviato per l\'approvazione. Verrà mostrato su {n} schermi quando un revisore lo approva.',
-  'simple.done.seconds': 'Gli schermi si aggiornano entro pochi secondi.',
+  'simple.done.seconds': 'Gli schermi ricevono la modifica entro pochi secondi. Un nuovo elemento appare quando arriva il suo turno nel ciclo.',
   'simple.done.home': 'Torna alla home',
   'simple.upload.title': 'Scegli le tue foto e i tuoi video',
   'simple.upload.where_title_one': 'Su quali schermi mostrarlo?',

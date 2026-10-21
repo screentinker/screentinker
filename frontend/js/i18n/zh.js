@@ -1208,7 +1208,7 @@ export default {
   'simple.done.review_hint': '你的工作区会在更改发布到屏幕前进行审核。在此之前，屏幕上的内容不会改变。',
   'simple.upload.review_on_one': '已提交审核。审核人员批准后，它将在 1 块屏幕上显示。',
   'simple.upload.review_on_other': '已提交审核。审核人员批准后，它将在 {n} 块屏幕上显示。',
-  'simple.done.seconds': '屏幕会在几秒内更新。',
+  'simple.done.seconds': '屏幕会在几秒内收到更改。新项目会在循环中轮到它时显示。',
   'simple.done.home': '返回首页',
   'simple.upload.title': '选择你的照片和视频',
   'simple.upload.where_title_one': '在哪些屏幕上显示它？',
