@@ -51,8 +51,8 @@ async function waitFor(fn, timeoutMs, stepMs = 250) {
   return last;
 }
 
-/** Boot a server with a fresh data directory and one signed-up account. */
-async function startServer(tag) {
+/** Boot a server with a fresh data directory and one signed-up account. `env` overrides the defaults. */
+async function startServer(tag, env = {}) {
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const dataDir = path.join(os.tmpdir(), `st-${tag}-` + crypto.randomBytes(4).toString('hex'));
@@ -65,7 +65,7 @@ async function startServer(tag) {
     // players these e2e tests drive, and a test counting "Screenshot requested" then counts one it
     // never sent (display-links-e2e "and not the other one"). None of these tests is about preview
     // refresh, so it is off for them (PREVIEW_REFRESH=off); preview-refresh-e2e starts its own server.
-    env: { PREVIEW_REFRESH: 'off', ...process.env, DATA_DIR: dataDir, SELF_HOSTED: 'true', PORT: String(port), NODE_ENV: 'test' },
+    env: { PREVIEW_REFRESH: 'off', ...process.env, DATA_DIR: dataDir, SELF_HOSTED: 'true', PORT: String(port), NODE_ENV: 'test', ...env },
     stdio: ['ignore', fd, fd],
   });
   const up = await waitFor(async () => {

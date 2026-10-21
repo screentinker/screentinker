@@ -102,6 +102,11 @@
   of it, so it was never seen. **Save Settings** also now sends the change to a screen that is
   already on, instead of it waiting for the screen to reconnect; that goes for orientation and
   background colour too.
+- **Creating an account from an invite link lands in the invited workspace.** Someone who opened
+  the link signed out and then signed up (or signed in) was added to the workspace, but the page
+  reloaded mid-switch: they started in their own workspace instead, and a new account on a hosted
+  server got its empty "Default" workspace and the setup guide. Accepting an invite now also marks
+  the first-run guide done for that account, since they're joining a workspace someone else set up.
 - **The playlist editor no longer looks as if Publish lost your work.** After **Publish** (or
   **Discard changes**) the editor redrew from a shorter answer than a page load gets, so until a
   reload the Layout row said "Each screen's own layout", the Default zone row and every Zone picker

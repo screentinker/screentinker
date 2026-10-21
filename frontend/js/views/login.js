@@ -970,7 +970,14 @@ function onAuthSuccess(data) {
   if (!data || !data.token) return;
   localStorage.setItem('token', data.token);
   localStorage.setItem('user', JSON.stringify(data.user));
-  window.location.hash = '#/';
+  /*
+   * ⚠️ replaceState, never `location.hash = '#/'`. Assigning the hash fires hashchange, and route()
+   * then runs in THIS page while the reload is still on its way: it picked up a stashed invite
+   * (app.js consumeAcceptInvite), accepted it, and the reload landed mid switch-workspace. The
+   * member was added but the new page booted in their own workspace (a new signup's empty one,
+   * so the first-run guide too). Only the reloaded page may route.
+   */
+  history.replaceState(null, '', window.location.pathname + window.location.search + '#/');
   window.location.reload();
 }
 
