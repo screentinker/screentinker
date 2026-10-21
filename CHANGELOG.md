@@ -27,6 +27,26 @@
   most 10 sources instead of doing nothing.
 - **A template widget in the playlist editor shows the template's thumbnail** instead of the generic
   widget icon.
+- **The slide editor's Insert Variable list offers the keys each data source really has.** It listed
+  the same six calendar keys for every source, so a tag picked for a Sheet, Weather or table source
+  showed nothing. It now lists the keys from the source's last sync (as the Data Sources page does),
+  and is no longer squeezed to "⚡ Ins▾" beside the text box.
+- **Choosing "Not tracked" for a slide's QR code works.** The code kept the tracked short address;
+  it now goes back to the link's own destination.
+- **The slide editor warns when a QR code holds a private address.** A tracked link picked while the
+  dashboard is open at localhost, a LAN address or a `.local` name scans to nothing on a visitor's
+  phone. The QR codes page's warning now also covers IPv6 (`::1`, `fd00::/8`, link-local) and
+  `.local` names; both pages use the same rule.
+- **The room-sign and waste-collection deck templates are in the dashboard's language** instead of
+  always German, and with no calendar connected they fill sample text rather than tags for made-up
+  data sources (`testraum`, `abfall`) that showed as empty.
+- **Renaming a slide deck renames its playlist** while the playlist still has the deck's old name. A
+  playlist renamed on the Playlists page keeps its own name.
+- **The toolbar's Add keeps the 40-element limit**, like paste. Elements past it showed in the editor
+  and were dropped on save.
+- **Undo works right after A.I. Generate**, even with nothing edited before it.
+- **More of the slide editor is translated**: the QR code panel, the Slide tab, + New deck, Edit,
+  Delete and ▶ Play entrance.
 
 ## 3.0.2
 
