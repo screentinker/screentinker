@@ -12,7 +12,7 @@ const crypto = require('crypto');
 const { db } = require('../db/database');
 const { syncDataSource, withFetchSlot, bumpDependentWidgets } = require('../lib/data-sources/service');
 const { resolveIcalData } = require('../lib/data-sources/ical-resolver');
-const { resolveWeatherData, validateWeatherConfig } = require('../lib/data-sources/weather-resolver');
+const { resolveWeatherData, validateWeatherConfig, WEATHER_TEXT } = require('../lib/data-sources/weather-resolver');
 const { requireWorkspaceWrite, canWrite } = require('../lib/permissions');
 const { parseSafeUrl } = require('../lib/ssrf-guard');
 const { makePluginFetch } = require('../lib/plugins/egress');
@@ -172,6 +172,12 @@ router.get('/', (req, res) => {
   });
 
   res.json(parsed);
+});
+
+// #667: the languages a weather source can show its words in: one per file in weather-i18n, which is not the
+// dashboard's own language list (there is a Danish weather file and no Danish dashboard).
+router.get('/weather-languages', (req, res) => {
+  res.json({ languages: Object.keys(WEATHER_TEXT).sort() });
 });
 
 router.get('/plugin-types', (req, res) => {

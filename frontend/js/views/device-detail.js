@@ -3373,15 +3373,20 @@ function setupActions(device) {
     } catch (err) { showToast(err.message, 'error'); }
   });
 
-  document.getElementById('rotateTrigSecretBtn')?.addEventListener('click', async () => {
+  // Whether the screen has a secret yet: the first Generate has nothing to invalidate.
+  let trigSecretSet = !!device.trigger_secret;
+  const trigSecretBtn = document.getElementById('rotateTrigSecretBtn');
+  trigSecretBtn?.addEventListener('click', async () => {
     // ⚠️ Rotating invalidates whatever the integrator already typed into their control system, and
     // there is no way to un-rotate. Confirm rather than treating it as an ordinary button.
-    if (!confirm(t('device.trigcfg.rotate_confirm'))) return;
+    if (trigSecretSet && !confirm(t('device.trigcfg.rotate_confirm'))) return;
     try {
       const res = await api.setTriggerSecret(device.id, { rotate: true });
       if (res.secret) {
         const el = document.getElementById('trigSecretVal');
         if (el) el.textContent = res.secret;
+        trigSecretSet = true;
+        trigSecretBtn.textContent = t('device.trigcfg.rotate');
       }
       showToast(res.delivered ? t('device.trigcfg.saved_live') : t('device.trigcfg.saved_queued'),
         res.delivered ? 'success' : 'warning');

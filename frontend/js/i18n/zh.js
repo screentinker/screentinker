@@ -4103,6 +4103,10 @@ export default {
   'review.field.enabled': '已启用',
   'review.no_value': '（无）',
   'review.schedule_blocks': '{n} 个时间段',
+  'auto.zapier_token': '使用“设置 → API 令牌”中的 API 令牌连接。事件和表格使用“读写”，接管屏幕的操作使用“完全权限（含设备命令）”。',
+  'auto.end_now': '立即结束',
+  'auto.confirm_end': '结束 {name} 当前在屏幕上显示的内容？',
+  'auto.ended': '已结束',
   'nav.data_sources': "数据源",
   'data_sources.key_column_hint': "用此列为每一行命名：{a}，而不是 {b}。",
   'data_sources.status_failed': "失败",
@@ -4153,6 +4157,7 @@ export default {
   'slides.slide.delete': "删除此幻灯片",
   'slides.slide.last_one': "演示至少需要一张幻灯片",
   'slides.edit.add_hint': "从工具栏添加一个元素。",
+  'data_sources.weather_locale_label': '天气语言',
   // Reports (uptime by client, CSV export), content request place picker, alerts intro
   'alerts.intro': "当屏幕离线或显示问题（空白、卡住、内容错误、面板关闭）时通知你的团队，恢复时再次通知。每个渠道每次事件发送一条消息。",
   'report.export_failed': "无法导出：{error}",

@@ -89,6 +89,7 @@ function hookCard(h) {
         <div class="corp-help" style="font-size:12px;margin-top:4px">${esc(tn('auto.last_called', h.call_count, { when: ago(h.last_called_at) }))}</div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${live && canWrite('admin') ? `<button class="btn btn-secondary btn-sm" data-act="end" style="color:var(--danger)">${esc(t('auto.end_now'))}</button>` : ''}
         <button class="btn btn-secondary btn-sm" data-act="test" ${canWrite('admin') ? '' : 'hidden'}>${esc(t('auto.test'))}</button>
         <button class="btn btn-secondary btn-sm" data-act="calls">${esc(t('auto.calls'))}</button>
         <button class="btn btn-secondary btn-sm" data-act="rotate" ${canWrite('admin') ? '' : 'hidden'}>${esc(t('auto.rotate'))}</button>
@@ -188,6 +189,12 @@ export async function render(app) {
         showToast(r.outcome || t('auto.tested'), r.ok ? 'success' : 'error');
         render(app);
       } catch (e) { showToast((e && e.message) || t('common.error'), 'error'); ev.target.disabled = false; }
+    });
+    card.querySelector('[data-act="end"]')?.addEventListener('click', async (ev) => {
+      if (!confirm(t('auto.confirm_end', { name: h.name }))) return;
+      ev.target.disabled = true;
+      try { await api.post(`/automation/${h.id}/end`, {}); showToast(t('auto.ended'), 'success'); render(app); }
+      catch (e) { showToast((e && e.message) || t('common.error'), 'error'); ev.target.disabled = false; }
     });
     card.querySelector('[data-act="calls"]').addEventListener('click', async () => {
       const box = card.querySelector('.auto-calls');

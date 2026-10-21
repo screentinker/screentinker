@@ -5192,6 +5192,10 @@ export default {
   'review.field.enabled': '有効',
   'review.no_value': '（なし）',
   'review.schedule_blocks': '{n} 件の時間帯',
+  'auto.zapier_token': "設定 → API トークン で作成した API トークンで接続します。イベントとテーブルには「読み取り&書き込み」、画面を切り替えるアクションには「フル (デバイスコマンドを含む)」を使います。",
+  'auto.end_now': "今すぐ終了",
+  'auto.confirm_end': "{name} が今画面に表示しているものを終了しますか?",
+  'auto.ended': "終了しました",
   'nav.data_sources': "データソース",
   'data_sources.key_column_hint': "各行にこの列の値で名前を付けます: {b} ではなく {a}。",
   'data_sources.status_failed': "失敗",
@@ -5242,6 +5246,7 @@ export default {
   'slides.slide.delete': "このスライドを削除",
   'slides.slide.last_one': "デッキには少なくとも1枚のスライドが必要です",
   'slides.edit.add_hint': "ツールバーから要素を追加してください。",
+  'data_sources.weather_locale_label': '天気の言語',
   // Reports (uptime by client, CSV export), content request place picker, alerts intro
   'alerts.intro': "画面がオフラインになったときや問題（空白、フリーズ、誤ったコンテンツ、パネルオフ）を表示したとき、そして復旧したときにチームへ通知します。各チャンネルはインシデントごとに1件のメッセージを送信します。",
   'report.export_failed': "エクスポートできませんでした: {error}",

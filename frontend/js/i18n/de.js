@@ -4565,6 +4565,10 @@ export default {
   'review.field.enabled': 'Aktiviert',
   'review.no_value': '(keine)',
   'review.schedule_blocks': '{n} Zeitblock/-blöcke',
+  'auto.zapier_token': 'Verbinden Sie sich mit einem API-Token aus Einstellungen → API-Tokens. Verwenden Sie Lesen & Schreiben für Ereignisse und Tabellen und Voll (inkl. Gerätebefehle) für Aktionen, die Bildschirme übernehmen.',
+  'auto.end_now': 'Jetzt beenden',
+  'auto.confirm_end': 'Beenden, was {name} gerade auf den Bildschirmen zeigt?',
+  'auto.ended': 'Beendet',
   'data_sources.key_column_hint': "Benennt jede Zeile nach dieser Spalte: {a} statt {b}.",
   'data_sources.status_failed': "Fehlgeschlagen",
   'data_sources.slug_rewrite_confirm': "{n} Folie(n) oder Widget(s) verwenden {old}-Tags. Wenn du den Slug änderst, werden sie auf {new} umgestellt. Fortfahren?",
@@ -4614,6 +4618,7 @@ export default {
   'slides.slide.delete': "Diese Folie löschen",
   'slides.slide.last_one': "Ein Deck braucht mindestens eine Folie",
   'slides.edit.add_hint': "Fügen Sie über die Werkzeugleiste ein Element hinzu.",
+  'data_sources.weather_locale_label': 'Sprache für das Wetter',
   // Reports (uptime by client, CSV export), content request place picker, alerts intro
   'alerts.intro': "Benachrichtigen Sie Ihr Team, wenn ein Bildschirm offline geht oder ein Problem zeigt (leer, eingefroren, falscher Inhalt, Display aus), und erneut, wenn alles wieder in Ordnung ist. Jeder Kanal sendet eine Nachricht pro Vorfall.",
   'report.export_failed': "Export fehlgeschlagen: {error}",

@@ -5192,6 +5192,10 @@ export default {
   'review.field.enabled': 'Activé',
   'review.no_value': '(aucun)',
   'review.schedule_blocks': '{n} plage(s) horaire(s)',
+  'auto.zapier_token': "Connectez-vous avec un jeton d'API depuis Paramètres → Jetons d'API. Utilisez Lecture et écriture pour les événements et les tables, et Complet (cmd. appareils incluses) pour les actions qui prennent le contrôle des écrans.",
+  'auto.end_now': "Arrêter maintenant",
+  'auto.confirm_end': "Arrêter ce que {name} affiche en ce moment sur les écrans ?",
+  'auto.ended': "Arrêté",
   'nav.data_sources': "Sources de données",
   'data_sources.key_column_hint': "Nomme chaque ligne d’après cette colonne : {a} au lieu de {b}.",
   'data_sources.status_failed': "Échec",
@@ -5242,6 +5246,7 @@ export default {
   'slides.slide.delete': "Supprimer cette diapositive",
   'slides.slide.last_one': "Une présentation doit contenir au moins une diapositive",
   'slides.edit.add_hint': "Ajoutez un élément depuis la barre d'outils.",
+  'data_sources.weather_locale_label': 'Langue de la météo',
   // Reports (uptime by client, CSV export), content request place picker, alerts intro
   'alerts.intro': "Prévenez votre équipe quand un écran passe hors ligne ou affiche un problème (vide, figé, mauvais contenu, dalle éteinte), puis quand tout est rentré dans l'ordre. Chaque canal envoie un message par incident.",
   'report.export_failed': "Échec de l'export : {error}",

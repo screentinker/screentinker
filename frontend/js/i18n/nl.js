@@ -6159,6 +6159,10 @@ export default {
   'review.field.enabled': 'Ingeschakeld',
   'review.no_value': '(geen)',
   'review.schedule_blocks': '{n} tijdsblok(ken)',
+  'auto.zapier_token': 'Verbind met een API-token uit Instellingen → API-tokens. Gebruik Lezen en schrijven voor gebeurtenissen en tabellen, en Volledig (incl. apparaatopdrachten) voor acties die schermen overnemen.',
+  'auto.end_now': 'Nu beëindigen',
+  'auto.confirm_end': 'Beëindigen wat {name} nu op de schermen toont?',
+  'auto.ended': 'Beëindigd',
   'data_sources.key_column_hint': "Geeft elke rij een naam naar deze kolom: {a} in plaats van {b}.",
   'data_sources.status_failed': "Mislukt",
   'data_sources.slug_rewrite_confirm': "{n} dia(’s) of widget(s) gebruiken {old}-tags. Als je de slug wijzigt, worden ze bijgewerkt naar {new}. Doorgaan?",
@@ -6209,6 +6213,7 @@ export default {
   'slides.slide.last_one': "Een deck heeft minstens één dia nodig",
   'slides.edit.add_hint': "Voeg een element toe via de werkbalk.",
   'slides.ai.done': "{n} elementen gegenereerd — Ongedaan maken haalt de oude dia terug; sla alleen op als je tevreden bent",
+  'data_sources.weather_locale_label': 'Taal van het weer',
   // Reports (uptime by client, CSV export), content request place picker, alerts intro
   'alerts.intro': "Laat je team weten wanneer een scherm offline gaat of een probleem toont (leeg, bevroren, verkeerde inhoud, paneel uit), en opnieuw wanneer het weer in orde is. Elk kanaal stuurt één bericht per incident.",
   'report.export_failed': "Exporteren mislukt: {error}",

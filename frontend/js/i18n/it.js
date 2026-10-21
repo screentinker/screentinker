@@ -4439,6 +4439,9 @@ export default {
   'review.field.enabled': 'Attivo',
   'review.no_value': '(nessuno)',
   'review.schedule_blocks': '{n} fascia/e oraria/e',
+  'auto.end_now': 'Termina ora',
+  'auto.confirm_end': 'Terminare ciò che {name} mostra ora sugli schermi?',
+  'auto.ended': 'Terminato',
   'nav.data_sources': "Origini dati",
   'data_sources.key_column_hint': "Dà a ogni riga il nome di questa colonna: {a} invece di {b}.",
   'data_sources.status_failed': "Non riuscito",
@@ -4489,6 +4492,7 @@ export default {
   'slides.slide.delete': "Elimina questa slide",
   'slides.slide.last_one': "Una presentazione deve avere almeno una slide",
   'slides.edit.add_hint': "Aggiungi un elemento dalla barra degli strumenti.",
+  'data_sources.weather_locale_label': 'Lingua del meteo',
   // Reports (uptime by client, CSV export), content request place picker, alerts intro
   'alerts.intro': "Avvisa il tuo team quando uno schermo va offline o mostra un problema (vuoto, bloccato, contenuto sbagliato, pannello spento), e di nuovo quando torna a posto. Ogni canale invia un messaggio per incidente.",
   'report.export_failed': "Esportazione non riuscita: {error}",

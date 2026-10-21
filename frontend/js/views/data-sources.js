@@ -335,6 +335,26 @@ const field = (label, control, hint, cls = '') => `
   </label>`;
 const opt = (value, label, cur) => `<option value="${esc(value)}" ${String(cur) === String(value) ? 'selected' : ''}>${esc(label)}</option>`;
 const langOptions = (cur) => getAvailableLanguages().map((l) => opt(l.code, l.name, cur || 'en')).join('');
+// #667: weather words come in the languages the server has files for (GET /weather-languages), which include
+// some the dashboard itself isn't translated into, like Danish. Fetched once; until it answers (or if it
+// can't), the dashboard's own languages are offered. The saved choice is always kept in the list.
+let weatherLangs = null;
+function loadWeatherLanguages() {
+  if (!weatherLangs) weatherLangs = api('/data-sources/weather-languages').then((r) => r.languages).catch(() => null);
+  return weatherLangs;
+}
+function languageName(code) {
+  try {
+    const n = new Intl.DisplayNames([code], { type: 'language' }).of(code);
+    return n ? n.charAt(0).toLocaleUpperCase(code) + n.slice(1) : code;
+  } catch { return code; }
+}
+const weatherLangOptions = (codes, cur) => {
+  const list = (codes || getAvailableLanguages().map((l) => l.code)).slice();
+  if (cur && !list.includes(cur)) list.push(cur);
+  return list.map((c) => ({ c, n: languageName(c) })).sort((a, b) => a.n.localeCompare(b.n))
+    .map(({ c, n }) => opt(c, n, cur || 'en')).join('');
+};
 const intervalSelect = (id, cur, choices) => `<select id="${id}" class="input">${choices.map((m) => opt(m, t(`data_sources.every_${m}`), cur || 15)).join('')}</select>`;
 
 function formHtml(type, cfg, isEdit) {
@@ -530,7 +550,7 @@ function weatherFormHtml(cfg) {
     </div>
     <div class="ds-row3">
       ${field(esc(t('data_sources.weather_units_label')), `<select id="dsWxUnitsInput" class="input">${opt('metric', t('data_sources.weather_units_metric'), cfg.units || 'metric')}${opt('imperial', t('data_sources.weather_units_imperial'), cfg.units)}</select>`)}
-      ${field(esc(t('data_sources.weather_locale_label')), `<select id="dsWxLocaleInput" class="input">${langOptions(cfg.locale)}</select>`)}
+      ${field(esc(t('data_sources.weather_locale_label')), `<select id="dsWxLocaleInput" class="input">${weatherLangOptions(null, cfg.locale)}</select>`)}
       ${field(esc(t('data_sources.interval_label')), intervalSelect('dsWxIntervalInput', cfg.interval_min >= 60 ? 60 : cfg.interval_min == 30 ? 30 : 15, [15, 30, 60]))}
     </div>
     <p class="ds-field-hint">${esc(t('data_sources.weather_attribution'))}</p>`;
@@ -621,6 +641,12 @@ function openEditModal(ds, presetType, opts = {}) {
       <div class="ds-form">${specific}</div>
       <div id="dsTestResult" class="ds-result" aria-live="polite"></div>`;
     wireForm(typeCfg);
+    if (type === 'weather') {
+      loadWeatherLanguages().then((codes) => {
+        const sel = $('#dsWxLocaleInput');
+        if (codes && sel && sel.isConnected) sel.innerHTML = weatherLangOptions(codes, sel.value);
+      });
+    }
     const nameInput = $('#dsNameInput');
     if (nameInput) nameInput.focus();
   }
