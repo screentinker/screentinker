@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.0.3
+
+### Fixed
+
+- **Menu Board's Logo, Background image and item Photo buttons work.** They opened the playlist's
+  Add Content dialog, so the Logo field read "[object Object]" at once and Add did nothing. They now
+  open the widget image picker (with upload), and the picked image is saved.
+- **Renaming a data source's slug no longer silently empties its tags.** Every `{{ds:old.…}}` tag
+  in slides and widgets, a menu board bound to the source and template widgets using it kept the
+  old name and rendered blank. Saving a new slug now lists what uses it and, on OK, rewrites those
+  tags to the new slug (live config and pending drafts). `GET /api/data-sources/:id/references` is
+  new; `PUT /api/data-sources/:id` takes `rewrite_tags: true` and returns `rewritten`.
+- **Data source slugs keep accented letters.** "Café menu" became `caf_menu`; it is now `cafe_menu`
+  (é → e, ß → ss, and so on), for the automatic slug and a typed one.
+- **A failed data source's status reads "Failed"**, not "Something went wrong."; the error itself
+  stays in the box under it and is the pill's tooltip.
+- **A long Source on a data source card (an .ics URL) is cut off with "…"** instead of overflowing
+  the card and pushing Last sync out of view.
+- **The Data Sources sidebar label is translated**, and the key-column hint shows the source's own
+  slug instead of always `{{ds:menu.…}}`.
+- **Social feed errors say what to do.** A Bluesky search reads "Bluesky only lets signed-in apps
+  search posts…" instead of "403"; an unknown Bluesky account reads "No Bluesky account by that
+  name." instead of "400: InvalidRequest"; an Instagram token that is expired or pasted wrong says
+  to paste a new token instead of "400: Failed to decode". **Add a source** says a feed can have at
+  most 10 sources instead of doing nothing.
+- **A template widget in the playlist editor shows the template's thumbnail** instead of the generic
+  widget icon.
+
 ## 3.0.2
 
 ### Upgrade notes

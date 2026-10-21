@@ -6155,4 +6155,9 @@ export default {
   'review.field.enabled': 'Ingeschakeld',
   'review.no_value': '(geen)',
   'review.schedule_blocks': '{n} tijdsblok(ken)',
+  'data_sources.key_column_hint': "Geeft elke rij een naam naar deze kolom: {a} in plaats van {b}.",
+  'data_sources.status_failed': "Mislukt",
+  'data_sources.slug_rewrite_confirm': "{n} dia(’s) of widget(s) gebruiken {old}-tags. Als je de slug wijzigt, worden ze bijgewerkt naar {new}. Doorgaan?",
+  'data_sources.saved_rewritten': "Gegevensbron opgeslagen; tags bijgewerkt in {n} dia(’s) of widget(s)",
+  'social.max_sources': "Een feed kan maximaal {n} bronnen hebben.",
 };

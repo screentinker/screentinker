@@ -4098,4 +4098,10 @@ export default {
   'review.field.enabled': '已启用',
   'review.no_value': '（无）',
   'review.schedule_blocks': '{n} 个时间段',
+  'nav.data_sources': "数据源",
+  'data_sources.key_column_hint': "用此列为每一行命名：{a}，而不是 {b}。",
+  'data_sources.status_failed': "失败",
+  'data_sources.slug_rewrite_confirm': "{n} 个幻灯片或小组件使用 {old} 标签。更改 slug 会将它们更新为 {new}。是否继续？",
+  'data_sources.saved_rewritten': "数据源已保存；已更新 {n} 个幻灯片或小组件中的标签",
+  'social.max_sources': "一个信息流最多可以有 {n} 个来源。",
 };

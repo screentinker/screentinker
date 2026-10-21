@@ -5187,4 +5187,10 @@ export default {
   'review.field.enabled': 'Activé',
   'review.no_value': '(aucun)',
   'review.schedule_blocks': '{n} plage(s) horaire(s)',
+  'nav.data_sources': "Sources de données",
+  'data_sources.key_column_hint': "Nomme chaque ligne d’après cette colonne : {a} au lieu de {b}.",
+  'data_sources.status_failed': "Échec",
+  'data_sources.slug_rewrite_confirm': "{n} diapositive(s) ou widget(s) utilisent des balises {old}. Changer le slug les met à jour en {new}. Continuer ?",
+  'data_sources.saved_rewritten': "Source de données enregistrée ; balises mises à jour dans {n} diapositive(s) ou widget(s)",
+  'social.max_sources': "Un flux peut avoir au maximum {n} sources.",
 };

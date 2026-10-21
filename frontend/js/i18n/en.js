@@ -706,7 +706,7 @@ export default {
   'data_sources.table_options': 'Rows, key column & refresh',
   'data_sources.key_column': 'Key column (recommended)',
   'data_sources.key_column_ph': 'e.g. Item — test first, then click a column',
-  'data_sources.key_column_hint': 'Names each row by this column: {{ds:menu.latte_price}} instead of {{ds:menu.row3_price}}.',
+  'data_sources.key_column_hint': "Names each row by this column: {a} instead of {b}.",
   'data_sources.shape': 'Treat the data as',
   'data_sources.shape_auto': 'Auto (lists become tables)',
   'data_sources.shape_table': 'A table (list of records)',
@@ -8435,4 +8435,8 @@ export default {
   'wall.toast.screenshot_requested': "Screenshot requested — it appears on the panel's device page",
   'wall.toast.layout_saved': "Layout saved",
   'wall.prompt_rename': "Wall name:",
+  'data_sources.status_failed': "Failed",
+  'data_sources.slug_rewrite_confirm': "{n} slide(s) or widget(s) use {old} tags. Changing the slug updates them to {new}. Continue?",
+  'data_sources.saved_rewritten': "Data source saved; tags updated in {n} slide(s) or widget(s)",
+  'social.max_sources': "A feed can have at most {n} sources.",
 };

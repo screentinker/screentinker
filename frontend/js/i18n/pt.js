@@ -709,7 +709,7 @@ export default {
   'data_sources.table_options': "Linhas, coluna-chave e atualização",
   'data_sources.key_column': "Coluna-chave (recomendado)",
   'data_sources.key_column_ph': "ex. Item — teste primeiro, depois clique em uma coluna",
-  'data_sources.key_column_hint': "Nomeia cada linha por esta coluna: {{ds:menu.latte_price}} em vez de {{ds:menu.row3_price}}.",
+  'data_sources.key_column_hint': "Nomeia cada linha por esta coluna: {a} em vez de {b}.",
   'data_sources.shape': "Tratar os dados como",
   'data_sources.shape_auto': "Auto (listas viram tabelas)",
   'data_sources.shape_table': "Uma tabela (lista de registros)",
@@ -8439,4 +8439,8 @@ export default {
   'review.field.enabled': 'Ativado',
   'review.no_value': '(nenhum)',
   'review.schedule_blocks': '{n} bloco(s) de horário',
+  'data_sources.status_failed': "Falhou",
+  'data_sources.slug_rewrite_confirm': "{n} slide(s) ou widget(s) usam tags {old}. Mudar o slug atualiza-os para {new}. Continuar?",
+  'data_sources.saved_rewritten': "Fonte de dados salva; tags atualizadas em {n} slide(s) ou widget(s)",
+  'social.max_sources': "Um feed pode ter no máximo {n} fontes.",
 };
