@@ -101,6 +101,10 @@
   server has SQLite built in, but the pre-upgrade backup uses the `sqlite3` shell; without it the
   script ended right after "Backing up db" with no message. It now checks first, offers to install
   the package (like it does Node), and otherwise says what to install, before changing anything.
+- **Videos on the guide pages play again.** The /guides/ pages get the dashboard's security policy,
+  which only allowed youtube.com frames, so the youtube-nocookie.com embed on the Samsung TV guide
+  was a blank box. Every user guide (getting started, playlists, scheduling, layouts & zones,
+  groups & walls, users & roles, white-label and troubleshooting) now embeds its video too.
 - **With approval required, the playlist editor no longer offers a Publish button that can only
   fail.** The draft banner says to submit the playlist for review instead (the server already
   refused a direct publish, for every role).
