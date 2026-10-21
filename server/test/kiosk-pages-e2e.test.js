@@ -109,8 +109,16 @@ describe('kiosk pages on a screen and in the editor', { skip: SKIP }, () => {
       assert.equal(saved.siteBackLabel, 'Back', 'the Back bar label is saved in the editor language');
 
       // The preview lays out at 1920x1080 and is scaled into its box: the last row is inside it.
-      const pf = await waitFor(() => page.frames().find((f) => f.url().includes(`/api/kiosk/${kp.id}/render`)), 10000);
-      await pf.waitForSelector('.kiosk-btn');
+      // Saving reloads the preview, so a frame found too early can be the old one, detached a moment later
+      // (CI caught exactly that: "Waiting for selector `.kiosk-btn` failed"). Keep re-finding the frame
+      // until one actually has its buttons.
+      const pf = await waitFor(async () => {
+        for (const f of page.frames().filter((x) => x.url().includes(`/api/kiosk/${kp.id}/render`))) {
+          try { if (await f.evaluate(() => document.querySelectorAll('.kiosk-btn').length > 0)) return f; } catch { /* detached */ }
+        }
+        return null;
+      }, 15000);
+      assert.ok(pf, 'the preview frame shows its buttons');
       const fit = await pf.evaluate(() => {
         const btns = [...document.querySelectorAll('.kiosk-btn')];
         return { last: btns[btns.length - 1].getBoundingClientRect().bottom, h: window.innerHeight, w: window.innerWidth };
