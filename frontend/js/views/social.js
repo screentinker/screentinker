@@ -228,7 +228,13 @@ function openForm(app, f) {
     });
   }
   drawSources();
-  $('sfAdd').addEventListener('click', () => { readSources(); if (sources.length < 10) sources.push({ network: 'bluesky', kind: 'account', value: '' }); drawSources(); });
+  // 10 = the server's limit (lib/social/feeds.js). Say so; the button used to just do nothing.
+  $('sfAdd').addEventListener('click', () => {
+    readSources();
+    if (sources.length >= 10) { $('sfError').textContent = t('social.max_sources', { n: 10 }); return; }
+    $('sfError').textContent = '';
+    sources.push({ network: 'bluesky', kind: 'account', value: '' }); drawSources();
+  });
   $('sfCancel').addEventListener('click', () => overlay.remove());
   $('sfSave').addEventListener('click', async () => {
     readSources();

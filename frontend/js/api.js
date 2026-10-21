@@ -1076,6 +1076,7 @@ export const api = {
   getDataSources: () => request('/data-sources'),
   getDataSourcePluginTypes: () => request('/data-sources/plugin-types'),
   getDataSource: (id) => request(`/data-sources/${id}`),
+  getDataSourceReferences: (id) => request(`/data-sources/${id}/references`),
   testDataSource: (type, config, id) => request('/data-sources/test', {
     method: 'POST',
     body: JSON.stringify(id ? { type, config, id } : { type, config })

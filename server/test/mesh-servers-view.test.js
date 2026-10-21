@@ -313,8 +313,8 @@ test('⚠️ COVERAGE IS RENDERED BESIDE UPTIME, THE SAME SIZE', () => {
    * their screens were fine during a week nobody was watching them. Whichever number is smaller is
    * the one cropped out of the screenshot somebody emails.
    */
-  const up = REPORTS.match(/Uptime<\/div>\s*<div style="font-size:(\d+)px/);
-  const cov = REPORTS.match(/Coverage<\/div>\s*<div style="font-size:(\d+)px/);
+  const up = REPORTS.match(/t\('report\.uptime\.uptime'\)\}<\/div>\s*<div style="font-size:(\d+)px/);
+  const cov = REPORTS.match(/t\('report\.uptime\.coverage'\)\}<\/div>\s*<div style="font-size:(\d+)px/);
   assert.ok(up && cov, 'both figures must be rendered');
   assert.equal(up[1], cov[1], 'and at the same size — coverage is not a footnote');
   assert.match(REPORTS, /coverageNote/);
@@ -340,8 +340,9 @@ test('⚠️ the CSV is FETCHED with the auth header, not linked', () => {
 
 test('a truncated incident list says so', () => {
   // A report quietly showing 50 of 300 reads as "that was all of them".
-  assert.match(REPORTS, /Showing the 50 longest of/);
-  assert.match(REPORTS, /CSV contains every one/);
+  assert.match(REPORTS, /r\.incidents\.length > 50[\s\S]{0,200}t\('report\.uptime\.truncated', \{ n: r\.incidents\.length \}\)/);
+  const EN = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'i18n', 'en.js'), 'utf8');
+  assert.match(EN, /'report\.uptime\.truncated': "Showing the 50 longest of \{n\}\. The CSV contains every one\."/);
 });
 
 test('the uptime section renders NOTHING when there is no mesh', () => {

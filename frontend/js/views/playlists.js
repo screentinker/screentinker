@@ -24,6 +24,35 @@ function getTypeIcon(item) {
   return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
 }
 
+// A template widget's row shows the template's own thumbnail (the grid icon until it loads, and
+// for a template without one). Installed templates are asked for once a minute at most.
+function templateKeyOf(item) {
+  if (item.widget_type !== 'template' || !item.widget_config) return null;
+  try {
+    const c = typeof item.widget_config === 'string' ? JSON.parse(item.widget_config) : item.widget_config;
+    return c && typeof c.template === 'string' ? c.template : null;
+  } catch { return null; }
+}
+let tplThumbs = null;
+let tplThumbsAt = 0;
+function paintTemplateThumbs(root) {
+  const els = root.querySelectorAll('[data-tpl-thumb]');
+  if (!els.length) return;
+  if (!tplThumbs || Date.now() - tplThumbsAt > 60000) {
+    tplThumbsAt = Date.now();
+    tplThumbs = api.getInstalledTemplates()
+      .then((r) => new Map(((r && r.templates) || []).filter((x) => x.thumbnail).map((x) => [x.key, x.thumbnail])))
+      .catch(() => new Map());
+  }
+  tplThumbs.then((m) => els.forEach((el) => {
+    const u = m.get(el.dataset.tplThumb);
+    if (!u || !/^\/api\/templates\/thumb\/[0-9a-f]{64}$/.test(u) || !el.isConnected) return;
+    const img = document.createElement('img');
+    img.src = u; img.alt = ''; img.style.cssText = 'width:100%;height:100%;object-fit:cover';
+    el.replaceWith(img);
+  }));
+}
+
 // #74/#75 per-item schedule editor helpers. Client validation MIRRORS the server
 // (server/routes/playlists.js validateBlocks): same time/date regexes, non-empty days.
 const SCHED_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -1443,7 +1472,7 @@ function renderItems(items) {
           ? '<div style="color:var(--text-muted)">☰</div>'
           : item.thumbnail_path
             ? `<img data-auth-src="/api/content/${esc(item.content_id)}/thumbnail" style="width:100%;height:100%;object-fit:cover">`
-            : `<div style="color:var(--text-muted);opacity:0.5">${getTypeIcon(item)}</div>`
+            : `<div style="color:var(--text-muted);opacity:0.5"${templateKeyOf(item) ? ` data-tpl-thumb="${esc(templateKeyOf(item))}"` : ''}>${getTypeIcon(item)}</div>`
         }
       </div>
       <div style="flex:1 1 160px;min-width:160px">
@@ -1505,6 +1534,7 @@ function renderItems(items) {
     </div>
   `).join('');
   hydrateAuthImages(itemsEl);
+  paintTemplateThumbs(itemsEl);
   bindZoneSelects(itemsEl, currentPlaylistId, () => refreshAfterMutation());
   itemsEl.querySelectorAll('.item-layout-edit').forEach((btn) => {
     btn.addEventListener('click', async (e) => {

@@ -8,6 +8,29 @@
   @djalfe). 3.0.2 shipped Danish weather words, but the form's language list was the dashboard's own,
   which has no Danish. It now lists every language the weather supports, each in its own name, and the
   label says **Weather language** instead of "Language for day names".
+- **Menu Board's Logo, Background image and item Photo buttons work.** They opened the playlist's
+  Add Content dialog, so the Logo field read "[object Object]" at once and Add did nothing. They now
+  open the widget image picker (with upload), and the picked image is saved.
+- **Renaming a data source's slug no longer silently empties its tags.** Every `{{ds:old.…}}` tag
+  in slides and widgets, a menu board bound to the source and template widgets using it kept the
+  old name and rendered blank. Saving a new slug now lists what uses it and, on OK, rewrites those
+  tags to the new slug (live config and pending drafts). `GET /api/data-sources/:id/references` is
+  new; `PUT /api/data-sources/:id` takes `rewrite_tags: true` and returns `rewritten`.
+- **Data source slugs keep accented letters.** "Café menu" became `caf_menu`; it is now `cafe_menu`
+  (é → e, ß → ss, and so on), for the automatic slug and a typed one.
+- **A failed data source's status reads "Failed"**, not "Something went wrong."; the error itself
+  stays in the box under it and is the pill's tooltip.
+- **A long Source on a data source card (an .ics URL) is cut off with "…"** instead of overflowing
+  the card and pushing Last sync out of view.
+- **The Data Sources sidebar label is translated**, and the key-column hint shows the source's own
+  slug instead of always `{{ds:menu.…}}`.
+- **Social feed errors say what to do.** A Bluesky search reads "Bluesky only lets signed-in apps
+  search posts…" instead of "403"; an unknown Bluesky account reads "No Bluesky account by that
+  name." instead of "400: InvalidRequest"; an Instagram token that is expired or pasted wrong says
+  to paste a new token instead of "400: Failed to decode". **Add a source** says a feed can have at
+  most 10 sources instead of doing nothing.
+- **A template widget in the playlist editor shows the template's thumbnail** instead of the generic
+  widget icon.
 - **The slide editor's Insert Variable list offers the keys each data source really has.** It listed
   the same six calendar keys for every source, so a tag picked for a Sheet, Weather or table source
   showed nothing. It now lists the keys from the source's last sync (as the Data Sources page does),
@@ -28,6 +51,23 @@
 - **Undo works right after A.I. Generate**, even with nothing edited before it.
 - **More of the slide editor is translated**: the QR code panel, the Slide tab, + New deck, Edit,
   Delete and ▶ Play entrance.
+- **Reports' Export CSV downloads the file.** It opened a new tab that only said "Authentication
+  required", because the link carried the sign-in token in the address, which the server does not
+  read. The file is now fetched with the session and saved, like the uptime CSV.
+- **Reports' Plays per Day labels each bar with its own day.** West of UTC every label was a day
+  early. The default date range is now today and the 30 days before it in your own time zone (in
+  the evening it could start a day late and end on tomorrow), and the range covers your whole days.
+- **Reports' "Screen uptime by client" section is translated**, and the numbers over the Plays per
+  Day bars are no longer printed on top of each other when they do not fit (hover a bar for its value).
+- **A content request form's place picker shows which groups have no playlist yet** and does not
+  let you pick them. Choosing one was only refused on Save.
+- **Request dates in the content request inbox are shown in your own date format** instead of
+  2026-10-21.
+- **An offline alert set to 1440 minutes (a day) is sent.** The form allows 2 to 1440 minutes, but
+  screens dark for more than a day were never looked at, so 1440 never fired and thresholds near it
+  barely did.
+- **The Alerts page's description mentions screen problems** (blank, frozen, wrong content, panel
+  off) as well as offline and back online.
 
 ## 3.0.2
 
