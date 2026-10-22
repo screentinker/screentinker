@@ -16,6 +16,9 @@
 (function () {
   'use strict';
   var APP_VERSION_FALLBACK = '3.0.3';   // stamped from appinfo.json by build-ipk.sh
+  // The file this build is published as, and so the one it updates itself from. build-ipk.sh
+  // stamps it: ScreenTinker.ipk, or com.lg.app.signage.ipk for the Local application mode build.
+  var IPK_FILE = 'ScreenTinker.ipk';
   var KEY_SERVER = 'st_server_url';
   var KEY_UPDATE_TRIED = 'st_update_tried';
   var BACK_KEY = 461;                    // webOS remote "Back"
@@ -96,7 +99,7 @@
   function onCommand(action, payload) {
     if (!window.STWebOS) return post({ type: 'host:result', action: action, ok: false, error: 'unsupported' });
     var p = payload || {};
-    if (action === 'update' && !p.url) p.url = serverUrl + '/webos/ScreenTinker.ipk';
+    if (action === 'update' && !p.url) p.url = serverUrl + '/webos/' + IPK_FILE;
     STWebOS.run(action, p).then(function () {
       post({ type: 'host:result', action: action, ok: true });
     }, function (e) {
@@ -121,18 +124,22 @@
     return false;
   }
   function checkUpdate() {
-    if (!serverUrl || !window.STWebOS || STWebOS.capabilities().indexOf('system.update') < 0) return;
+    // 'system.self_update' is what device-control.js announces. This used to ask for system.update,
+    // which nothing announces, so a panel never updated itself on its own.
+    if (!serverUrl || !window.STWebOS || STWebOS.capabilities().indexOf('system.self_update') < 0) return;
     fetch(serverUrl + '/webos/version.json', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
         if (!j || !j.version || !j.available) return;
+        // A server that predates `files` only publishes ScreenTinker.ipk.
+        if (j.files ? !j.files[IPK_FILE] : IPK_FILE !== 'ScreenTinker.ipk') return;
         if (!newer(j.version, APP_VERSION_FALLBACK)) return;
         var tried = '';
         try { tried = localStorage.getItem(KEY_UPDATE_TRIED) || ''; } catch (e) {}
         if (tried === j.version) return;               // one attempt per published version
         try { localStorage.setItem(KEY_UPDATE_TRIED, j.version); } catch (e) {}
         log('update available: ' + j.version + ' (running ' + APP_VERSION_FALLBACK + ')');
-        STWebOS.run('update', { url: serverUrl + '/webos/ScreenTinker.ipk' })
+        STWebOS.run('update', { url: serverUrl + '/webos/' + IPK_FILE })
           .then(function () { log('update installed'); }, function (e) { log('update failed: ' + (e && e.message)); });
       })
       .catch(function () {});

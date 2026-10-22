@@ -3359,6 +3359,7 @@ app.get(['/download', '/download/'], (req, res) => {
   res.send(downloadIndex.renderPage({
     apk: apkCache.get(),
     ipk: ipkCache.get(),
+    ipkLocal: ipkCache.getLocal(),
     wgt: wgtCache.get(),
     brightsign: { exists: bsPackage.available(), version: bsPackage.version() },
     deb: debCache.get(),
@@ -3457,17 +3458,21 @@ app.get('/webos/version.json', (req, res) => {
   res.json(ipkCache.versionJson());
 });
 
-app.get('/webos/ScreenTinker.ipk', (req, res) => {
-  const ipk = ipkCache.get();
+function sendIpk(res, ipk, file) {
   if (!ipk.exists) return webosNotAvailable(res);
   res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Content-Disposition', 'attachment; filename="ScreenTinker.ipk"');
+  res.setHeader('Content-Disposition', `attachment; filename="${file}"`);
   res.setHeader('Cache-Control', 'no-cache');
   res.sendFile(ipk.path);
-});
+}
+
+app.get('/webos/ScreenTinker.ipk', (req, res) => sendIpk(res, ipkCache.get(), ipkCache.FILE));
+// The same app under the id a panel in Local application launch mode installs (lib/ipk-cache.js).
+app.get('/webos/com.lg.app.signage.ipk', (req, res) => sendIpk(res, ipkCache.getLocal(), ipkCache.LOCAL_FILE));
 
 app.get(['/webos', '/webos/'], (req, res) => {
   const ipk = ipkCache.get();
+  const local = ipkCache.getLocal();
   const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send('<!DOCTYPE html><html><head><meta charset="utf-8"><title>ScreenTinker on LG webOS Signage</title>'
@@ -3477,10 +3482,16 @@ app.get(['/webos', '/webos/'], (req, res) => {
     + 'ol{padding-left:20px}li{margin:8px 0}.mut{color:#94a3b8;font-size:14px}.pill{display:inline-block;background:#1e293b;border-radius:20px;padding:4px 12px;font-size:13px;color:#94a3b8}a{color:#3b82f6}</style></head>'
     + '<body><div class="w"><h1>ScreenTinker \u2014 LG webOS Signage</h1>'
     + (ipk.exists ? `<p class="pill">Ready \u00b7 v${ipk.version} \u00b7 ${(ipk.size / 1024 / 1024).toFixed(2)} MB</p>` : '<p class="pill">No .ipk hosted yet</p>')
-    + `<p>Download <a href="${base}/webos/ScreenTinker.ipk">ScreenTinker.ipk</a> and install it on the panel:</p>`
+    + (local.exists
+      ? `<h2>USB, Local application mode</h2><p>Download <a href="${base}/webos/com.lg.app.signage.ipk">com.lg.app.signage.ipk</a>. Keep that file name: the panel installs nothing else.</p>`
+        + '<ol><li>On a FAT32 USB stick, make a folder named <code>application</code> at the root and put the file in it.</li>'
+        + '<li>On the panel, open <b>Server Settings</b>: set <b>Application Launch Mode</b> to <b>Local</b> and the application type to <b>IPK</b>, then run <b>Local Application Upgrade</b> from <b>USB</b>.</li>'
+        + '<li>Restart the panel when the upgrade finishes.</li></ol>'
+      : '')
+    + `<h2>${local.exists ? 'Other install routes' : 'Install'}</h2><p>Download <a href="${base}/webos/ScreenTinker.ipk">ScreenTinker.ipk</a> and install it on the panel:</p>`
     + '<ol><li><b>USB:</b> copy the file to a USB stick, plug it into the panel, open <b>Settings \u2192 General \u2192 Install App</b> (the exact path varies by webOS version), and pick it.</li>'
-    + '<li><b>SI server:</b> host the file and point the panel\u2019s SI Server setting at it.</li>'
-    + `<li>Launch ScreenTinker, enter <code>${base}</code>, and claim the pairing code in your dashboard.</li></ol>`
+    + '<li><b>SI server:</b> host the file and point the panel\u2019s SI Server setting at it.</li></ol>'
+    + `<p>Then launch ScreenTinker, enter <code>${base}</code>, and claim the pairing code in your dashboard.</p>`
     + `<p class="mut">The app checks <code>${base}/webos/version.json</code> and installs a newer build itself when the panel\u2019s SCAP library is present. Without it (or from a browser) the web player runs at <a href="${base}/player">${base}/player</a>.</p>`
     + '</div></body></html>');
 });

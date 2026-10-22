@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **An LG webOS package for Local application launch mode: `com.lg.app.signage.ipk`.** A panel set
+  to Local mode installs only a package with the id `com.lg.app.signage`, under that file name,
+  from the `application/` folder of a USB stick (Server Settings: Application Launch Mode Local,
+  type IPK, Local Application Upgrade from USB). `ScreenTinker.ipk` could not be installed that way.
+  The release, `/webos`, `/download` and `scripts/upgrade.sh` now carry both builds, and
+  `webos/build-ipk.sh --app-id com.lg.app.signage` builds it. The install steps were worked out on
+  real LG panels by a customer evaluating ScreenTinker. `ScreenTinker.ipk` is unchanged, so panels
+  already running it keep updating from it.
+
+### Fixed
+
+- **The webOS app now updates itself when the server publishes a newer build.** The six-hourly
+  check asked for a capability named `system.update`, but the app announces `system.self_update`,
+  so the check always stopped before downloading anything. It only applies to builds with LG's
+  SCAP library in `webos/vendor/`; the CI-built packages have no SCAP and update the way they were
+  installed. Each build now updates from its own file, which `/webos/version.json` lists under `files`.
+
 ## 3.0.3
 
 ### Security: upgrade Node.js

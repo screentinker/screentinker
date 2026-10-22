@@ -87,9 +87,10 @@ jobs:
       - name: Build LG webOS .ipk (no SCAP library in CI; see webos/vendor/README.md)
         run: |
           chmod +x webos/build-ipk.sh
-          ( cd webos && ./build-ipk.sh )
+          ( cd webos && ./build-ipk.sh && ./build-ipk.sh --app-id com.lg.app.signage )
           cp webos/ScreenTinker.ipk ScreenTinker.ipk
-          ls -la ScreenTinker.ipk
+          cp webos/com.lg.app.signage.ipk com.lg.app.signage.ipk
+          ls -la ScreenTinker.ipk com.lg.app.signage.ipk
 
       - name: Build BrightSign autorun.zip (single-file player installer)
         run: |
@@ -116,7 +117,7 @@ jobs:
             --exclude='*.apk' \
             --exclude='brightsign/*.zip' --exclude='brightsign/server-payload.json' \
             --exclude='.claude' --exclude='.cc-writes' \
-            server frontend scripts docs VERSION README.md LICENSE .env.example ScreenTinker.wgt ScreenTinker.ipk brightsign
+            server frontend scripts docs VERSION README.md LICENSE .env.example ScreenTinker.wgt ScreenTinker.ipk com.lg.app.signage.ipk brightsign
           echo "TARBALL=$OUT" >> "$GITHUB_ENV"
           ls -la "$OUT"
 
@@ -200,6 +201,8 @@ jobs:
             echo "  updates itself from your instance. Built without LG's SCAP library (not redistributable),"
             echo "  so power and self-update controls need a build from \`webos/build-ipk.sh\` with the SDK"
             echo "  files in \`webos/vendor/\`; see \`docs/webos-player.md\`."
+            echo "- \`com.lg.app.signage.ipk\` - the same webOS app for panels in **Local** application launch"
+            echo "  mode, which install only a file of this name from the \`application/\` folder of a USB stick."
               echo "- \`autorun.zip\` - BrightSign player installer. Drop it on the root of a player's"
               echo "  storage (microSD, USB, or internal flash) and power-cycle: it unpacks itself and"
               echo "  reboots into the player. Edit \`screentinker.json\` inside the archive first to"
@@ -244,7 +247,8 @@ jobs:
             server-payload.json \
             "screentinker-sbom-${{ steps.ver.outputs.version }}.cdx.json" \
             tizen/ScreenTinker.wgt \
-            ScreenTinker.ipk
+            ScreenTinker.ipk \
+            com.lg.app.signage.ipk
 
       # ⚠️ AFTER the release is published, so a Sigstore outage cannot block a release: a failure
       # here leaves the release up and this job red, and re-running the job adds the provenance.
@@ -263,6 +267,7 @@ jobs:
             screentinker-sbom-${{ steps.ver.outputs.version }}.cdx.json
             tizen/ScreenTinker.wgt
             ScreenTinker.ipk
+            com.lg.app.signage.ipk
 
       - name: Attach the provenance bundle to the release
         env:

@@ -421,7 +421,7 @@ fetch_players() {
   # name<TAB>destination<TAB>sha256:digest<TAB>url, the APK first so its sidecar can follow it.
   list="$(printf '%s' "$json" | node -e '
     let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
-      const root = new Set(["ScreenTinker.apk", "ScreenTinker.apk.version", "ScreenTinker.ipk", "ScreenTinker.wgt"]);
+      const root = new Set(["ScreenTinker.apk", "ScreenTinker.apk.version", "ScreenTinker.ipk", "com.lg.app.signage.ipk", "ScreenTinker.wgt"]);
       const dist = /^(screentinker-pi_[^/]+_all\.deb|ScreenTinker-Setup-[^/]+\.exe|ScreenTinker-[^/]+\.dmg)$/;
       const rank = (n) => (n === "ScreenTinker.apk" ? 0 : n === "ScreenTinker.apk.version" ? 1 : 2);
       const out = (JSON.parse(s).assets || [])

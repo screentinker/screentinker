@@ -37,6 +37,7 @@ function formatSize(bytes) {
 function entries(state = {}) {
   const apk = state.apk || {};
   const ipk = state.ipk || {};
+  const ipkLocal = state.ipkLocal || {};
   const wgt = state.wgt || {};
   const brightsign = state.brightsign || {};
   const deb = state.deb || {};
@@ -84,6 +85,19 @@ function entries(state = {}) {
       version: ipk.version || null,
       size: formatSize(ipk.size),
       absent: 'No .ipk is hosted on this instance. The panel’s own browser can run the web player.',
+      fallback: '/player',
+    },
+    {
+      id: 'webos-local',
+      name: 'LG webOS Signage (Local app mode)',
+      file: 'com.lg.app.signage.ipk',
+      what: 'The same app for panels set to Local application launch mode. Keep the file name, put it in an application folder on a USB stick, and run Local Application Upgrade from USB.',
+      url: '/webos/com.lg.app.signage.ipk',
+      guide: '/guides/lg-webos-digital-signage.html',
+      available: !!ipkLocal.exists,
+      version: ipkLocal.version || null,
+      size: formatSize(ipkLocal.size),
+      absent: 'No Local mode .ipk is hosted on this instance. Build it with webos/build-ipk.sh --app-id com.lg.app.signage.',
       fallback: '/player',
     },
     {

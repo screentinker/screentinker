@@ -177,6 +177,7 @@ server-payload.json
 ScreenTinker.apk
 ScreenTinker.wgt
 ScreenTinker.ipk
+com.lg.app.signage.ipk
 screentinker-$VERSION.tar.gz
 screentinker-sbom-$VERSION.cdx.json
 screentinker-vega_armv7.vpkg
