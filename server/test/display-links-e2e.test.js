@@ -119,7 +119,9 @@ const playingContent = (page, contentId) => player(page, `playlist.length === 1 
 
 before(async () => {
   if (SKIP) return;
-  srv = await startServer('display-links');
+  // PREVIEW_REFRESH=off: the server would otherwise ask each screen for a screenshot ~8 s after a change, and one
+  // landing during the remote-view checks below counted as a request that reached "the other" screen (CI flake).
+  srv = await startServer('display-links', { PREVIEW_REFRESH: 'off' });
   browser = await launch(['--autoplay-policy=no-user-gesture-required',
     // Several pages share one browser; keep the background ones running at full speed.
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows']);
@@ -217,11 +219,17 @@ describe('display links: remote view works everywhere', { skip: SKIP }, () => {
       assert.ok(await shows(d.id, isRed), 'the original answers remote view');
       assert.ok(await shows(mirror.id, isRed), 'the mirror answers remote view');
       const asked = (p) => p.logs.filter((l) => l === 'Screenshot requested').length;
+      // Screen verification can still ask a screen for its own occasional screenshot, so one stray request on
+      // the other page is not proof of misrouting: try up to three times. A real misroute fails every time.
       for (const [id, mine, other] of [[d.id, pA, pB], [mirror.id, pB, pA]]) {
-        const [m0, o0] = [asked(mine), asked(other)];
-        assert.ok(await screenshotColour(id), 'a frame for ' + id);
-        assert.equal(asked(mine), m0 + 1, 'the request reached the screen it was for');
-        assert.equal(asked(other), o0, 'and not the other one');
+        let clean = false;
+        for (let attempt = 0; attempt < 3 && !clean; attempt++) {
+          const [m0, o0] = [asked(mine), asked(other)];
+          assert.ok(await screenshotColour(id), 'a frame for ' + id);
+          assert.ok(asked(mine) >= m0 + 1, 'the request reached the screen it was for');
+          clean = asked(other) === o0;
+        }
+        assert.ok(clean, `a screenshot request for ${id} reached the other screen on three tries in a row`);
       }
 
       // A playlist change on the original reaches both.
