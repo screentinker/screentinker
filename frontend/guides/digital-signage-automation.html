@@ -66,7 +66,7 @@
     <h2 id="before">Before you start</h2>
     <ul>
       <li><strong>The page is in Advanced view.</strong> New accounts start in Simple view. Switch with the <strong>Simple</strong> / <strong>Advanced</strong> buttons at the top of the menu, then choose <strong>Automation</strong> under <strong>Automate</strong>.</li>
-      <li><strong>Only a workspace admin can make changes.</strong> Everyone in the workspace can open the page and read the calls, but making, editing, testing and deleting hooks needs the <strong>Admin</strong> role. Editors and viewers still see the buttons, but the server refuses them.</li>
+      <li><strong>Only a workspace admin can make changes.</strong> Everyone in the workspace can open the page and read the calls, but making, editing, testing and deleting hooks needs the <strong>Admin</strong> role. Editors and viewers don't get those buttons; a note at the top says only a workspace admin can change this.</li>
       <li><strong>Have the thing to show ready.</strong> A playlist switch needs a playlist that has been published. A table update needs a <strong>Manual table</strong> made on the Data Sources page. A trigger hook needs a trigger.</li>
     </ul>
 
@@ -124,7 +124,7 @@
     <h3>Mass notification (Alertus, InformaCast, CAP)</h3>
     <p>Point your mass notification system at the address. The headline, message, alert id and "cleared" status are found by themselves. If your sender uses other field names, open <strong>Field mapping (optional)</strong> and fill in <strong>Alert id field</strong>, <strong>Headline field</strong>, <strong>Message field</strong> or <strong>Clear / status field</strong>. <strong>Severity when the sender does not say</strong> and <strong>End automatically after (minutes)</strong> (120 unless you change it) fill the gaps. CAP test and exercise messages never take over a screen.</p>
     <h3>Fire a trigger</h3>
-    <p>Pick the <strong>Trigger</strong> and the <strong>Action</strong>, <strong>Fire</strong> or <strong>Clear</strong>. Over the internet this only reaches Raspberry Pi and Windows screens. Other screens can still fire the trigger from their own network.</p>
+    <p>Pick the <strong>Trigger</strong> and the <strong>Action</strong>, <strong>Fire</strong> or <strong>Clear</strong>. Over the internet this reaches the Raspberry Pi, Windows and Mac apps, screens that play in a web browser, and BrightSign, LG (webOS), Fire TV Vega and iPhone or iPad players. It doesn't reach Android TV, Fire TV (Android), Samsung (Tizen) or Roku screens; those that support triggers can still get them from a sender on their own network.</p>
     <h3>Update a table</h3>
     <ul>
       <li><strong>Table</strong>: one of your <strong>Manual table</strong> data sources.</li>
@@ -142,9 +142,9 @@
       <li>Calling the hook again starts the time again from that call; it doesn't add up.</li>
       <li>It never changes a screen that is on a head office playlist, and an emergency alert still comes first.</li>
     </ul>
-    <div class="callout warn">
+    <div class="callout">
       <span class="callout-title">Ending a switch early</span>
-      <p>The <strong>Action</strong> list also has <strong>Switch screens back</strong>, but in this version a separate hook set to it does not end another hook's switch. To send the screens back early, open the switching hook with <strong>Edit</strong>, untick <strong>Enabled</strong> and press <strong>Save</strong>, then tick it again when you next need it.</p>
+      <p>While a hook is switching screens, its card has an <strong>End now</strong> button: press it to send the screens back. A sender can do the same: make a second hook with the <strong>Action</strong> set to <strong>Switch screens back</strong>. When it is called, every screen it covers goes back to what it normally plays, whichever hook switched it.</p>
     </div>
 
     <h2 id="security">Signing and GET requests</h2>
@@ -154,10 +154,10 @@
     </ul>
 
     <h2 id="calls">Test a hook and read its calls</h2>
-    <p><strong>Test</strong> runs the hook with a sample request and shows the result in a message. It is not a rehearsal: an emergency test puts a "Test alert" on your screens, and a playlist test switches them. The page asks first for those kinds.</p>
+    <p><strong>Test</strong> runs the hook with a sample request and shows the result in a message. It is not a rehearsal: an emergency test puts a "Test alert" on your screens, a playlist test switches them, and a trigger test fires the trigger. The page asks first for those kinds. A test of an <strong>Update a table</strong> hook is the exception: it changes nothing and only says what it would have done to the table.</p>
     <div class="callout warn">
       <span class="callout-title">Test runs for real</span>
-      <p>To take a test alert or switch off the screens, untick <strong>Enabled</strong> on the hook and <strong>Save</strong>: switching a hook off ends everything it is showing. Don't press <strong>Test</strong> on an <strong>Update a table</strong> hook set to <strong>Replace all rows</strong>: the sample is empty, so it empties your table, and the page doesn't ask first.</p>
+      <p>A test alert or a test switch stays on your screens until it ends by itself. To take it down sooner, press <strong>End now</strong> on the hook's card. Unticking <strong>Enabled</strong> and pressing <strong>Save</strong> also ends everything the hook is showing.</p>
     </div>
     <p><strong>Calls</strong> opens the hook's recent calls: <strong>When</strong>, <strong>Status</strong> (200 means it worked) and <strong>Result</strong>, such as "raised 1 on 1 screen(s)" or "switched 1 screen(s) for 60 minute(s)". Tests are marked "(test)". A refused call says why, for example a missing signature or too many calls.</p>
     <figure>

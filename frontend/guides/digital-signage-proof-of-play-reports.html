@@ -136,11 +136,7 @@
     </div>
 
     <h2 id="export">Export CSV</h2>
-    <p>The <strong>Export CSV</strong> button is meant to download every play in your dates as a spreadsheet file, <code>proof-of-play.csv</code>, one row per play, with the Device, Content, Started, Ended, Duration (sec) and Completed columns. Times in the file are in UTC.</p>
-    <div class="callout warn">
-      <span class="callout-title">Export CSV does not work in version 3.0.2</span>
-      <p>Pressing it opens a new tab that says "Authentication required" instead of downloading the file. The charts and tables on the page are not affected. Developers can still get the same file through the ScreenTinker API with an API token.</p>
-    </div>
+    <p>The <strong>Export CSV</strong> button downloads every play in your dates as a spreadsheet file, <code>proof-of-play.csv</code>, one row per play, with the Device, Content, Started, Ended, Duration (sec) and Completed columns. Times in the file are in UTC.</p>
 
     <h2 id="history">How far back you can look</h2>
     <p>On screentinker.com each play is kept in full for 7 days; on your own server the default is 90 days. After that, plays are kept as hourly totals, so the charts and tables still work for older dates: the numbers are the same, only the single-play detail is gone.</p>

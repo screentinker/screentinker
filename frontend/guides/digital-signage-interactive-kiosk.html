@@ -88,7 +88,7 @@
     <p>The editor shows a small preview on the left and three panels on the right. Nothing is kept until you press <strong>Save</strong> at the top. Saving also refreshes the small preview.</p>
     <figure>
       <img src="/assets/guides/kiosk/editor.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The kiosk editor for the page Café welcome. On the left, a preview with the title Welcome to Larkspur Café, the subtitle Tap a button to find out more, and buttons for Menu, Today's bakes and Wi-Fi. On the right, the Page Settings panel with Title, Subtitle, Logo URL, Footer Text, Idle Screen Title set to Touch to Begin and Idle Timeout set to 60, and the start of the Style panel. Preview and Save buttons are at the top right.">
-      <figcaption>The editor. The small preview can cut off the lower rows of buttons; <strong>Preview</strong> shows the whole page.</figcaption>
+      <figcaption>The editor: a small preview on the left, the settings on the right.</figcaption>
     </figure>
 
     <h3 id="page-settings">Page Settings</h3>
@@ -116,12 +116,8 @@
     <ul>
       <li><strong>No action</strong>: the button is just a label. Good for short facts such as opening hours.</li>
       <li><strong>Go to page</strong>: the screen opens the address in the box, in place of the kiosk page. Use this to link to your other kiosk pages (see <a href="#link-pages">link pages together</a>).</li>
-      <li><strong>Open URL</strong>: opens the address in a new browser tab. This only works in <strong>Preview</strong> on a computer. On a screen, new tabs are blocked and the button does nothing, so use <strong>Go to page</strong> instead.</li>
+      <li><strong>Open URL</strong>: opens a website full screen inside the kiosk page, with a <strong>Back</strong> bar at the top that returns to your buttons. Good for an online menu to read. Forms and sign-ins don't work there, and many websites refuse to be shown inside another page and stay blank; the bar says so. Try it on your screen first.</li>
     </ul>
-    <div class="callout warn">
-      <span class="callout-title">Choose the action first, then type the address</span>
-      <p>The address box remembers which action was chosen when you typed into it. If you type the address first and change the action to <strong>Go to page</strong> afterwards, the button will do nothing. Choose the action, then type (or retype) the address, then <strong>Save</strong>.</p>
-    </div>
 
     <h3 id="idle">The idle screen</h3>
     <p>When nobody has touched the screen for the <strong>Idle Timeout (seconds)</strong> (60 unless you change it), a dark cover with the <strong>Idle Screen Title</strong> ("Touch to Begin") appears over the page. The next touch removes it. The idle screen belongs to each kiosk page: it does not take a visitor back to your first page.</p>
@@ -157,14 +153,14 @@
     <p>Add only your first page. The others open from its buttons.</p>
     <div class="callout warn">
       <span class="callout-title">Give the touchscreen a playlist of its own</span>
-      <p>A kiosk page is an item like any other: it plays for its <strong>Duration</strong> (10 seconds unless you change it) and then the playlist moves on, even if someone is using it. When the kiosk page is the only item in the playlist, it stays on the screen. So give the touchscreen a playlist with just the kiosk page in it.</p>
+      <p>A kiosk page is an item like any other: it plays for its <strong>Duration</strong> and then the playlist moves on, even if someone is using it. When you add a kiosk page, its <strong>Duration</strong> is set to 43200 seconds (12 hours), so it stays up while people use it, and the other items in the playlist only get a turn after that. When the kiosk page is the only item in the playlist, it stays on the screen. So give the touchscreen a playlist with just the kiosk page in it.</p>
     </div>
 
     <h2 id="changes">Changing a page that is already on a screen</h2>
-    <p>Press <strong>Save</strong> after your changes. Saving does not send the page to your screens again: a screen picks up the new version the next time it loads the page. A touchscreen that shows only the kiosk page can keep the old version for a long time. To update it now, open the screen in <strong>Screens</strong>, go to <strong>Device Info</strong> and press <strong>Reload Player</strong>. Not every player has that button; if yours does not, restart the player.</p>
+    <p>Press <strong>Save</strong> after your changes. Saving sends the new version to every screen that plays the page; you don't need to publish the playlist again. If a screen still shows the old version, open it in <strong>Screens</strong>, go to <strong>Device Info</strong> and press <strong>Reload Player</strong>. Not every player has that button; if yours does not, restart the player.</p>
     <div class="callout warn">
       <span class="callout-title">Remove it from playlists before you delete it</span>
-      <p>Deleting a kiosk page does not remove its "Kiosk:" item from your playlists. A screen that still plays it shows "Page not found". Take it out of the playlist and <strong>Publish</strong> first, then delete the page.</p>
+      <p>You can't delete a kiosk page while a playlist or schedule still plays it. <strong>Delete</strong> then says "This page is still in use:" and names them. Take its "Kiosk:" item out of each playlist and <strong>Publish</strong>, then delete the page.</p>
     </div>
 
     <div class="callout self-hosted">
@@ -174,9 +170,9 @@
 
     <h2 id="faq">FAQ</h2>
     <h3>A button does nothing when I tap it on the screen.</h3>
-    <p>Check its action. <strong>Open URL</strong> never works on a screen; change it to <strong>Go to page</strong>. If it is already <strong>Go to page</strong>, choose the action again, retype the address and press <strong>Save</strong>. Then reload the player on the screen, as described in <a href="#changes">changing a page</a>.</p>
+    <p>Check its action: a button set to <strong>No action</strong> is only a label. If it is <strong>Open URL</strong> or <strong>Go to page</strong>, check the address and press <strong>Save</strong>. If the screen opens a blank page, that website does not allow being shown inside another page; link to a different page instead. If the screen still shows your old buttons, reload the player, as described in <a href="#changes">changing a page</a>.</p>
     <h3>The screen goes back to my other content after a few seconds.</h3>
-    <p>The kiosk page is sharing a playlist with other items, so it plays for its <strong>Duration</strong> and moves on. Give the touchscreen a playlist that holds only the kiosk page.</p>
+    <p>The kiosk page is sharing a playlist with other items, so it plays for its <strong>Duration</strong> and moves on. Check the kiosk item's <strong>Duration</strong> in the playlist: a kiosk page added a while ago, or one you changed, may say 10 seconds. Set it to 43200 (12 hours), or give the touchscreen a playlist that holds only the kiosk page.</p>
     <h3>Is this the same as "Interactive (walk-up kiosk)"?</h3>
     <p>No. That is a setting on a Web page widget, for letting visitors use a whole website and wiping what they did when they leave. A kiosk page is a simpler page of buttons that you build here.</p>
     <h3>Can I rename a kiosk page?</h3>

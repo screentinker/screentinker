@@ -144,21 +144,21 @@
       <figcaption>The tag in the text box, and the live value on the slide.</figcaption>
     </figure>
     <p>You publish once. After that, when the data changes, the screens playing that slide update on their own: no re-publishing.</p>
-    <div class="callout warn">
-      <span class="callout-title">Copy tags from the Data Sources page</span>
-      <p>The slide editor has an <strong>⚡ Insert Variable...</strong> list, but it offers calendar values (status, next event) for every source, even a sheet or the weather, where they don't exist. Copy the tag from the source's <strong>Variables</strong> instead. A tag whose source or variable does not exist shows as empty text on the screen.</p>
+    <div class="callout">
+      <span class="callout-title">Or pick the tag in the slide editor</span>
+      <p>Under a text box's <strong>Text</strong>, the <strong>⚡ Insert Variable...</strong> list shows each source with the values it had at its last sync, the same ones as its <strong>Variables</strong>. Pick one to add its tag. A source that has never synced says "No data yet: sync this source first". A tag whose source or variable does not exist shows as empty text on the screen.</p>
     </div>
 
     <h2 id="refresh">How often it updates, and when it fails</h2>
     <ul>
       <li>Each source refreshes on its own <strong>Sync Interval</strong>: every 5 minutes, 15 minutes or hour for a Google Sheet (never faster than every 2 minutes), every 15 minutes to an hour for the weather. A manual table changes only when you save it.</li>
       <li>Press <strong>Sync Now</strong> on a card to fetch it straight away. Screens update when the values actually change.</li>
-      <li>The card's dot says <strong>Live</strong> when the last sync worked. If it failed, the dot says "Something went wrong." and the card shows the reason in red, for example that the sheet is not shared. <strong>Screens keep showing the last values that worked</strong> until the next good sync.</li>
+      <li>The card's dot says <strong>Live</strong> when the last sync worked. If it failed, the dot says <strong>Failed</strong> and the card shows the reason in red, for example that the sheet is not shared. Hold the pointer over <strong>Failed</strong> to see the reason there too. <strong>Screens keep showing the last values that worked</strong> until the next good sync.</li>
       <li><strong>Edit</strong> opens the form again. Press <strong>Test &amp; preview</strong>, then <strong>Save</strong>.</li>
     </ul>
     <div class="callout warn">
-      <span class="callout-title">Changing a slug, or deleting a source, empties its tags</span>
-      <p>Slides find a source by its slug. If you change the <strong>Identifier Slug</strong> or press <strong>Delete</strong>, every tag that used the old one shows nothing until you fix the slides. Rename the source's <strong>Name</strong> freely; leave the slug alone.</p>
+      <span class="callout-title">Deleting a source empties its tags</span>
+      <p>Slides find a source by its slug. If you press <strong>Delete</strong>, every tag that used it shows nothing until you fix the slides. If you change the <strong>Identifier Slug</strong> and slides or widgets use it, ScreenTinker asks first and then updates their tags to the new slug, and screens pick up the change. Cancel that question to keep the old slug. Rename the source's <strong>Name</strong> freely.</p>
     </div>
 
     <div class="callout self-hosted">

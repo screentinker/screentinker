@@ -66,7 +66,7 @@
     <h2 id="before">Before you start</h2>
     <ul>
       <li><strong>The page is in Advanced view.</strong> New accounts start in Simple view. Switch with the <strong>Simple / Advanced</strong> buttons at the top of the menu.</li>
-      <li><strong>Links belong to the workspace.</strong> Everyone in the workspace sees the same list. An Editor or Admin can make and change links. A <strong>Viewer</strong> can see them and their scans, but saving or deleting is refused with "Read-only access". See <a href="/guides/digital-signage-users-roles.html">Users and roles</a>.</li>
+      <li><strong>Links belong to the workspace.</strong> Everyone in the workspace sees the same list. An Editor or Admin can make and change links. A <strong>Viewer</strong> can see them, their scans and their codes, but doesn't get the buttons to add, edit or delete links. See <a href="/guides/digital-signage-users-roles.html">Users and roles</a>.</li>
       <li>You need the address the code should open, for example your online menu. It must start with <code>https://</code> or <code>http://</code>.</li>
     </ul>
 
@@ -130,7 +130,7 @@
 
     <div class="callout self-hosted">
       <span class="callout-title">On a self-hosted server</span>
-      <p>Scans go to your own server, so phones must be able to reach it from outside your building, and codes stop opening while the server is down. If you open the dashboard at a local address (such as <code>localhost</code>, <code>127.0.0.1</code> or a <code>192.168.</code> address), the QR codes page shows an orange warning: open the dashboard at its public address before you copy or download codes, or pick a link on a slide. The slide editor does not show that warning, so check the address in <strong>Encodes</strong>.</p>
+      <p>Scans go to your own server, so phones must be able to reach it from outside your building, and codes stop opening while the server is down. If you open the dashboard at a local address (such as <code>localhost</code>, <code>127.0.0.1</code>, a <code>192.168.</code> address, a name ending in <code>.local</code>, or a private IPv6 address), the QR codes page shows an orange warning: open the dashboard at its public address before you copy or download codes, or pick a link on a slide. The slide editor warns too, under <strong>Encodes</strong>, when a code holds a private address.</p>
     </div>
 
     <h2 id="related-features">Related features</h2>
@@ -142,7 +142,7 @@
     <h3>I changed the address, but people still land on the old page.</h3>
     <p>Check that you pressed <strong>Save</strong> and that the card shows the new address after the arrow. The change applies to the next scan; nothing on the screen needs to be republished.</p>
     <h3>How do I stop a slide's QR code being tracked?</h3>
-    <p>Type the address you want straight into <strong>Encodes</strong>, then publish the deck. Choosing "Not tracked" in the list does not change the code by itself.</p>
+    <p>Choose <strong>Not tracked</strong> in the <strong>Tracked link</strong> list, then publish the deck. The code goes back to the link's own address, so it opens the same page but no longer counts scans.</p>
     <h3>Why is the scan count lower than I expected?</h3>
     <p>Repeat opens from the same phone within 10 seconds count once, and link previews are not counted at all. Scans while a link is switched off are not counted either.</p>
 
