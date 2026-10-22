@@ -13,9 +13,9 @@
 #   ScreenTinkerCacheNode.exe/.xml   WinSW 2.12.0 (MIT), which runs node as a Windows service
 param(
     [string]$Version = "",
-    [string]$NodeVersion = "22.23.3",
-    # From https://nodejs.org/dist/v22.23.3/SHASUMS256.txt
-    [string]$NodeSha256 = "2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71",
+    [string]$NodeVersion = "22.23.4",
+    # From https://nodejs.org/dist/v22.23.4/SHASUMS256.txt
+    [string]$NodeSha256 = "cbc74b5e0982c9dbb41525fd8fb5dcd32fbee237863f7829072f4639a1ce5f20",
     [string]$WinSwVersion = "2.12.0",
     # SHA-256 of WinSW-x64.exe from the v2.12.0 GitHub release (that release predates GitHub's
     # published asset digests, so it was computed from the official download and pinned here).
