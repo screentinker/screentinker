@@ -384,13 +384,30 @@ test('a test of a "Replace all rows" table hook changes nothing', async () => {
   const before = q1('SELECT config FROM data_sources WHERE id = ?', ds.body.id).config;
   const t = await api(`/api/automation/${h.id}/test`, J({}));
   assert.equal(t.status, 200, JSON.stringify(t.body));
-  assert.match(t.body.outcome, /nothing changed: would replace the table with 0 row\(s\)/);
+  assert.match(t.body.outcome, /nothing changed: would replace the table with 1 row\(s\)/, 'the test sends one sample row');
   assert.equal(q1('SELECT config FROM data_sources WHERE id = ?', ds.body.id).config, before, 'the table is untouched');
   assert.equal((await api(`/api/automation/${h.id}/calls`, J(undefined, 'GET'))).body[0].test, true);
   // A real call still replaces.
   const r = await post(h.url, [{ item: 'Latte', price: '3.50' }]);
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.deepEqual(JSON.parse(q1('SELECT config FROM data_sources WHERE id = ?', ds.body.id).config).rows, [['Latte', '3.50']]);
+});
+
+test('a test of a table hook reading {{body.items}} gets a sample row there (the guide\'s own example)', async () => {
+  // The test body used to be [], so Rows: {{body.items}} found nothing and the test failed with
+  // "No rows in the body" before the dry run could say what a real call would do.
+  const ds = await api('/api/data-sources', J({ name: 'Specials', type: 'table', config: { columns: ['Item', 'Price'], rows: [['Soup', '4.00']] } }));
+  assert.equal(ds.status, 201, JSON.stringify(ds.body));
+  const h = await mkHook({ name: 'Till specials', kind: 'data', config: { data_source_id: ds.body.id, mode: 'replace', rows: '{{body.items}}' } });
+  const before = q1('SELECT config FROM data_sources WHERE id = ?', ds.body.id).config;
+  const t = await api(`/api/automation/${h.id}/test`, J({}));
+  assert.equal(t.status, 200, JSON.stringify(t.body));
+  assert.match(t.body.outcome, /nothing changed: would replace the table with 1 row\(s\); the table would have 1 \(it has 1\)/);
+  assert.equal(q1('SELECT config FROM data_sources WHERE id = ?', ds.body.id).config, before, 'still a dry run');
+  // A real call with the same shape works.
+  const r = await post(h.url, { items: [{ item: 'Chili', price: '5.50' }] });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(JSON.parse(q1('SELECT config FROM data_sources WHERE id = ?', ds.body.id).config).rows, [['Chili', '5.50']]);
 });
 
 /* ============================== review fixes ============================== */

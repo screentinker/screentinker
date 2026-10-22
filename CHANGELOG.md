@@ -10,6 +10,10 @@
 
 ### Fixed
 
+- **Testing a table hook works when its rows come from a field such as `{{body.items}}`.** The test sent an
+  empty list, so it failed with "No rows in the body" before the dry run could report anything. It now
+  sends one sample row, made from the table's own columns, where the hook reads its rows; still nothing
+  is written.
 - **Viewers no longer see buttons that only answer "Read-only access".** A workspace Viewer was
   offered create, edit and delete buttons on Templates ("Use…"), QR codes, Data Sources (Connect
   data, Sync Now, Edit, Delete), Kiosk, Widgets, Slides, Playlists, Layouts, Schedule, Triggers,
