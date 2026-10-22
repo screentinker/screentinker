@@ -164,6 +164,8 @@ export default {
   'common.cancel': "キャンセル",
   'common.delete': "削除",
   'common.edit': "編集",
+  'common.read_only_note': 'このワークスペースへのアクセスは閲覧のみです。内容は確認できますが、変更はできません。',
+  'common.admin_only_note': 'これを変更できるのはワークスペース管理者だけです。閲覧はできます。',
   'common.done': "完了",
   'common.saving': "保存中...",
   'common.deleting': "削除中...",

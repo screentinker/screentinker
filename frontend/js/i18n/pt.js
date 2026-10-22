@@ -996,6 +996,8 @@ export default {
   'common.cancel': 'Cancelar',
   'common.delete': 'Excluir',
   'common.edit': 'Editar',
+  'common.read_only_note': 'Você tem acesso somente leitura a este espaço de trabalho: pode ver tudo, mas não alterar nada.',
+  'common.admin_only_note': 'Só um administrador do espaço de trabalho pode alterar isto. Você pode visualizar.',
   'common.create': "Criar",
   'common.status': "Status",
   'common.pending': "Pendente",

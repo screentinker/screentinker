@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alerts when a screen goes offline | ScreenTinker</title>
+  <meta name="description" content="Get a Slack, Teams, email, Telegram, PagerDuty or webhook message when a screen goes offline, comes back, or shows a blank or frozen picture.">
+  <meta name="keywords" content="digital signage alerts, screen offline alert, digital signage monitoring, slack alert screen offline, signage downtime notification, screentinker alerts">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/digital-signage-alerts.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/digital-signage-alerts.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/digital-signage-alerts.html">
+  <meta property="og:title" content="Alerts when a screen goes offline">
+  <meta property="og:description" content="Get a Slack, Teams, email, Telegram, PagerDuty or webhook message when a screen goes offline, comes back, or shows a blank or frozen picture.">
+  <meta property="og:image" content="https://screentinker.com/assets/guides/alerts/channels.webp">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Alerts when a screen goes offline">
+  <meta name="twitter:description" content="Get a Slack, Teams, email, Telegram, PagerDuty or webhook message when a screen goes offline, comes back, or shows a blank or frozen picture.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/guides/alerts/channels.webp">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/guides/">Guides</a>
+      <span>/</span>
+      <span>Alerts</span>
+    </nav>
+
+    <h1>Alerts when a screen goes offline</h1>
+    <p class="lead">A screen that has gone dark doesn't tell anyone. Alerts do: when a screen has been offline for a few minutes, ScreenTinker posts a message to your team's Slack, Microsoft Teams, Telegram or PagerDuty, or sends an email. When the screen comes back, it says so. It can also tell you when a screen is on but showing a blank or frozen picture.</p>
+
+    <p>This guide covers adding an alert channel, choosing which screens it watches, testing it, and the screen verification settings on the same page.</p>
+
+    <h2 id="before">Before you start</h2>
+    <ul>
+      <li><strong>Alerts is in Advanced view.</strong> New accounts start in Simple view. Switch with the <strong>Simple / Advanced</strong> buttons at the top of the menu.</li>
+      <li><strong>Only a workspace Admin can add or change channels.</strong> Everyone in the workspace can see the page, and the buttons show for everyone, but an Editor or a Viewer who presses <strong>Save</strong>, <strong>Send test</strong> or <strong>Delete</strong> gets "Only a workspace admin can change alert channels." See <a href="/guides/digital-signage-users-roles.html">Users and roles</a>.</li>
+      <li><strong>Have the address ready</strong> that the messages should go to: a Slack or Teams webhook, a PagerDuty integration key, a Telegram bot, or some email addresses. The form tells you where to find each one.</li>
+    </ul>
+
+    <h2 id="open">The Alerts page</h2>
+    <p>Choose <strong>Alerts</strong> in the <strong>Automate</strong> part of the sidebar. At the top are the <strong>Screen verification</strong> settings and <strong>Recent screen problems</strong> (see <a href="#verification">below</a>). Under them is the <strong>Add alert channel</strong> button and your channels.</p>
+    <figure>
+      <img src="/assets/guides/alerts/channels.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The ScreenTinker Alerts page. At the top, Screen verification is On, asking each screen for a screenshot every 30 minutes, sensitivity Normal, a problem must last 10 minutes, alerts for Blank, Frozen and Panel off. Recent screen problems says no screen problems recorded. Below the Add alert channel button are three channels: Café managers (Slack, sends offline, back online, screen problems and screen recovered after 5 minutes, all screens), Kitchen team (Telegram, offline and back online after 10 minutes, group Kitchen) and Owner and shift lead (Email, after 15 minutes, group Front of house), each with Send test, Edit and Delete buttons.">
+      <figcaption>Three channels: the managers' Slack hears about every screen, the kitchen's Telegram group only about the kitchen screens.</figcaption>
+    </figure>
+    <p>Each channel card shows where it sends (the address is shortened, for example <code>https://hooks.slack.com/…Wy6e</code>), a <strong>Sends:</strong> line with what it sends, after how many minutes and for which screens, and when it <strong>Last sent</strong> a message. If the last message failed, the reason appears in amber next to it.</p>
+
+    <h2 id="add">Add an alert channel</h2>
+    <ol class="steps">
+      <li>Press <strong>Add alert channel</strong>.</li>
+      <li><strong>Send to</strong>: <strong>Slack</strong>, <strong>Microsoft Teams</strong>, <strong>Email</strong>, <strong>PagerDuty</strong>, <strong>Telegram</strong> or <strong>Webhook</strong>. You can't change this later; make a new channel instead.</li>
+      <li><strong>Name</strong>: anything that tells you who it reaches, such as "Café managers".</li>
+      <li>Fill in where it goes. The hint under each box says where to find it:
+        <ul>
+          <li><strong>Slack incoming webhook</strong>: in Slack, Apps → Incoming Webhooks → Add to a channel, then copy the webhook URL.</li>
+          <li><strong>Teams workflow webhook</strong>: in Teams, the channel's ⋯ → Workflows → "Post to a channel when a webhook request is received", then copy its URL.</li>
+          <li><strong>Email addresses</strong>: up to 20, separated by commas.</li>
+          <li><strong>PagerDuty integration key</strong>: from a PagerDuty service, Integrations → Events API v2.</li>
+          <li><strong>Telegram bot token</strong> and <strong>Chat ID</strong>: make a bot with @BotFather, add it to your group, and follow the hint to find the chat ID.</li>
+          <li><strong>Webhook URL</strong> (and an optional <strong>Signing secret</strong>) if your own system should receive the alert.</li>
+        </ul>
+      </li>
+      <li><strong>Send when</strong>: tick the messages you want. All four are ticked on a new channel:
+        <ul>
+          <li><strong>a screen has been offline for</strong> 5 <strong>minutes</strong> (any number from 2 to 1440).</li>
+          <li><strong>it comes back online (after an offline alert)</strong>.</li>
+          <li><strong>a screen is online but showing a problem (blank, frozen, wrong content, panel off)</strong>.</li>
+          <li><strong>that screen is showing its content again</strong>.</li>
+        </ul>
+      </li>
+      <li><strong>For</strong>: <strong>All screens in this workspace</strong> (screens you add later are included), <strong>Screens in these groups</strong> or <strong>These screens</strong>, then tick them.</li>
+      <li>Leave <strong>On</strong> ticked and press <strong>Save</strong>.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/alerts/new.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Add alert channel form. Send to is Slack, Name has the example Ops team, Slack incoming webhook with the hint In Slack: Apps, Incoming Webhooks, Add to a channel, then copy the webhook URL. Send when has four ticked boxes: a screen has been offline for 5 minutes, it comes back online after an offline alert, a screen is online but showing a problem, and that screen is showing its content again. For is All screens in this workspace, with the note All 3 screens here, and any added later. On is ticked, with Cancel and Save buttons.">
+      <figcaption>A new channel. Every message type is ticked to start with.</figcaption>
+    </figure>
+
+    <div class="callout">
+      <span class="callout-title">Why wait a few minutes?</span>
+      <p>Screens drop off for a moment when the Wi-Fi blinks or the player restarts. Waiting 5 to 15 minutes before an alert means you only hear about screens that are really down. Each channel sends one message per outage, however long it lasts.</p>
+    </div>
+
+    <h2 id="test">Test it</h2>
+    <p>Press <strong>Send test</strong> on the channel. You see "Test message sent", and a message titled "ScreenTinker test alert" arrives where you sent it. If something is wrong, the error appears instead, for example "The service answered HTTP 404." for a mistyped webhook. A PagerDuty test opens an incident and closes it again straight away, so nobody stays paged.</p>
+
+    <h2 id="edit">Change or switch off a channel</h2>
+    <p>Press <strong>Edit</strong>. The webhook, key or bot token is never shown again in full: its box shows only the last few characters. <strong>Leave empty to keep the current one</strong>, or paste a new one to replace it.</p>
+    <figure>
+      <img src="/assets/guides/alerts/edit-telegram.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Edit Kitchen team form. Send to is Telegram and cannot be changed. The Telegram bot token box shows only its last four characters with the hint Leave empty to keep the current one. Chat ID is -1002847193650 with a hint about BotFather and getUpdates. Send good news silently is ticked. Send when has offline for 10 minutes and back online ticked. For is Screens in these groups, with Kitchen ticked and Front of house not.">
+      <figcaption>Editing the kitchen's Telegram channel. The bot token stays as it is unless you type a new one.</figcaption>
+    </figure>
+    <p>For Telegram, <strong>Send good news silently (back online, screen OK): only problems make a sound</strong> keeps the group's phones quiet for the good news. To pause a channel, untick <strong>On</strong> and save: its card is marked <strong>Off</strong>. <strong>Delete</strong> removes it for good.</p>
+
+    <h2 id="verification">Blank, frozen or switched-off screens</h2>
+    <p>A screen can be online and still show nothing useful: a black picture, a picture that stopped moving, or a TV someone switched off. <strong>Screen verification</strong> checks the screenshots your screens send and spots these. The settings are at the top of the Alerts page:</p>
+    <figure>
+      <img src="/assets/guides/alerts/verification.webp" width="1156" height="404" loading="lazy" decoding="async" alt="The Screen verification settings, switched On: Ask each screen for a screenshot Every 30 minutes, Sensitivity Normal, A problem must last 10 minutes. Send alerts for Blank, Frozen and Panel off are ticked, Unexpected content is not. A line says 1 of 3 alert channels receive screen problems. Below, Recent screen problems says No screen problems recorded.">
+      <figcaption>The usual settings. Only channels with the screen-problem boxes ticked get these messages.</figcaption>
+    </figure>
+    <ul>
+      <li><strong>Ask each screen for a screenshot</strong>: every 30 minutes to start with. Choose a different time, or "Never (only check screenshots already taken)".</li>
+      <li><strong>Sensitivity</strong>: <strong>Normal</strong>; "Low (only when certain)" or "High (catches more, more false alarms)".</li>
+      <li><strong>A problem must last (minutes)</strong>: 10 to start with. A problem shorter than this is ignored, and it clears itself when the screen recovers.</li>
+      <li><strong>Send alerts for</strong>: <strong>Blank</strong>, <strong>Frozen</strong>, <strong>Unexpected content</strong>, <strong>Panel off</strong>. All but Unexpected content are ticked at first.</li>
+    </ul>
+    <p>Press <strong>Save</strong> after a change. Only a workspace Admin can change these; everyone else sees "Only a workspace admin can change these settings." <strong>Recent screen problems</strong> lists the last problems found, which screen, how long they lasted, and how they ended. A screen with a planned power-off time is not reported as switched off during it.</p>
+    <p>For a message about these problems, a channel needs <strong>a screen is online but showing a problem</strong> ticked. The line under <strong>Send alerts for</strong> tells you how many of your channels have it. To check one screen by hand, see <a href="/guides/digital-signage-troubleshooting.html">Troubleshooting</a>.</p>
+
+    <h2 id="owner-email">The owner's own email</h2>
+    <p>Apart from your channels, each screen's owner gets an email after a screen has been offline for 5 minutes. To stop it, they untick <strong>Email me when devices go offline</strong> in their <strong>Settings</strong>. Alert channels are for everyone else who needs to know.</p>
+
+    <div class="callout self-hosted">
+      <span class="callout-title">On a self-hosted server</span>
+      <p><strong>Email</strong> channels, and the owner's email, need the server's email set up (SMTP or Microsoft 365). Without it, <strong>Send test</strong> says "Email is not set up on this server." Webhook, Teams and Slack messages only go to public internet addresses: a webhook on your own network is refused unless the server's operator allows it (the <code>OUTBOUND_ALLOW_HOSTS</code> setting). Messages carry an "Open in ScreenTinker" link only when the server's <code>APP_URL</code> is set.</p>
+    </div>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>A screen went offline but no alert came.</h3>
+    <p>Check that the channel is <strong>On</strong>, that the screen is covered under <strong>For</strong> (a group channel only covers screens in that group), and that the screen has been offline for longer than the channel's minutes. Then press <strong>Send test</strong>: a delivery problem shows its reason on the card. No alert goes out for a screen that has already been offline for more than a day, for example when you add the channel later.</p>
+    <h3>Why didn't I get a "back online" message?</h3>
+    <p>A channel only says a screen is back after it has said that screen went offline. A short drop that never reached the alert time sends neither message.</p>
+    <h3>Can different people hear about different screens?</h3>
+    <p>Yes. Make one channel per team and set <strong>For</strong> on each, for example the kitchen's Telegram group for the kitchen screens and the managers' Slack for all screens.</p>
+
+    <div class="cta">
+      <h2>Try it on your own screens</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/digital-signage-troubleshooting.html">Troubleshooting</a></li>
+        <li><a href="/guides/digital-signage-groups-video-walls.html">Groups and video walls</a></li>
+        <li><a href="/guides/digital-signage-users-roles.html">Users and roles</a></li>
+        <li><a href="/guides/self-hosted-digital-signage.html">Self-hosted digital signage</a></li>
+        <li><a href="/guides/">All guides</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="/guides/">Guides</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Guides",
+      "item": "https://screentinker.com/guides/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Alerts",
+      "item": "https://screentinker.com/guides/digital-signage-alerts.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Alerts when a screen goes offline",
+  "description": "Get a Slack, Teams, email, Telegram, PagerDuty or webhook message when a screen goes offline, comes back, or shows a blank or frozen picture.",
+  "image": "https://screentinker.com/assets/guides/alerts/channels.webp",
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Open Alerts",
+      "text": "Switch to Advanced view and choose Alerts in the Automate part of the sidebar.",
+      "url": "https://screentinker.com/guides/digital-signage-alerts.html#open"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Add a channel",
+      "text": "Press Add alert channel, pick where to send it under Send to, give it a Name and paste the webhook, key or addresses.",
+      "url": "https://screentinker.com/guides/digital-signage-alerts.html#add"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Choose when and for which screens",
+      "text": "Under Send when, set how many minutes a screen must be offline and tick the messages you want. Under For, pick all screens, some groups or some screens. Save.",
+      "url": "https://screentinker.com/guides/digital-signage-alerts.html#add"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 4,
+      "name": "Send a test",
+      "text": "Press Send test on the channel and check the message arrives.",
+      "url": "https://screentinker.com/guides/digital-signage-alerts.html#test"
+    }
+  ]
+}
+  </script>
+</body>
+</html>

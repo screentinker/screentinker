@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { esc } from '../utils.js';
+import { esc, canWrite, readOnlyNote } from '../utils.js';
 import { t, tn } from '../i18n.js';
 
 /*
@@ -80,10 +80,10 @@ function feedCard(f) {
           <div style="font-size:13px;display:flex;gap:8px;align-items:center">${sevChip(a.severity)} <span>${esc(a.headline || a.event)}</span></div>`).join('')}</div>` : ''}
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button class="btn btn-secondary btn-sm" data-act="poll">${esc(t('capf.check_now'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="poll" ${canWrite('admin') ? '' : 'hidden'}>${esc(t('capf.check_now'))}</button>
         <button class="btn btn-secondary btn-sm" data-act="alerts">${esc(t('capf.recent'))}</button>
-        <button class="btn btn-secondary btn-sm" data-act="edit">${esc(t('common.edit'))}</button>
-        <button class="btn btn-secondary btn-sm" data-act="del" style="color:var(--danger)">${esc(t('common.delete'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="edit" ${canWrite('admin') ? '' : 'hidden'}>${esc(t('common.edit'))}</button>
+        <button class="btn btn-secondary btn-sm" data-act="del" ${canWrite('admin') ? '' : 'hidden'} style="color:var(--danger)">${esc(t('common.delete'))}</button>
       </div>
     </div>
     <div class="cap-alerts" hidden style="margin-top:12px"></div>
@@ -107,9 +107,9 @@ export async function render(app) {
     return;
   }
   body.innerHTML = `
-    <div class="corp-toolbar"><button class="btn btn-primary" id="capNew">${esc(t('capf.new'))}</button></div>
+    ${canWrite('admin') ? `<div class="corp-toolbar"><button class="btn btn-primary" id="capNew">${esc(t('capf.new'))}</button></div>` : readOnlyNote('admin')}
     ${cache.feeds.length ? cache.feeds.map(feedCard).join('') : `<div class="corp-empty">${esc(t('capf.empty'))}</div>`}`;
-  document.getElementById('capNew').addEventListener('click', () => openForm(app, null));
+  document.getElementById('capNew')?.addEventListener('click', () => openForm(app, null));
   body.querySelectorAll('.corp-card[data-id]').forEach((card) => {
     const f = cache.feeds.find((x) => x.id === card.dataset.id);
     card.querySelector('[data-act="edit"]').addEventListener('click', () => openForm(app, f));

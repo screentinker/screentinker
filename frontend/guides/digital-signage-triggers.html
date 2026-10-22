@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Triggers: let a button or alarm take over your screens | ScreenTinker</title>
+  <meta name="description" content="Let a fire alarm, a control panel or a button put a playlist over your screens, even offline. How ScreenTinker triggers work and how to set one up.">
+  <meta name="keywords" content="digital signage triggers, signage fire alarm, emergency message screen, crestron digital signage, extron digital signage, udp trigger signage, screentinker triggers">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/digital-signage-triggers.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/digital-signage-triggers.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/digital-signage-triggers.html">
+  <meta property="og:title" content="Triggers: let a button or alarm take over your screens">
+  <meta property="og:description" content="Let a fire alarm, a control panel or a button put a playlist over your screens, even offline. How ScreenTinker triggers work and how to set one up.">
+  <meta property="og:image" content="https://screentinker.com/assets/guides/triggers/list.webp">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Triggers: let a button or alarm take over your screens">
+  <meta name="twitter:description" content="Let a fire alarm, a control panel or a button put a playlist over your screens, even offline. How ScreenTinker triggers work and how to set one up.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/guides/triggers/list.webp">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/guides/">Guides</a>
+      <span>/</span>
+      <span>Triggers</span>
+    </nav>
+
+    <h1>Triggers: let a button or alarm take over your screens</h1>
+    <p class="lead">A trigger lets something outside ScreenTinker put a playlist over whatever a screen is showing. A fire alarm panel can cover every screen with "Please leave by the nearest exit". A button behind the counter can show "Cinnamon buns are ready" for 30 seconds. When the trigger ends, the screen goes back to what it was playing.</p>
+
+    <p>The screen decides for itself, from a copy it already holds, so a trigger still works when the internet is down. This guide covers the Triggers page, the settings on each screen that let it listen, and what your installer needs to send.</p>
+
+    <h2 id="before">Before you start</h2>
+    <ul>
+      <li><strong>The Triggers page is in Advanced view.</strong> New accounts start in Simple view. Switch with the <strong>Simple / Advanced</strong> buttons at the top of the menu. Triggers is under <strong>Automate</strong> in the sidebar.</li>
+      <li><strong>Make the playlist first, and press Publish.</strong> A trigger shows a published playlist. The playlist may only hold pictures and videos you uploaded: no widgets, YouTube videos or web addresses, because the screen must be able to play it with no network. If you pick one that doesn't fit, <strong>Save</strong> shows an error naming the item.</li>
+      <li><strong>You need a screen that can listen.</strong> The Android TV and Fire TV app, the Raspberry Pi and Windows apps, and BrightSign players can. A screen that is just a browser tab can't open a network port by itself, and Roku and e-ink screens don't support triggers.</li>
+      <li><strong>You need someone to send the message.</strong> Usually that is a control system such as Crestron, Extron, AMX or Q-SYS, a PLC, or a small network button. ScreenTinker does not include the sender.</li>
+      <li>Anyone in the workspace except a <strong>Viewer</strong> can create and change triggers. Viewers see the buttons, but saving is refused.</li>
+    </ul>
+
+    <h2 id="page">The Triggers page</h2>
+    <p>Choose <strong>Triggers</strong> in the sidebar. Each row is one trigger: its <strong>Name</strong>, the words that set it off and end it (<strong>Fire / clear</strong>), the playlist it <strong>Plays</strong>, its <strong>Mode</strong>, which kinds of message it <strong>Accepts</strong> (HTTP, UDP or both), its <strong>Priority</strong>, and the <strong>Screens</strong> it is on. The highest priority is at the top.</p>
+    <figure>
+      <img src="/assets/guides/triggers/list.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The ScreenTinker Triggers page with two triggers. Fire alarm has the tokens FIRE_ALARM and FIRE_CLEAR, plays Fire alarm notice, holds until cleared, accepts HTTP and UDP, has priority 100 and is on the group Front of house. Buns are ready has the token BUNS_READY, plays Fresh out of the oven once, accepts HTTP, has priority 10 and is on Counter screen.">
+      <figcaption>Two triggers: a fire alarm on every screen in the café, and a "buns are ready" message on the counter screen.</figcaption>
+    </figure>
+    <p>Watch for two labels. <strong>Not assigned</strong> means the trigger is on no screen, so it can never fire. <strong>no auto-clear</strong> marks a trigger that holds over UDP with no time limit: if the "clear" message gets lost, those screens stay covered until someone clears them by hand. An orange note at the top of the page says the same.</p>
+
+    <h2 id="create">Create a trigger</h2>
+    <ol class="steps">
+      <li>Press <strong>New trigger</strong>.</li>
+      <li><strong>Name</strong>: what you'll recognise it by, for example "Fire alarm".</li>
+      <li><strong>Fire token</strong>: the exact word the sender will send, for example <code>FIRE_ALARM</code>. Letters, digits and punctuation, up to 64 characters, no spaces. Capitals count: <code>fire_alarm</code> is a different token.</li>
+      <li><strong>Clear token</strong> (optional): a second word that ends the trigger, for example <code>FIRE_CLEAR</code>. It must differ from the fire token.</li>
+      <li>Tick <strong>HTTP</strong>, <strong>UDP</strong> or both: the kind of message your sender uses. Ask your installer if you are not sure. HTTP is ticked to start with.</li>
+      <li><strong>Plays</strong>: pick the playlist to show.</li>
+      <li>Fill in <a href="#behaviour">How it behaves</a> and tick the <a href="#assign">Screens</a>, then press <strong>Save</strong>.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/triggers/edit-top.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Edit trigger window. Under Trigger, the Name is Fire alarm. Under What fires it, the Fire token is FIRE_ALARM, the Clear token is FIRE_CLEAR, and both HTTP and UDP are ticked. Under What it shows, Plays is set to Fire alarm notice, with a note that 1 unpublished playlist is not listed. Mode is Hold until cleared.">
+      <figcaption>The top of the form: the name, the two tokens, and the playlist it shows.</figcaption>
+    </figure>
+    <p>Only published playlists are in the <strong>Plays</strong> list. If you have playlists that were never published, a note under the list says how many are hidden. If none of your playlists is published, the form says so and <strong>Save</strong> stays greyed out.</p>
+    <p>Every fire and clear token must be different from every other trigger's tokens in the workspace. If one is already used, <strong>Save</strong> tells you which.</p>
+
+    <h2 id="behaviour">How it behaves</h2>
+    <ul>
+      <li><strong>Mode</strong>: <strong>Play once</strong> plays the playlist through one time, then the screen goes back to normal. Use it for short news, like "buns are ready". <strong>Hold until cleared</strong> stays until the clear token arrives. Use it for anything that lasts, like an alarm.</li>
+      <li><strong>Maximum length (seconds)</strong>: a safety limit for <strong>Play once</strong>. 0 means play the whole playlist. If the playlist is longer than the limit, the limit wins and the trigger ends early.</li>
+      <li><strong>Auto-clear after (seconds)</strong>: only for <strong>Hold until cleared</strong>. Most alarm panels repeat their message every few seconds while the alarm is on. Each repeat restarts this timer, so if the sender stops (the alarm panel loses power, or the clear message never arrives), the screen clears itself. When you tick <strong>UDP</strong> on a new hold trigger, it is filled in with 90 for you. You can empty it, but then a lost clear message leaves the screen covered.</li>
+      <li><strong>Priority</strong>: from -1000 to 1000. If two triggers arrive, the higher number wins. A lower one that arrives while a higher one is showing is ignored. A held trigger that was covered by a higher one comes back when the higher one clears. Give alarms a high number.</li>
+    </ul>
+    <figure>
+      <img src="/assets/guides/triggers/edit-bottom.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The lower part of the Edit trigger window. Mode is Hold until cleared, Maximum length is 0, Auto-clear after is 90 seconds and Priority is 100. Under Screens, the group Front of house is ticked and Counter screen is not. Enabled is ticked at the bottom, next to Cancel and Save.">
+      <figcaption>The fire alarm holds until cleared, clears itself 90 seconds after the panel goes quiet, and is on the whole Front of house group.</figcaption>
+    </figure>
+    <p>Sending the same fire token again while the trigger is already showing does not restart it from the first item. It only renews the auto-clear timer.</p>
+
+    <h2 id="assign">Pick the screens</h2>
+    <p>Under <strong>Screens</strong>, tick single screens on the left and whole <strong>Groups</strong> on the right. This is the step that matters most. As soon as you press <strong>Save</strong>, ScreenTinker sends the trigger to every ticked screen, and each one downloads the playlist and keeps it. That is what lets it play with the network down. A trigger with nothing ticked never fires.</p>
+    <p>A screen that is switched off when you save gets the trigger the next time it connects. If you change the playlist later, press <strong>Publish</strong> on it again, and the screens holding the trigger get the new version.</p>
+    <p>To pause a trigger without deleting it, untick <strong>Enabled</strong> at the bottom of the form. The list then shows it as <strong>Disabled</strong>.</p>
+
+    <h2 id="screen">Let the screen listen</h2>
+    <p>The trigger is half of it. Each screen also has to be told to listen, and it needs a password the sender must know. Both are off until you turn them on.</p>
+    <ol class="steps">
+      <li>Open the screen from <strong>Screens</strong> and choose the <strong>Device Info</strong> tab.</li>
+      <li>Find <strong>Triggers — listener settings</strong>. Tick <strong>Accept HTTP</strong>, <strong>Accept UDP</strong> or both. The boxes next to them hold the port numbers: leave them empty to use 8079 for HTTP and 7847 for UDP, or type another number from 1024 to 65534.</li>
+      <li>Press <strong>Save trigger settings</strong>.</li>
+      <li>Next to <strong>Shared secret</strong>, press <strong>Generate</strong>. A long code appears. Until there is one, the screen says "not set — triggers cannot fire".</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/triggers/listener.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Triggers — listener settings section on a screen's Device Info tab. Accept HTTP is ticked with the port box showing 8079, Accept UDP is not ticked, there are boxes for a multicast group and a clear-all token, a Save trigger settings button, and a Shared secret of 32 letters and digits with a Rotate button.">
+      <figcaption>This screen listens for HTTP on the usual port, and has a shared secret.</figcaption>
+    </figure>
+    <p>A toast tells you whether the screen got the change right away or will pick it up when it reconnects. The screen starts listening the next time its player starts.</p>
+    <div class="callout warn">
+      <span class="callout-title">Treat the secret like a key</span>
+      <p>Anything on your network that knows a screen's secret and a token can put that trigger's playlist on it. Give the secret only to whoever sets up the sender. If it gets out, press <strong>Rotate</strong>: the old secret stops working at once, so the sender has to be updated too.</p>
+    </div>
+    <p>Two optional boxes are for installers. A <strong>multicast group</strong> (an address from 224.0.0.0 to 239.255.255.255) lets one UDP message reach many screens at once. A <strong>clear-all token</strong> ends whatever trigger is showing on that screen. It must not be the same as any trigger's token.</p>
+
+    <h2 id="send">What the sender sends</h2>
+    <p>Give your installer, for each screen: its network address, the port, its shared secret, and the trigger's fire and clear tokens. The message is one line: <code>ST1</code>, the secret, and the token, with a space between each.</p>
+    <ul>
+      <li><strong>UDP</strong>: send <code>ST1 &lt;secret&gt; FIRE_ALARM</code> to port 7847.</li>
+      <li><strong>HTTP</strong>: open <code>http://&lt;screen address&gt;:8079/trigger?secret=&lt;secret&gt;&amp;token=FIRE_ALARM</code>. A POST with the same line, or with JSON <code>{"secret": "…", "token": "…"}</code>, works too.</li>
+    </ul>
+    <figure>
+      <img src="/assets/guides/triggers/fired.webp" width="1440" height="900" loading="lazy" decoding="async" alt="A screen showing a red full-screen notice: FIRE ALARM. Please leave by the nearest exit. Do not use the lift. Meet in the car park.">
+      <figcaption>The counter screen a moment after FIRE_ALARM arrived. It covers the whole screen until FIRE_CLEAR arrives or the panel goes quiet for 90 seconds.</figcaption>
+    </figure>
+    <p>A trigger always fills the whole screen. Once the screen reports how its listening is going, a <strong>Triggers</strong> box appears under the listener settings. It counts what arrived and says in plain words what is wrong: if messages are reaching the screen but being refused, check the token and the secret; if nothing has arrived, the problem is the network between the sender and the screen.</p>
+
+    <div class="callout self-hosted">
+      <span class="callout-title">On a self-hosted server</span>
+      <p>Your server can also take the messages for screens that can't listen themselves, such as a browser tab, or for sites where the sender can reach the server but not each screen. Start the server with <code>TRIGGER_INGRESS=1</code>. The sender then uses the server's address: <code>http://&lt;server&gt;/api/trigger?secret=&lt;secret&gt;&amp;token=FIRE_ALARM</code>, or UDP to port 7847 (change it with <code>TRIGGER_INGRESS_UDP_PORT</code>). The server finds the screen by its secret and passes the message on; the screen still decides. Because the message goes through the server, the screen must be online, and the screen still needs <strong>Accept HTTP</strong> or <strong>Accept UDP</strong> ticked and a shared secret. It is off unless you set it.</p>
+    </div>
+
+    <div class="callout">
+      <span class="callout-title">Head office alerts</span>
+      <p>If your organization uses head office (corporate) playlists, head office's emergency alerts that reach your screens are listed on this page, read-only, with their codes hidden. Only your organization's admins can change them, under <strong>Emergency alerts</strong>.</p>
+    </div>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>Does a trigger work if the internet is down?</h3>
+    <p>Yes, if the sender can still reach the screen on your local network. The screen already holds the trigger and its playlist, so it needs nothing from ScreenTinker to show it. Make your changes while the screens are online, so they have the latest version.</p>
+    <h3>Can I fire a trigger from the dashboard?</h3>
+    <p>Not from the Triggers page: it only sets triggers up. The message has to come from a sender on the screen's network.</p>
+    <h3>I sent the token but nothing happened.</h3>
+    <p>Check, in order: the trigger is ticked for that screen and <strong>Enabled</strong>; the screen has <strong>Accept HTTP</strong> or <strong>Accept UDP</strong> ticked for the kind of message you sent, and the trigger has the same box ticked; the screen has a <strong>Shared secret</strong> and the sender uses it exactly; the token matches, capitals included. Then look at the <strong>Triggers</strong> box on the screen's <strong>Device Info</strong> tab: it says whether messages arrive and are refused, or don't arrive at all.</p>
+
+    <div class="cta">
+      <h2>Try it on your own screens</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/digital-signage-content-playlists.html">Content and playlists</a></li>
+        <li><a href="/guides/digital-signage-groups-video-walls.html">Groups and video walls</a></li>
+        <li><a href="/guides/digital-signage-scheduling.html">Scheduling</a></li>
+        <li><a href="/guides/digital-signage-troubleshooting.html">Troubleshooting</a></li>
+        <li><a href="/guides/">All guides</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="/guides/">Guides</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Guides",
+      "item": "https://screentinker.com/guides/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Triggers",
+      "item": "https://screentinker.com/guides/digital-signage-triggers.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Triggers: let a button or alarm take over your screens",
+  "description": "Let a fire alarm, a control panel or a button put a playlist over your screens, even offline. How ScreenTinker triggers work and how to set one up.",
+  "image": "https://screentinker.com/assets/guides/triggers/list.webp",
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Publish the playlist to show",
+      "text": "Make a playlist of uploaded pictures or videos, such as an evacuation notice, and press Publish.",
+      "url": "https://screentinker.com/guides/digital-signage-triggers.html#before"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Create the trigger",
+      "text": "In Advanced view choose Triggers, press New trigger, give it a Name and a Fire token, pick the playlist under Plays, choose the Mode, tick the screens or groups, and Save.",
+      "url": "https://screentinker.com/guides/digital-signage-triggers.html#create"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Turn on listening on each screen",
+      "text": "Open the screen, choose the Device Info tab, tick Accept HTTP or Accept UDP under Triggers — listener settings, press Save trigger settings, then Generate a Shared secret.",
+      "url": "https://screentinker.com/guides/digital-signage-triggers.html#screen"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 4,
+      "name": "Set up the sender",
+      "text": "Give your installer the screen's address, the port, the shared secret and the fire token. The sender sends ST1, the secret and the token as one line.",
+      "url": "https://screentinker.com/guides/digital-signage-triggers.html#send"
+    }
+  ]
+}
+  </script>
+</body>
+</html>

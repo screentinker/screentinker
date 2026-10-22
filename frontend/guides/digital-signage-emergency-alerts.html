@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Emergency alerts on your screens | ScreenTinker</title>
+  <meta name="description" content="Show official weather and civil protection warnings on your screens automatically, from the US National Weather Service, MeteoAlarm or any CAP feed.">
+  <meta name="keywords" content="digital signage emergency alerts, CAP alerts digital signage, weather warnings on screens, national weather service alerts display, meteoalarm signage, emergency messaging screens, screentinker emergency feeds">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/digital-signage-emergency-alerts.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/digital-signage-emergency-alerts.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/digital-signage-emergency-alerts.html">
+  <meta property="og:title" content="Emergency alerts on your screens">
+  <meta property="og:description" content="Show official weather and civil protection warnings on your screens automatically, from the US National Weather Service, MeteoAlarm or any CAP feed.">
+  <meta property="og:image" content="https://screentinker.com/assets/guides/emergency-feeds/alert-card.webp">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Emergency alerts on your screens">
+  <meta name="twitter:description" content="Show official weather and civil protection warnings on your screens automatically, from the US National Weather Service, MeteoAlarm or any CAP feed.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/guides/emergency-feeds/alert-card.webp">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/guides/">Guides</a>
+      <span>/</span>
+      <span>Emergency feeds</span>
+    </nav>
+
+    <h1>Emergency alerts on your screens</h1>
+    <p class="lead">When the weather service issues a tornado watch or a flood warning for your area, your screens can show it straight away, without anyone touching the dashboard. You connect ScreenTinker to an official alert feed once. While a warning for your area is live, your screens show it instead of their playlist. When it ends, they go back by themselves.</p>
+
+    <p>This guide covers where the alerts come from, how to add a feed, how to narrow it to your area and your screens, how to test it before a real emergency, and what the screens show. Alert feeds use CAP (the Common Alerting Protocol), the format weather services and civil protection agencies publish in.</p>
+
+    <h2 id="before">Before you start</h2>
+    <ul>
+      <li><strong>The page is in Advanced view.</strong> New accounts start in Simple view. Switch with the <strong>Simple / Advanced</strong> buttons at the top of the menu.</li>
+      <li><strong>Only a workspace Admin can add or change feeds.</strong> Everyone in the workspace can see the page and its alerts. Editors and Viewers see the same buttons, but saving, testing or <strong>Check now</strong> tells them "Only a workspace admin can change emergency feeds."</li>
+      <li>It works on every plan, on screentinker.com and on your own server.</li>
+    </ul>
+
+    <h2 id="open">The Emergency feeds page</h2>
+    <p>Choose <strong>Emergency feeds</strong> under <strong>Automate</strong> in the sidebar. Each feed is a card. It shows the feed's address, which alerts it lets through, which screens it reaches, what they show, and when it was last <strong>Checked</strong>. A feed with a live alert has a red edge and says how many alerts are on screens now, with each one listed below.</p>
+    <figure>
+      <img src="/assets/guides/emergency-feeds/feeds.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Emergency feeds page with two feeds. Flood warnings, Utah is marked Off and says it is not being checked. Weather warnings, Flagstaff has a red edge and says 3 alerts on screens now: an Extreme Tornado Watch, a Severe Flash Flood Warning and a Severe Flood Watch, all issued by NWS Flagstaff AZ. Each card has Check now, Recent alerts, Edit and Delete buttons.">
+      <figcaption>Two feeds: one switched off, one with three live alerts on every screen.</figcaption>
+    </figure>
+    <p>The buttons on each card:</p>
+    <ul>
+      <li><strong>Check now</strong> fetches the feed at once instead of waiting for the next check.</li>
+      <li><strong>Recent alerts</strong> lists what the feed has carried in the last week (see <a href="#recent">below</a>).</li>
+      <li><strong>Edit</strong> opens the feed's settings. <strong>Delete</strong> removes it, and its alerts leave the screens.</li>
+    </ul>
+
+    <h2 id="add">Add a feed</h2>
+    <ol class="steps">
+      <li>Press <strong>Add emergency feed</strong>.</li>
+      <li><strong>Name</strong>: something you will recognise, like "Weather warnings, Flagstaff".</li>
+      <li><strong>Source</strong>: where the alerts come from. Pick one:
+        <ul>
+          <li><strong>US National Weather Service, by state</strong>: type the two-letter state, for example <code>AZ</code>.</li>
+          <li><strong>US National Weather Service, by zone or county code</strong>: type a forecast zone or county code, for example <code>WIZ066</code>, for a smaller area.</li>
+          <li><strong>Europe, MeteoAlarm, by country</strong>: choose your country from the list.</li>
+          <li><strong>Another CAP feed (address)</strong>: paste the address of any other agency's CAP feed.</li>
+        </ul>
+        The full feed address appears under the field, so you can check it.</li>
+      <li><strong>Show alerts that are</strong>: how serious an alert must be to take over your screens. <strong>Severe or worse</strong> is the default. The other choices are <strong>Extreme only</strong>, <strong>Moderate or worse</strong>, <strong>Minor or worse</strong> and <strong>Any severity, including unrated</strong>.</li>
+      <li><strong>Check the feed</strong>: <strong>every minute</strong>, <strong>every 2 minutes</strong> (the default), <strong>every 5 minutes</strong> or <strong>every 10 minutes</strong>.</li>
+      <li>Narrow it down with the <a href="#filters">optional filters</a>, choose the screens and what they show, then press <strong>Test feed</strong> and <strong>Save</strong>.</li>
+    </ol>
+    <p>The feed is checked as soon as you save it. Untick <strong>On</strong> to keep a feed without it reaching any screen.</p>
+
+    <h2 id="filters">Only your area, only your screens</h2>
+    <p>A whole state or country has warnings most days that don't concern you. Three settings keep the screens for what matters:</p>
+    <ul>
+      <li><strong>Only these alert types (optional)</strong>: a comma-separated list, such as <code>Tornado Warning, Flash Flood Warning</code>. Write them exactly as the feed names them; <strong>Test feed</strong> shows you the names. Leave it empty for every type.</li>
+      <li><strong>Only these areas (optional)</strong>: place names or area codes, separated by commas, such as <code>Coconino, Yavapai</code>. An alert gets through when its area mentions any of them. Codes (UGC, SAME or NUTS) must match exactly.</li>
+      <li><strong>Show on</strong>: <strong>All screens in this workspace</strong> (including screens you add later), <strong>Screens in these groups</strong> or <strong>These screens</strong>, then tick the groups or screens. Screens in a video wall show the alert across the whole wall.</li>
+    </ul>
+    <p><strong>What screens show</strong> is either <strong>The alert card (headline, area, what to do, until when)</strong>, made from the alert itself, or one of your playlists, for example your own "Shelter in place" slides.</p>
+    <div class="callout warn">
+      <span class="callout-title">Publish the playlist you pick</span>
+      <p>Screens play the published version of that playlist. If it has never been published, or it is empty, they show the alert card instead, so a warning never comes up as a blank screen.</p>
+    </div>
+
+    <h2 id="test">Test it before you need it</h2>
+    <p><strong>Test feed</strong> fetches the feed now, without saving, and tells you what your settings would do: how many alerts the feed has, and how many would be on screens right now. Each alert is marked <strong>would show</strong>, <strong>filtered out</strong> (by your severity, type or area settings) or <strong>not current</strong> (not started yet, expired, or only a test message).</p>
+    <figure>
+      <img src="/assets/guides/emergency-feeds/edit-test.webp" width="760" height="1430" loading="lazy" decoding="async" alt="The Edit "Weather warnings, Flagstaff" form. Source is US National Weather Service, by state, AZ. Show alerts that are Severe or worse, Check the feed every 2 minutes, Only these areas Coconino, Yavapai, Show on All screens in this workspace, What screens show The alert card, and On ticked. The test result below says 14 alerts in the feed, 3 would be on screens right now: a Flash Flood Warning, a Tornado Watch and a Flood Watch from NWS Flagstaff marked would show, and the rest, for other parts of Arizona, marked filtered out. Test feed, Cancel and Save buttons at the bottom.">
+      <figcaption>Fourteen alerts for Arizona, but only the three that mention Coconino or Yavapai would reach the screens.</figcaption>
+    </figure>
+    <p>On a quiet day the feed may have no alerts at all. That is normal. Try <strong>Any severity, including unrated</strong>, or a bigger area, to see that the feed answers, then set it back before you save.</p>
+
+    <h2 id="screens">What the screens show</h2>
+    <p>As soon as a matching alert is live, every screen the feed reaches drops what it is playing and shows the alert. It does not wait for the current slide or video to finish. The alert card fills the screen: a coloured band with the severity in words, the type of alert, the headline, the area, what to do, and until when (in the screen's local time). If several alerts are live, they take turns, 15 seconds each.</p>
+    <figure>
+      <img src="/assets/guides/emergency-feeds/alert-card.webp" width="1440" height="810" loading="lazy" decoding="async" alt="A full-screen alert card on a dark red background. A red band at the top reads EXTREME, Tornado Watch, 1 / 3. The headline says Tornado Watch issued October 21 at 10:10AM MST until October 21 at 6:00PM MST by NWS Flagstaff AZ, then the area Coconino, Yavapai and Navajo counties and the weather service's text. The footer says Until Wed, Oct 21, 08:00 PM, and NWS.">
+      <figcaption>The alert card. "1 / 3" means two more alerts take their turn after this one.</figcaption>
+    </figure>
+    <p>The words on the card are the agency's own, in the language the feed publishes. When the alert expires, or the agency cancels or replaces it, the screens go back to their normal playlist on their own.</p>
+    <div class="callout">
+      <span class="callout-title">If the feed can't be reached</span>
+      <p>When a check fails, the card on the Emergency feeds page shows the error, and alerts already on screens stay there until their own end time. A slow agency server never takes a warning off your screens early.</p>
+    </div>
+    <p>Emergency feeds take over from schedules and from a screen's own playlist. If several of your feeds have live alerts for the same screen, the one with the most severe alert wins. If your organization uses head office (corporate) playlists, an emergency alert that head office activates outranks your feeds.</p>
+
+    <h2 id="recent">Recent alerts</h2>
+    <p><strong>Recent alerts</strong> on a feed's card opens a table of what the feed has carried in the last week, with the <strong>Area</strong>, when it runs <strong>Until</strong>, and its <strong>State</strong>: <strong>On screens</strong>, <strong>Not shown (filters or time)</strong>, <strong>Cancelled or replaced</strong> or <strong>No longer in the feed</strong>. Use it to answer "why didn't that warning show?" the morning after.</p>
+    <figure>
+      <img src="/assets/guides/emergency-feeds/recent-alerts.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Weather warnings, Flagstaff card with Recent alerts open. A table with the columns Alert, Area, Until and State lists a Flash Flood Warning for Coconino, AZ marked On screens, and Severe Thunderstorm Warnings for Navajo and Apache counties and Flood Watches for Pinal and Gila counties marked Not shown (filters or time).">
+      <figcaption>Recent alerts: the Coconino warning is on screens; warnings for other counties were filtered out.</figcaption>
+    </figure>
+
+    <div class="callout self-hosted">
+      <span class="callout-title">On a self-hosted server</span>
+      <p>Your server fetches the feed itself, so it needs internet access to the agency (api.weather.gov, feeds.meteoalarm.org, or the address you entered). Your screens don't. A feed on your own private network is refused unless the server's <code>OUTBOUND_ALLOW_HOSTS</code> setting names that host, or <code>OUTBOUND_ALLOW_PRIVATE=true</code> is set.</p>
+    </div>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>Can I show my own emergency message, like a fire evacuation?</h3>
+    <p>Emergency feeds only show alerts that an agency publishes. To let your own systems, such as a fire panel, raise an alert on your screens, use <strong>Automation</strong> under <strong>Automate</strong>. If your organization uses head office (corporate) playlists, head office can also activate its own emergency alerts.</p>
+    <h3>My feed shows "Checked" but nothing appears on screen.</h3>
+    <p>That usually means there is no live alert that passes your filters. Open the feed with <strong>Edit</strong> and press <strong>Test feed</strong>: each alert says whether it <strong>would show</strong> or was <strong>filtered out</strong>. Also check that <strong>On</strong> is ticked and that <strong>Show on</strong> includes the screen.</p>
+    <h3>Where do I find my zone or county code?</h3>
+    <p>The US National Weather Service lists its forecast zone and county codes on its website. If you're not sure, use <strong>US National Weather Service, by state</strong> and put your county's name in <strong>Only these areas (optional)</strong>.</p>
+    <h3>Is this a replacement for official warning systems?</h3>
+    <p>No. Your screens show an alert at the next check after the agency publishes it, so up to the time you chose under <strong>Check the feed</strong>. Treat it as an extra way to reach people in your building, alongside sirens, phone alerts and radio.</p>
+
+    <div class="cta">
+      <h2>Try it on your own screens</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/digital-signage-groups-video-walls.html">Groups and video walls</a></li>
+        <li><a href="/guides/digital-signage-content-playlists.html">Content and playlists</a></li>
+        <li><a href="/guides/digital-signage-scheduling.html">Scheduling</a></li>
+        <li><a href="/guides/digital-signage-users-roles.html">Users, roles and workspaces</a></li>
+        <li><a href="/guides/">All guides</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="/guides/">Guides</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Guides",
+      "item": "https://screentinker.com/guides/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Emergency feeds",
+      "item": "https://screentinker.com/guides/digital-signage-emergency-alerts.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Emergency alerts on your screens",
+  "description": "Show official weather and civil protection warnings on your screens automatically, from the US National Weather Service, MeteoAlarm or any CAP feed.",
+  "image": "https://screentinker.com/assets/guides/emergency-feeds/alert-card.webp",
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Open Emergency feeds",
+      "text": "Switch to Advanced view and choose Emergency feeds under Automate in the sidebar.",
+      "url": "https://screentinker.com/guides/digital-signage-emergency-alerts.html#open"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Add a feed",
+      "text": "Choose Add emergency feed. Name it, pick the Source (National Weather Service by state or zone, MeteoAlarm by country, or another CAP feed) and how severe an alert must be.",
+      "url": "https://screentinker.com/guides/digital-signage-emergency-alerts.html#add"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Narrow it to your area",
+      "text": "Optionally list alert types and place names or area codes, then choose which screens it shows on and whether they show the alert card or a playlist.",
+      "url": "https://screentinker.com/guides/digital-signage-emergency-alerts.html#filters"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 4,
+      "name": "Test and save",
+      "text": "Press Test feed to see which current alerts would be on screens right now, then Save.",
+      "url": "https://screentinker.com/guides/digital-signage-emergency-alerts.html#test"
+    }
+  ]
+}
+  </script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 import { api, assertLocalCallAllowed } from '../api.js';
 import { on, off, requestScreenshot } from '../socket.js';
 import { showToast } from '../components/toast.js';
-import { esc, livenessBadge } from '../utils.js';
+import { esc, livenessBadge, canWrite, readOnlyNote } from '../utils.js';
 import { t, tn } from '../i18n.js';
 import * as cui from '../components/corporate-ui.js';
 import { snapMove, snapResize } from '../components/snap.js';
@@ -62,11 +62,12 @@ async function renderList(container) {
   container.innerHTML = `
     <div class="page-header">
       <div><h1>${t('wall.title')} <span class="help-tip" data-tip="${t('wall.help_tip')}">?</span></h1><div class="subtitle">${t('wall.subtitle')}</div></div>
-      <button class="btn btn-primary" id="newWallBtn">
+      <button class="btn btn-primary" id="newWallBtn" ${canWrite() ? '' : 'hidden'}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         ${t('wall.new_wall')}
       </button>
     </div>
+    ${readOnlyNote()}
     <div class="content-grid" id="wallGrid"></div>
   `;
 
@@ -237,19 +238,19 @@ async function renderWallEditor(container, wallId) {
     <div class="page-header" style="margin-bottom:12px">
       <h1 style="display:flex;align-items:center;gap:10px">
         <span id="wallTitleText">${esc(wall.name)}</span>
-        <button class="btn btn-sm" id="renameWallBtn" title="${t('wall.rename')}" style="padding:2px 8px;font-size:12px">✎</button>
+        <button class="btn btn-sm" id="renameWallBtn" ${canWrite() ? '' : 'hidden'} title="${t('wall.rename')}" style="padding:2px 8px;font-size:12px">✎</button>
       </h1>
       <div style="display:flex;gap:8px">
         <!-- A command to every panel, like a screen's own controls (POST /walls/:id/command). -->
-        <select class="input" id="wallCommand" style="width:170px;padding:4px 8px;font-size:12px;background:var(--bg-input)">
+        <select class="input" id="wallCommand" ${canWrite() ? '' : 'hidden'} style="width:170px;padding:4px 8px;font-size:12px;background:var(--bg-input)">
           <option value="">${t('wall.cmd_placeholder')}</option>
           ${WALL_COMMANDS.map(c => `<option value="${c}" ${WALL_DESTRUCTIVE.includes(c) ? 'style="color:var(--danger)"' : ''}>${t('dashboard.cmd.' + (c === 'launch' ? 'restart_app' : c === 'update' ? 'check_update' : c))}</option>`).join('')}
         </select>
         <button class="btn btn-sm" id="centerViewBtn" title="${esc(t('wall.center_tip'))}">${t('wall.center')}</button>
-        <button class="btn btn-sm" id="autoArrangeBtn" title="${esc(t('wall.auto_arrange_tip'))}">${t('wall.auto_arrange')}</button>
-        <button class="btn btn-sm" id="fitPlayerBtn" title="${esc(t('wall.fit_player_tip'))}">${t('wall.fit_player')}</button>
-        <button class="btn btn-sm" id="saveLayoutBtn" disabled>${t('wall.save_layout')}</button>
-        <button class="btn btn-danger btn-sm" id="deleteWallBtn">${t('wall.delete_wall')}</button>
+        <button class="btn btn-sm" id="autoArrangeBtn" ${canWrite() ? '' : 'hidden'} title="${esc(t('wall.auto_arrange_tip'))}">${t('wall.auto_arrange')}</button>
+        <button class="btn btn-sm" id="fitPlayerBtn" ${canWrite() ? '' : 'hidden'} title="${esc(t('wall.fit_player_tip'))}">${t('wall.fit_player')}</button>
+        <button class="btn btn-sm" id="saveLayoutBtn" ${canWrite() ? '' : 'hidden'} disabled>${t('wall.save_layout')}</button>
+        <button class="btn btn-danger btn-sm" id="deleteWallBtn" ${canWrite() ? '' : 'hidden'}>${t('wall.delete_wall')}</button>
       </div>
     </div>
 
@@ -284,7 +285,7 @@ async function renderWallEditor(container, wallId) {
             <option value="">${t('wall.no_playlist')}</option>
             ${(playlists || []).map(p => `<option value="${esc(p.id)}" ${p.id === wall.playlist_id ? 'selected' : ''}>${esc(p.name)}${p.status === 'draft' ? ' (draft)' : ''}</option>`).join('')}
           </select>
-          <button class="btn btn-primary btn-sm" id="setPlaylistBtn" style="margin-left:8px">${t('wall.set_playlist')}</button>
+          <button class="btn btn-primary btn-sm" id="setPlaylistBtn" ${canWrite() ? '' : 'hidden'} style="margin-left:8px">${t('wall.set_playlist')}</button>
         </div>
 
         <!-- Wall layouts: zones on the wall itself (server/lib/wall-layout.js), each on the shared
@@ -297,8 +298,8 @@ async function renderWallEditor(container, wallId) {
               <option value="">${t('wall.no_layout')}</option>
               ${layouts.filter(l => (l.zones || []).length > 1 || l.id === wall.layout_id).map(l => `<option value="${esc(l.id)}" ${l.id === wall.layout_id ? 'selected' : ''}>${esc(l.name)}${l.is_template ? ' (' + esc(t('wall.layout_template')) + ')' : ''}</option>`).join('')}
             </select>
-            <button class="btn btn-primary btn-sm" id="setWallLayoutBtn">${t('wall.set_layout')}</button>
-            <button class="btn btn-sm" id="newWallLayoutBtn" title="${esc(t('wall.layout_per_screen_tip'))}">${t('wall.layout_per_screen')}</button>
+            <button class="btn btn-primary btn-sm" id="setWallLayoutBtn" ${canWrite() ? '' : 'hidden'}>${t('wall.set_layout')}</button>
+            <button class="btn btn-sm" id="newWallLayoutBtn" ${canWrite() ? '' : 'hidden'} title="${esc(t('wall.layout_per_screen_tip'))}">${t('wall.layout_per_screen')}</button>
             <a class="btn btn-sm" id="editWallLayoutLink" style="display:${wall.layout_id ? '' : 'none'}" href="#/layout/${esc(wall.layout_id || '')}?wall=${esc(wallId)}">${t('wall.edit_zones')}</a>
           </div>
           <div id="wallZoneWarn" style="margin-top:8px"></div>
@@ -978,22 +979,22 @@ async function renderWallEditor(container, wallId) {
     const row = (it) => `
       <div style="display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
         <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="${esc(it.filename || '')}">${it.mime_type === 'application/x-st-hold' ? '⏸ ' : ''}${esc(it.filename || it.widget_name || it.child_playlist_name || '?')}</span>
-        <button class="btn btn-sm wz-move" data-item="${esc(it.id)}" data-dir="-1" title="${esc(t('wall.zone_earlier'))}" style="padding:1px 6px;font-size:11px">↑</button>
-        <button class="btn btn-sm wz-move" data-item="${esc(it.id)}" data-dir="1" title="${esc(t('wall.zone_later'))}" style="padding:1px 6px;font-size:11px">↓</button>
+        <button class="btn btn-sm wz-move" ${canWrite() ? '' : 'hidden'} data-item="${esc(it.id)}" data-dir="-1" title="${esc(t('wall.zone_earlier'))}" style="padding:1px 6px;font-size:11px">↑</button>
+        <button class="btn btn-sm wz-move" ${canWrite() ? '' : 'hidden'} data-item="${esc(it.id)}" data-dir="1" title="${esc(t('wall.zone_later'))}" style="padding:1px 6px;font-size:11px">↓</button>
         <input type="number" class="input wz-dur" data-item="${esc(it.id)}" value="${secs(it)}" min="1" step="1" style="width:72px" title="${esc(t('wall.zone_seconds'))}">
         <select class="input wz-zone" data-item="${esc(it.id)}" style="width:150px;background:var(--bg-input)${it.zone_id && !valid.has(it.zone_id) ? ';border-color:var(--danger)' : ''}">${zoneOptions(valid.has(it.zone_id) ? it.zone_id : '')}</select>
       </div>`;
     box.innerHTML = `
       ${pl.status === 'draft' ? `<div class="info-card" style="padding:8px 10px;font-size:12px;display:flex;gap:10px;align-items:center;margin-bottom:8px;border-color:#92400e">
           <span style="flex:1">${esc(t('wall.zones_draft'))}</span>
-          <button class="btn btn-primary btn-sm" id="wzPublishBtn">${esc(t('wall.zones_publish'))}</button></div>` : ''}
+          <button class="btn btn-primary btn-sm" id="wzPublishBtn" ${canWrite() ? '' : 'hidden'}>${esc(t('wall.zones_publish'))}</button></div>` : ''}
       ${uneven ? `<p style="font-size:12px;color:var(--warning,#e0a800);margin:0 0 6px">${esc(t('wall.zones_uneven'))}</p>` : ''}
       ${zones.map((z, i) => `
         <div style="margin:8px 0 4px;display:flex;align-items:center;gap:8px">
           <span style="width:10px;height:10px;border-radius:2px;background:${zoneColor(i)}"></span>
           <strong style="font-size:12px">${esc(z.name || t('layout.zone_n', { n: i + 1 }))}</strong>
           <span style="font-size:11px;color:var(--text-muted)">${esc(t('wall.zone_loop', { s: totals[i] }))}</span>
-          <button class="btn btn-sm wz-hold" data-zone="${esc(z.id)}" style="margin-left:auto;padding:2px 8px;font-size:11px">${esc(t('wall.zone_add_hold'))}</button>
+          <button class="btn btn-sm wz-hold" ${canWrite() ? '' : 'hidden'} data-zone="${esc(z.id)}" style="margin-left:auto;padding:2px 8px;font-size:11px">${esc(t('wall.zone_add_hold'))}</button>
         </div>
         ${items.filter(it => it.zone_id === z.id).map(row).join('') || `<p style="font-size:11px;color:var(--text-muted);margin:0">${esc(t('wall.zone_empty'))}</p>`}`).join('')}
       ${items.some(it => !valid.has(it.zone_id)) ? `

@@ -128,6 +128,8 @@ export default {
   'common.cancel': 'Cancelar',
   'common.delete': 'Eliminar',
   'common.edit': 'Editar',
+  'common.read_only_note': 'Tienes acceso de solo lectura a este espacio de trabajo: puedes ver todo, pero no cambiar nada.',
+  'common.admin_only_note': 'Solo un administrador del espacio de trabajo puede cambiar esto. Tú puedes verlo.',
   'common.done': 'Listo',
   'common.loading': 'Cargando...',
   'common.checking': 'Verificando...',

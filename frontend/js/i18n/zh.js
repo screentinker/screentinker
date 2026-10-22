@@ -74,6 +74,8 @@ export default {
   'nav.teams': '团队', 'nav.help': '帮助', 'nav.settings': '设置', 'nav.subscription': '订阅', 'nav.admin': '管理',
   'common.close': '关闭', 'common.save': '保存', 'common.cancel': '取消', 'common.delete': '删除',
   'common.edit': '编辑', 'common.done': '完成', 'common.saving': '保存中……', 'common.deleting': '删除中……',
+  'common.read_only_note': '你对此工作区只有查看权限：可以查看，但不能更改任何内容。',
+  'common.admin_only_note': '只有工作区管理员可以更改此项。你可以查看。',
   'common.loading': '加载中……', 'common.checking': '检查中……', 'common.connected': '已连接',
   'common.disconnected': '已断开', 'common.never': '从未', 'common.just_now': '刚刚', 'common.unknown': '未知',
   'auth.next': '下一步', 'auth.sign_in': '登录', 'auth.sign_out': '退出登录', 'auth.create_account': '创建账户',
