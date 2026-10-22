@@ -109,27 +109,39 @@ describe('kiosk pages on a screen and in the editor', { skip: SKIP }, () => {
       assert.equal(saved.siteBackLabel, 'Back', 'the Back bar label is saved in the editor language');
 
       // The preview lays out at 1920x1080 and is scaled into its box: the last row is inside it.
-      // Saving reloads the preview, so a frame found too early can be the old one, detached a moment later
-      // (CI caught exactly that: "Waiting for selector `.kiosk-btn` failed"). Keep re-finding the frame
-      // until one actually has its buttons.
-      const pf = await waitFor(async () => {
+      // Saving reloads the preview, sometimes more than once, so a frame found too early can be the old one,
+      // detached a moment later. CI caught both halves of that: "Waiting for selector `.kiosk-btn` failed", and,
+      // when the frame was found first and measured in a second step, "Execution context was destroyed".
+      // So find the frame AND measure it in one retried step, and only accept a measurement taken twice in a
+      // row on the same frame (the preview has stopped reloading).
+      let prev = null;
+      const fit = await waitFor(async () => {
         for (const f of page.frames().filter((x) => x.url().includes(`/api/kiosk/${kp.id}/render`))) {
-          try { if (await f.evaluate(() => document.querySelectorAll('.kiosk-btn').length > 0)) return f; } catch { /* detached */ }
+          try {
+            const m = await f.evaluate(() => {
+              const btns = [...document.querySelectorAll('.kiosk-btn')];
+              if (!btns.length) return null;
+              return { last: btns[btns.length - 1].getBoundingClientRect().bottom, h: window.innerHeight, w: window.innerWidth };
+            });
+            if (!m) continue;
+            if (prev && prev.f === f) return m;
+            prev = { f, m };
+          } catch { prev = null; /* detached mid-measure: the preview reloaded */ }
         }
         return null;
-      }, 15000);
-      assert.ok(pf, 'the preview frame shows its buttons');
-      const fit = await pf.evaluate(() => {
-        const btns = [...document.querySelectorAll('.kiosk-btn')];
-        return { last: btns[btns.length - 1].getBoundingClientRect().bottom, h: window.innerHeight, w: window.innerWidth };
-      });
+      }, 20000, 400);
+      assert.ok(fit, 'the preview frame shows its buttons');
       assert.equal(fit.w, 1920);
       assert.ok(fit.last <= fit.h, `the last row (bottom ${fit.last}) fits the ${fit.h}px page`);
-      const box = await page.evaluate(() => {
-        const b = document.getElementById('kioskPreviewBox').getBoundingClientRect();
-        const f = document.getElementById('kioskPreview').getBoundingClientRect();
-        return { bw: b.width, bh: b.height, fw: f.width, fh: f.height };
-      });
+      const box = await waitFor(async () => {
+        try {
+          return await page.evaluate(() => {
+            const b = document.getElementById('kioskPreviewBox')?.getBoundingClientRect();
+            const f = document.getElementById('kioskPreview')?.getBoundingClientRect();
+            return b && f ? { bw: b.width, bh: b.height, fw: f.width, fh: f.height } : null;
+          });
+        } catch { return null; }
+      }, 10000);
       assert.ok(Math.abs(box.fw - box.bw) <= 2 && box.fh <= box.bh + 2, `the scaled page fills the box (${JSON.stringify(box)})`);
       assert.deepEqual(errors, []);
     } finally {
