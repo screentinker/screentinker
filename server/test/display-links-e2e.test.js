@@ -224,9 +224,15 @@ describe('display links: remote view works everywhere', { skip: SKIP }, () => {
       for (const [id, mine, other] of [[d.id, pA, pB], [mirror.id, pB, pA]]) {
         let clean = false;
         for (let attempt = 0; attempt < 3 && !clean; attempt++) {
+          // shows() above asks every second, so a reply (and its console line) for an EARLIER request can still be
+          // on its way: let those settle before counting, or this check takes an old reply as its own (CI: "the
+          // request reached the screen it was for" failed on main d39497e0). Console lines arrive asynchronously
+          // too, so wait for the count to rise instead of reading it once.
+          await sleep(2500);
           const [m0, o0] = [asked(mine), asked(other)];
           assert.ok(await screenshotColour(id), 'a frame for ' + id);
-          assert.ok(asked(mine) >= m0 + 1, 'the request reached the screen it was for');
+          assert.ok(await waitFor(() => asked(mine) >= m0 + 1, 5000), 'the request reached the screen it was for');
+          await sleep(1000);
           clean = asked(other) === o0;
         }
         assert.ok(clean, `a screenshot request for ${id} reached the other screen on three tries in a row`);
