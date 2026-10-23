@@ -1,0 +1,29 @@
+# Install as /etc/fail2ban/jail.d/screentinker.local.
+# Defaults: disabled, local firewall. Cloudflare test setup: docs/operations.md#cloudflare-action
+# Configure and test the chosen action before enabling this jail.
+# Bans apply to the IP and can also block working devices sharing that public IP.
+[screentinker]
+enabled = false
+filter = screentinker
+# Optional: set SECURITY_LOG to this path to enable failed-login logging.
+# You (the server administrator) must create /var/log/screentinker and give the user
+# running the app write access to it and any existing security.log. The app creates the file.
+# Setup: docs/operations.md#fail2ban-optional
+logpath = /var/log/screentinker/security.log
+backend = auto
+usedns = no
+# Match the ports users connect to. The app's default HTTP port is 3001.
+# With app TLS, use port = 3001,3443 (HTTP redirect + HTTPS), or your custom ports.
+# With Nginx/Caddy, use the proxy's public ports.
+# Caddy HTTP/3 also needs protocol = tcp,udp.
+port = 3001
+protocol = tcp
+findtime = 10m
+maxretry = 10
+bantime = 15m
+# Local firewall: requires nftables and traffic through this host's INPUT chain.
+action = nftables[type=multiport, name=screentinker, port="%(port)s", protocol="%(protocol)s"]
+# Cloudflare Tunnel/proxied DNS: replace the action above with this one.
+# First install examples/fail2ban-cloudflare-action.conf and its credentials file.
+# This action ignores port/protocol and bans the IP across the Cloudflare zone.
+# action = screentinker-cloudflare

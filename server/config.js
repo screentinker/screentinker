@@ -82,6 +82,7 @@ module.exports = {
   rateLimitBackstopAnon: backstop.parseLimit(process.env.RATE_LIMIT_BACKSTOP_ANON, backstop.DEFAULT_ANON_MAX),
 
   port: process.env.PORT || 3001,
+  accessLogEnabled: process.env.ACCESS_LOG === 'true',
   httpsPort: process.env.HTTPS_PORT || 3443,
   dataDir: DATA_DIR,
   dbPath: process.env.DB_PATH || path.join(DATA_DIR, 'db', 'remote_display.db'),

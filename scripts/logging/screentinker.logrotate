@@ -1,0 +1,12 @@
+# The app reopens the file for each write, so rotation does not need copytruncate.
+/var/log/screentinker/security.log {
+    weekly
+    maxsize 10M
+    rotate 8
+    missingok
+    notifempty
+    compress
+    delaycompress
+    # Keep the owner and group so the service user can still write after rotation.
+    create 0640
+}

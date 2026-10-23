@@ -23,6 +23,7 @@ did not behave.
 - [Upgrading Node.js](#upgrading-nodejs)
 - [Upgrading 1.9 to 2.0 on slow storage](#upgrading-19-to-20-on-slow-storage)
 - [Traps worth knowing before they bite](#traps-worth-knowing-before-they-bite)
+- [Fail2ban (optional)](#fail2ban-optional)
 
 ---
 
@@ -462,3 +463,214 @@ WAL, uploads and thumbnails — and a read-only root throws all of it away at re
 silently reverts to its state at the moment you enabled overlay. If you want both, put `DATA_DIR` on
 a writable partition that overlay does not cover, and confirm a screen you add survives a power cut
 before relying on it.
+
+## Fail2ban (optional)
+
+Fail2ban reads failed password/TOTP logins from `SECURITY_LOG` and temporarily bans
+the source IP. The supplied jail bans after 10 failures within 10 minutes and
+runs its unban action after 15 minutes. Logging and the jail are off by default.
+
+A ban applies to all clients sharing that public IP, including working devices
+behind the same router. The local firewall action blocks the configured ports;
+the Cloudflare action blocks access across the configured zone. Leave the jail
+disabled if that could interrupt devices that need to stay connected.
+
+[Account security](../frontend/guides/digital-signage-users-roles.html#sign-in) works independently: use strong, unique passwords and enable
+**Settings → Two-factor authentication** for password accounts. For SSO, configure
+MFA with the identity provider. [Passkeys](passkeys.md) are also available.
+
+### Security log
+
+Install Fail2ban and logrotate. From the repository root, replace `APP_USER` and
+`APP_GROUP` with the app's service user and its primary group (`id -gn APP_USER`):
+
+Copy the jail template only for a new setup. If the jail already exists, skip that
+copy command and edit its settings instead.
+
+```sh
+sudo install -d -o APP_USER -g APP_GROUP -m 0750 /var/log/screentinker
+sudo install -m 0644 scripts/logging/screentinker.logrotate /etc/logrotate.d/screentinker
+sudo install -m 0644 scripts/logging/fail2ban-filter.conf /etc/fail2ban/filter.d/screentinker.conf
+sudo install -m 0644 scripts/logging/fail2ban-jail.local /etc/fail2ban/jail.d/screentinker.local
+```
+
+The copied jail is disabled and uses the local firewall. It is a starting template;
+configure the action for your traffic path before enabling it.
+
+Set `SECURITY_LOG=/var/log/screentinker/security.log` in the service environment and restart.
+Systemd needs `Environment=` or `EnvironmentFile=`; `npm start` reads `server/.env`.
+If you use another path, update the jail and logrotate to match.
+The app creates the file on the first failed login, but does not create directories.
+The service user needs write access to the directory and any existing log.
+Console logs stay in journald or Docker; `ACCESS_LOG` is independent of Fail2ban.
+
+### Nginx and Caddy
+
+The [Nginx](../scripts/logging/examples/nginx.conf) and
+[Caddy](../scripts/logging/examples/Caddyfile) examples cover two layouts:
+
+| Layout | Configuration | Ban action |
+|---|---|---|
+| Client → proxy on this host → app | Default example | Local firewall on the proxy's public ports |
+| Client → Cloudflare Tunnel → local cloudflared → proxy → app | All `TUNNEL` changes in the example | Cloudflare |
+
+The default examples do **not** restore visitor IPs behind Cloudflare's public
+proxy (proxied DNS). They would forward the edge IP instead. That layout needs
+proxy trust configured for Cloudflare's published IP ranges before enabling bans.
+See [Cloudflare's visitor-IP guidance](https://developers.cloudflare.com/support/troubleshooting/restoring-visitor-ips/restoring-original-visitor-ips/).
+
+For the supplied layouts:
+
+- Keep the app's port private. Both examples expect HTTP on `127.0.0.1:3001`.
+  If app TLS is active, port 3001 redirects; the app serves HTTPS on 3443 by default.
+  An HTTPS upstream also needs the correct certificate trust and server name.
+- Nginx needs an existing TLS certificate for the public example. Its Tunnel
+  configuration needs the [realip module](https://nginx.org/en/docs/http/ngx_http_realip_module.html).
+  The example does not add an HTTP-to-HTTPS redirect on port 80.
+- Caddy manages public certificates and redirects using [automatic HTTPS](https://caddyserver.com/docs/automatic-https).
+  The Tunnel configuration needs Caddy 2.8+; the `servers` address must match the
+  loopback bind address and port, as explained in [proxy trust settings](https://caddyserver.com/docs/caddyfile/options#trusted-proxies).
+- The Tunnel examples require `cloudflared` on the same host, outside a separate
+  container network. Set its service URL to `http://127.0.0.1:8080` and preserve the
+  site's public Host header. Cloudflare's [HTTP Host Header setting](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/origin-parameters/#httphostheader)
+  can set it explicitly. Only use the forced forwarded protocol `https` when visitors use HTTPS.
+- For local firewall bans, use the ports clients reach: normally `443`, plus `80`
+  if served. If Caddy serves HTTP/3, include UDP too. The supplied nftables action
+  uses the host INPUT hook; it is not a Docker forwarding-chain configuration.
+
+### Cloudflare action
+
+This action manages **zone-level IP Access rules**, available on the Free plan.
+See Cloudflare's [feature availability](https://developers.cloudflare.com/waf/).
+It requires `curl` and Fail2ban's `cloudflare.conf` action with `_cf_api_url` and
+`_cf_api_prms` support, as noted in the [action example](../scripts/logging/examples/fail2ban-cloudflare-action.conf).
+
+#### Configure the token and action
+
+In **My Profile → API Tokens**, create a custom token:
+
+- Permission: **Zone → Firewall Services → Edit**. Select **Zone** in the first dropdown.
+- Zone resources: **Include → Specific zone → your domain**.
+- If you restrict client IPs, allow the server's outgoing public IP.
+
+Use **Edit**, not Read: a token can be active and list rules while creating blocks
+still returns `403 Authentication error`. **Account Firewall Access Rules** is an
+account permission; this action calls the zone endpoint.
+References: [token setup](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/),
+[current permission names](https://developers.cloudflare.com/fundamentals/api/reference/permissions/#zone-permissions),
+[Fail2ban's zone-token example](https://github.com/fail2ban/fail2ban/blob/master/config/action.d/cloudflare-token.conf).
+
+From the repository root:
+
+```sh
+sudo install -m 0644 scripts/logging/examples/fail2ban-cloudflare-action.conf /etc/fail2ban/action.d/screentinker-cloudflare.conf
+sudo touch /etc/fail2ban/action.d/screentinker-cloudflare.local
+sudo chown root:root /etc/fail2ban/action.d/screentinker-cloudflare.local
+sudo chmod 0600 /etc/fail2ban/action.d/screentinker-cloudflare.local
+sudo nano /etc/fail2ban/action.d/screentinker-cloudflare.local
+```
+
+The credentials file needs the section header, too:
+
+```ini
+[Init]
+cfzone = YOUR_ZONE_ID
+cftoken = YOUR_TOKEN_SECRET
+```
+
+Copy the **Zone ID**, not the Account ID, from the domain's overview page.
+Enter only the token secret: no quotes and no `Bearer` prefix.
+
+For a Cloudflare test, use this complete content in
+`/etc/fail2ban/jail.d/screentinker.local`. Keep it disabled until the checks below pass:
+
+```ini
+[screentinker]
+enabled = false
+filter = screentinker
+logpath = /var/log/screentinker/security.log
+backend = auto
+usedns = no
+findtime = 10m
+maxretry = 5
+bantime = 2m
+action = screentinker-cloudflare
+```
+
+The Cloudflare action ignores `port` and `protocol`; it blocks the IP across the zone.
+
+The inherited `cloudflare.conf` action discards the create/delete response bodies
+and does not check the API's JSON success flag. A Fail2ban `Ban`/`Unban` message alone
+is not confirmation. API failures can leave a block absent or prevent its removal.
+The token and API connection must work at unban time.
+See the [IP Access rules API](https://developers.cloudflare.com/api/resources/firewall/subresources/access_rules/).
+Use `sudo fail2ban-client get logtarget` to locate Fail2ban's logs. Avoid sharing
+configuration dumps or expanded action commands: they can contain the token.
+
+### Verify and enable
+
+If using Nginx or Caddy, validate the installed configuration with `sudo nginx -t`
+or `sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`.
+Reload the proxy only if validation passes.
+
+Write errors are silently ignored. With the jail still disabled, submit an incorrect
+password through the public hostname. The security log must show the visitor's IP,
+not the proxy or loopback address. Check the log and filter:
+
+```sh
+sudo tail /var/log/screentinker/security.log
+sudo fail2ban-regex /var/log/screentinker/security.log /etc/fail2ban/filter.d/screentinker.conf
+```
+
+Check that client-supplied `X-Forwarded-For` and `CF-Connecting-IP` values cannot
+replace the logged visitor IP. Do not enable bans until attribution is correct.
+
+Check rotation with `sudo logrotate -f /etc/logrotate.d/screentinker`, then confirm another
+failed login reaches the new file. Logging and filter tests work with the jail disabled.
+
+After these checks, set `enabled = true` in the jail. The Cloudflare test example
+already uses `bantime = 2m`; use that duration for a short local-firewall test too.
+For a local firewall action, set `port` to the public ports clients reach.
+Validate first:
+
+```sh
+sudo fail2ban-client -t
+```
+
+If validation passes, reload the running Fail2ban service:
+
+```sh
+sudo fail2ban-client reload
+sudo fail2ban-client get screentinker actions
+sudo fail2ban-client get screentinker bantime
+```
+
+The duration should be `120` seconds. For Cloudflare, the action should be
+`screentinker-cloudflare`. Reload after changing saved credentials; an existing ban
+does not itself retest the action.
+
+Replace `TEST_IP` below with the test device's current public IP. Use the same
+address throughout; IPv4 and IPv6 are separate addresses.
+
+```sh
+sudo fail2ban-client set screentinker unbanip TEST_IP
+sudo fail2ban-client set screentinker banip TEST_IP
+sudo fail2ban-client status screentinker
+```
+
+An unban result of `0` means there was no active Fail2ban ban to remove.
+For Cloudflare, in the domain's [IP Access rules](https://developers.cloudflare.com/waf/tools/ip-access-rules/create/),
+confirm a **Block** rule for that exact IP, with a note containing `Fail2Ban screentinker`.
+
+From the test device, request `/api/auth/config?ban_test=1` at your actual public
+origin, including its scheme and port (for example, `http://HOST:3001` for direct
+HTTP or `https://HOST:3443` for app TLS). It should be blocked.
+An already loaded login page, or changing `#/login`, does not
+prove access: the fragment change does not request a page from the server.
+
+After `bantime` expires, confirm all three: the IP leaves Fail2ban's banned list,
+a fresh request reaches the app again, and (for Cloudflare) the block disappears.
+To unblock early, run `sudo fail2ban-client set screentinker unbanip TEST_IP`.
+For Cloudflare, if a rule remains, remove it in Cloudflare before finishing the test.
+After testing, restore `maxretry = 10` and `bantime = 15m`, or disable the jail.
+Keep the action appropriate to your traffic path, then validate and reload again.

@@ -1,0 +1,32 @@
+# This example accepts public traffic directly, without a CDN or tunnel.
+# For Cloudflare Tunnel, make all three changes marked TUNNEL below.
+# It does not configure visitor IP restoration for Cloudflare's public proxy.
+# Keep port 3001 private. This upstream requires the app to serve HTTP on 3001.
+# With app TLS, 3001 redirects to HTTPS (default 3443); configure the upstream accordingly.
+# Setup and verification: docs/operations.md#nginx-and-caddy
+# Proxy trust reference: https://caddyserver.com/docs/caddyfile/options#trusted-proxies
+
+# TUNNEL 1: uncomment this block (Caddy 2.8+). Merge it into any existing
+# global block. The address must match the bind address and port in TUNNEL 2.
+# {
+#     servers 127.0.0.1:8080 {
+#         trusted_proxies static 127.0.0.1/32
+#         trusted_proxies_strict
+#         client_ip_headers CF-Connecting-IP
+#     }
+# }
+
+# TUNNEL 2: replace this site address with http://signage.example.com:8080
+# and uncomment bind. This keeps the listener on loopback for local cloudflared.
+# Point cloudflared at http://127.0.0.1:8080, with Host = signage.example.com.
+signage.example.com {
+    # bind 127.0.0.1
+    reverse_proxy 127.0.0.1:3001 {
+        # Set the forwarded host here instead of trusting the incoming header.
+        header_up X-Forwarded-Host {hostport}
+        # TUNNEL 3: replace {remote_host} with {client_ip} and uncomment X-Forwarded-Proto.
+        header_up X-Forwarded-For {remote_host}
+        # header_up X-Forwarded-Proto https
+        header_up -CF-Connecting-IP
+    }
+}

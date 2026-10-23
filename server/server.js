@@ -21,6 +21,7 @@ if (process.env.SITE_CACHE_FOR) {
  * precisely when something else has already gone wrong. Repairing takes seconds; diagnosing at 2am
  * does not. ST_SKIP_DEP_PREFLIGHT=1 turns it off.
  */
+const { accessLogger } = require('./lib/http-logging');
 require('./lib/preflight-deps').preflight();
 
 const express = require('express');
@@ -75,6 +76,8 @@ const { getClientIp } = require('./services/activity');
 // the original client when fronted by Cloudflare; X-Forwarded-For from any
 // non-trusted source is ignored, so the value can't be spoofed.
 app.set('trust proxy', trustedProxies);
+// Before parsers, CORS, limiters and routes so their rejections are recorded too.
+if (config.accessLogEnabled) app.use(accessLogger({ getClientIp }));
 
 // Determine if SSL certs are available
 const hasSsl = fs.existsSync(config.sslCert) && fs.existsSync(config.sslKey);

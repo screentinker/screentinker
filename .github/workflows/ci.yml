@@ -51,6 +51,8 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: server/package-lock.json
+      # The filter test needs fail2ban-regex installed.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq fail2ban
       - run: npm ci
       - run: npm test
 
@@ -90,6 +92,8 @@ jobs:
       # Forcing the driver is also the stronger check: the server under test runs on node:sqlite
       # while the harness reads the same files with the native driver, so a divergence between the
       # two shows up as a failing assertion rather than as agreement between one driver and itself.
+      # The filter test needs fail2ban-regex installed.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq fail2ban
       - run: npm ci
       - name: Confirm the fallback really is what the server picks here
         run: |
