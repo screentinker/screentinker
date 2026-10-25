@@ -812,11 +812,36 @@ function sendPlayer(res, file, opts) {
   });
 }
 
+/*
+ * ⚠️ #715: THE webOS SHELL FRAMES THE PLAYER FROM ANOTHER ORIGIN.
+ *
+ * The LG webOS app (webos/js/app.js, playerUrl()) runs the web player in an iframe whose src is
+ * `/player?host=webos` — the shell is a packaged app, a different origin than the server, so helmet's
+ * X-Frame-Options: SAMEORIGIN makes webOS refuse the frame and show "connection to server is
+ * unstable", while the same /player opens fine in the panel's own browser. Same failure and same
+ * fix as the BrightSign player-host above and the bundle/widget render routes: drop the header and
+ * widen frame-ancestors. Gated on the `?host=webos` marker the shell sends (never for an ordinary
+ * /player), mirroring how the BrightSign case is scoped by context rather than opening the header up
+ * for everyone — a page framing the player from any other origin keeps SAMEORIGIN.
+ */
+function allowWebosFraming(req, res) {
+  if (String(req.query.host || '').toLowerCase() !== 'webos') return;
+  res.removeHeader('X-Frame-Options');
+  // The CSP is stripped from /player by the exempt middleware above, so this is usually a no-op;
+  // kept so the directive is relaxed rather than the policy dropped wherever a CSP does reach here.
+  const csp = res.getHeader('Content-Security-Policy');
+  if (typeof csp === 'string' && csp.includes('frame-ancestors')) {
+    res.setHeader('Content-Security-Policy', csp.replace(/frame-ancestors[^;]*/, 'frame-ancestors *'));
+  }
+}
+
 app.get(['/player', '/player/', '/player/index.html'], (req, res) => {
+  allowWebosFraming(req, res);
   sendPlayer(res, 'index.html');
 });
 
 app.get(['/player/legacy', '/player/legacy/', '/player/legacy/index.html', '/player/legacy.html'], (req, res) => {
+  allowWebosFraming(req, res);
   sendPlayer(res, 'legacy.html');
 });
 

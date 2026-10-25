@@ -96,6 +96,35 @@ test('THE DEEPER CASE: nested frames inside the player are freed too', async () 
   });
 });
 
+test('#715: the webOS shell frames /player?host=webos on any ordinary server', async () => {
+  // The LG webOS app loads the web player in an iframe at /player?host=webos (webos/js/app.js,
+  // playerUrl()). The shell is a packaged app on a different origin, so SAMEORIGIN refuses the
+  // frame — "connection to server is unstable" — while a plain /player keeps clickjacking
+  // protection. No ST_PLAYER_HOST here: this is a normal hosted install.
+  await withServer({}, async (base) => {
+    const webos = await fetch(`${base}/player?host=webos`);
+    assert.equal(webos.status, 200);
+    assert.equal(webos.headers.get('x-frame-options'), null,
+      'the webOS shell cannot frame the player while SAMEORIGIN is set');
+
+    const legacy = await fetch(`${base}/player/legacy?host=webos`);
+    assert.equal(legacy.status, 200);
+    assert.equal(legacy.headers.get('x-frame-options'), null,
+      'the legacy player must be framable by the webOS shell too');
+
+    // The exception is scoped to the webOS marker: a bare /player still refuses framing, and so
+    // does the player loaded for any other host.
+    const plain = await fetch(`${base}/player`);
+    assert.equal(plain.status, 200);
+    assert.equal(plain.headers.get('x-frame-options'), 'SAMEORIGIN',
+      'an ordinary /player must keep clickjacking protection');
+
+    const other = await fetch(`${base}/player?host=brightsign`);
+    assert.equal(other.headers.get('x-frame-options'), 'SAMEORIGIN',
+      'only host=webos relaxes the header');
+  });
+});
+
 test('the frame-ancestors directive is relaxed rather than the whole policy dropped', async () => {
   // Where a CSP is set, frame-ancestors 'self' blocks the frame just as effectively as the header
   // above — but the rest of that policy is still worth keeping.

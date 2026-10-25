@@ -15,6 +15,13 @@
 
 ### Fixed
 
+- **The webOS app shows the player instead of "connection to server is unstable"** (#715, reported
+  by @0xf800). The app runs the web player in an iframe at `/player?host=webos`, and the server
+  answered `/player` with `X-Frame-Options: SAMEORIGIN`; the app is a different origin than the
+  server, so webOS refused to render the frame even though `/player` opened fine in the panel's own
+  browser. The server now drops that header (and relaxes `frame-ancestors`) only for a `/player`
+  request carrying `host=webos`, the same way it already does for a BrightSign player host. An
+  ordinary `/player` still refuses to be framed.
 - **The webOS app now updates itself when the server publishes a newer build.** The six-hourly
   check asked for a capability named `system.update`, but the app announces `system.self_update`,
   so the check always stopped before downloading anything. It only applies to builds with LG's
