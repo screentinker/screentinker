@@ -243,6 +243,8 @@ function renderPlaylistGrid(playlists) {
             ${p.has_children ? `<span title="${esc(t('playlist.contains_tip'))}" style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg-input);color:var(--text-muted)">☰ ${t('playlist.tag_nested')}</span>` : ''}
             ${p.corporate ? cui.chip(t('corp.badge.corporate'), 'hq', t('corp.tip.corporate'), { lock: true }) : ''}
             ${p.corporate_slot ? cui.chip(t('corp.badge.your_slot'), 'slot', t('corp.tip.your_slot', { slot: p.corporate_slot.slot_name || '', playlist: p.corporate_slot.playlist_name || '' })) : ''}
+            ${/* #714: admin-only playlist — a content manager can see it but not change it. */ ''}
+            ${p.admin_locked ? `<span title="${esc(t('playlist.admin_lock.tip'))}" style="font-size:10px;padding:2px 6px;border-radius:4px;background:#3f2d1e;color:#fbbf24">🔒 ${esc(t('playlist.admin_lock.badge'))}</span>` : ''}
           </div>
           <div style="font-size:12px;color:var(--text-muted);white-space:nowrap;margin-left:12px">${p.smart_rules ? t('smart.by_rules') : tn('playlist.item_count', p.item_count)}</div>
         </div>
@@ -523,6 +525,10 @@ function renderDetailContent(container, playlist) {
   // Head office: keep what the last render learnt about this playlist's slots, so a re-render after
   // every edit does not flash slot rows back to their bare form while the details reload.
   const corpMode = playlist.corporate ? 'corporate' : playlist.corporate_slot ? 'fill' : null;
+  // #714: an admin-only playlist a non-admin may look at but not change. The server enforces it; this
+  // hides the controls that would answer 403 (same approach as the workspace read-only member below).
+  const adminCanLock = canWrite('admin');
+  const lockedForMe = !!playlist.admin_locked && !adminCanLock;
   const prev = corpEditor && corpEditor.playlistId === playlist.id ? corpEditor : null;
   corpEditor = corpMode ? { ...(prev || {}), mode: corpMode, playlistId: playlist.id, slots: (prev && prev.slots) || new Map() } : null;
 
@@ -559,6 +565,8 @@ function renderDetailContent(container, playlist) {
              click used to land on Delete. Keep the destructive button at the other end. -->
         <button class="btn btn-secondary" id="deletePlaylistBtn" style="color:var(--danger);margin-right:8px">${t('playlist.delete_playlist')}</button>
         <button class="btn btn-secondary" id="previewPlaylistBtn">${t('widget.preview')}</button>
+        ${/* #714: only a workspace admin sees the lock toggle. */ ''}
+        ${adminCanLock ? `<button class="btn btn-secondary" id="adminLockBtn" title="${esc(t('playlist.admin_lock.tip'))}">${playlist.admin_locked ? '🔒 ' + esc(t('playlist.admin_lock.unlock')) : '🔓 ' + esc(t('playlist.admin_lock.lock'))}</button>` : ''}
         ${playlist.smart_rules
           ? `<button class="btn btn-primary" id="editRulesBtn">${t('smart.edit_rules')}</button>`
           : `${playlist.corporate || playlist.corporate_slot || (playlist.layout && playlist.layout.explicit) ? '' : `<button class="btn btn-secondary" id="addLayoutItemBtn" data-advanced-ui title="${esc(t('campaign.add_hint'))}">${esc(t('campaign.add_btn'))}</button>`}<button class="btn btn-secondary" id="addHoldBtn">${esc(t('playlist.add_hold'))}</button><button class="btn btn-primary" id="addItemBtn">${t('playlist.add_content')}</button>`}
@@ -567,6 +575,7 @@ function renderDetailContent(container, playlist) {
     </div>
     <div id="playlistApprovalBar" style="margin:-8px 0 12px"></div>
     ${readOnlyNote()}
+    ${lockedForMe ? `<p class="corp-notice">${esc(t('playlist.admin_lock.note'))}</p>` : ''}
     ${corpMode ? '<div id="corpEditorBar"></div>' : ''}
 
     <!-- Step 3 sends you here by creating a playlist, and this is where you fill it. Losing the
@@ -668,10 +677,27 @@ function renderDetailContent(container, playlist) {
     });
   }
 
-  // A read-only member sees the playlist, without the buttons the server would refuse.
-  if (!canWrite()) ['publishBtn', 'discardDraftBtn', 'deletePlaylistBtn', 'editRulesBtn', 'addLayoutItemBtn', 'addSlotBtn', 'addHoldBtn', 'addItemBtn'].forEach((id) => { const el = document.getElementById(id); if (el) el.hidden = true; });
-  document.getElementById('playlistTitle').addEventListener('click', () => inlineEdit(playlist, 'name'));
-  document.getElementById('playlistDesc').addEventListener('click', () => inlineEdit(playlist, 'description'));
+  // A read-only member — or, #714, a non-admin looking at an admin-only playlist — sees the playlist
+  // without the buttons the server would refuse. (adminLockBtn stays: it is only rendered for admins.)
+  if (!canWrite() || lockedForMe) ['publishBtn', 'discardDraftBtn', 'deletePlaylistBtn', 'editRulesBtn', 'addLayoutItemBtn', 'addSlotBtn', 'addHoldBtn', 'addItemBtn'].forEach((id) => { const el = document.getElementById(id); if (el) el.hidden = true; });
+  // #714: rename/description are inline edits; don't offer them on a playlist this user can't change.
+  if (!lockedForMe) {
+    document.getElementById('playlistTitle').addEventListener('click', () => inlineEdit(playlist, 'name'));
+    document.getElementById('playlistDesc').addEventListener('click', () => inlineEdit(playlist, 'description'));
+  } else {
+    document.getElementById('playlistTitle').style.cursor = 'default';
+    document.getElementById('playlistTitle').removeAttribute('title');
+    document.getElementById('playlistDesc').style.cursor = 'default';
+    document.getElementById('playlistDesc').removeAttribute('title');
+  }
+  // #714: the lock toggle (admins only).
+  document.getElementById('adminLockBtn')?.addEventListener('click', async () => {
+    try {
+      const updated = await api.updatePlaylist(playlist.id, { admin_locked: playlist.admin_locked ? 0 : 1 });
+      showToast(updated.admin_locked ? t('playlist.admin_lock.toast_locked') : t('playlist.admin_lock.toast_unlocked'));
+      renderDetailContent(container, await api.getPlaylist(playlist.id));
+    } catch (err) { showToast(err.message, 'error'); }
+  });
 
   document.getElementById('addItemBtn')?.addEventListener('click', () => showAddItemModal(playlist.id));
   document.getElementById('addHoldBtn')?.addEventListener('click', (e) => showAddHoldModal(playlist.id, e.currentTarget));

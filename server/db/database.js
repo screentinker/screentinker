@@ -5162,6 +5162,15 @@ migrationStep('template-zone dedupe', () => {
   }
 });
 
+migrationStep('#714 admin-only playlists', () => {
+  // #714: a workspace admin can lock a playlist so only admins (workspace_admin, or an org/platform
+  // admin acting-as) may edit, reorder or delete it — a content manager (workspace_editor) can still
+  // work on every other playlist. A setting, not published content, so there is no published_ mirror
+  // and nothing to send to a player: enforced server-side in routes/playlists.js (loadPlaylistAccess).
+  // 0 = anyone with write access may edit, as before.
+  try { db.prepare('ALTER TABLE playlists ADD COLUMN admin_locked INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] playlists.admin_locked added'); } catch (_) { /* present */ }
+});
+
 /*
  * Corporate (head office) playlists: every table and column of the feature, applied here because
  * organizations only exists once the multi-tenancy phase above has run. Idempotent; see

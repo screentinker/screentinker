@@ -4,6 +4,14 @@
 
 ### Added
 
+- **A workspace admin can mark a playlist as admin-only** (#714). Open the playlist and use
+  "Lock to admins": members with the editor (content manager) role can still see it, but can no
+  longer rename it, add or remove items, reorder it, publish or delete it — while every other
+  playlist stays editable for them. The lock is enforced on the server, not just hidden in the
+  dashboard, so an API call cannot work around it; only a workspace admin (or an organization or
+  platform admin) can set or clear it. An admin-only playlist is marked with a lock badge in the
+  playlist list.
+
 - **An LG webOS package for Local application launch mode: `com.lg.app.signage.ipk`.** A panel set
   to Local mode installs only a package with the id `com.lg.app.signage`, under that file name,
   from the `application/` folder of a USB stick (Server Settings: Application Launch Mode Local,
