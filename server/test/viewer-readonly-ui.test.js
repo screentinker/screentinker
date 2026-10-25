@@ -104,7 +104,7 @@ const PAGES = {
   'kiosk.js': [/id="newKioskBtn" \$\{canWrite\(\)/, /\$\{canWrite\(\) \? '' : 'hidden'\} data-delete-kiosk=/, /id="saveKioskBtn" \$\{canWrite\(\)/],
   'widgets.js': [/id="newWidgetBtn" \$\{canWrite\(\)/, /id="saveWidgetBtn" \$\{canWrite\(\)/, /\$\{canWrite\(\) \? '' : 'hidden'\} data-duplicate-widget=/, /\$\{canWrite\(\) \? '' : 'hidden'\} data-delete-widget=/],
   'slides.js': [/id="newDeck" \$\{canWrite\(\)/, /\$\{canWrite\(\) \? '' : 'hidden'\} data-del=/, /id="saveBtn" \$\{canWrite\(\)/, /id="pubBtn" \$\{canWrite\(\)/],
-  'playlists.js': [/id="createPlaylistBtn" \$\{canWrite\(\)/, /if \(!canWrite\(\)\) \['publishBtn'/],
+  'playlists.js': [/id="createPlaylistBtn" \$\{canWrite\(\)/, /if \(!canWrite\(\)[^)]*\) \['publishBtn'/],
   'layout-editor.js': [/id="newLayoutBtn" \$\{canWrite\(\)/, /id="saveLayoutBtn" \$\{canWrite\(\)/, /data-delete-layout=/],
   'schedule.js': [/id="addScheduleBtn" \$\{canWrite\(\)/, /id="saveScheduleBtn" \$\{canWrite\(\)/, /openCompose\([^)]*\) \{\n\s*if \(!canWrite\(\)\) return;/],
   'triggers.js': [/id="tgNew" \$\{canWrite\(\)/, /data-act="del" \$\{canWrite\(\)/],
