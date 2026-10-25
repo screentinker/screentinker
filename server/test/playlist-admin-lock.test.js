@@ -31,6 +31,8 @@ const mem = db.prepare('INSERT OR IGNORE INTO workspace_members (workspace_id,us
 mem.run(WS, users.admin, 'workspace_admin');
 mem.run(WS, users.editor, 'workspace_editor');
 mem.run(WS, users.viewer, 'workspace_viewer');
+const DEV = 'd-al-screen';
+db.prepare('INSERT OR IGNORE INTO devices (id,name,workspace_id,user_id) VALUES (?,?,?,?)').run(DEV, 'Lobby screen', WS, users.admin);
 
 const app = express();
 app.use(express.json());
@@ -92,6 +94,14 @@ test('an editor is refused every write on a locked playlist', async () => {
   assert.equal((await call('DELETE', `/api/playlists/${S.locked}`, 'editor')).status, 403);
   // The item survived every refused attempt.
   assert.ok(db.prepare('SELECT 1 FROM playlist_items WHERE id = ?').get(S.lockedItem), 'item still present');
+});
+
+test('#714: an editor can still ASSIGN a locked playlist to a screen (using it is not editing it)', async () => {
+  const r = await call('POST', `/api/playlists/${S.locked}/assign`, 'editor', { device_id: DEV });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.notEqual(r.json && r.json.code, 'PLAYLIST_ADMIN_LOCKED', 'the admin-lock must not block assignment');
+  // A read-only viewer still cannot assign (the viewer block is unchanged).
+  assert.equal((await call('POST', `/api/playlists/${S.locked}/assign`, 'viewer', { device_id: DEV })).status, 403);
 });
 
 test('an admin is unaffected by the lock', async () => {

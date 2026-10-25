@@ -7,7 +7,8 @@
 - **A workspace admin can mark a playlist as admin-only** (#714). Open the playlist and use
   "Lock to admins": members with the editor (content manager) role can still see it, but can no
   longer rename it, add or remove items, reorder it, publish or delete it — while every other
-  playlist stays editable for them. The lock is enforced on the server, not just hidden in the
+  playlist stays editable for them. They can still assign a locked playlist to screens (that uses
+  it, it does not change it). The lock is enforced on the server, not just hidden in the
   dashboard, so an API call cannot work around it; only a workspace admin (or an organization or
   platform admin) can set or clear it. An admin-only playlist is marked with a lock badge in the
   playlist list.
