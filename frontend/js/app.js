@@ -389,6 +389,39 @@ async function refreshCurrentUser() {
 // level so every view's tips work without each having to opt in: tapping toggles one, Escape or
 // a tap elsewhere closes it, and the marker is made focusable so Tab can reach it.
 let tipsBound = false;
+
+// #721: a help tip inside the device-detail tab bar opens above a tab, but on mobile that bar is a
+// scroll container (overflow-x:auto) with a mask, which clips anything extending out of it and
+// cannot be escaped with z-index. For the tap-open state we render the tip as a fixed-position
+// element on <body> (outside the scroll/mask box) and position it under the tapped marker. Only
+// used for tips inside .tabs; everything else keeps the CSS ::after tooltip.
+function positionTabHelpTip(tip) {
+  let el = document.getElementById('helpTipFloating');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'helpTipFloating';
+    el.className = 'help-tip-floating';
+    el.setAttribute('role', 'tooltip');
+    document.body.appendChild(el);
+  }
+  el.textContent = tip.dataset.tip || '';
+  const r = tip.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth;
+  const margin = 12;
+  const width = Math.min(250, vw - margin * 2);
+  el.style.width = width + 'px';
+  let left = r.left + r.width / 2 - width / 2;
+  left = Math.max(margin, Math.min(left, vw - margin - width));
+  el.style.left = left + 'px';
+  // Open BELOW the tab (the pseudo opened above, which is the clipped direction); below the bar is
+  // unobstructed. getBoundingClientRect is viewport-relative, which matches position:fixed.
+  el.style.top = (r.bottom + 6) + 'px';
+}
+function hideTabHelpTip() {
+  const el = document.getElementById('helpTipFloating');
+  if (el) el.remove();
+}
+
 function enableHelpTips() {
   document.querySelectorAll('.help-tip:not([tabindex])').forEach((el) => {
     el.setAttribute('tabindex', '0');
@@ -430,14 +463,30 @@ function enableHelpTips() {
   document.addEventListener('click', (e) => {
     const tip = e.target.closest('.help-tip');
     document.querySelectorAll('.help-tip.is-open').forEach((o) => { if (o !== tip) o.classList.remove('is-open'); });
-    if (tip) { e.preventDefault(); tip.classList.toggle('is-open'); }
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') document.querySelectorAll('.help-tip.is-open').forEach((o) => o.classList.remove('is-open'));
-    if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('help-tip')) {
-      e.preventDefault(); e.target.classList.toggle('is-open');
+    hideTabHelpTip();   // #721: clear any floating tip before (re)deciding below
+    if (tip) {
+      e.preventDefault();
+      const nowOpen = tip.classList.toggle('is-open');
+      if (nowOpen && tip.closest('.tabs')) positionTabHelpTip(tip);   // #721: escape the tab scroll/mask box
     }
   });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { document.querySelectorAll('.help-tip.is-open').forEach((o) => o.classList.remove('is-open')); hideTabHelpTip(); }
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('help-tip')) {
+      e.preventDefault();
+      const nowOpen = e.target.classList.toggle('is-open');
+      hideTabHelpTip();
+      if (nowOpen && e.target.closest('.tabs')) positionTabHelpTip(e.target);
+    }
+  });
+  // #721: a fixed-position tip does not track its anchor, so dismiss it (and the open state) when
+  // the page or the tab bar scrolls or the viewport resizes. Capture catches the tab bar's own
+  // scroll, which does not bubble.
+  const closeAllTips = () => {
+    document.querySelectorAll('.help-tip.is-open').forEach((o) => o.classList.remove('is-open'));
+    hideTabHelpTip();
+  };
+  ['scroll', 'resize'].forEach((ev) => window.addEventListener(ev, closeAllTips, { passive: true, capture: true }));
 }
 
 function route() {

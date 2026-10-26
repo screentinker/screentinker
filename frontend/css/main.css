@@ -1722,6 +1722,31 @@ body {
   line-height: 1.4;
 }
 
+/* #721: inside the device-detail tab bar the mobile scroll container (overflow-x:auto + mask,
+   see the .tabs rule in the mobile media query) clips a tooltip that opens above the tab, and a
+   z-index cannot climb out of an overflow/mask box. For the tap/click-open state we render the tip
+   as a fixed-position element at <body> level (app.js positionTabHelpTip) so it escapes the scroll
+   and mask entirely while the tab bar keeps scrolling. Suppress the clipped pseudo-tip for that
+   open state; desktop hover (no clip there) keeps using the ::after above. */
+.tabs .help-tip.is-open::after { content: none; }
+
+.help-tip-floating {
+  position: fixed;
+  z-index: 3000;
+  width: 250px;
+  max-width: calc(100vw - 24px);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+
 /* Table wrapper: enables horizontal scroll when table min-width exceeds viewport */
 .table-wrap {
   overflow-x: auto;
