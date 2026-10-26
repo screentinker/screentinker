@@ -775,7 +775,7 @@ router.put('/:id', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
 
-  const { name, notes, timezone, orientation, background_color, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule, live_video_enabled, tags, screen_profile } = req.body;
+  const { name, notes, timezone, orientation, background_color, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule, live_video_enabled, tags, screen_profile, ignore_battery } = req.body;
   // Where the screen is (lib/local-conditions.js). Both coordinates or neither; both null clears.
   let locUpdate = null;
   if (req.body.latitude !== undefined || req.body.longitude !== undefined || req.body.location_label !== undefined) {
@@ -854,6 +854,12 @@ router.put('/:id', (req, res) => {
   // master switch are also on (see liveVideoOn); off by default. Write-gated by checkDeviceOwnership.
   if (live_video_enabled !== undefined) {
     updates.push('live_video_enabled = ?'); values.push(live_video_enabled ? 1 : 0);
+  }
+  // #724: "mains powered, ignore battery" override for boards that report a fake battery as present.
+  // Enforced server-side at telemetry ingest (deviceSocket.js), so it works regardless of player
+  // version. The honest mains boards are already handled by the player's EXTRA_PRESENT check.
+  if (ignore_battery !== undefined) {
+    updates.push('ignore_battery = ?'); values.push(ignore_battery ? 1 : 0);
   }
   // #12 scheduled reboot: device-local "HH:MM" (null/'' clears -> off). Reset the
   // once-per-day guard on any change so a newly-set time can still fire later today.

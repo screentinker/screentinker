@@ -1914,6 +1914,8 @@ export default {
   'device.live_badge': 'Live',
   'device.live_video.toggle': 'Enable live video for this screen',
   'device.live_video.hint': 'Shows a live WebRTC feed in Now Playing when a player is publishing. Also requires live video enabled for this workspace and configured on the server. Falls back to screenshots otherwise.',
+  'device.ignore_battery.toggle': 'Mains powered (ignore battery)',
+  'device.ignore_battery.hint': 'For TVs and panels with no battery whose board still reports a fake level (e.g. a permanent "42%, charging"). Forces the battery reading to blank so it reads as mains everywhere, including alerts. Leave off for real battery devices.',
   // Shown instead of the line above on a player that cannot capture its own screen — pointing at
   // a "Screenshot" button that is correctly not rendered reads as a broken dashboard.
   'device.no_screenshot_unsupported': 'This player cannot capture its own screen.',

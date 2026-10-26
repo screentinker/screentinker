@@ -1771,6 +1771,18 @@ const EVENT_APPLIERS = Object.freeze({
     // Optional panel state (power / input) for screen verification; no column of its own here.
     if (telemetry && telemetry.panel) { try { screenVerify.notePanelReport(device_id, telemetry.panel); } catch (_) { /* best effort */ } }
     if (telemetry && deviceExists(device_id)) {
+      // #724: the per-device "mains powered, ignore battery" override forces battery readings to
+      // null for boards that report a fake battery as present. The player's EXTRA_PRESENT check
+      // handles honest mains boards; this covers the ones that lie about presence, and does it
+      // server-side so it holds for every player version. battery_charging is stored as null (not
+      // 0) when there is no reading, so a batteryless panel reads "not applicable" rather than
+      // "not charging" — matching how battery_level already treats a missing value.
+      const battRow = db.prepare('SELECT ignore_battery FROM devices WHERE id = ?').get(device_id);
+      const ignoreBatt = !!(battRow && battRow.ignore_battery);
+      const battLevel = ignoreBatt ? null : (telemetry.battery_level ?? null);
+      const battCharging = (ignoreBatt || telemetry.battery_charging == null)
+        ? null
+        : (telemetry.battery_charging ? 1 : 0);
       db.prepare(`
         INSERT INTO device_telemetry (device_id, battery_level, battery_charging, storage_free_mb, storage_total_mb,
           ram_free_mb, ram_total_mb, cpu_usage, wifi_rssi, uptime_seconds, local_ip, local_ip6, temperature_c,
@@ -1778,8 +1790,8 @@ const EVENT_APPLIERS = Object.freeze({
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         device_id,
-        telemetry.battery_level ?? null,
-        telemetry.battery_charging ? 1 : 0,
+        battLevel,
+        battCharging,
         telemetry.storage_free_mb ?? null,
         telemetry.storage_total_mb ?? null,
         telemetry.ram_free_mb ?? null,

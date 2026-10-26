@@ -1443,6 +1443,13 @@ async function loadDevice(deviceId, activeTab = null) {
             </label>
             <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 24px">${t('device.live_video.hint')}</div>
           </div>` : ''}
+          ${!isEmbeddedDevice(device) ? `
+          <div style="margin:12px 0">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+              <input type="checkbox" id="ignoreBatteryToggle" ${device.ignore_battery === 1 ? 'checked' : ''}> ${t('device.ignore_battery.toggle')}
+            </label>
+            <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 24px">${t('device.ignore_battery.hint')}</div>
+          </div>` : ''}
           ${(!isEmbeddedDevice(device) || device.power_source === 'usb') ? `
           <div class="form-group" style="max-width:280px">
             <label>${t('device.reboot_schedule.label')}</label>
@@ -2965,6 +2972,9 @@ function setupActions(device) {
         // a save never flips a flag the operator could not see.
         ...(document.getElementById('liveVideoToggle')
           ? { live_video_enabled: document.getElementById('liveVideoToggle').checked ? 1 : 0 } : {}),
+        // #724: "mains powered, ignore battery" override. Only sent when its control rendered.
+        ...(document.getElementById('ignoreBatteryToggle')
+          ? { ignore_battery: document.getElementById('ignoreBatteryToggle').checked ? 1 : 0 } : {}),
         ...(epdProfileUpdate !== undefined ? { screen_profile: epdProfileUpdate } : {}),
       });
       if (saved && saved.screen_profile !== undefined) {

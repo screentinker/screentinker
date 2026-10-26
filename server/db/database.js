@@ -3459,6 +3459,13 @@ const migrations = [
      burned_by_node    TEXT
    )`,
   'CREATE INDEX IF NOT EXISTS idx_mesh_invites_code ON mesh_invites (code)',
+  // #724: per-device "mains powered, ignore battery" override. Some commercial TV boards report a
+  // battery as present with a fixed bogus level (e.g. 42%, charging) that the EXTRA_PRESENT check
+  // in the player cannot catch, because the board lies about presence. When this is set the server
+  // forces battery_level / battery_charging to null at telemetry ingest, so a batteryless panel
+  // reads as mains everywhere (dashboard and alerts) regardless of what the board claims. Off by
+  // default; the honest boards are handled by the player's EXTRA_PRESENT gate and need no switch.
+  "ALTER TABLE devices ADD COLUMN ignore_battery INTEGER NOT NULL DEFAULT 0",
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.
