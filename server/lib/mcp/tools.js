@@ -25,12 +25,13 @@ const TOOLS = [
   {
     name: 'list_displays',
     scope: 'read',
-    description: 'List the screens in this workspace with their online status, last heartbeat, platform and assigned playlist. Use this first to find a display id.',
+    description: 'List the screens in this workspace with their online status, last heartbeat, platform, tags, location, notes and assigned playlist. Use this first to find a display id, or to pick screens by tag.',
     input: {
       type: 'object',
       properties: {
         status: { type: 'string', enum: ['online', 'offline'], description: 'Only screens in this state.' },
         search: { type: 'string', description: 'Case-insensitive match on the display name.' },
+        tag: { type: 'string', description: 'Only screens carrying this tag (case-insensitive). Tags are what dynamic groups are built on.' },
       },
     },
     call: { method: 'GET', path: '/api/devices' },
@@ -40,9 +41,11 @@ const TOOLS = [
     shape: (rows, args) => (Array.isArray(rows) ? rows : [])
       .filter((d) => !args.status || (args.status === 'online' ? d.status === 'online' : d.status !== 'online'))
       .filter((d) => !args.search || String(d.name || '').toLowerCase().includes(String(args.search).toLowerCase()))
+      .filter((d) => !args.tag || (Array.isArray(d.tags) ? d.tags : []).some((t) => String(t).toLowerCase() === String(args.tag).toLowerCase()))
       .map((d) => ({
         id: d.id, name: d.name, status: d.status, platform: d.platform || d.client_type || null,
         last_heartbeat: d.last_heartbeat ? new Date(d.last_heartbeat * 1000).toISOString() : null,
+        tags: Array.isArray(d.tags) ? d.tags : [], location: locationOf(d), notes: d.notes || null,
         playlist_id: d.playlist_id || null, ...groupsOf(d),
       })),
   },
@@ -64,6 +67,16 @@ const TOOLS = [
         orientation: d.orientation || null,
         last_heartbeat: d.last_heartbeat ? new Date(d.last_heartbeat * 1000).toISOString() : null,
         offline_reason: d.status === 'online' ? null : (d.offline_reason || null),
+        // Device Info settings (same fields as the dashboard's Save Settings button), so an agent
+        // can read what it may change with update_display_settings.
+        tags: Array.isArray(d.tags) ? d.tags : [],
+        location: locationOf(d),
+        notes: d.notes || null,
+        background_color: d.background_color || null,
+        default_content_id: d.default_content_id || null,
+        reboot_schedule: d.reboot_schedule || null,
+        ota_enabled: !!d.ota_enabled,
+        ota_beta: !!d.ota_beta,
         playlist_id: d.playlist_id || null,
         ...groupsOf(d),
         now_playing: (d.assignments || []).map((a) => ({
@@ -395,6 +408,45 @@ const TOOLS = [
       ? { id: d.id, name: d.name, status: d.status, ...(d.groups_changed ? { groups_changed: d.groups_changed } : {}) }
       : d),
   },
+  {
+    name: 'update_display_settings',
+    scope: 'write',
+    description: 'Change a screen\'s settings — the same fields as the Save Settings button on the Device Info tab (tags, location, notes, orientation, background colour, default content, nightly reboot, OTA). Pass only the fields you want to change; omit the rest. Read the current values first with get_display.',
+    input: {
+      type: 'object',
+      required: ['display_id'],
+      properties: {
+        display_id: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Labels for this screen (array of strings, or a comma-separated string). REPLACES the existing tags. Tags drive dynamic groups.' },
+        notes: { type: 'string', description: 'Free-text note on the Device Info tab. Empty string clears it.' },
+        latitude: { type: 'number', minimum: -90, maximum: 90, description: 'Screen location latitude. Give latitude AND longitude together; both null clears the location.' },
+        longitude: { type: 'number', minimum: -180, maximum: 180, description: 'Screen location longitude (give with latitude).' },
+        location_label: { type: 'string', description: 'Human-readable location name, e.g. "Lobby, 2nd floor".' },
+        orientation: { type: 'string', enum: ['landscape', 'portrait', 'landscape-flipped', 'portrait-flipped'], description: 'Screen rotation.' },
+        background_color: { type: 'string', description: 'Hex colour behind content, e.g. "#202020". Empty string clears to the player default.' },
+        default_content_id: { type: 'string', description: 'Content id to show when no playlist is assigned.' },
+        reboot_schedule: { type: 'string', description: 'Device-local nightly reboot time as "HH:MM" (24h), or empty string for off.' },
+        ota_enabled: { type: 'boolean', description: 'Whether the player auto-updates over the air.' },
+        ota_beta: { type: 'boolean', description: 'Whether it takes pre-release (beta) OTA builds.' },
+      },
+    },
+    call: {
+      method: 'PUT', path: '/api/devices/{display_id}',
+      body: ['tags', 'notes', 'latitude', 'longitude', 'location_label', 'orientation', 'background_color', 'default_content_id', 'reboot_schedule', 'ota_enabled', 'ota_beta'],
+    },
+    // Echo back the settings that now apply (the raw row is ~80 columns), plus whether a tag change
+    // moved the screen into or out of a dynamic group.
+    shape: (d) => (d && typeof d === 'object'
+      ? {
+          id: d.id, name: d.name, status: d.status,
+          tags: Array.isArray(d.tags) ? d.tags : [], location: locationOf(d), notes: d.notes || null,
+          orientation: d.orientation || null, background_color: d.background_color || null,
+          default_content_id: d.default_content_id || null, reboot_schedule: d.reboot_schedule || null,
+          ota_enabled: !!d.ota_enabled, ota_beta: !!d.ota_beta,
+          ...(d.groups_changed ? { groups_changed: d.groups_changed } : {}),
+        }
+      : d),
+  },
 ];
 
 /*
@@ -418,6 +470,13 @@ function groupsOf(d) {
   const ids = Array.isArray(d.group_ids) ? d.group_ids : [];
   // group_id kept for clients written against the old field; it is the first group by name.
   return { group_ids: ids, group_id: ids[0] || null };
+}
+
+// A screen's location as the Device Info tab holds it: a label and/or coordinates, or null when unset.
+function locationOf(d) {
+  const lat = d.latitude, lon = d.longitude, label = d.location_label || null;
+  if (label == null && lat == null && lon == null) return null;
+  return { label, latitude: lat ?? null, longitude: lon ?? null };
 }
 
 // A widget needs a name, and "https://intranet.example.com/menu" says more than "Web page".

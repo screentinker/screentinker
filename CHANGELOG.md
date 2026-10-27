@@ -4,6 +4,14 @@
 
 ### Added
 
+- **The MCP server can read and write a screen's tags, location and Device Info settings** (#732,
+  requested by a customer rolling out a large fleet). `list_displays` and `get_display` now return
+  each screen's tags, location and notes (and `get_display` its orientation, background colour,
+  default content, nightly reboot time and OTA/pre-release flags); `list_displays` takes a `tag`
+  filter; and a new `update_display_settings` tool writes all of those — the same fields as the
+  Device Info tab's Save Settings button. An AI assistant can now organise and configure a fleet by
+  tag and location instead of editing each screen in the dashboard.
+
 - **A workspace admin can mark a playlist as admin-only** (#714). Open the playlist and use
   "Lock to admins": members with the editor (content manager) role can still see it, but can no
   longer rename it, add or remove items, reorder it, publish or delete it — while every other

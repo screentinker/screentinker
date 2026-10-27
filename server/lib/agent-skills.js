@@ -42,7 +42,8 @@ rather call it directly than speak MCP.
 
 - \`fleet_status\` — the one call worth making first: totals, and every offline display with the
   reason it is considered offline.
-- \`list_displays\` / \`get_display\` — a display's status, resolution, what it is playing now.
+- \`list_displays\` / \`get_display\` — a display's status, resolution, what it is playing now, plus
+  its tags, location, notes and settings. \`list_displays\` takes a \`tag\` filter.
 - \`uptime_report\` / \`play_report\` — proof of play and availability over a date range.
 
 ## What you can change
@@ -52,6 +53,8 @@ rather call it directly than speak MCP.
 - \`assign_playlist_to_display\`, \`assign_playlist_to_group\`
 - \`send_command\`, \`send_group_command\` — \`refresh\`, \`screen_on\`, \`screen_off\`,
   \`set_volume\`, \`set_brightness\` (a value of 0-100 for the last two).
+- \`rename_display\`, \`update_display_settings\` — a screen's name and its Device Info settings:
+  tags, location, notes, orientation, background colour, default content, nightly reboot and OTA.
 - \`add_youtube_video\`, \`add_media_url\` (an image or video file), \`add_web_page\` (a live page: it
   returns a widget id, which \`add_to_playlist\` takes instead of a content id).
 

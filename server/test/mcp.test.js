@@ -328,6 +328,63 @@ test('get_display returns an answer, not a database row', () => {
   assert.equal(shaped.offline_reason, null);
 });
 
+test('#732 list_displays surfaces tags, location and notes, and filters by tag', () => {
+  const rows = [
+    { id: 'd1', name: 'Lobby 55', status: 'online', tags: ['wall-55', 'site-a'], notes: 'top of the stairs',
+      location_label: 'Lobby', latitude: 40.1, longitude: -74.2, last_heartbeat: 1790000000 },
+    { id: 'd2', name: 'Cafe', status: 'online', tags: ['site-b'], notes: null,
+      location_label: null, latitude: null, longitude: null },
+  ];
+  const all = tools.byName('list_displays').shape(rows, {});
+  assert.deepEqual(all[0].tags, ['wall-55', 'site-a']);
+  assert.deepEqual(all[0].location, { label: 'Lobby', latitude: 40.1, longitude: -74.2 });
+  assert.equal(all[0].notes, 'top of the stairs');
+  assert.equal(all[1].location, null, 'no location set reads as null, not an empty object');
+  // the tag filter is case-insensitive and is what dynamic groups are built on
+  const tagged = tools.byName('list_displays').shape(rows, { tag: 'WALL-55' });
+  assert.equal(tagged.length, 1);
+  assert.equal(tagged[0].id, 'd1');
+  assert.equal(tools.byName('list_displays').shape(rows, { tag: 'nope' }).length, 0);
+});
+
+test('#732 get_display surfaces the Device Info settings (and still no secrets)', () => {
+  const shaped = tools.byName('get_display').shape({
+    id: 'd1', name: 'Lobby', status: 'online', orientation: 'portrait',
+    tags: ['wall-55'], notes: 'n', location_label: 'Lobby', latitude: 1, longitude: 2,
+    background_color: '#202020', default_content_id: 'c9', reboot_schedule: '03:30',
+    ota_enabled: 1, ota_beta: 0, device_token: 'SECRET', assignments: [],
+  });
+  assert.deepEqual(shaped.tags, ['wall-55']);
+  assert.deepEqual(shaped.location, { label: 'Lobby', latitude: 1, longitude: 2 });
+  assert.equal(shaped.background_color, '#202020');
+  assert.equal(shaped.reboot_schedule, '03:30');
+  assert.equal(shaped.ota_enabled, true);
+  assert.equal(shaped.ota_beta, false, 'the 0/1 columns become booleans');
+  assert.ok(!JSON.stringify(shaped).includes('SECRET'), 'still no secrets');
+});
+
+test('#732 update_display_settings sends only declared fields and echoes the settings', () => {
+  // mass-assignment guard: a model passing extra keys cannot set fields the tool never advertised.
+  const req = tools.toRequest(tools.byName('update_display_settings'), {
+    display_id: 'd1', tags: ['wall-55', 'site-a'], orientation: 'portrait', reboot_schedule: '03:30',
+    ota_enabled: false, workspace_id: 'other-ws', is_admin: true,
+  });
+  assert.equal(req.method, 'PUT');
+  assert.equal(req.path, '/api/devices/d1');
+  assert.deepEqual(req.body, { tags: ['wall-55', 'site-a'], orientation: 'portrait', reboot_schedule: '03:30', ota_enabled: false });
+  // it is a write tool, so a read token never sees it
+  assert.equal(tools.toolsForScope('read').some((t) => t.name === 'update_display_settings'), false);
+  assert.equal(tools.toolsForScope('write').some((t) => t.name === 'update_display_settings'), true);
+  // the answer echoes what now applies, with no raw-row noise
+  const shaped = tools.byName('update_display_settings').shape({
+    id: 'd1', name: 'Lobby', status: 'online', tags: ['wall-55'], orientation: 'portrait',
+    reboot_schedule: '03:30', ota_enabled: 1, ota_beta: 0, device_token: 'SECRET',
+  });
+  assert.deepEqual(shaped.tags, ['wall-55']);
+  assert.equal(shaped.ota_enabled, true);
+  assert.ok(!JSON.stringify(shaped).includes('SECRET'));
+});
+
 test('⚠️ the published server card cannot disagree with the handshake', () => {
   /*
    * SEP-1649. A card is a promise a client acts on BEFORE it connects — it picks an endpoint, a
