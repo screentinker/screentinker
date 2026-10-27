@@ -604,6 +604,27 @@ function isEmbeddedDevice(device) {
   return device.client_type === 'embedded' || String(device.platform || '').toLowerCase().includes('embedded');
 }
 
+// Mirrors the 'web' fallback of platformFamily() (and 'ios', the same web player in a WKWebView):
+// the browser web player, the LG webOS panel and the iOS app all load /player and its
+// /player/unpair-gate.js, so they REFUSE to unpair without the settings PIN ("Enter the settings PIN
+// for this screen"). Every family with an arm of its own (Android, the native Pi/Windows/Mac
+// players, BrightSign, Samsung Tizen, Roku, embedded, Vega) is carved out ahead of the fallback and
+// keeps its current behaviour — this only names the families that were left with NO PIN card at all
+// in the dashboard even though the player enforces one (issue #731). webOS has no arm of its own in
+// platformFamily() (it registers platform 'webos'), so it lands here, which is correct.
+function isWebDevice(device) {
+  if (!device) return false;
+  if (isAndroidDevice(device)) return false;      // client_type 'apk', or a non-web android_version (Tizen too)
+  if (isNativeDevice(device)) return false;        // Pi / Windows / Mac
+  if (isBrightSignDevice(device)) return false;
+  if (isRokuDevice(device)) return false;
+  if (isEmbeddedDevice(device)) return false;
+  const platform = String(device.platform || '').toLowerCase();
+  if (platform.includes('tizen') || device.client_type === 'wgt') return false;
+  if (platform.includes('vega')) return false;
+  return true;
+}
+
 // The one-shot shell's presets and wording, per native OS. Android keeps TERMINAL_PRESETS.
 function terminalPresets(device) {
   if (isWindowsDevice(device)) return WINDOWS_TERMINAL_PRESETS;
@@ -1256,8 +1277,12 @@ async function loadDevice(deviceId, activeTab = null) {
           <!-- The Linux player sends android_version '' (it is not Android), so it never reaches the
                Android arm; its OS and model are on the hardware_os_version / hardware_model cards
                above. It DOES have an on-device settings menu behind the same PIN, so the PIN card
-               is rendered for it too. -->
-          ${(device.android_version && !device.android_version.startsWith('Web/')) || isNativeDevice(device) ? `
+               is rendered for it too. The web family (browser web player, LG webOS, iOS) is added by
+               isWebDevice: it reports android_version 'Web/...' so the Android arm skips it, yet it
+               ENFORCES the PIN at the Esc/back unpair gate (server/player/unpair-gate.js) — without
+               this it enforced a PIN the dashboard never showed or let you reset (#731). The nested
+               android_version card below stays Android-only, so a web player shows only the PIN. -->
+          ${(device.android_version && !device.android_version.startsWith('Web/')) || isNativeDevice(device) || isWebDevice(device) ? `
           ${device.android_version && !device.android_version.startsWith('Web/') ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.android_version')}</div>

@@ -39,6 +39,14 @@
 
 ### Fixed
 
+- **The settings PIN now shows on the dashboard for web players** (#731, reported from the field on
+  a self-hosted instance). The web player (and the LG webOS panel and iOS app, which embed it) asks
+  for the settings PIN before it will unpair at the screen, but the Device Info card that shows and
+  resets that PIN was only rendered for Android and the native Pi/Windows/Mac players. A web screen
+  therefore enforced a PIN that could not be seen or rotated anywhere in the dashboard. The PIN card
+  now renders for the web player family as well; Android, native, Samsung Tizen, BrightSign and Roku
+  are unchanged.
+
 - **A YouTube video on a video wall or a synced group no longer restarts on the follower screens**
   (#729, reported from the field on a two-TV wall). The leader runs the playlist and the followers
   take their place from it, but a YouTube item on a follower advanced itself when it ended, or when

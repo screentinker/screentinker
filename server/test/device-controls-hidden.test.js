@@ -92,6 +92,24 @@ function render(device, telemetry) {
     isEmbeddedDevice: (d) => !!d && (d.client_type === 'embedded' || String(d.platform || '').toLowerCase().includes('embedded')),
     isNativeDevice: (d) => !!d && (d.client_type === 'pi' || d.client_type === 'win' || d.client_type === 'mac'
       || /^(linux|windows|macos)\//.test(String(d.platform || '').toLowerCase())),
+    // Mirrors isWebDevice() in device-detail.js: the 'web' fallback of platformFamily() (the browser
+    // web player, LG webOS, iOS) — none of the families with an arm of their own. #731. Change the
+    // real helper and this together. The android_version short-circuit comes first: Android AND
+    // Tizen report a non-'Web/' android_version, so both are excluded before anything else.
+    isWebDevice: (d) => {
+      if (!d) return false;
+      const p = String(d.platform || '').toLowerCase();
+      if (d.client_type === 'apk') return false;
+      const av = String(d.android_version || '');
+      if (av !== '' && !av.startsWith('Web/')) return false;      // Android / Tizen OS strings
+      if (p.includes('brightsign') || p.includes('tizen') || d.client_type === 'wgt') return false;
+      if (d.client_type === 'roku' || /^roku($|\/)/.test(p)) return false;
+      if (d.client_type === 'pi' || d.client_type === 'win' || d.client_type === 'mac'
+        || /^(linux|windows|macos)\//.test(p)) return false;
+      if (d.client_type === 'embedded' || p.includes('embedded')) return false;
+      if (p.includes('vega')) return false;
+      return true;
+    },
     terminalPresets: (d) => {
       const p = String((d && d.platform) || '').toLowerCase();
       if (d && (d.client_type === 'win' || p.startsWith('windows/'))) return [{ label: 'Helper service', cmd: 'Get-Service ScreenTinkerHelper' }];
@@ -566,6 +584,35 @@ test('the Android-only cards stay Android-only', () => {
   assert.ok(!bs.includes('device.info.android_version'), 'android_version is an APK concept');
   const android = render({ ...ANDROID_FULL, app_version: '1.9.36' });
   assert.ok(android.includes('device.info.settings_pin'), 'Android keeps its PIN card');
+});
+
+test('#731 the web player gets the PIN card it enforces, and so does webOS', () => {
+  // The browser web player loads /player/unpair-gate.js and refuses to unpair without the settings
+  // PIN ("Enter the settings PIN for this screen"), but the card that shows and rotates that PIN was
+  // gated to Android + native — so a web screen enforced a PIN nobody could see or reset (#731). The
+  // card now renders for the whole web family (browser, LG webOS).
+  for (const [name, dev] of [['web', WEB], ['webos', { platform: 'webos', android_version: 'Web/webOS' }]]) {
+    const html = render({ ...dev, settings_pin: '246813' });
+    assert.ok(html.includes('device.info.settings_pin') && html.includes('246813'),
+      `${name} must show the settings PIN it enforces`);
+    assert.ok(has(html, 'rotatePinBtn') && has(html, 'setPinBtn'),
+      `${name} must be able to rotate and set the PIN`);
+    // The Android OS version card stays Android-only: a web player has no android_version to show.
+    assert.ok(!html.includes('device.info.android_version'), `${name} shows no Android OS version card`);
+  }
+});
+
+test('#731 the new web PIN card does not leak onto a BrightSign, Roku or Tizen path change', () => {
+  // isWebDevice is the platformFamily 'web' FALLBACK: families with an arm of their own are carved
+  // out first and keep exactly their prior behaviour, so adding web touches none of them.
+  assert.ok(!render({ ...BRIGHTSIGN, settings_pin: '111111' }).includes('device.info.settings_pin'),
+    'BrightSign still shows no PIN card');
+  assert.ok(!render({ client_type: 'roku', platform: 'roku', settings_pin: '222222' }).includes('device.info.settings_pin'),
+    'Roku still shows no PIN card');
+  // Samsung Tizen already showed the PIN card (non-web android_version satisfies the Android arm);
+  // the web change must not disturb that — the "don't break Samsung" case.
+  assert.ok(render({ ...TIZEN, settings_pin: '333333' }).includes('device.info.settings_pin'),
+    'Tizen keeps the PIN card it already had');
 });
 
 // ---------------------------------------------------------------------------------------------
