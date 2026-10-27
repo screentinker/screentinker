@@ -59,7 +59,11 @@ function listTracks(contentId) {
 
 // Viewer-facing shape: public URLs only, never internal keys. Used by the view-poll enrichment and
 // the listen page, so a visitor can discover the languages offered for whatever is on the screen.
+// Gated on the per-video opt-in: a video with tracks but the guide switched off exposes nothing.
 function tracksForViewer(contentId) {
+  if (!hasTable()) return [];
+  const row = db.prepare('SELECT audio_guide_enabled FROM content WHERE id = ?').get(contentId);
+  if (!row || !row.audio_guide_enabled) return [];
   return listTracks(contentId).map((t) => ({
     lang: t.lang,
     label: t.label || null,

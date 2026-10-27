@@ -1421,7 +1421,7 @@ function showEditModal(contentItem, onSave, { focus = null } = {}) {
   overlay.querySelector('#editEditCaptions')?.addEventListener('click', () => openCaptionsEditor(contentItem.id));
 
   // Visitor audio sync: the per-language audio-guide tracks section (uploaded video only).
-  initAudioTracks(overlay, contentItem.id);
+  initAudioTracks(overlay, contentItem.id, contentItem.audio_guide_enabled);
 
   // 3.0 TV-safe video copies (server/lib/video-variants.js): for a tall video, say whether the copy
   // a Samsung TV plays is being prepared, ready or failed — and offer Retry on failure.
@@ -1585,10 +1585,27 @@ function showEditModal(contentItem, onSave, { focus = null } = {}) {
  * track is an audio file + optional WebVTT caption, keyed by language. The list, add and remove act
  * immediately against /api/content/:id/audio-tracks (not deferred to Save), like the subtitle action.
  */
-async function initAudioTracks(overlay, contentId) {
+async function initAudioTracks(overlay, contentId, initialEnabled) {
   const box = overlay.querySelector('#editAudioTracks');
   if (!box) return; // not an uploaded video
   const headers = { Authorization: 'Bearer ' + localStorage.getItem('token') };
+  let enabled = !!initialEnabled;
+
+  // Per-video opt-in: toggling it PUTs immediately (like the add/remove below act immediately).
+  async function setEnabled(e) {
+    const on = e.target.checked;
+    try {
+      assertLocalCallAllowed('/content', 'PUT');
+      const r = await fetch('/api/content/' + contentId, {
+        method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio_guide_enabled: on ? 1 : 0 }),
+      });
+      const b = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(b.error || t('content.error_update_failed'));
+      enabled = on;
+      showToast(on ? t('content.audio_guide_on') : t('content.audio_guide_off'), 'success');
+    } catch (err) { e.target.checked = !on; showToast(err.message, 'error'); }
+  }
 
   async function load() {
     let tracks = [];
@@ -1606,11 +1623,16 @@ async function initAudioTracks(overlay, contentId) {
         <button type="button" class="btn btn-secondary btn-sm" data-atk-del="${esc(tk.lang)}">${esc(t('content.audio_remove'))}</button>
       </div>`).join('');
     box.innerHTML = `
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="atkEnabled" ${enabled ? 'checked' : ''} style="width:auto;margin:0">
+        <span>${esc(t('content.audio_guide_enable'))}</span>
+      </label>
+      <div style="font-size:11px;color:var(--text-muted);margin:4px 0 12px 24px">${esc(t('content.audio_guide_enable_hint'))}</div>
       ${tracks.length ? rows : `<p style="font-size:12px;color:var(--text-muted)">${esc(t('content.audio_none'))}</p>`}
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-          <div><label style="font-size:12px;color:var(--text-secondary);display:block">${esc(t('content.label_subtitle_lang'))}</label>
-            <select id="atkLang" class="input" style="background:var(--bg-input)">${langOptions('en')}</select></div>
+          <div><label style="font-size:12px;color:var(--text-secondary);display:block">${esc(t('content.audio_language'))}</label>
+            <select id="atkLang" class="input" style="background:var(--bg-input)">${SUBTITLE_LANGS.map(function (l) { return '<option value="' + l[0] + '">' + esc(l[1]) + '</option>'; }).join('')}</select></div>
           <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" id="atkDefault" style="width:auto;margin:0">${esc(t('content.audio_make_default'))}</label>
         </div>
         <div style="margin-top:8px"><label style="font-size:12px;color:var(--text-secondary);display:block">${esc(t('content.audio_file'))}</label>
@@ -1621,6 +1643,7 @@ async function initAudioTracks(overlay, contentId) {
       </div>`;
     box.querySelectorAll('[data-atk-del]').forEach((b) => b.addEventListener('click', () => del(b.dataset.atkDel)));
     box.querySelector('#atkAdd').addEventListener('click', add);
+    box.querySelector('#atkEnabled').addEventListener('change', setEnabled);
   }
 
   async function add() {

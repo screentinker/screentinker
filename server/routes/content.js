@@ -1132,7 +1132,7 @@ router.put('/:id', (req, res) => {
 
   const { filename, mime_type, folder, folder_id, expires_at, unstable_connection,
           captions_enabled, captions_lang, subtitle_url, subtitle_lang, tags, meta, video_prerotated,
-          tls_self_signed, fisheye } = req.body;
+          tls_self_signed, fisheye, audio_guide_enabled } = req.body;
   let { remote_url } = req.body;
   // A camera URL comes back to the dashboard with its password and share token masked (middleware/
   // mask-stream-credentials.js). Sent back with the mask in place, it means "keep the saved one",
@@ -1281,6 +1281,8 @@ router.put('/:id', (req, res) => {
   // #216: caption/subtitle metadata. The subtitle FILE is uploaded via POST /:id/subtitle;
   // these fields toggle YouTube captions, set languages, or clear a subtitle (subtitle_url=null).
   if (captions_enabled !== undefined) set('captions_enabled', captions_enabled ? 1 : 0);
+  // Visitor audio sync: per-video opt-in for the guide + its on-screen QR (lib/content-audio-tracks).
+  if (audio_guide_enabled !== undefined) set('audio_guide_enabled', audio_guide_enabled ? 1 : 0);
   if (captions_lang !== undefined) set('captions_lang', captions_lang ? String(captions_lang).slice(0, 10) : null);
   if (subtitle_url !== undefined) {
     // Only null (clear) is accepted here — a real subtitle_url is set by the upload endpoint.

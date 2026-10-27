@@ -99,9 +99,11 @@ test('POST stores an audio track + caption, first track is default, files land o
   assert.ok(fs.existsSync(path.join(require('../config').contentDir, path.basename(t.audio_url))));
   assert.ok(fs.existsSync(path.join(require('../config').contentDir, path.basename(t.caption_url))));
 
-  // viewer shape exposes public URLs only, no internal keys
+  // viewer side is gated on the per-video opt-in: off by default -> nothing exposed
+  assert.equal(audioTracks.tracksForViewer(c).length, 0, 'guide off by default');
+  db.prepare('UPDATE content SET audio_guide_enabled = 1 WHERE id = ?').run(c);
   const viewer = audioTracks.tracksForViewer(c);
-  assert.equal(viewer.length, 1);
+  assert.equal(viewer.length, 1, 'enabled -> tracks exposed');
   assert.equal(viewer[0].lang, 'en');
   assert.ok(viewer[0].audio_url.startsWith('/uploads/content/'));
   assert.equal(viewer[0].audio_key, undefined);

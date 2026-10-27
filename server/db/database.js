@@ -3533,6 +3533,10 @@ const migrations = [
    )`,
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_content_audio_tracks_lang ON content_audio_tracks(content_id, lang)',
   'CREATE INDEX IF NOT EXISTS idx_content_audio_tracks_content ON content_audio_tracks(content_id)',
+  // Per-video opt-in for the visitor audio guide. Off by default: a video can carry language tracks
+  // without the guide being live. When on AND the video has tracks, visitors get the guide (the
+  // /listen poll exposes the tracks) and the player shows a "Scan for audio guide" QR while it plays.
+  "ALTER TABLE content ADD COLUMN audio_guide_enabled INTEGER NOT NULL DEFAULT 0",
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.
