@@ -1772,16 +1772,19 @@ const EVENT_APPLIERS = Object.freeze({
     if (telemetry && telemetry.panel) { try { screenVerify.notePanelReport(device_id, telemetry.panel); } catch (_) { /* best effort */ } }
     if (telemetry && deviceExists(device_id)) {
       // #724: the per-device "mains powered, ignore battery" override forces battery readings to
-      // null for boards that report a fake battery as present. The player's EXTRA_PRESENT check
+      // blank for boards that report a fake battery as present. The player's EXTRA_PRESENT check
       // handles honest mains boards; this covers the ones that lie about presence, and does it
-      // server-side so it holds for every player version. battery_charging is stored as null (not
-      // 0) when there is no reading, so a batteryless panel reads "not applicable" rather than
-      // "not charging" — matching how battery_level already treats a missing value.
+      // server-side so it holds for every player version. The "no battery" signal the dashboard and
+      // alerts key on is battery_level being null; battery_charging stays 0 in that case because the
+      // device_telemetry.battery_charging column is NOT NULL (it has always stored 0 for a
+      // batteryless/mains device — every web player sends battery_charging:null and relied on this).
+      // Writing null here instead threw a NOT NULL constraint, which the safe-socket wrapper above
+      // reads as a broken handler and disconnects the panel over — so keep it 0.
       const battRow = db.prepare('SELECT ignore_battery FROM devices WHERE id = ?').get(device_id);
       const ignoreBatt = !!(battRow && battRow.ignore_battery);
       const battLevel = ignoreBatt ? null : (telemetry.battery_level ?? null);
       const battCharging = (ignoreBatt || telemetry.battery_charging == null)
-        ? null
+        ? 0
         : (telemetry.battery_charging ? 1 : 0);
       db.prepare(`
         INSERT INTO device_telemetry (device_id, battery_level, battery_charging, storage_free_mb, storage_total_mb,
