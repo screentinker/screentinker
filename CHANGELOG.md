@@ -24,6 +24,13 @@
 
 ### Fixed
 
+- **The webOS app defaults to screentinker.com and recovers from a stalled player load instead of a
+  black screen** (#728). A fresh panel now plays with no server address typed in (a value entered on
+  the remote, or shipped in `config.json`, still wins, and Back still opens setup). And when the
+  player frame does not come up, because the panel booted or woke from standby before its network
+  was ready, so LG shows its "CHECK NETWORK CONNECTION" error or the frame stays black, the app now
+  retries with backoff and shows a "Connecting to the server…" screen until it loads, rather than
+  sitting dark until someone presses RETRY.
 - **The webOS app shows the player instead of "connection to server is unstable"** (#715, reported
   by @0xf800). The app runs the web player in an iframe at `/player?host=webos`, and the server
   answered `/player` with `X-Frame-Options: SAMEORIGIN`; the app is a different origin than the
