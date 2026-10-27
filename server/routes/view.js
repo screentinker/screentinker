@@ -64,7 +64,15 @@ module.exports = function viewRoutes({ sendPlayer }) {
     const r = viewAccess.resolve(db, req, by);
     if (!r.device) return res.status(r.status).json({ error: 'This view is no longer available', available: false });
     const { payload: body, rev } = payloadFor(r.device.id);
-    const out = { rev, server_ms: Date.now(), now_playing: nowPlaying.forDevice(r.device.id), poll_ms: viewAccess.POLL_MS };
+    // Visitor audio sync: enrich each now_playing entry with the language tracks offered for the item
+    // currently on screen, so a visitor's phone can pick a language and play it in sync. Viewer-only:
+    // this never touches the player payload, so it cannot change the structural player fingerprint.
+    const audioTracks = require('../lib/content-audio-tracks');
+    const now_playing = nowPlaying.forDevice(r.device.id).map((e) => {
+      const tracks = e && e.content_id ? audioTracks.tracksForViewer(e.content_id) : [];
+      return tracks.length ? { ...e, audio_tracks: tracks } : e;
+    });
+    const out = { rev, server_ms: Date.now(), now_playing, poll_ms: viewAccess.POLL_MS };
     if (req.query.rev === rev) out.unchanged = true;
     else out.payload = body;
     res.json(out);

@@ -43,6 +43,7 @@ const storageLocations = require('../lib/storage/locations');
 const storageServe = require('../lib/storage/serve');
 const revisionsLib = require('../lib/revisions');
 const libraryLib = require('../lib/content-library');
+const audioTracks = require('../lib/content-audio-tracks');
 // IPTV/HLS: the URL gates (server-fetched vs player-opened) and the live mime live
 // in one place so the route, the PUT boundary and the tests share one definition.
 const { LIVE_MIME, RTSP_MIME, HDMI_IN_MIME, LIVE_MIMES, validateRemoteUrl, validatePlayerOpenedUrl, validateRtspUrl, validateHdmiInUrl, looksLikeHlsUrl, looksLikeRtspUrl, classifyLiveUrl, CREDENTIAL_MASK, restoreMaskedSecrets, isSecretPathSegment } = require('../lib/remote-url');
@@ -916,6 +917,7 @@ function purgeContentRow(content) {
   unlinkIfUnreferenced(content.filepath, id, 'filepath');
   unlinkIfUnreferenced(content.thumbnail_path, id, 'thumbnail_path');
   unlinkIfUnreferenced(content.subtitle_url, id, 'subtitle_url'); // #216 sidecar (no-op pre-#216)
+  audioTracks.removeAllForContent(id); // visitor audio sync: per-language narration tracks + their files
   // 3.0 TV-safe copies of a tall video (lib/video-variants.js): named per content id, never shared.
   try { require('../lib/video-variants').removeFor(id); } catch (_) { /* the orphan sweep gets them */ }
 
@@ -1363,6 +1365,75 @@ router.post('/:id/subtitle', upload.subtitleUpload.single('subtitle'), async (re
   // The new .vtt is a local file; it follows the asset to the workspace's storage (lib/storage).
   storageLocations.settleSoon(content.id, { kinds: ['subtitle'] });
   res.json(db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id));
+});
+
+/*
+ * Visitor audio sync: per-content multilingual narration tracks. A video can carry one audio track
+ * per language, each with an optional WebVTT caption; a visitor's phone plays the chosen language in
+ * sync with the display. Extends the single-subtitle route above to a list (lib/content-audio-tracks).
+ */
+function trackView(t) {
+  return {
+    lang: t.lang, label: t.label, is_default: t.is_default, sort_order: t.sort_order,
+    audio_url: audioTracks.urlFor(t.audio_key), caption_url: audioTracks.urlFor(t.caption_key),
+    has_caption: !!t.caption_key,
+  };
+}
+
+router.get('/:id/audio-tracks', (req, res) => {
+  const content = checkContentRead(req, res);
+  if (!content) return;
+  res.json(audioTracks.listTracks(content.id).map(trackView));
+});
+
+// Add or replace the track for one language. Multipart: `audio` (required to create), optional
+// `caption` (.vtt), plus `lang` (required), `label`, `is_default`.
+router.post('/:id/audio-tracks', upload.audioTrackUpload.fields([
+  { name: 'audio', maxCount: 1 }, { name: 'caption', maxCount: 1 },
+]), (req, res) => {
+  const content = checkContentWrite(req, res);
+  if (!content) { discardUploads(req); return; }
+  const lang = req.body.lang ? String(req.body.lang).trim().slice(0, 35) : '';
+  if (!lang) { discardUploads(req); return res.status(400).json({ error: 'A language is required' }); }
+  const audioFile = req.files && req.files.audio && req.files.audio[0];
+  const captionFile = req.files && req.files.caption && req.files.caption[0];
+  const existing = audioTracks.listTracks(content.id).find((t) => t.lang === lang);
+  if (!audioFile && !existing) {
+    discardUploads(req);
+    return res.status(400).json({ error: 'An audio file is required for a new language track' });
+  }
+  audioTracks.upsertTrack(content.id, {
+    lang,
+    label: req.body.label !== undefined ? String(req.body.label).slice(0, 80) : undefined,
+    audioKey: audioFile ? audioFile.filename : undefined,
+    captionKey: captionFile ? captionFile.filename : undefined,
+    isDefault: req.body.is_default === '1' || req.body.is_default === 'true',
+    sortOrder: req.body.sort_order !== undefined ? (parseInt(req.body.sort_order, 10) || 0) : undefined,
+  });
+  res.json({ ok: true, tracks: audioTracks.listTracks(content.id).map(trackView) });
+});
+
+// Metadata-only update (label / default / order) without re-uploading files.
+router.put('/:id/audio-tracks/:lang', (req, res) => {
+  const content = checkContentWrite(req, res);
+  if (!content) return;
+  const lang = String(req.params.lang).slice(0, 35);
+  const existing = audioTracks.listTracks(content.id).find((t) => t.lang === lang);
+  if (!existing) return res.status(404).json({ error: 'No track for that language' });
+  audioTracks.upsertTrack(content.id, {
+    lang,
+    label: req.body.label !== undefined ? String(req.body.label).slice(0, 80) : undefined,
+    isDefault: req.body.is_default === true || req.body.is_default === 1 || req.body.is_default === '1',
+    sortOrder: req.body.sort_order !== undefined ? (parseInt(req.body.sort_order, 10) || 0) : undefined,
+  });
+  res.json({ ok: true, tracks: audioTracks.listTracks(content.id).map(trackView) });
+});
+
+router.delete('/:id/audio-tracks/:lang', (req, res) => {
+  const content = checkContentWrite(req, res);
+  if (!content) return;
+  const removed = audioTracks.removeTrack(content.id, String(req.params.lang).slice(0, 35));
+  res.json({ ok: removed });
 });
 
 // Uploads share the dashboard origin — see server.js hardenUploadResponse. Same rule
