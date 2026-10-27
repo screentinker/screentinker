@@ -1347,6 +1347,13 @@ function showEditModal(contentItem, onSave, { focus = null } = {}) {
         ` : ''}
         ${isUploadedVideo ? `
         <div class="form-group">
+          <label>${t('content.label_audio_tracks')}</label>
+          <p style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">${t('content.audio_tracks_hint')}</p>
+          <div id="editAudioTracks">${t('common.loading')}</div>
+        </div>
+        ` : ''}
+        ${isUploadedVideo ? `
+        <div class="form-group">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
             <input type="checkbox" id="editVideoPrerotated" ${contentItem.video_prerotated ? 'checked' : ''} style="width:auto;margin:0">
             <span>${esc(t('content.tvsafe.prerotated'))}</span>
@@ -1412,6 +1419,9 @@ function showEditModal(contentItem, onSave, { focus = null } = {}) {
     });
   }
   overlay.querySelector('#editEditCaptions')?.addEventListener('click', () => openCaptionsEditor(contentItem.id));
+
+  // Visitor audio sync: the per-language audio-guide tracks section (uploaded video only).
+  initAudioTracks(overlay, contentItem.id);
 
   // 3.0 TV-safe video copies (server/lib/video-variants.js): for a tall video, say whether the copy
   // a Samsung TV plays is being prepared, ready or failed — and offer Retry on failure.
@@ -1568,6 +1578,80 @@ function showEditModal(contentItem, onSave, { focus = null } = {}) {
       showToast(err.message || t('content.error_update_failed'), 'error');
     }
   };
+}
+
+/*
+ * Visitor audio sync: manage a video's per-language narration tracks inside the edit modal. Each
+ * track is an audio file + optional WebVTT caption, keyed by language. The list, add and remove act
+ * immediately against /api/content/:id/audio-tracks (not deferred to Save), like the subtitle action.
+ */
+async function initAudioTracks(overlay, contentId) {
+  const box = overlay.querySelector('#editAudioTracks');
+  if (!box) return; // not an uploaded video
+  const headers = { Authorization: 'Bearer ' + localStorage.getItem('token') };
+
+  async function load() {
+    let tracks = [];
+    try {
+      const r = await fetch('/api/content/' + contentId + '/audio-tracks', { headers });
+      if (r.ok) tracks = await r.json();
+    } catch (_) { /* show the add form regardless */ }
+    render(Array.isArray(tracks) ? tracks : []);
+  }
+
+  function render(tracks) {
+    const rows = tracks.map((tk) => `
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span style="flex:1;min-width:0;font-size:13px">${esc(tk.label || tk.lang)} <span style="color:var(--text-muted)">(${esc(tk.lang)})</span>${tk.is_default ? ` &middot; <span style="color:var(--accent)">${esc(t('content.audio_default'))}</span>` : ''}${tk.has_caption ? ` &middot; ${esc(t('content.audio_has_caption'))}` : ''}</span>
+        <button type="button" class="btn btn-secondary btn-sm" data-atk-del="${esc(tk.lang)}">${esc(t('content.audio_remove'))}</button>
+      </div>`).join('');
+    box.innerHTML = `
+      ${tracks.length ? rows : `<p style="font-size:12px;color:var(--text-muted)">${esc(t('content.audio_none'))}</p>`}
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div><label style="font-size:12px;color:var(--text-secondary);display:block">${esc(t('content.label_subtitle_lang'))}</label>
+            <select id="atkLang" class="input" style="background:var(--bg-input)">${langOptions('en')}</select></div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" id="atkDefault" style="width:auto;margin:0">${esc(t('content.audio_make_default'))}</label>
+        </div>
+        <div style="margin-top:8px"><label style="font-size:12px;color:var(--text-secondary);display:block">${esc(t('content.audio_file'))}</label>
+          <input type="file" id="atkAudio" accept="audio/*,.mp3,.m4a,.aac,.ogg,.wav,.flac" style="font-size:13px;color:var(--text-secondary)"></div>
+        <div style="margin-top:8px"><label style="font-size:12px;color:var(--text-secondary);display:block">${esc(t('content.audio_caption_file'))}</label>
+          <input type="file" id="atkCaption" accept=".vtt,text/vtt" style="font-size:13px;color:var(--text-secondary)"></div>
+        <button type="button" class="btn btn-secondary btn-sm" id="atkAdd" style="margin-top:10px">${esc(t('content.audio_add'))}</button>
+      </div>`;
+    box.querySelectorAll('[data-atk-del]').forEach((b) => b.addEventListener('click', () => del(b.dataset.atkDel)));
+    box.querySelector('#atkAdd').addEventListener('click', add);
+  }
+
+  async function add() {
+    const audio = box.querySelector('#atkAudio').files[0];
+    if (!audio) { showToast(t('content.audio_need_file'), 'error'); return; }
+    const fd = new FormData();
+    fd.append('lang', box.querySelector('#atkLang').value);
+    fd.append('audio', audio);
+    const caption = box.querySelector('#atkCaption').files[0];
+    if (caption) fd.append('caption', caption);
+    if (box.querySelector('#atkDefault').checked) fd.append('is_default', '1');
+    try {
+      assertLocalCallAllowed('/content', 'POST');
+      const r = await fetch('/api/content/' + contentId + '/audio-tracks', { method: 'POST', headers, body: fd });
+      const b = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(b.error || t('content.error_update_failed'));
+      showToast(t('content.audio_saved'), 'success');
+      load();
+    } catch (e) { showToast(e.message, 'error'); }
+  }
+
+  async function del(lang) {
+    try {
+      assertLocalCallAllowed('/content', 'DELETE');
+      const r = await fetch('/api/content/' + contentId + '/audio-tracks/' + encodeURIComponent(lang), { method: 'DELETE', headers });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || t('content.error_update_failed'));
+      load();
+    } catch (e) { showToast(e.message, 'error'); }
+  }
+
+  load();
 }
 
 async function showPreview(content) {
