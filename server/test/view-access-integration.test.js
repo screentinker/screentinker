@@ -279,3 +279,21 @@ test('the old ways are untouched: /player is a screen, pairing and the enrolment
   assert.equal(viaToken.registered, true, 'and the paired screen still connects with its own token');
   assert.equal(deviceCount(), before);
 });
+
+test('the visitor audio guide page is served for an enabled view, gated, and CSP-exempt like the player', async () => {
+  const dev = await display('Guide');
+  assert.equal((await fetch(`${BASE}/listen/screen/${dev.id}`)).status, 404, 'no guide before the view is on');
+  const token = tokenOf(await (await as('PUT', `/api/devices/${dev.id}/view`, { enabled: true })).json());
+
+  const page = await fetch(`${BASE}/listen/${token}`);
+  assert.equal(page.status, 200);
+  assert.equal(page.headers.get('cache-control'), 'no-store', 'the token in the URL is never cached');
+  assert.equal(page.headers.get('content-security-policy'), null, 'inline JS allowed, like /player and /view');
+  const html = await page.text();
+  assert.match(html, /audio guide/i);
+  assert.match(html, /\/api\/view\//, 'the page knows how to poll the viewer payload');
+
+  assert.equal((await fetch(`${BASE}/listen/${crypto.randomBytes(32).toString('base64url')}`)).status, 404, 'a guessed token is nothing');
+  await as('PUT', `/api/devices/${dev.id}/view`, { enabled: false });
+  assert.equal((await fetch(`${BASE}/listen/${token}`)).status, 404, 'off means the guide goes dark too');
+});

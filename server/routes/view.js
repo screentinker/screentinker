@@ -14,6 +14,8 @@
  */
 
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
 const { db } = require('../db/database');
 const viewAccess = require('../lib/view-access');
 const nowPlaying = require('../lib/now-playing');
@@ -86,6 +88,22 @@ module.exports = function viewRoutes({ sendPlayer }) {
     noStore(res);
     return res.status(404).json({ error: 'Not found' });
   });
+
+  // Visitor audio guide: an audio-only page that plays the per-language narration for whatever is on
+  // this screen, in sync, via the same poll the viewer player uses. Gated like /view; the page holds
+  // no secrets (its token stays in the URL and the payload endpoint re-checks it on every poll).
+  function listen(req, res, by) {
+    noStore(res);
+    const r = viewAccess.resolve(db, req, by);
+    if (!r.device) return res.status(r.status).type('html').send(UNAVAILABLE_HTML);
+    fs.readFile(path.join(__dirname, '..', 'listen', 'index.html'), (err, html) => {
+      if (err) return res.status(500).type('text/plain').send('audio guide unavailable');
+      res.type('html').send(html);
+    });
+  }
+  router.get('/listen/screen/:id', (req, res) => listen(req, res, { deviceId: req.params.id }));
+  router.get('/listen/:key', (req, res) => listen(req, res, { token: req.params.key }));
+
   return router;
 };
 

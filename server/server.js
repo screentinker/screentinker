@@ -205,6 +205,7 @@ app.use((req, res, next) => {
   if (req.path === '/' || req.path === '/landing.html') return exempt();
   if (req.path.startsWith('/player')) return exempt();
   if (req.path.startsWith('/view/')) return exempt(); // view-only display page: the web player (routes/view.js)
+  if (req.path.startsWith('/listen/')) return exempt(); // visitor audio-guide page, inline JS like the player (routes/view.js)
   if (req.path === '/docs') return exempt(); // Redoc API reference needs a relaxed CSP
   if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/render')) return exempt();
   if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/data.json')) return exempt();
@@ -1550,7 +1551,7 @@ app.use('/api/public/requests', rateLimit(60000, 1500), require('./routes/reques
  * token is the credential, so each IP gets one bucket per route shape (lib/limit-paths.js), not one
  * per token. 4s polling is 15/min per open viewer; 240/min leaves room for a wall of them on one NAT.
  */
-app.get(['/view/:key', '/view/screen/:id', '/api/view/:kind/:key/payload'], rateLimit(60000, 240), require('./routes/view')({ sendPlayer }));
+app.get(['/view/:key', '/view/screen/:id', '/api/view/:kind/:key/payload', '/listen/:key', '/listen/screen/:id'], rateLimit(60000, 240), require('./routes/view')({ sendPlayer }));
 // Canva OAuth callback (routes/canva.js): the browser returns from canva.com with no Authorization
 // header, so it cannot sit behind the JWT-only /api/canva mount below. It trusts only the signed
 // httpOnly transaction cookie set when the person pressed Connect.
