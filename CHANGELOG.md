@@ -24,6 +24,14 @@
 
 ### Fixed
 
+- **A YouTube video on a video wall or a synced group no longer restarts on the follower screens**
+  (#729, reported from the field on a two-TV wall). The leader runs the playlist and the followers
+  take their place from it, but a YouTube item on a follower advanced itself when it ended, or when
+  its fallback timer fired (about every ten seconds on a muted, cropped screen whose reported
+  duration comes back as zero), diverged from the leader, and was snapped back, which looked exactly
+  like the video restarting. A YouTube item now follows the shared clock the way an uploaded video
+  already did. Note: YouTube is still not frame-synced across a wall (the screens play it in rough
+  step); an uploaded video file is the one to use for a frame-exact spanned wall.
 - **The webOS app shows the player instead of "connection to server is unstable"** (#715, reported
   by @0xf800). The app runs the web player in an iframe at `/player?host=webos`, and the server
   answered `/player` with `X-Frame-Options: SAMEORIGIN`; the app is a different origin than the
