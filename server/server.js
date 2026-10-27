@@ -2658,6 +2658,34 @@ app.post('/api/device/exit', (req, res) => {
   res.status(204).end();
 });
 
+// Visitor audio sync: a device asks for ITS OWN "scan for audio guide" QR — the /listen URL for this
+// screen — so the player can overlay it while a guide-enabled video plays. Device-token auth, exactly
+// like /api/device/exit above. Returns the QR only when view-only access is ALREADY enabled for this
+// screen (a token exists); we never silently enable view access here, that stays an admin choice.
+app.post('/api/device/audio-guide', (req, res) => {
+  const { db } = require('./db/database');
+  const { device_id, device_token } = req.body || {};
+  if (!device_id || typeof device_token !== 'string') return res.status(401).json({ enabled: false });
+  const row = db.prepare('SELECT device_token, view_enabled, view_token_enc FROM devices WHERE id = ?').get(device_id);
+  let ok = false;
+  try {
+    ok = !!(row && row.device_token && device_token.length === row.device_token.length &&
+      crypto.timingSafeEqual(Buffer.from(row.device_token), Buffer.from(device_token)));
+  } catch (_) { ok = false; }
+  if (!ok) return res.status(401).json({ enabled: false });
+  const cfg = require('./config');
+  if (!cfg.viewOnlyEnabled || !row.view_enabled || !row.view_token_enc) {
+    return res.json({ enabled: false });   // no on-screen QR until view-only access is turned on for this screen
+  }
+  try {
+    const token = require('./lib/secretbox').decrypt(row.view_token_enc);
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const listen_url = `${origin}/listen/${token}`;
+    const qr_svg = require('./lib/slide-render').qrSvg(listen_url, 'M', '#000000', '#ffffff');
+    return res.json(qr_svg ? { enabled: true, listen_url, qr_svg } : { enabled: false });
+  } catch (_) { return res.json({ enabled: false }); }
+});
+
 // (Content file endpoint moved above protected routes)
 
 // (Screenshot route moved above protected routes)

@@ -611,7 +611,7 @@ function refreshWidgetRevs(assignments, deviceId = null) {
  */
 const contentFactsOf = db.prepare(`
   SELECT COALESCE(NULLIF(updated_at, 0), created_at) AS rev, filepath, mime_type, file_size, bundle_entry,
-         width, height, video_prerotated, fisheye
+         width, height, video_prerotated, fisheye, audio_guide_enabled
     FROM content WHERE id = ?
 `);
 function refreshContentRevs(assignments) {
@@ -647,6 +647,10 @@ function refreshContentRevs(assignments) {
       const fisheye = row.fisheye && require('../lib/remote-url').LIVE_MIMES.includes(a.mime_type)
         ? require('../lib/fisheye').normalize(row.fisheye) : null;
       if (fisheye) a.fisheye = fisheye; else delete a.fisheye;
+      /* Visitor audio sync: the player overlays a "Scan for audio guide" QR while a guide-enabled
+       * video plays. Read at send time (no republish), and a TOP-LEVEL per-item field, so it is NOT
+       * in the player's change-fingerprint — toggling it adopts in place and never restarts a screen. */
+      if (Number(row.audio_guide_enabled) === 1) a.audio_guide_enabled = 1; else delete a.audio_guide_enabled;
     } catch (_) { /* keep published */ }
   }
 }
