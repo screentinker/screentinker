@@ -39,6 +39,16 @@
 
 ### Fixed
 
+- **A web player in a multi-zone layout now applies a published change to a zone without a manual
+  reload** (#725, reported from the field with a nested slide deck). Editing and publishing a slide
+  (or adding or removing an item) in one zone of a multi-zone layout updated the player's playlist
+  but did not reach the screen: the player kept rotating the old content until someone pressed
+  Reload Player. The live-update handler re-rendered only the item playing full screen or the single
+  "anchor" zone, so a change confined to another zone was missed. It now rebuilds the zone stage from
+  the new playlist whenever a multi-zone layout receives a real change, the same result Reload Player
+  produced. The edit still had to be a genuine content change; duration, mute and caption tweaks were
+  already synced in place and are unaffected.
+
 - **The settings PIN now shows on the dashboard for web players** (#731, reported from the field on
   a self-hosted instance). The web player (and the LG webOS panel and iOS app, which embed it) asks
   for the settings PIN before it will unpair at the screen, but the Device Info card that shows and

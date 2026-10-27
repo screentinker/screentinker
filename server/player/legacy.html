@@ -5273,6 +5273,14 @@ function handlePlaylistUpdate(data) {
     return;
   }
   document.getElementById("setupScreen").style.display = "none";
+  if (layout && layout.zones && layout.zones.length > 1 && !wallConfig) {
+    console.log("Playlist changed in a multi-zone layout - re-rendering all zones (#725)");
+    const survivor = playlist.findIndex((x) => identityOf(x) === oldAnchorId);
+    currentIndex = survivor !== -1 ? survivor : 0;
+    isPlaying = true;
+    renderContent(playlist[currentIndex]);
+    return;
+  }
   if (oldAnchorId && oldAnchorId !== "|||") {
     const stillThereIdx = playlist.findIndex((x) => identityOf(x) === oldAnchorId);
     if (stillThereIdx !== -1) {

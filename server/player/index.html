@@ -6427,6 +6427,31 @@
 
       document.getElementById('setupScreen').style.display = 'none';
 
+      /*
+       * #725: a multi-zone layout renders each zone from `playlist` on its OWN timer, and the
+       * single-anchor continuity below only ever re-renders the anchor item's zone (the fullscreen
+       * model it was written for). A change confined to ANOTHER zone — the common case of a nested
+       * slide deck sitting in one zone whose slide was edited, but equally an item added to or
+       * removed from any non-anchor zone — landed in `playlist` but never reached the screen: the
+       * anchor "survives" (its id is unchanged), control falls to the plain `return` below, and the
+       * live zone timers keep rotating the item arrays they captured at the last full render, until a
+       * manual Reload Player rebuilds everything. We are here ONLY because the structural fingerprint
+       * changed (duration / mute / caption noise is synced in place above and never reaches this
+       * branch), so rebuild the zone stage from the new `playlist` exactly as a reload would. This is
+       * deliberately a whole-stage redraw (zones restart from their first item) rather than a
+       * per-zone patch: it is the same correct result the Reload Player button produces, and it
+       * avoids reusing the fullscreen continuity for a layout it does not fit. Walls own their own
+       * sync (wall:sync / renderWallZones), so they are excluded.
+       */
+      if (layout && layout.zones && layout.zones.length > 1 && !wallConfig) {
+        console.log('Playlist changed in a multi-zone layout - re-rendering all zones (#725)');
+        const survivor = playlist.findIndex(x => identityOf(x) === oldAnchorId);
+        currentIndex = survivor !== -1 ? survivor : 0;
+        isPlaying = true;
+        renderContent(playlist[currentIndex]);
+        return;
+      }
+
       // Continuity: if the playing item survives the update, keep playing it.
       // Just retarget the index pointer - no re-render, no interrupt. It will
       // advance naturally via onended -> nextItem.
