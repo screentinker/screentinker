@@ -6789,7 +6789,7 @@
       // follower, where getDuration() is often 0 so the net falls back to duration_sec). The <video>
       // path is already gated this way (the fullscreen advance timer returns early for a follower /
       // group member; follower videos render with mayAdvance false), so match it for YouTube here.
-      const syncFollower = !zoneMode && (((typeof isWallFollower === 'function') && isWallFollower()) || !!groupSync);
+      const syncFollower = !zoneMode && (((typeof isWallFollower === 'function') && isWallFollower()) || (typeof groupSync !== 'undefined' && !!groupSync));
       const done = zoneMode ? (opts.onEnded || null) : (syncFollower ? null : nextItem);
       const videoId = extractVideoId(src);
       if (!videoId) {

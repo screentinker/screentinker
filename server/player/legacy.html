@@ -5556,13 +5556,14 @@ function loadYoutubeApi(cb) {
 }
 function createYoutubeEmbed(src, item, container, opts) {
   const zoneMode = !!(opts && opts.zone);
-  const done = zoneMode ? opts.onEnded || null : nextItem;
+  const syncFollower = !zoneMode && (typeof isWallFollower === "function" && isWallFollower() || typeof groupSync !== "undefined" && !!groupSync);
+  const done = zoneMode ? opts.onEnded || null : syncFollower ? null : nextItem;
   const videoId = extractVideoId(src);
   if (!videoId) {
     console.error("Could not extract YouTube video ID from:", src);
     if (zoneMode) {
       if (done) setTimeout(done, 2e3);
-    } else if (playlist.length > 1) setTimeout(nextItem, 2e3);
+    } else if (playlist.length > 1 && !syncFollower) setTimeout(nextItem, 2e3);
     return null;
   }
   let alive;
@@ -5713,7 +5714,7 @@ function createYoutubeEmbed(src, item, container, opts) {
             if (done) setTimeout(() => {
               if (alive()) done();
             }, 2e3);
-          } else if (playlist.length > 1) {
+          } else if (playlist.length > 1 && !syncFollower) {
             console.log("Skipping unplayable YouTube video");
             setTimeout(nextItem, 2e3);
           }
