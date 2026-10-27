@@ -1494,10 +1494,18 @@ function viewState(req, device) {
   const origin = `${req.protocol}://${req.get('host')}`;
   const token = device.view_token_enc ? secretbox.decrypt(device.view_token_enc) : null;
   const cidrs = viewAccess.parseStoredCidrs(device.view_cidrs);
+  // Visitor audio sync: the same token also opens the audio-guide page (/listen). Hand the admin a
+  // scannable QR of it, generated with the existing qrSvg helper (no new dep), inline so the <img>
+  // auth problem never arises. Best-effort: a QR failure must not break the view card.
+  const listen_url = token ? `${origin}/listen/${token}` : null;
+  let listen_qr_svg = null;
+  if (listen_url) { try { listen_qr_svg = require('../lib/slide-render').qrSvg(listen_url, 'M', '#000000', '#ffffff'); } catch (_) { /* qr is optional */ } }
   return {
     available: !!config.viewOnlyEnabled,
     enabled: !!device.view_enabled,
     share_url: token ? `${origin}/view/${token}` : null,
+    listen_url,
+    listen_qr_svg,
     cidrs,
     network_url: cidrs.length ? `${origin}/view/screen/${device.id}` : null,
     trusted_proxies_configured: (config.viewTrustedProxies || []).length > 0,

@@ -2740,6 +2740,8 @@ export default {
   'device.view.admin_only': 'Only workspace admins can change this.',
   'device.view.link': 'Share link',
   'device.view.link_hint': 'Anyone with this link can watch this display. Nothing else in the workspace is visible to them.',
+  'device.view.audio_guide': 'Audio guide (visitor QR)',
+  'device.view.audio_guide_hint': 'Print or display this QR near the screen. Visitors scan it to hear the narration on their phone, in their language, in sync with the video.',
   'device.view.copy': 'Copy',
   'device.view.regenerate': 'Regenerate link',
   'device.view.confirm_regenerate': 'Create a new link? The current link stops working immediately, and anyone watching through it is disconnected.',

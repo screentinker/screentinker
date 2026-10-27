@@ -46,6 +46,18 @@ export async function setupViewAccess(device) {
         </div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t('device.view.link_hint')}</div>
       </div>
+      ${state.listen_url ? `
+      <div style="margin-top:14px">
+        <div style="font-size:12px;font-weight:600;margin-bottom:4px">${t('device.view.audio_guide')}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">${t('device.view.audio_guide_hint')}</div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">
+          ${state.listen_qr_svg ? `<div style="background:#fff;padding:8px;border-radius:8px;width:132px;height:132px;flex:none">${state.listen_qr_svg}</div>` : ''}
+          <div style="flex:1;min-width:220px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <input class="input" id="viewListenUrl" readonly value="${esc(state.listen_url)}" style="flex:1;min-width:200px;font-family:monospace;font-size:11px">
+            <button class="btn btn-secondary btn-sm" id="viewListenCopyBtn">${t('device.view.copy')}</button>
+          </div>
+        </div>
+      </div>` : ''}
       <div style="margin-top:12px">
         <div style="font-size:12px;font-weight:600;margin-bottom:4px">${t('device.view.networks')}</div>
         <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">${t('device.view.networks_hint')}</div>
@@ -86,6 +98,8 @@ export async function setupViewAccess(device) {
         draw();
       } catch (err) { errEl.textContent = err.message; }
     });
+    const lst = host.querySelector('#viewListenCopyBtn');
+    if (lst) lst.addEventListener('click', () => copy('#viewListenUrl'));
     const net = host.querySelector('#viewNetCopyBtn');
     if (net) net.addEventListener('click', () => copy('#viewNetUrl'));
   };

@@ -283,7 +283,10 @@ test('the old ways are untouched: /player is a screen, pairing and the enrolment
 test('the visitor audio guide page is served for an enabled view, gated, and CSP-exempt like the player', async () => {
   const dev = await display('Guide');
   assert.equal((await fetch(`${BASE}/listen/screen/${dev.id}`)).status, 404, 'no guide before the view is on');
-  const token = tokenOf(await (await as('PUT', `/api/devices/${dev.id}/view`, { enabled: true })).json());
+  const state = await (await as('PUT', `/api/devices/${dev.id}/view`, { enabled: true })).json();
+  const token = tokenOf(state);
+  assert.match(state.listen_url, new RegExp(`/listen/${token}$`), 'the admin gets the audio-guide URL');
+  assert.match(state.listen_qr_svg || '', /<svg/, 'and a scannable inline QR of it');
 
   const page = await fetch(`${BASE}/listen/${token}`);
   assert.equal(page.status, 200);
