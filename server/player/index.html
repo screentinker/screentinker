@@ -6782,12 +6782,20 @@
      */
     function createYoutubeEmbed(src, item, container, opts) {
       const zoneMode = !!(opts && opts.zone);
-      const done = zoneMode ? (opts.onEnded || null) : nextItem;
+      // A wall FOLLOWER takes its playlist index only from the leader's wall:sync; a synced GROUP
+      // member derives it from the shared clock. Neither may self-advance when its YouTube ENDS or
+      // the #215 safety net fires — it would diverge from the others and the next sync snaps it back
+      // by re-mounting the item, which looks exactly like the video restarting (every ~10s on a
+      // follower, where getDuration() is often 0 so the net falls back to duration_sec). The <video>
+      // path is already gated this way (the fullscreen advance timer returns early for a follower /
+      // group member; follower videos render with mayAdvance false), so match it for YouTube here.
+      const syncFollower = !zoneMode && (((typeof isWallFollower === 'function') && isWallFollower()) || !!groupSync);
+      const done = zoneMode ? (opts.onEnded || null) : (syncFollower ? null : nextItem);
       const videoId = extractVideoId(src);
       if (!videoId) {
         console.error('Could not extract YouTube video ID from:', src);
         if (zoneMode) { if (done) setTimeout(done, 2000); }
-        else if (playlist.length > 1) setTimeout(nextItem, 2000);
+        else if (playlist.length > 1 && !syncFollower) setTimeout(nextItem, 2000);
         return null;
       }
 
@@ -6934,7 +6942,7 @@
               console.error('YouTube error', event.data, 'for:', item.filename);
               if (zoneMode) {
                 if (done) setTimeout(() => { if (alive()) done(); }, 2000);
-              } else if (playlist.length > 1) {
+              } else if (playlist.length > 1 && !syncFollower) {
                 console.log('Skipping unplayable YouTube video');
                 setTimeout(nextItem, 2000);
               }
