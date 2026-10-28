@@ -53,7 +53,15 @@
     if (!u) return '';
     var m = /^(https?):\/\/(.*)$/i.exec(u);
     var rest = (m ? m[2] : u).replace(/\/+$/, '');
-    return (m && m[1].toLowerCase() === 'https' ? 'https://' : 'http://') + rest;
+    var candidate = (m && m[1].toLowerCase() === 'https' ? 'https://' : 'http://') + rest;
+    // Hard-require a parseable http(s) URL before it can ever reach iframe.src,
+    // so a javascript:/data: URI typed into the server field or planted in
+    // localStorage is rejected rather than coerced through (#833, js/xss-through-dom).
+    try {
+      var p = new URL(candidate);
+      if (p.protocol !== 'http:' && p.protocol !== 'https:') return '';
+    } catch (e) { return ''; }
+    return candidate;
   }
 
   // A config.json next to the app wins over nothing, and a value typed on the remote wins over
