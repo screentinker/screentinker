@@ -14,6 +14,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+// Requiring ../routes/admin in the tests below pulls in the db module, which runs the tenant-cascade
+// migration on load. Point DATA_DIR at a throwaway directory so that migration runs against an
+// isolated database rather than the shared default one, where it collided with other suites under
+// the parallel runner and failed with SQLITE_BUSY ("database is locked"). Set before any require of
+// db-touching code. This file only exercises detectInstall(), a filesystem check, so the database
+// is an incidental side effect and its contents are irrelevant here.
+process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'st-adminupd-'));
+
 const ROOT = path.join(__dirname, '..', '..');
 
 test('a git checkout is told to run upgrade.sh, not docker', () => {
