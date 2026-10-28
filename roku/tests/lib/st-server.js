@@ -38,12 +38,17 @@ async function start({ serverDir = process.env.SERVER_DIR || path.join(REPO, 'se
      * ping. At 15 s that is exactly the app's post timeout, so the session was torn down on some runs
      * and not others (CI, 2026-10-12/13). Measured: 1 post timeout per run at 15 s, 0 at 4-5 s.
      *
-     * PING_TIMEOUT 60 s, not 30. brs-node runs every SceneGraph thread on one JavaScript thread, so
-     * while playback is busy the socket task can miss a pong deadline; at a 4 s interval and 30 s
-     * timeout the server closed the session for "ping timeout" ~4 times a run. The app derives its
-     * own deadline from the open packet, so it relaxes with it.
+     * PING_TIMEOUT 180 s. brs-node runs every SceneGraph thread on one JavaScript thread, so while
+     * playback is busy the socket task can miss a pong deadline; at a 4 s interval and a 30 s timeout
+     * the server closed the session ~4 times a run, and even at 60 s a heavily loaded CI runner still
+     * starved pongs long enough to mark the device offline mid-run and fail "the display is not
+     * online" (2026-10-27, main). The heartbeat timeout is a brs-node threading artifact that does
+     * not apply to a real Roku, and this functional run does not test it (run-protocol.js --e2e
+     * covers ping/pong), so set it well beyond the whole run's duration (~115 s: 80 s playback plus
+     * pairing and the online check) so a starved pong cannot tear the session down here. The app
+     * derives its own deadline from the open packet, so it relaxes with it.
      */
-    env: { ...process.env, PORT: String(port), DATA_DIR: path.join(work, 'data'), SELF_HOSTED: 'true', NODE_ENV: 'development', JWT_SECRET: crypto.randomBytes(16).toString('hex'), PING_INTERVAL: '5000', PING_TIMEOUT: '60000', ...env },
+    env: { ...process.env, PORT: String(port), DATA_DIR: path.join(work, 'data'), SELF_HOSTED: 'true', NODE_ENV: 'development', JWT_SECRET: crypto.randomBytes(16).toString('hex'), PING_INTERVAL: '5000', PING_TIMEOUT: '180000', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';
