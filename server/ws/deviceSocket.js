@@ -561,7 +561,15 @@ function refreshWidgetRevs(assignments, deviceId = null) {
         const tok = require('../lib/rooms/service').panelToken(a.widget_id, panelDevice);
         if (tok) a.widget_panel = tok;
       }
-      const rev = facts.rev ?? a.widget_rev ?? 0;
+      let rev = facts.rev ?? a.widget_rev ?? 0;
+      // A widget following its screen renders differently per place, and its page is cached by URL:
+      // the place goes into the rev, so moving the screen reloads it and nothing else does.
+      if (deviceId) {
+        const wl = require('../lib/widget-location');
+        let cfg = {};
+        try { cfg = JSON.parse(facts.config || '{}'); } catch (_) {}
+        if (wl.followsScreen(facts.widget_type, cfg)) rev = Number(rev) + wl.revSalt(facts.widget_type, cfg, wl.screenPlace(db, deviceId, facts.workspace_id));
+      }
       a.widget_rev = rev;
       // A cloud document is framed same-origin too: Google's embed breaks in an opaque origin, and its
       // render document runs no script at all (lib/cloud-docs.js, enforced by its CSP).

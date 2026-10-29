@@ -4,6 +4,19 @@
 
 ### Added
 
+- **Weather, clock and radar widgets can follow the screen they are on.** A weather widget used
+  to show only the place typed into it, so one widget could not serve screens in different towns,
+  and moving a screen in Device Info changed nothing. Set the weather widget's Location to "The
+  screen's location", or tick "Use the screen's time zone" on a clock, and each screen shows its own
+  place or local time from Device Info. A screen with no location set falls back to the widget's own
+  setting. This works on every player already in the field: no app update is needed.
+
+- **A Weather radar widget.** An animated rain radar for the last two hours on a dark (or light) map
+  with state and country lines, lakes and city names, centred on the screen's location or on a
+  latitude and longitude you pin. Pair it with a playlist condition ("weather is rain") to show it
+  only when it is raining. Radar frames come from RainViewer; the map is built in (Natural Earth,
+  public domain), so it needs no map account, or you can point it at your own map tiles.
+
 - **The MCP server can read and write a screen's tags, location and Device Info settings** (#732,
   requested by a customer rolling out a large fleet). `list_displays` and `get_display` now return
   each screen's tags, location and notes (and `get_display` its orientation, background colour,
@@ -42,6 +55,17 @@
 - **A fisheye camera on the native player zooms with the mouse wheel.** With "Let people move it
   by touch on the screen" on, a mouse could already drag the view and double-click it back, but
   only a pinch could zoom. One wheel notch now zooms 15% (up = in).
+- **A layout zone with more than one widget now rotates on the native Raspberry Pi and Windows
+  players.** A zone holding, say, a weather widget and a radar stayed on the first widget for ever:
+  the player took the widget for a video and waited for it to end. Widgets now move on after their
+  duration, like images. Full-screen playlists were not affected.
+
+- **The native Raspberry Pi player no longer leaves the mouse pointer over the sign in Desktop
+  mode.** A Pi running the full desktop (labwc) showed the arrow on top of the content, because
+  only Lite mode hid it. The player now hides the pointer after 3 seconds without movement and
+  shows it again as soon as someone moves the mouse, so a technician or a visitor on an interactive
+  page can still see where it is. The macOS player follows the same rule (it used to hide the
+  pointer permanently).
 
 - **A web player in a multi-zone layout now applies a published change to a zone without a manual
   reload** (#725, reported from the field with a nested slide deck). Editing and publishing a slide

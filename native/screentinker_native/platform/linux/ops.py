@@ -18,6 +18,10 @@ PACKAGE_NAME = "screentinker-pi_{version}_all.deb"
 PACKAGE_EXT = ".deb"
 INSTALL_ROOT = "/usr/lib/screentinker-pi"
 
+# Desktop mode (labwc/Wayland) left the arrow over the sign: QT_QPA_EGLFS_HIDECURSOR covers Lite
+# only and labwc has no idle-hide setting. The player hides it while the mouse is idle (ui/idle_cursor.py).
+HIDE_CURSOR = True
+
 
 def default_state_dir():
     env = os.environ.get("ST_STATE_DIR")

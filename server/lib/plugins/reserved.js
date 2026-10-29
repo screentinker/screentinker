@@ -9,6 +9,7 @@
 const BUILTIN_WIDGET_TYPES = Object.freeze([
   'clock',
   'weather',
+  'radar',
   'rss',
   'text',
   'webpage',
