@@ -205,6 +205,39 @@ class WifiPlanTest {
         assertEquals("connected_network_in_use", WifiPlan.waitReason(m(id = "b", netId = 3), sit(netId = 3)))
     }
 
+    // ── one network per SSID, released networks ─────────────────────────────────────────────────
+
+    @Test fun `renaming a network onto the SSID of the one in use waits instead of overwriting it`() {
+        // B (in use) was deleted on the dashboard; A was renamed to B's SSID.
+        val managed = listOf(m("a", ssid = "Alpha", netId = 1), m("b", ssid = "Bravo", netId = 2))
+        val desired = listOf(d("a", ssid = "Bravo", password = "password-a"))
+        val held = WifiPlan.plan(desired, managed, sit(netId = 2))
+        assertTrue("nothing may write over Bravo while the panel is on it", held.steps.isEmpty())
+        assertEquals(listOf(WifiOutcome("a", "deferred", "connected_network_in_use")), held.outcomes)
+        assertEquals(listOf("b"), held.removalsWaiting.map { it.id })
+    }
+
+    @Test fun `and when that one is not in use it is removed FIRST, then the rename runs`() {
+        val managed = listOf(m("a", ssid = "Alpha", netId = 1), m("b", ssid = "Bravo", netId = 2))
+        val desired = listOf(d("a", ssid = "Bravo", password = "password-a"))
+        val r = WifiPlan.plan(desired, managed, sit(netId = 1 + 100))   // on some other network
+        assertEquals(listOf("Remove", "Update"), r.steps.map { it::class.simpleName })
+        assertEquals("b", (r.steps[0] as WifiStep.Remove).managed.id)
+        assertTrue("removed once, not twice", r.steps.count { it is WifiStep.Remove } == 1)
+    }
+
+    @Test fun `a released network is never removed, but a new list with its SSID takes it over`() {
+        val managed = listOf(m("old", ssid = "Van", netId = 7).copy(released = true))
+        val nothing = WifiPlan.plan(emptyList(), managed, sit(wifiActive = false))
+        assertTrue("released means left alone", nothing.steps.isEmpty() && nothing.removalsWaiting.isEmpty())
+        // The new screen lists "Van" with another password while the panel is on it: taken over, and it waits.
+        val r = WifiPlan.plan(listOf(d("new", ssid = "Van", password = "other")), managed, sit(netId = 7))
+        assertTrue(r.steps.isEmpty())
+        assertEquals("deferred", r.outcomes.single().state)
+        assertEquals(false, r.managed.single().released)
+        assertEquals("new", r.managed.single().id)
+    }
+
     // ── small helpers ─────────────────────────────────────────────────────────────────────────────
 
     @Test fun `a 64-hex key goes in raw, a passphrase in quotes`() {

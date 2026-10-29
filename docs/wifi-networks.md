@@ -64,6 +64,12 @@ A wrong password must not take a panel offline that nobody can reach. So:
   held back until the screen is no longer on it, because it moved to another managed network or
   because that connection dropped on its own. A new password for the network in use is therefore
   applied exactly when the old one stops working, for example after the router's password changed.
+- A change that would give a network the name of another managed network waits until that other
+  one is removed, because Android keeps only one network per name.
+- A change the screen cannot carry out (for example WPA3 on Android 9) leaves the previous version
+  of that network in place and is reported as not supported.
+- When a screen is connected to two Wi-Fi networks at once (possible on Android 12 and newer), it
+  treats both as in use.
 - On Android 10 and newer, Android hides which Wi-Fi a screen is on unless the player has location
   permission. Without it, the screen cannot tell, so it changes or removes nothing while Wi-Fi is
   its connection. It does those steps when the screen is on Ethernet, or once the player has
@@ -71,7 +77,9 @@ A wrong password must not take a panel offline that nobody can reach. So:
 
 Removing a screen from the dashboard, or unpairing it, leaves its networks on the panel: a screen
 that has lost its pairing still needs a network to be paired again. If the panel is later paired as
-a new screen, it lets go of them. They stay on the panel and count as set up by hand from then on.
+a new screen, it lets go of them. They stay on the panel and are never removed by the player again.
+If the new screen's list has a network with the same name, the player takes that one over again,
+under the same rules as any change.
 Moving a screen to another workspace removes the list on the server. On its next connect the screen
 drops the networks it managed, except the one it is connected on, which it keeps under the rule
 above.

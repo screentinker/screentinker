@@ -59,6 +59,11 @@ data class WifiManaged(
     val priority: Int?,
     val password: String?,
     val netId: Int,
+    /**
+     * Let go after a new pairing (WifiNetworkManager): still on the panel, never removed by this
+     * player again, but taken over when the new screen lists a network with the same SSID.
+     */
+    val released: Boolean = false,
 ) {
     fun sameAs(d: WifiDesired): Boolean =
         ssid == d.ssid && security == d.security && hidden == d.hidden && priority == d.priority && password == d.password
@@ -146,8 +151,13 @@ object WifiPlan {
      * ⚠️ MATCHED BY SSID TOO. Deleting a network on the dashboard and adding it again gives it a new
      * id. Matched by id alone that is "add the new one, remove the old one" — and the add overwrites
      * the very configuration the panel may be connected on, past the in-use guard. A desired network
-     * without an id match takes over an unclaimed managed entry with the same SSID instead; the
-     * result's [WifiPlanResult.managed] carries the new id.
+     * without an id match takes over an unclaimed managed entry with the same SSID instead (a released
+     * one included); the result's [WifiPlanResult.managed] carries the new id.
+     *
+     * ⚠️ ONE NETWORK PER SSID ON THE PANEL. Android keys a saved network or a suggestion by SSID and
+     * security, so a change that gives one network the SSID of another managed entry would overwrite
+     * that entry's configuration. The other entry is removed first — only if it is not in use; if it
+     * is, the change waits like any change to the network in use.
      */
     fun plan(desired: List<WifiDesired>, managed: List<WifiManaged>, s: WifiSituation): WifiPlanResult {
         val appliedState = if (s.mode == WifiModeLogic.SUGGESTIONS) "suggested" else "applied"
@@ -156,31 +166,41 @@ object WifiPlan {
         for (d in desired) {
             if (rebound.any { it.id == d.id }) continue
             val i = rebound.indexOfFirst { it.ssid == d.ssid && it.id !in wantedIds }
-            if (i >= 0) rebound[i] = rebound[i].copy(id = d.id)
+            if (i >= 0) rebound[i] = rebound[i].copy(id = d.id, released = false)
         }
         val byId = rebound.associateBy { it.id }
+        val first = mutableListOf<WifiStep>()      // removals that must clear an SSID before a change
         val adds = mutableListOf<WifiStep>()
         val updates = mutableListOf<WifiStep>()
         val removes = mutableListOf<WifiStep>()
         val outcomes = mutableListOf<WifiOutcome>()
         val waiting = mutableListOf<WifiManaged>()
+        val handled = mutableSetOf<String>()
 
         for (d in desired) {
             val m = byId[d.id]
             val unsupported = unsupportedReason(d, s.mode, s.sdkInt)
             when {
+                // The previous version (if any) stays: a working network is not dropped for one the panel cannot use.
                 unsupported != null -> outcomes += WifiOutcome(d.id, "unsupported", unsupported)
                 m == null -> adds += WifiStep.Add(d)
                 m.sameAs(d) && rightKind(m, s.mode) -> outcomes += WifiOutcome(d.id, if (m.netId >= 0) "applied" else appliedState)
                 inUse(m, s) -> outcomes += WifiOutcome(d.id, "deferred", waitReason(m, s))
-                else -> updates += WifiStep.Update(m, d)
+                else -> {
+                    val clash = if (m.ssid == d.ssid) null else rebound.firstOrNull { it.id != m.id && it.ssid == d.ssid && it.id !in wantedIds }
+                    when {
+                        clash == null -> updates += WifiStep.Update(m, d)
+                        inUse(clash, s) -> outcomes += WifiOutcome(d.id, "deferred", waitReason(clash, s))
+                        else -> { first += WifiStep.Remove(clash); handled += clash.id; updates += WifiStep.Update(m, d) }
+                    }
+                }
             }
         }
         for (m in rebound) {
-            if (m.id in wantedIds) continue
+            if (m.id in wantedIds || m.id in handled || m.released) continue
             if (inUse(m, s)) waiting += m else removes += WifiStep.Remove(m)
         }
-        return WifiPlanResult(adds + updates + removes, outcomes, waiting, rebound)
+        return WifiPlanResult(first + adds + updates + removes, outcomes, waiting, rebound)
     }
 
     /**
