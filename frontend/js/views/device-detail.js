@@ -13,6 +13,7 @@ import { frameDeviceOutput, displayAspectRatio } from '../lib/device-frame.js';
 import * as gettingStarted from '../components/getting-started.js';
 import { LiveViewer, whenVisible } from '../lib/webrtc-viewer.js';
 import { renderPowerScheduleEditor, readPowerScheduleEditor, presetWindows, problemMessage } from '../components/power-schedule-editor.js';
+import { mountWifiNetworks } from '../components/wifi-networks.js';
 import * as cui from '../components/corporate-ui.js';
 import { openDeviceMoveDialog } from '../components/device-move-dialog.js';
 import { setupViewAccess } from '../components/view-access-card.js';
@@ -205,6 +206,7 @@ let screenshotHandler = null;
 let playbackHandler = null;
 let logHandler = null;
 let shellHandler = null;
+let wifiDispose = null;   // #720 Wi-Fi section listener
 // Interactive terminal (system.pty): the live xterm.js instance, its session and its socket listeners,
 // kept at module scope so leaving the page (cleanup()) can close the session on the device.
 let ptyState = null;
@@ -957,7 +959,7 @@ async function loadDevice(deviceId, activeTab = null) {
         <div class="tab" data-tab="playlist">${t('device.tab.playlist')} <span class="help-tip" data-tip="${t('device.tab.playlist_tip')}">?</span></div>
         <div class="tab" data-tab="info">${t('device.tab.info')} <span class="help-tip" data-tip="${t('device.tab.info_tip')}">?</span></div>
         ${(can('remote.stream') || can('remote.input') || can('remote.screenshot')) ? `<div class="tab" data-tab="remote" data-advanced-ui>${t('device.tab.remote')} <span class="help-tip" data-tip="${t('device.tab.remote_tip')}">?</span></div>` : ''}
-        ${((can('audio.volume') || can('display.brightness') || can('system.brightness') || can('system.screen_timeout')) || isEmbeddedDevice(device)) ? `<div class="tab" data-tab="controls" data-advanced-ui>${t('device.tab.controls')} <span class="help-tip" data-tip="${t('device.tab.controls_tip')}">?</span></div>` : ''}
+        ${((can('audio.volume') || can('display.brightness') || can('system.brightness') || can('system.screen_timeout') || can('net.wifi')) || isEmbeddedDevice(device)) ? `<div class="tab" data-tab="controls" data-advanced-ui>${t('device.tab.controls')} <span class="help-tip" data-tip="${t('device.tab.controls_tip')}">?</span></div>` : ''}
         ${(device.tier === 2 || can('system.shell') || can('system.pty')) ? `<div class="tab" data-tab="terminal" data-advanced-ui>${t('device.tab.terminal')} <span class="help-tip" data-tip="${t('device.tab.terminal_tip')}">?</span></div>` : ''}
         <!--
           #313 — only for a display that actually HAS an enrolment key, i.e. one created for a
@@ -1746,7 +1748,7 @@ async function loadDevice(deviceId, activeTab = null) {
         </div>
       </div>` : ''}
 
-      ${((can('audio.volume') || can('display.brightness') || can('system.brightness') || can('system.screen_timeout')) || isEmbeddedDevice(device)) ? `
+      ${((can('audio.volume') || can('display.brightness') || can('system.brightness') || can('system.screen_timeout') || can('net.wifi')) || isEmbeddedDevice(device)) ? `
       <!-- Controls Tab (#160 Track-A system control — no device owner needed). ⚠️ ALSO for e-paper and
            other embedded panels, which have none of those controls but DO honour a device power
            schedule (the embedded renderer evaluates it and tells the panel how long to sleep). Without
@@ -1763,6 +1765,12 @@ async function loadDevice(deviceId, activeTab = null) {
           <h4 style="margin:0 0 8px">${t('power.section_title')}</h4>
           <div id="powerScheduleHost" style="font-size:13px;color:var(--text-muted)">…</div>
         </div>
+        ${can('net.wifi') ? `
+        <!-- #720 Wi-Fi networks this screen manages. Filled by mountWifiNetworks() (components/wifi-networks.js). -->
+        <div id="wifiSection" style="margin-bottom:22px">
+          <h4 style="margin:0 0 8px">${t('wifi.section_title')} <span class="help-tip" data-tip="${t('wifi.section_title_tip')}">?</span></h4>
+          <div id="wifiHost" style="font-size:13px;color:var(--text-muted)">…</div>
+        </div>` : ''}
         ${!isEmbeddedDevice(device) ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">${t('device.sysctl.subtitle')}</div>` : ''}
         <div style="display:grid;grid-template-columns:130px 1fr;gap:14px 14px;align-items:center;font-size:13px;max-width:480px">
           ${can('audio.volume') ? `
@@ -3285,6 +3293,9 @@ function setupActions(device) {
     sendCommand(device.id, 'set_screen_timeout', { ms: parseInt(e.target.value, 10) }));
 
   wirePowerSchedule(device);
+  // #720: the screen's managed Wi-Fi list (only rendered when the player declares net.wifi).
+  const wifiHost = document.getElementById('wifiHost');
+  if (wifiHost) wifiDispose = mountWifiNetworks(wifiHost, device);
 
   const blockBtn = document.getElementById('blockDeviceBtn');
   blockBtn?.addEventListener('click', async () => {
@@ -4370,6 +4381,7 @@ export function cleanup() {
   if (embeddedLogsHandler) off('embedded-logs', embeddedLogsHandler);
   embeddedLogsHandler = null;
   if (shellHandler) off('shell-result', shellHandler);   // #161 owner-tools listener
+  if (wifiDispose) { wifiDispose(); wifiDispose = null; }
   teardownPty(true);   // leaving the page ends the interactive terminal on the device too
   if (screenshotInterval) clearInterval(screenshotInterval);
   stopLiveTile();

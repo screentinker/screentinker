@@ -403,6 +403,16 @@ export const api = {
   updatePowerSchedule: (id, body) => request(`/display-power-schedules/${id}`,
     { method: 'PUT', body: JSON.stringify(body ?? {}) }),
   deletePowerSchedule: (id) => request(`/display-power-schedules/${id}`, { method: 'DELETE' }),
+  /*
+   * #720 Wi-Fi networks of a screen (server/routes/device-wifi.js, JWT-only). The password is
+   * write-only: it is sent on create/update and never comes back — rows carry has_password.
+   */
+  deviceWifi: (deviceId) => request(`/device-wifi/${deviceId}`),
+  addDeviceWifiNetwork: (deviceId, body) => request(`/device-wifi/${deviceId}/networks`,
+    { method: 'POST', body: JSON.stringify(body ?? {}) }),
+  updateDeviceWifiNetwork: (deviceId, id, body) => request(`/device-wifi/${deviceId}/networks/${id}`,
+    { method: 'PUT', body: JSON.stringify(body ?? {}) }),
+  deleteDeviceWifiNetwork: (deviceId, id) => request(`/device-wifi/${deviceId}/networks/${id}`, { method: 'DELETE' }),
   put: (path, body) => request(path, { method: 'PUT', body: JSON.stringify(body ?? {}) }),
   patch: (path, body) => request(path, { method: 'PATCH', body: JSON.stringify(body ?? {}) }),
   delete: (path) => request(path, { method: 'DELETE' }),

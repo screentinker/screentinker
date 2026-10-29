@@ -82,6 +82,9 @@ export function connectSocket() {
     emit('talk-state', data);
   });
 
+  // #720: a screen reported what it did with its Wi-Fi list (never a password, just states).
+  dashboardSocket.on('dashboard:wifi-result', (data) => emit('wifi-result', data));
+
   // #161 device-owner tooling: remote-shell output
   dashboardSocket.on('dashboard:shell-result', (data) => {
     emit('shell-result', data);

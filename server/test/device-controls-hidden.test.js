@@ -1003,3 +1003,21 @@ test('a Roku is not offered the Triggers listener it does not implement', () => 
   assert.equal(has(render(roku), 'triggerConfigStub'), false);
   assert.ok(has(render(ANDROID_FULL), 'triggerConfigStub'), 'an Android panel keeps it');
 });
+
+test('#720 the Wi-Fi section is offered only to a player that declares net.wifi', () => {
+  const wifiPanel = { ...ANDROID_FULL, capabilities: [...ANDROID_FULL.capabilities, 'net.wifi'] };
+  assert.ok(has(render(wifiPanel), 'wifiHost'), 'a player that manages Wi-Fi gets the section');
+  assert.equal(has(render(ANDROID_FULL), 'wifiHost'), false, 'an Android panel without net.wifi does not');
+  assert.equal(has(render(WEB), 'wifiHost'), false, 'nor a browser tab');
+  // The ~440 undeclared panels resolve to their baseline, and net.wifi is in none.
+  const { capabilitiesFor } = require('../lib/player-capabilities');
+  const legacy = { client_type: 'apk', android_version: '9' };
+  legacy.capabilities = capabilitiesFor({ ...legacy, capabilities: null });
+  assert.equal(has(render(legacy), 'wifiHost'), false, 'a legacy panel is not offered a section its player cannot act on');
+});
+
+test('#720 net.wifi alone is enough for the Controls tab to appear', () => {
+  const html = render({ client_type: 'apk', android_version: '10', capabilities: ['playback.video', 'net.wifi'] });
+  assert.ok(html.includes('data-tab="controls"'), 'the tab is there');
+  assert.ok(has(html, 'wifiHost'), 'with the Wi-Fi section in it');
+});
