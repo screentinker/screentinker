@@ -39,6 +39,11 @@
 
 ### Fixed
 
+- **A layout zone with more than one widget now rotates on the native Raspberry Pi and Windows
+  players.** A zone holding, say, a weather widget and a radar stayed on the first widget for ever:
+  the player took the widget for a video and waited for it to end. Widgets now move on after their
+  duration, like images. Full-screen playlists were not affected.
+
 - **The native Raspberry Pi player no longer leaves the mouse pointer over the sign in Desktop
   mode.** A Pi running the full desktop (labwc) showed the arrow on top of the content, because
   only Lite mode hid it. The player now hides the pointer after 3 seconds without movement and
