@@ -103,6 +103,8 @@ export default {
   'wifi.reason.wifi_off': "Il Wi-Fi è disattivato sullo schermo.",
   'wifi.reason.already_configured_by_hand': "Una rete con questo nome è stata configurata a mano sullo schermo. Non viene toccata; rimuovila sullo schermo per gestirla da qui.",
   'wifi.reason.connected_network_unknown': "Lo schermo non riesce a sapere a quale Wi-Fi è connesso (Android lo nasconde senza il permesso di posizione), quindi non modifica nulla finché il Wi-Fi è la sua connessione. Concedi al player l'accesso alla posizione per superare questo limite.",
+  'wifi.reason.wpa3_needs_android_11': "Una rete WPA3 salvata richiede Android 11 o successivo (come suggerimento basta Android 10).",
+  'wifi.reason.hex_key_needs_saved_network': "Una chiave esadecimale di 64 cifre può essere solo salvata, non suggerita. Usa la passphrase o rendi il player proprietario del dispositivo.",
 
   'nav.group.devices': 'Schermi',
   'nav.group.publish': 'Pubblica',

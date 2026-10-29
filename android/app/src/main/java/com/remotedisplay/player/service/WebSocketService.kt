@@ -218,7 +218,7 @@ class WebSocketService : Service() {
                 try { socket?.emit("device:wifi-result", body.put("device_id", config.deviceId)) }
                 catch (e: Throwable) { Log.w("WebSocketService", "wifi result emit: ${e.message}") }
             }
-        }.also { it.restore() }
+        }.also { it.restore(config.deviceId) }
 
         powerSchedule = com.remotedisplay.player.power.PowerScheduleManager(
             applicationContext,

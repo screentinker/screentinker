@@ -320,6 +320,8 @@ export default {
   'wifi.reason.wifi_off': "O Wi-Fi está desligado na tela.",
   'wifi.reason.already_configured_by_hand': "Uma rede com este nome foi configurada manualmente na tela. Ela não é alterada; remova-a na tela para gerenciá-la daqui.",
   'wifi.reason.connected_network_unknown': "A tela não consegue saber em qual Wi-Fi está conectada (o Android oculta isso sem a permissão de localização), então não altera nada enquanto o Wi-Fi for sua conexão. Conceda ao player acesso à localização para remover essa limitação.",
+  'wifi.reason.wpa3_needs_android_11': "Uma rede WPA3 salva precisa do Android 11 ou mais recente (como sugestão, o Android 10 basta).",
+  'wifi.reason.hex_key_needs_saved_network': "Uma chave hexadecimal de 64 dígitos só pode ser salva, não sugerida. Use a frase-senha ou torne o player proprietário do dispositivo.",
 
   'nav.group.devices': 'Telas',
   'nav.group.publish': 'Publicar',

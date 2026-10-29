@@ -3295,6 +3295,7 @@ function setupActions(device) {
   wirePowerSchedule(device);
   // #720: the screen's managed Wi-Fi list (only rendered when the player declares net.wifi).
   const wifiHost = document.getElementById('wifiHost');
+  if (wifiDispose) { wifiDispose(); wifiDispose = null; }   // a reload of the page re-runs this
   if (wifiHost) wifiDispose = mountWifiNetworks(wifiHost, device);
 
   const blockBtn = document.getElementById('blockDeviceBtn');

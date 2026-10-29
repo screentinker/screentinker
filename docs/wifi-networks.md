@@ -11,8 +11,11 @@ section.
 
 1. Open the display → **Controls** → **Wi-Fi networks**.
 2. **Add network**. Enter the network name (SSID) and choose the security:
-   - **WPA2 (password)**: a password of 8 to 63 characters, or a 64-digit hexadecimal key.
-   - **WPA3 (password)**: Android 10 or newer.
+   - **WPA2 (password)**: a password of 8 to 63 characters, or a 64-digit hexadecimal key. The
+     hexadecimal key works only where the network is saved (modes owner and direct), not as a
+     suggestion.
+   - **WPA3 (password)**: Android 10 or newer as a suggestion, Android 11 or newer as a saved
+     network.
    - **Open (no password)**.
 3. Optional: **Priority** (0–100, higher is preferred) and **Hidden network**, for a network that
    does not broadcast its name.
@@ -27,7 +30,7 @@ Each row then shows what the screen reported:
 | Suggested to Android | Suggestions mode (see below): Android knows the network but decides itself. |
 | Held back | The screen is connected on this network right now. The change waits (see *A screen never strands itself*). |
 | Not supported here | For example WPA3 on Android 9, or a hidden network in suggestions mode on Android 10. |
-| Failed | Android refused it, or a network with the same name was set up on the screen by hand. |
+| Failed | Android refused it, or a network with the same name was set up on the screen by hand. A refused change leaves the previous network in place. |
 | Not delivered | The server did not send the list: the connection is not HTTPS, or a stored password can no longer be read. |
 
 A screen holds at most 16 managed networks.
@@ -43,8 +46,8 @@ The player reports how it can manage networks, and the section says so:
 | **suggestions** | Android 10 or newer, not device owner | **Suggested, not enforced.** Android only lets an ordinary app *suggest* networks. Android may decline them, and the screen may ask once on its own display to allow suggestions. Make the player device owner to manage networks reliably. |
 | **unsupported** | No Wi-Fi hardware | Nothing to manage. |
 
-Priority is a strong hint for suggestions. For saved networks, newer Android versions treat it as a
-hint only.
+Priority is used for suggestions. For saved networks, Android 8 and newer ignore it and choose by
+signal and history.
 
 ## Only its own networks
 

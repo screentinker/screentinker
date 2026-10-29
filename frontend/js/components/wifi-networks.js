@@ -30,7 +30,7 @@ const STATUSES = Object.keys(STATUS_TONE);
 // Reason codes the server (lib/device-wifi.js) and the player (net/WifiPlan.kt, net/WifiNetworkManager.kt) send.
 const REASONS = ['insecure_connection', 'password_unreadable', 'connected_network_in_use', 'wpa3_needs_android_10',
   'hidden_needs_android_11', 'rejected_by_android', 'permission_denied', 'wifi_off',
-  'already_configured_by_hand', 'connected_network_unknown'];
+  'already_configured_by_hand', 'connected_network_unknown', 'wpa3_needs_android_11', 'hex_key_needs_saved_network'];
 
 function statusChip(n) {
   const status = STATUSES.includes(n.status) ? n.status : 'pending';
@@ -119,6 +119,7 @@ export function mountWifiNetworks(host, device) {
   const canEdit = canWrite();
   let state = null;
   let editing = null; // null | 'new' | network id
+  let staleWhileEditing = false; // a report arrived while a form was open
 
   async function load() {
     try {
@@ -152,7 +153,10 @@ export function mountWifiNetworks(host, device) {
       pw.disabled = sec.value === 'open';
       if (pw.disabled) pw.value = '';
     });
-    host.querySelector('#wifiCancel')?.addEventListener('click', () => { editing = null; draw(); });
+    host.querySelector('#wifiCancel')?.addEventListener('click', () => {
+      editing = null;
+      if (staleWhileEditing) { staleWhileEditing = false; load(); } else draw();
+    });
     host.querySelector('#wifiSave')?.addEventListener('click', async () => {
       const prio = host.querySelector('#wifiPriority').value.trim();
       const body = {
@@ -168,6 +172,7 @@ export function mountWifiNetworks(host, device) {
           ? await api.addDeviceWifiNetwork(device.id, body)
           : await api.updateDeviceWifiNetwork(device.id, editing, body);
         editing = null;
+        staleWhileEditing = false;
         deliveryToast(r.delivery);
         await load();
       } catch (err) { showToast(err.message, 'error'); }
@@ -175,7 +180,10 @@ export function mountWifiNetworks(host, device) {
   }
 
   // The player's report arrives a moment after a save; redraw unless a form is open.
-  const onResult = (data) => { if (data && data.device_id === device.id && editing === null) load(); };
+  const onResult = (data) => {
+    if (!data || data.device_id !== device.id) return;
+    if (editing === null) load(); else staleWhileEditing = true;
+  };
   on('wifi-result', onResult);
   load();
   return () => off('wifi-result', onResult);

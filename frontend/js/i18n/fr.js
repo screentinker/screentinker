@@ -103,6 +103,8 @@ export default {
   'wifi.reason.wifi_off': "Le Wi-Fi est désactivé sur l’écran.",
   'wifi.reason.already_configured_by_hand': "Un réseau portant ce nom a été configuré à la main sur l'écran. Il n'est pas modifié ; supprimez-le sur l'écran pour le gérer d'ici.",
   'wifi.reason.connected_network_unknown': "L'écran ne peut pas savoir à quel Wi-Fi il est connecté (Android le masque sans l'autorisation de localisation) ; il ne modifie donc rien tant que le Wi-Fi est sa connexion. Accordez l'accès à la localisation au lecteur pour lever cette limite.",
+  'wifi.reason.wpa3_needs_android_11': "Un réseau WPA3 enregistré nécessite Android 11 ou plus récent (en suggestion, Android 10 suffit).",
+  'wifi.reason.hex_key_needs_saved_network': "Une clé hexadécimale de 64 chiffres peut seulement être enregistrée, pas suggérée. Utilisez la phrase de passe ou faites du lecteur le propriétaire de l'appareil.",
 
   'nav.group.devices': 'Écrans',
   'nav.group.publish': 'Publier',

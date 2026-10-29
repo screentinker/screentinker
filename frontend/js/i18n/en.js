@@ -317,6 +317,8 @@ export default {
   'wifi.reason.wifi_off': "Wi-Fi is switched off on the screen.",
   'wifi.reason.already_configured_by_hand': "A network with this name was set up on the screen by hand. It is left alone; remove it on the screen to manage it from here.",
   'wifi.reason.connected_network_unknown': "The screen cannot tell which Wi-Fi it is on (Android hides it without the location permission), so it changes nothing while Wi-Fi is its connection. Grant the player location access to lift this.",
+  'wifi.reason.wpa3_needs_android_11': "A saved WPA3 network needs Android 11 or newer (as a suggestion, Android 10 is enough).",
+  'wifi.reason.hex_key_needs_saved_network': "A 64-digit hexadecimal key can only be saved, not suggested. Use the passphrase, or make the player device owner.",
 
   'nav.group.devices': 'Screens',
   'nav.group.publish': 'Publish',

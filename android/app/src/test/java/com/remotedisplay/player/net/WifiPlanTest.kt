@@ -44,9 +44,19 @@ class WifiPlanTest {
 
     // ── what a panel cannot do ────────────────────────────────────────────────────────────────────
 
-    @Test fun `WPA3 needs Android 10`() {
+    @Test fun `WPA3 needs Android 10 as a suggestion and Android 11 as a saved network`() {
         assertEquals("wpa3_needs_android_10", WifiPlan.unsupportedReason(d("a", security = "wpa3"), "direct", 28))
-        assertNull(WifiPlan.unsupportedReason(d("a", security = "wpa3"), "owner", 29))
+        assertEquals("wpa3_needs_android_10", WifiPlan.unsupportedReason(d("a", security = "wpa3"), "owner", 28))
+        assertNull(WifiPlan.unsupportedReason(d("a", security = "wpa3"), "suggestions", 29))
+        assertEquals("wpa3_needs_android_11", WifiPlan.unsupportedReason(d("a", security = "wpa3"), "owner", 29))
+        assertNull(WifiPlan.unsupportedReason(d("a", security = "wpa3"), "owner", 30))
+    }
+
+    @Test fun `a raw 64-hex WPA2 key cannot be suggested, only saved`() {
+        val hex = "ab".repeat(32)
+        assertEquals("hex_key_needs_saved_network", WifiPlan.unsupportedReason(d("a", password = hex), "suggestions", 30))
+        assertNull(WifiPlan.unsupportedReason(d("a", password = hex), "owner", 30))
+        assertNull(WifiPlan.unsupportedReason(d("a", password = hex), "direct", 28))
     }
 
     @Test fun `a hidden network can be suggested only from Android 11`() {
@@ -145,6 +155,54 @@ class WifiPlanTest {
     @Test fun `an empty list on a panel that manages nothing is a no-op`() {
         val r = WifiPlan.plan(emptyList(), emptyList(), sit())
         assertTrue(r.steps.isEmpty() && r.outcomes.isEmpty() && r.removalsWaiting.isEmpty())
+    }
+
+    // ── re-added networks, mode changes ────────────────────────────────────────────────────────────
+
+    @Test fun `deleted and re-added with the same SSID is the SAME network, not an add over the one in use`() {
+        // The dashboard gave it a new id; the panel is connected on it.
+        val managed = listOf(m("old-id", ssid = "Van", netId = 7))
+        val same = WifiPlan.plan(listOf(d("new-id", ssid = "Van", password = "password-old-id")), managed, sit(netId = 7))
+        assertTrue("no Android call for a new id alone", same.steps.isEmpty())
+        assertEquals(listOf(WifiOutcome("new-id", "applied")), same.outcomes)
+        assertEquals(listOf("new-id"), same.managed.map { it.id })
+        assertTrue(same.removalsWaiting.isEmpty())
+        // ...and with a different password it is a CHANGE to the network in use, so it waits.
+        val changed = WifiPlan.plan(listOf(d("new-id", ssid = "Van", password = "typo")), managed, sit(netId = 7))
+        assertTrue(changed.steps.isEmpty())
+        assertEquals(listOf(WifiOutcome("new-id", "deferred", "connected_network_in_use")), changed.outcomes)
+    }
+
+    @Test fun `an id that is still wanted is never taken over by another entry with the same SSID`() {
+        val managed = listOf(m("a", ssid = "X", netId = 1))
+        val r = WifiPlan.plan(listOf(d("a", ssid = "X"), d("b", ssid = "X")), managed, sit(wifiActive = false))
+        assertEquals(listOf("a"), r.managed.map { it.id })
+        assertEquals(listOf("Add"), r.steps.map { it::class.simpleName })
+    }
+
+    @Test fun `a suggestion is moved over to a saved network once the player is owner`() {
+        val managed = listOf(m("a", netId = -1))
+        val r = WifiPlan.plan(listOf(d("a")), managed, sit(mode = "owner", sdk = 33, wifiActive = false))
+        assertEquals(listOf("Update"), r.steps.map { it::class.simpleName })
+        // ...but not while it is the network in use.
+        val held = WifiPlan.plan(listOf(d("a")), managed, sit(mode = "owner", sdk = 33, ssid = "a"))
+        assertTrue(held.steps.isEmpty())
+        assertEquals("deferred", held.outcomes.single().state)
+    }
+
+    @Test fun `a saved network left by a revoked owner is left alone in suggestions mode`() {
+        val r = WifiPlan.plan(listOf(d("a")), listOf(m("a", netId = 4)), sit(mode = "suggestions", sdk = 33, wifiActive = false))
+        assertTrue(r.steps.isEmpty())
+        assertEquals(listOf(WifiOutcome("a", "applied")), r.outcomes)
+    }
+
+    @Test fun `the wait reason never claims to know more than inUse did`() {
+        // Suggestions (netId -1) with a known netId but no SSID: inUse cannot use the netId, so "unknown".
+        val m = m("a", netId = -1)
+        val s = sit(mode = "suggestions", sdk = 30, netId = 3)
+        assertTrue(WifiPlan.inUse(m, s))
+        assertEquals("connected_network_unknown", WifiPlan.waitReason(m, s))
+        assertEquals("connected_network_in_use", WifiPlan.waitReason(m(id = "b", netId = 3), sit(netId = 3)))
     }
 
     // ── small helpers ─────────────────────────────────────────────────────────────────────────────

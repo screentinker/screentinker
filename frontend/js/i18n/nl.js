@@ -110,6 +110,8 @@ export default {
   'wifi.reason.wifi_off': "Wifi staat uit op het scherm.",
   'wifi.reason.already_configured_by_hand': "Een netwerk met deze naam is handmatig op het scherm ingesteld. Het blijft ongemoeid; verwijder het op het scherm om het hier te beheren.",
   'wifi.reason.connected_network_unknown': "Het scherm kan niet zien met welk wifi-netwerk het verbonden is (Android verbergt dat zonder locatietoestemming), dus het verandert niets zolang wifi de verbinding is. Geef de player locatietoegang om dit op te heffen.",
+  'wifi.reason.wpa3_needs_android_11': "Een opgeslagen WPA3-netwerk heeft Android 11 of nieuwer nodig (als suggestie volstaat Android 10).",
+  'wifi.reason.hex_key_needs_saved_network': "Een hexadecimale sleutel van 64 tekens kan alleen worden opgeslagen, niet voorgesteld. Gebruik de wachtwoordzin of maak de player apparaateigenaar.",
 
     'nav.members': 'Gebruikers',
     'common.close': 'Sluiten',

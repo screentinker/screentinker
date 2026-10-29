@@ -91,6 +91,8 @@ data class WifiPlanResult(
     val outcomes: List<WifiOutcome>,
     /** Managed networks whose removal is waiting (no server row to report them on). */
     val removalsWaiting: List<WifiManaged>,
+    /** The managed list with ids moved over to re-added networks (see [WifiPlan.plan]). */
+    val managed: List<WifiManaged> = emptyList(),
 )
 
 object WifiPlan {
@@ -103,31 +105,60 @@ object WifiPlan {
         mode == WifiModeLogic.UNSUPPORTED -> "rejected_by_android"
         d.security !in listOf(SECURITY_OPEN, SECURITY_WPA2, SECURITY_WPA3) -> "rejected_by_android"
         d.security == SECURITY_WPA3 && sdkInt < 29 -> "wpa3_needs_android_10"
+        // A SAVED WPA3 network needs WifiConfiguration.setSecurityParams (API 30): on Android 10 the
+        // framework refuses SAE without PMF, and requirePmf is not public API. Suggestions have it on 29.
+        d.security == SECURITY_WPA3 && mode != WifiModeLogic.SUGGESTIONS && sdkInt < 30 -> "wpa3_needs_android_11"
         // WifiNetworkSuggestion.Builder.setIsHiddenSsid is API 30.
         mode == WifiModeLogic.SUGGESTIONS && d.hidden && sdkInt < 30 -> "hidden_needs_android_11"
+        // setWpa2Passphrase takes a passphrase only; a raw 64-hex key works as a saved network.
+        mode == WifiModeLogic.SUGGESTIONS && d.security == SECURITY_WPA2 && isHexKey(d.password) -> "hex_key_needs_saved_network"
         else -> null
     }
+
+    fun isHexKey(p: String?): Boolean =
+        p != null && p.length == 64 && p.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
 
     /** Is the panel (possibly) connected on [m] right now? Unknown counts as yes while Wi-Fi is up. */
     fun inUse(m: WifiManaged, s: WifiSituation): Boolean {
         if (!s.wifiActive) return false
-        if (s.currentNetId != null && s.currentNetId >= 0 && m.netId >= 0) return m.netId == s.currentNetId
+        if (knowsNetId(m, s)) return m.netId == s.currentNetId
         if (!s.currentSsid.isNullOrEmpty()) return m.ssid == s.currentSsid
         return true
     }
 
-    private fun waitReason(s: WifiSituation): String =
-        if ((s.currentNetId != null && s.currentNetId >= 0) || !s.currentSsid.isNullOrEmpty()) "connected_network_in_use"
-        else "connected_network_unknown"
+    private fun knowsNetId(m: WifiManaged, s: WifiSituation) = s.currentNetId != null && s.currentNetId >= 0 && m.netId >= 0
+
+    /** Why [m] waits — the same test as [inUse], so the reason never claims more than it knows. */
+    fun waitReason(m: WifiManaged, s: WifiSituation): String =
+        if (knowsNetId(m, s) || !s.currentSsid.isNullOrEmpty()) "connected_network_in_use" else "connected_network_unknown"
 
     /**
-     * The steps that bring [managed] towards [desired] without stranding the panel. [appliedState]
-     * is what an unchanged, managed network reports ("applied", or "suggested" in suggestions mode).
+     * Is [m] in the form this mode manages? A device owner saves networks; a suggestion left over
+     * from before the player became owner is moved over. The other way round (owner revoked) there
+     * is nothing a non-owner may do to a saved network, so it is left as it is.
+     */
+    private fun rightKind(m: WifiManaged, mode: String): Boolean = mode == WifiModeLogic.SUGGESTIONS || m.netId >= 0
+
+    /**
+     * The steps that bring [managed] towards [desired] without stranding the panel. An unchanged,
+     * managed network reports "applied" ("suggested" in suggestions mode).
+     *
+     * ⚠️ MATCHED BY SSID TOO. Deleting a network on the dashboard and adding it again gives it a new
+     * id. Matched by id alone that is "add the new one, remove the old one" — and the add overwrites
+     * the very configuration the panel may be connected on, past the in-use guard. A desired network
+     * without an id match takes over an unclaimed managed entry with the same SSID instead; the
+     * result's [WifiPlanResult.managed] carries the new id.
      */
     fun plan(desired: List<WifiDesired>, managed: List<WifiManaged>, s: WifiSituation): WifiPlanResult {
         val appliedState = if (s.mode == WifiModeLogic.SUGGESTIONS) "suggested" else "applied"
-        val byId = managed.associateBy { it.id }
-        val wanted = desired.associateBy { it.id }
+        val wantedIds = desired.map { it.id }.toSet()
+        val rebound = managed.toMutableList()
+        for (d in desired) {
+            if (rebound.any { it.id == d.id }) continue
+            val i = rebound.indexOfFirst { it.ssid == d.ssid && it.id !in wantedIds }
+            if (i >= 0) rebound[i] = rebound[i].copy(id = d.id)
+        }
+        val byId = rebound.associateBy { it.id }
         val adds = mutableListOf<WifiStep>()
         val updates = mutableListOf<WifiStep>()
         val removes = mutableListOf<WifiStep>()
@@ -140,16 +171,16 @@ object WifiPlan {
             when {
                 unsupported != null -> outcomes += WifiOutcome(d.id, "unsupported", unsupported)
                 m == null -> adds += WifiStep.Add(d)
-                m.sameAs(d) -> outcomes += WifiOutcome(d.id, appliedState)
-                inUse(m, s) -> outcomes += WifiOutcome(d.id, "deferred", waitReason(s))
+                m.sameAs(d) && rightKind(m, s.mode) -> outcomes += WifiOutcome(d.id, if (m.netId >= 0) "applied" else appliedState)
+                inUse(m, s) -> outcomes += WifiOutcome(d.id, "deferred", waitReason(m, s))
                 else -> updates += WifiStep.Update(m, d)
             }
         }
-        for (m in managed) {
-            if (m.id in wanted) continue
+        for (m in rebound) {
+            if (m.id in wantedIds) continue
             if (inUse(m, s)) waiting += m else removes += WifiStep.Remove(m)
         }
-        return WifiPlanResult(adds + updates + removes, outcomes, waiting)
+        return WifiPlanResult(adds + updates + removes, outcomes, waiting, rebound)
     }
 
     /**
@@ -159,9 +190,7 @@ object WifiPlan {
     fun quoted(s: String): String = "\"" + s + "\""
 
     /** A 64-hex-digit WPA2 key goes in raw; a passphrase goes in quoted. */
-    fun pskForConfig(password: String): String =
-        if (password.length == 64 && password.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) password
-        else quoted(password)
+    fun pskForConfig(password: String): String = if (isHexKey(password)) password else quoted(password)
 
     /** WifiInfo.getSSID() returns the name in quotes, or "<unknown ssid>" when it is redacted. */
     fun ssidFromWifiInfo(raw: String?): String? {

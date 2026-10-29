@@ -312,6 +312,8 @@ export default {
   'wifi.reason.wifi_off': "Wi-fi er slået fra på skærmen.",
   'wifi.reason.already_configured_by_hand': "Et netværk med dette navn er sat op manuelt på skærmen. Det røres ikke; fjern det på skærmen for at administrere det herfra.",
   'wifi.reason.connected_network_unknown': "Skærmen kan ikke se, hvilket wi-fi den er forbundet til (Android skjuler det uden placeringstilladelse), så den ændrer intet, så længe wi-fi er dens forbindelse. Giv afspilleren adgang til placering for at ophæve dette.",
+  'wifi.reason.wpa3_needs_android_11': "Et gemt WPA3-netværk kræver Android 11 eller nyere (som forslag er Android 10 nok).",
+  'wifi.reason.hex_key_needs_saved_network': "En hexadecimal nøgle på 64 tegn kan kun gemmes, ikke foreslås. Brug adgangssætningen, eller gør afspilleren til enhedsejer.",
   'nav.group.devices': "Skærme",
   'nav.group.publish': "Udgiv",
   'nav.group.create': "Opret",

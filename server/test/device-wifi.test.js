@@ -225,6 +225,18 @@ test('input is checked the way Android checks it', async () => {
   assert.equal((await addNet(S, dev.id, { ssid: 'Hex', security: 'open' })).status, 409, 'one entry per SSID');
 });
 
+test('switching WPA2 → WPA3 keeps a password only if it is valid for WPA3', async () => {
+  const dev = makeDevice(S);
+  const hex = await addNet(S, dev.id, { ssid: 'HexNet', security: 'wpa2', password: 'ab'.repeat(32) });
+  const r = await S.jfetch(`/api/device-wifi/${dev.id}/networks/${hex.body.network.id}`, H(S.jwt, { security: 'wpa3' }, 'PUT'));
+  assert.equal(r.status, 400, r.text);
+  assert.match(r.body.error, /again/);
+  const pass = await addNet(S, dev.id, { ssid: 'PassNet', security: 'wpa2', password: PASSWORD });
+  const ok = await S.jfetch(`/api/device-wifi/${dev.id}/networks/${pass.body.network.id}`, H(S.jwt, { security: 'wpa3' }, 'PUT'));
+  assert.equal(ok.status, 200, ok.text);
+  assert.equal(ok.body.network.security, 'wpa3');
+});
+
 test('a screen holds at most 16 managed networks', async () => {
   const dev = makeDevice(S);
   for (let i = 0; i < 16; i++) assert.equal((await addNet(S, dev.id, { ssid: `N${i}`, security: 'open' })).status, 201);

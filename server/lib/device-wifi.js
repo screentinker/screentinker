@@ -115,6 +115,14 @@ function normaliseInput(body, existing = null) {
     // Kept only while the network stays secured; open → secured needs a password typed now.
     pskEnc = existing && existing.security !== 'open' ? existing.psk_enc : null;
     if (!pskEnc) throw new InputError('A password is required for a secured network.');
+    // WPA2 → WPA3 keeps it only if it is valid for WPA3 too (a raw 64-hex WPA2 key is not).
+    if (existing && existing.security !== security) {
+      const kept = secretbox.decrypt(pskEnc);
+      if (!kept) throw new InputError('The stored password can no longer be read. Enter it again.');
+      try { cleanPassword(kept, security); } catch {
+        throw new InputError(`Enter the password again: the stored one is not valid for ${security === 'wpa3' ? 'WPA3' : 'WPA2'}.`);
+      }
+    }
   }
   return { ssid, security, hidden, priority, pskEnc };
 }

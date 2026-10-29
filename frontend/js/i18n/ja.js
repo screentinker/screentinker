@@ -110,6 +110,8 @@ export default {
   'wifi.reason.wifi_off': "画面の Wi-Fi がオフになっています。",
   'wifi.reason.already_configured_by_hand': "この名前のネットワークは画面上で手動で設定されています。変更しません。ここから管理するには、画面上で削除してください。",
   'wifi.reason.connected_network_unknown': "画面は接続中の Wi-Fi を判別できません(位置情報の権限がないと Android が隠します)。そのため Wi-Fi で接続している間は何も変更しません。プレーヤーに位置情報へのアクセスを許可すると解除されます。",
+  'wifi.reason.wpa3_needs_android_11': "保存する WPA3 ネットワークには Android 11 以降が必要です(提案であれば Android 10 で可)。",
+  'wifi.reason.hex_key_needs_saved_network': "64 桁の 16 進キーは保存のみ可能で、提案はできません。パスフレーズを使うか、プレーヤーをデバイス所有者にしてください。",
 
   'nav.members': "メンバー",
   'common.close': "閉じる",
