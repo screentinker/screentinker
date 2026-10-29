@@ -187,6 +187,14 @@ const CAPABILITIES = [
    */
   'net.http_request',
   /*
+   * #720: the player manages Wi-Fi networks an operator lists on the device page (lib/device-wifi.js,
+   * socket event device:wifi-networks). HOW it can do that is a value, not a capability: it reports
+   * device_info.wifi_mode (owner / direct / suggestions / unsupported), and the dashboard words the
+   * section after it. Declared only when the mode is not 'unsupported'. Not a command, so not in
+   * COMMAND_CAPABILITY: the list never travels as a device command. In NO baseline — brand new.
+   */
+  'net.wifi',
+  /*
    * 3.0 site cache (lib/site-cache, docs/site-cache.md): the player can fetch an asset from a cache
    * box on its own LAN by sha256 — `GET <cache>/cache/<sha256>` with a bearer token — VERIFY the bytes
    * against that digest, and fall back to this server on any failure. It CHANGES THE PAYLOAD (a

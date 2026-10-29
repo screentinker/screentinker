@@ -637,6 +637,12 @@ module.exports = {
   // Per-org enablement lives in organizations.talk_enabled; this is the global gate. Off by default.
   talkEnabled: process.env.TALK_ENABLED === 'true',
   /*
+   * #720: hand a screen its Wi-Fi passwords over a connection that is NOT HTTPS. Off by default:
+   * lib/device-wifi.js refuses unless the device socket is TLS (natively, or through a trusted proxy
+   * that says https). Only for an install that runs on a LAN it trusts end to end; logged at boot.
+   */
+  wifiAllowInsecure: process.env.WIFI_ALLOW_INSECURE === '1' || process.env.WIFI_ALLOW_INSECURE === 'true',
+  /*
    * 3.0: screen share to a screen (lib/screen-share.js, docs/screen-share.md). ON by default: it
    * needs no sidecar (peer-to-peer WebRTC, this server only relays signalling), only an editor can
    * start one, and the meeting-room code is off per screen until an admin turns it on. Set

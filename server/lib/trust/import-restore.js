@@ -43,6 +43,8 @@ const archive = require('./import-archive');
 const { ImportError } = archive;
 
 const BATCH = 400;
+// Tables an import drops even when an archive carries them (see scan()).
+const NEVER_IMPORTED = Object.freeze(['device_wifi_networks']);
 const UUID_RE = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g;
 const SPECIAL = new Set(['organizations', 'users', 'organization_members', 'workspace_members']);
 const FONT_EXTS = new Set(['.woff2', '.woff', '.ttf', '.otf']);
@@ -152,7 +154,13 @@ async function scan(arch, ctx, onProgress = () => {}) {
   if (arch.kind !== 'org') throw new ImportError('This is a whole-server bundle; import it from Platform → Data & privacy.', 'is_bundle');
   const m = arch.manifest;
   const orgId = m.organization.id;
-  const tablesIn = new Set([...arch.entries.keys()].filter((n) => n.startsWith('tables/')).map(tableName));
+  /*
+   * #720: Wi-Fi passwords are never imported. The export leaves the table out (export-tables.js
+   * EXCLUDED), so a genuine archive never carries it; one that does (hand-edited, or from a fork) has
+   * it dropped here, explicitly, rather than refused as an unknown table or restored by accident.
+   */
+  const tablesIn = new Set([...arch.entries.keys()].filter((n) => n.startsWith('tables/')).map(tableName)
+    .filter((t) => !NEVER_IMPORTED.includes(t)));
   const unknownTables = [...tablesIn].filter((t) => !exportTables.EXPORTED[t]);
   if (unknownTables.length) throw new ImportError(`The archive contains tables this server does not know (${unknownTables.slice(0, 5).join(', ')}). Update this server first.`, 'newer_export');
 

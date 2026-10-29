@@ -291,7 +291,7 @@ function applyDeviceInfo(deviceId, di) {
   } catch (_) { /* incident feed is best-effort */ }
   db.prepare(`UPDATE devices SET android_version = ?, app_version = ?, screen_width = ?, screen_height = ?, render_width = ?, render_height = ?,
     ota_status = ?, ota_target_version = ?, ota_attempts = ?, tier = ?, foreign_device_owner = ?,
-    can_write_settings = ?, accessibility_enabled = ?, overlay_granted = ?, capture_mode = ?,
+    can_write_settings = ?, accessibility_enabled = ?, overlay_granted = ?, capture_mode = ?, wifi_mode = ?,
     media_volume = ?, system_brightness = ?, window_brightness = ?, screen_off_timeout_ms = ?, ota_updated_at = strftime('%s','now') WHERE id = ?`)
     .run(di.android_version, di.app_version, px(di.screen_width), px(di.screen_height), px(di.render_width), px(di.render_height),
       di.ota_status ?? 'none', di.ota_target_version ?? null, di.ota_attempts ?? 0,
@@ -299,6 +299,8 @@ function applyDeviceInfo(deviceId, di) {
       di.can_write_settings ? 1 : 0, di.accessibility_enabled ? 1 : 0, di.overlay_granted ? 1 : 0,
       // Absent (older build, non-Android player) must stay NULL rather than become a bogus tier.
       ['projection', 'accessibility', 'view', 'none'].includes(di.capture_mode) ? di.capture_mode : null,
+      // #720: same rule — an older player has no wifi_mode and must stay NULL (lib/device-wifi.js).
+      require('../lib/device-wifi').cleanMode(di.wifi_mode),
       num(di.media_volume), num(di.system_brightness), num(di.window_brightness), num(di.screen_off_timeout_ms),
       deviceId);
 }
@@ -1953,6 +1955,17 @@ const EVENT_APPLIERS = Object.freeze({
   },
 
   /*
+   * #720: what the player did with each network of its managed Wi-Fi list (applied / suggested /
+   * deferred / failed / unsupported, plus a short reason code). A report like any other, so a
+   * replica may relay it; lib/device-wifi.js applyResult() only touches rows of THIS device and
+   * keeps nothing outside its vocabulary. There is never a password in it.
+   */
+  'wifi-result'(deviceId, data, ctx) {
+    if (data && data.device_id && data.device_id !== deviceId) return;
+    try { require('../lib/device-wifi').applyResult(deviceId, data); } catch (e) { console.warn(`[wifi] result from ${deviceId}: ${e.message}`); }
+    emitToDeviceWorkspace(_dashboardNsRef, deviceId, 'dashboard:wifi-result', { device_id: deviceId });
+  },
+  /*
    * The screen unpaired ITSELF — an operator pressed Esc at the panel and entered the settings PIN.
    *
    * ⚠️ The PIN is checked ON THE PLAYER, not here, and that is a deliberate limit rather than an
@@ -3290,6 +3303,10 @@ module.exports = function setupDeviceSocket(io) {
           logDeviceStatus(device_id, 'online');
           // Flush any commands/playlist-updates queued while this device was offline.
           commandQueue.flushQueue(deviceNs, device_id, buildPlaylistPayload);
+          // #720: the screen's managed Wi-Fi list, every connect (a change made while it was offline
+          // lands here). Only on this, the direct path: a replica holds no rows and must never send
+          // an empty list (lib/device-wifi.js). push() itself checks the capability and the TLS gate.
+          try { require('../lib/device-wifi').push(io, device_id); } catch (e) { console.warn(`[wifi] connect push for ${device_id} failed: ${e.message}`); }
 
           // If this device is part of a wall, re-evaluate leadership.
           // Preferred leader = online member with smallest (canvas_x +
@@ -3525,6 +3542,7 @@ module.exports = function setupDeviceSocket(io) {
     });
 
     socket.on('device:trigger-status', (data) => dispatch('trigger-status', data));
+    socket.on('device:wifi-result', (data) => dispatch('wifi-result', data));
 
     socket.on('device:heartbeat', (data) => {
       const { device_id } = data || {};

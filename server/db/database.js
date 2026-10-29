@@ -5178,6 +5178,38 @@ migrationStep('#714 admin-only playlists', () => {
   try { db.prepare('ALTER TABLE playlists ADD COLUMN admin_locked INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] playlists.admin_locked added'); } catch (_) { /* present */ }
 });
 
+migrationStep('#720 device Wi-Fi networks', () => {
+  /*
+   * #720: the Wi-Fi networks a screen should know (lib/device-wifi.js). Its own table on purpose, not
+   * devices columns: those reach every SELECT * of a device, PUT /devices/:id, exports, mesh replicas,
+   * API tokens and the MCP tools. psk_enc is the password through lib/secretbox, never returned.
+   * status is what the player last reported for the network (device:wifi-result), or what the server
+   * knows itself ('pending', 'sent', 'not_delivered').
+   */
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS device_wifi_networks (
+      id             TEXT PRIMARY KEY,
+      workspace_id   TEXT NOT NULL,
+      device_id      TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+      ssid           TEXT NOT NULL,
+      security       TEXT NOT NULL DEFAULT 'wpa2',
+      hidden         INTEGER NOT NULL DEFAULT 0,
+      priority       INTEGER,
+      psk_enc        TEXT,
+      status         TEXT NOT NULL DEFAULT 'pending',
+      status_reason  TEXT,
+      status_at      INTEGER,
+      created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at     INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      UNIQUE (device_id, ssid)
+    );
+    CREATE INDEX IF NOT EXISTS idx_device_wifi_networks_ws ON device_wifi_networks (workspace_id);
+  `);
+  // What the player can do with them, from device_info (owner / direct / suggestions / unsupported).
+  // NULL = an older or non-Android player, about which the dashboard says nothing. capture_mode style.
+  try { db.prepare('ALTER TABLE devices ADD COLUMN wifi_mode TEXT').run(); console.log('[migrate] devices.wifi_mode added'); } catch (_) { /* present */ }
+});
+
 /*
  * Corporate (head office) playlists: every table and column of the feature, applied here because
  * organizations only exists once the multi-tenancy phase above has run. Idempotent; see

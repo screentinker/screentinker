@@ -43,6 +43,9 @@ const WORKSPACE_SCOPED = [
   // 3.0 switch to ScreenTinker (lib/migrate): a deleted workspace's import jobs (and any source
   // credential still held for one), its idempotency map and its unpaired placeholders.
   'migration_jobs', 'migration_items', 'migration_screens',
+  // #720: a screen's Wi-Fi passwords (lib/device-wifi.js). device_id cascades with the device too;
+  // listed so a purge never depends on foreign keys being on.
+  'device_wifi_networks',
 ];
 // Logs that carry a device_id but NO foreign key (so they don't block, but we
 // clean them to avoid dangling rows).

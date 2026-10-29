@@ -1633,6 +1633,9 @@ router.delete('/:id', (req, res) => {
     db.prepare('DELETE FROM device_telemetry WHERE device_id = ?').run(id);
     db.prepare('DELETE FROM device_diagnostic_logs WHERE device_id = ?').run(id);
     db.prepare('DELETE FROM video_wall_devices WHERE device_id = ?').run(id);
+    // #720: its Wi-Fi passwords go with it. The panel keeps the networks it joined (lib/device-wifi.js):
+    // a deleted screen is never sent a list again, so nothing tells it to drop them.
+    db.prepare('DELETE FROM device_wifi_networks WHERE device_id = ?').run(id);
     db.prepare('DELETE FROM devices WHERE id = ?').run(id);
 
     // Notify dashboard in real-time. Phase 2.3: scope to the device's

@@ -68,6 +68,10 @@ function moveOne(db, device, toWs, opts = {}) {
   dropped.schedules = run(db, 'DELETE FROM schedules WHERE device_id = ?', id);
   dropped.power_schedules = run(db, 'DELETE FROM display_power_schedules WHERE device_id = ?', id);
   dropped.endpoints = run(db, 'DELETE FROM device_endpoints WHERE device_id = ?', id);
+  // #720: Wi-Fi passwords are the old workspace's credentials. The new workspace starts with an empty
+  // list; on its next connect the panel drops the networks it was managing, except the one it is
+  // connected on, which the stranding guard keeps until another managed network works.
+  dropped.wifi_networks = run(db, 'DELETE FROM device_wifi_networks WHERE device_id = ?', id);
   // A site cache belongs to one workspace and serves only that workspace's screens.
   dropped.site_cache = run(db, 'DELETE FROM site_cache_assignments WHERE device_id = ?', id);
   dropped.trigger_assignments = run(db, `DELETE FROM trigger_assignments WHERE target_type = 'device' AND target_id = ?

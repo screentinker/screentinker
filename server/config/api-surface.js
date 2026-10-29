@@ -101,6 +101,9 @@ const JWT_ONLY_ROUTERS = [
   // ONVIF cameras (routes/onvif.js): reaches into a customer's network through their screens, so
   // signed-in people only, never an API token.
   { path: '/api/onvif',       mod: './routes/onvif',        tenancy: true },
+  // #720 Wi-Fi networks of a screen (routes/device-wifi.js): credentials into a customer's network,
+  // so signed-in people only. Keeps them out of reach of API tokens and the MCP tools as well.
+  { path: '/api/device-wifi', mod: './routes/device-wifi',  tenancy: true },
   { path: '/api/provision',   mod: './routes/provisioning', tenancy: true },
   { path: '/api/teams',       mod: './routes/teams',        tenancy: true },
   { path: '/api/white-label', mod: './routes/white-label',  tenancy: true },

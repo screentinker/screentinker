@@ -204,6 +204,7 @@ const EXCLUDED = {
   content_video_variants: 'TV-safe re-encoded copies of tall videos (lib/video-variants.js): a cache, made again on demand on the new server',
   video_variant_usage: 'per-month encode minutes for the hosted TV-safe copy allowance: instance accounting, not the organization\'s data',
   site_caches: 'a site cache box and the credential it signs in with: set the box up again on the new server (docs/site-cache.md)',
+  device_wifi_networks: 'Wi-Fi passwords of the screens (#720, lib/device-wifi.js): credentials into the customer\'s network never leave a server; the screens keep the networks they already joined, and new ones are entered again on the new server',
   site_cache_assignments: 'which screens use a site cache box: follows site_caches',
   migration_jobs: 'import jobs from another signage system: transient, and may still hold an encrypted source credential',
   migration_items: 'an import\'s source-to-ScreenTinker id map, only used to make re-running an import safe',
