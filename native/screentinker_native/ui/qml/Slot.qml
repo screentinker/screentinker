@@ -197,6 +197,15 @@ Item {
                 enabled: !!(videoRoot.fish && videoRoot.fish.touch)
                 onDoubleTapped: slot.fisheyeTouch("reset")
             }
+            // A mouse gets the same steering: DragHandler and TapHandler already take it, and the
+            // wheel zooms like a pinch (one notch = 15%, up = in).
+            WheelHandler {
+                target: null
+                enabled: !!(videoRoot.fish && videoRoot.fish.touch)
+                onWheel: (event) => {
+                    if (event.angleDelta.y !== 0) slot.fisheyeTouch("pinch " + Math.pow(1.15, event.angleDelta.y / 120))
+                }
+            }
             MediaPlayer {
                 id: player
                 source: slot.item ? slot.item.source : ""

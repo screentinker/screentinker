@@ -75,10 +75,11 @@ const API = (url, opts = {}) => {
 
 // Widget type ids only — name + desc are looked up via t() so they switch
 // language with the rest of the UI.
-const WIDGET_TYPES = ['clock', 'weather', 'rss', 'text', 'webpage', 'cloud-doc', 'social', 'directory-board', 'directory-search', 'menu-board', 'bi-dashboard', 'room-display', 'transition'];
+const WIDGET_TYPES = ['clock', 'weather', 'radar', 'rss', 'text', 'webpage', 'cloud-doc', 'social', 'directory-board', 'directory-search', 'menu-board', 'bi-dashboard', 'room-display', 'transition'];
 const WIDGET_ICONS = {
   clock: '&#128339;',
   weather: '&#9925;',
+  radar: '&#127783;',
   rss: '&#128240;',
   text: '&#128221;',
   webpage: '&#127760;',
@@ -96,6 +97,15 @@ const WIDGET_ICONS = {
 };
 const widgetTypeName = (id) => t(`widget.type.${id.replace(/-/g, '_')}.name`);
 const widgetTypeDesc = (id) => t(`widget.type.${id.replace(/-/g, '_')}.desc`);
+
+// "Where is this?" for weather and radar: the screen's own location (Device Info, resolved on the
+// server per screen, lib/widget-location.js) or a place set on the widget.
+function locationSourceField(id, value) {
+  return `<div class="form-group"><label>${t('widget.field.location_source')}</label><select id="${id}" class="input" style="background:var(--bg-input)">`
+    + `<option value="screen" ${value === 'screen' ? 'selected' : ''}>${t('widget.field.location_source_screen')}</option>`
+    + `<option value="widget" ${value !== 'screen' ? 'selected' : ''}>${t('widget.field.location_source_widget')}</option>`
+    + `</select><div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.location_source_hint')}</div></div>`;
+}
 
 // Plugin widget types fetched from the server. Empty when plugins are off (404/[]).
 let pluginTypes = [];
@@ -691,6 +701,7 @@ export async function render(container) {
           const dateFormat = ['full', 'long', 'medium', 'short'].includes(config.date_format) ? config.date_format : 'full';
         html += `
           <div class="form-group"><label>${t('widget.field.format')}</label><select id="wFormat" class="input" style="background:var(--bg-input)"><option value="12h" ${config.format === '12h' ? 'selected' : ''}>${t('widget.field.format_12h')}</option><option value="24h" ${config.format === '24h' ? 'selected' : ''}>${t('widget.field.format_24h')}</option></select></div>
+          <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="wTzFromScreen" ${config.timezone_source === 'screen' ? 'checked' : ''}> ${t('widget.field.timezone_from_screen')}</label><div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.timezone_from_screen_hint')}</div></div>
           <div class="form-group"><label>${t('widget.field.timezone')}</label>${timezoneField(timezone)}<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" class="btn btn-secondary btn-sm" id="wUseDashboardTimezone">${t('widget.field.use_dashboard_timezone')}</button><button type="button" class="btn btn-secondary btn-sm" id="wUseServerTimezone">${t('widget.field.use_server_timezone')}</button></div><div class="form-hint" id="wTimezoneHint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.timezone_hint')}</div></div>
           <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="wShowSeconds" ${config.show_seconds === false ? '' : 'checked'}> ${t('widget.field.show_seconds')}</label></div>
           <div class="form-group"><label>${t('widget.field.locale')}</label><input type="text" id="wLocale" class="input" value="${escAttr(config.locale || '')}" placeholder="es-ES"><div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.locale_hint')}</div></div>
@@ -706,6 +717,7 @@ export async function render(container) {
         break;
       case 'weather':
         html += `
+          ${locationSourceField('wLocationSource', config.location_source === 'screen' ? 'screen' : 'widget')}
           <div class="form-group"><label>${t('widget.field.location')}</label><input type="text" id="wLocation" class="input" value="${esc(config.location || '')}" placeholder="${t('widget.field.location_placeholder')}"></div>
           <div class="form-group"><label>${t('widget.field.units')}</label><select id="wUnits" class="input" style="background:var(--bg-input)"><option value="imperial" ${config.units !== 'metric' ? 'selected' : ''}>${t('widget.field.units_imperial')}</option><option value="metric" ${config.units === 'metric' ? 'selected' : ''}>${t('widget.field.units_metric')}</option></select></div>
           <div class="form-group"><label>${t('widget.field.font_size')}</label><input type="number" id="wFontSize" class="input" value="${escAttr(config.font_size || 48)}"></div>
@@ -713,6 +725,30 @@ export async function render(container) {
           <div class="form-group"><label>${t('widget.field.layout')}</label><select id="wLayout" class="input" style="background:var(--bg-input)"><option value="vertical" ${config.layout !== 'horizontal' ? 'selected' : ''}>${t('widget.field.layout_vertical')}</option><option value="horizontal" ${config.layout === 'horizontal' ? 'selected' : ''}>${t('widget.field.layout_horizontal')}</option></select></div>
           <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="wShowLocation" ${config.show_location === false ? '' : 'checked'}> ${t('widget.field.show_location')}</label></div>
           <div class="form-group"><label>${t('widget.field.locale')}</label><input type="text" id="wWeatherLocale" class="input" value="${escAttr(config.locale || '')}" placeholder="es"><div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.weather_locale_hint')}</div></div>`;
+        break;
+      case 'radar':
+        {
+          const src = config.location_source === 'fixed' ? 'widget' : 'screen';
+          const zoom = Math.min(10, Math.max(3, parseInt(config.zoom, 10) || 7));
+          const opacity = Math.round(Math.min(1, Math.max(0.2, Number(config.opacity) || 0.8)) * 100);
+        html += `
+          ${locationSourceField('wRadarSource', src)}
+          <div class="form-group" style="display:flex;gap:8px">
+            <div style="flex:1"><label>${t('widget.field.latitude')}</label><input type="number" step="0.0001" min="-90" max="90" id="wRadarLat" class="input" value="${escAttr(config.latitude ?? '')}"></div>
+            <div style="flex:1"><label>${t('widget.field.longitude')}</label><input type="number" step="0.0001" min="-180" max="180" id="wRadarLon" class="input" value="${escAttr(config.longitude ?? '')}"></div>
+          </div>
+          <div class="form-group"><label>${t('widget.field.radar_label')}</label><input type="text" id="wRadarLabel" class="input" maxlength="80" value="${escAttr(config.label || '')}"><div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.radar_label_hint')}</div></div>
+          <div class="form-group"><label>${t('widget.field.radar_zoom')}</label><input type="range" id="wRadarZoom" min="3" max="10" value="${zoom}" style="width:100%"><div class="form-hint" style="font-size:12px;color:var(--text-muted)">${t('widget.field.radar_zoom_hint')}</div></div>
+          <div class="form-group"><label>${t('widget.field.radar_opacity')}</label><input type="range" id="wRadarOpacity" min="20" max="100" value="${opacity}" style="width:100%"></div>
+          <div class="form-group"><label>${t('widget.field.radar_map_style')}</label><select id="wRadarBasemap" class="input" style="background:var(--bg-input)"><option value="dark" ${config.basemap !== 'light' ? 'selected' : ''}>${t('widget.field.radar_map_dark')}</option><option value="light" ${config.basemap === 'light' ? 'selected' : ''}>${t('widget.field.radar_map_light')}</option></select></div>
+          <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="wRadarAnimate" ${config.animate === false ? '' : 'checked'}> ${t('widget.field.radar_animate')}</label></div>
+          <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="wRadarShowLabel" ${config.show_label === false ? '' : 'checked'}> ${t('widget.field.radar_show_label')}</label></div>
+          <details class="form-group"><summary style="cursor:pointer">${t('widget.field.radar_own_tiles')}</summary>
+            <div style="margin-top:8px"><label>${t('widget.field.radar_tile_url')}</label><input type="url" id="wRadarTileUrl" class="input" maxlength="300" placeholder="https://tiles.example.com/{z}/{x}/{y}.png?key=…" value="${escAttr(config.tile_url || '')}"><div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('widget.field.radar_tile_url_hint')}</div></div>
+            <div style="margin-top:8px"><label>${t('widget.field.radar_tile_attribution')}</label><input type="text" id="wRadarTileAttribution" class="input" maxlength="120" value="${escAttr(config.tile_attribution || '')}"></div>
+          </details>
+          <div class="form-hint" style="font-size:12px;color:var(--text-muted)">${t('widget.field.radar_sources')}</div>`;
+        }
         break;
       case 'rss':
         html += `
@@ -1440,6 +1476,8 @@ export async function render(container) {
         const fontSize = parseInt(val('wFontSize')) || 64;
         const dateFontSize = parseInt(val('wDateFontSize'));
         Object.assign(config, { format: val('wFormat'), timezone: val('wTimezone'), font_size: fontSize, color: val('wColor'), background: readBackground('wBg'),
+        // The screen's own time zone (lib/widget-location.js); the zone above is the fallback.
+        timezone_source: document.getElementById('wTzFromScreen') && document.getElementById('wTzFromScreen').checked ? 'screen' : 'widget',
         // #323: seconds were always on with no way to turn them off, and the clock was formatted
         // in en-US regardless of the operator's language. Both are settings now.
         show_seconds: document.getElementById('wShowSeconds') ? document.getElementById('wShowSeconds').checked : true,
@@ -1451,10 +1489,27 @@ export async function render(container) {
         date_color: val('wDateColor') }); break;
       }
       case 'weather': Object.assign(config, { location: val('wLocation'), units: val('wUnits'), font_size: parseInt(val('wFontSize')) || 48, color: val('wColor'),
+        location_source: val('wLocationSource') === 'screen' ? 'screen' : 'widget',
         // #324: layout, an optional city line, and a language for the condition text.
         layout: val('wLayout') || 'vertical',
         show_location: document.getElementById('wShowLocation') ? document.getElementById('wShowLocation').checked : true,
         locale: (val('wWeatherLocale') || '').trim() }); break;
+      case 'radar': {
+        const num = (id) => { const v = val(id); return v === '' || v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v); };
+        Object.assign(config, {
+          location_source: val('wRadarSource') === 'widget' ? 'fixed' : 'screen',
+          latitude: num('wRadarLat'), longitude: num('wRadarLon'),
+          label: (val('wRadarLabel') || '').trim(),
+          zoom: parseInt(val('wRadarZoom'), 10) || 7,
+          opacity: (parseInt(val('wRadarOpacity'), 10) || 80) / 100,
+          basemap: val('wRadarBasemap') === 'light' ? 'light' : 'dark',
+          animate: document.getElementById('wRadarAnimate') ? document.getElementById('wRadarAnimate').checked : true,
+          show_label: document.getElementById('wRadarShowLabel') ? document.getElementById('wRadarShowLabel').checked : true,
+          tile_url: (val('wRadarTileUrl') || '').trim(),
+          tile_attribution: (val('wRadarTileAttribution') || '').trim(),
+        });
+        break;
+      }
       case 'rss': Object.assign(config, readFeedPicker(document.getElementById('wFeedPicker')), {
         layout: val('wNewsLayout') === 'headlines' ? 'headlines' : 'ticker',
         scroll_speed: parseInt(val('wScrollSpeed')) || 30,

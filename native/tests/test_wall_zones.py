@@ -662,3 +662,22 @@ def test_the_main_surface_still_transitions_by_default_and_other_surfaces_do_not
     e.render(it)
     e.render(it, surface="trigger")
     assert [t for _, t in _zone_shows(app)] == [{"shader": "Crossfade"}, None]
+
+
+def test_a_zone_of_widgets_rotates_on_their_durations(eng):
+    # Widgets arrive with no mime_type, which Item defaults to video/mp4. The zone took them for
+    # videos and waited for an "ended" a web page never sends: a weather + radar zone showed the
+    # weather forever (seen on a Pi 5). They move on their dwell like images.
+    from screentinker_native.player.engine import ZoneRunner
+    e, app = eng
+    items = [Item.parse({"id": n, "widget_id": w, "duration_sec": d, "zone_id": "a", "sort_order": n})
+             for n, w, d in ((1, "weather", 30), (2, "radar", 20))]
+    assert items[0].mime_type == "video/mp4" and items[0].is_widget
+    r = ZoneRunner(e, {"id": "a"}, items)
+    r.show(0)
+    try:
+        assert r.timer.isActive() and r.timer.interval() == 30_000
+        r.advance()
+        assert r.index == 1 and r.timer.isActive() and r.timer.interval() == 20_000
+    finally:
+        r.timer.stop()

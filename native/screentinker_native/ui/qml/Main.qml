@@ -15,6 +15,15 @@ Window {
     title: "ScreenTinker"
     flags: Qt.Window | Qt.FramelessWindowHint
 
+    // Mouse moves for the idle pointer (ui/idle_cursor.py). Passive: it never takes an event from
+    // the content, a zone's web page or a fisheye camera's drag. ⚠️ Qt Quick re-sends a hover every
+    // time the scene changes under a still mouse (a ticker, a video), so the position goes along and
+    // only a real move counts; otherwise the pointer never hides.
+    HoverHandler {
+        enabled: idleCursor !== null
+        onPointChanged: idleCursor.moved(point.scenePosition.x, point.scenePosition.y)
+    }
+
     property var surfaces: ({})
     function registerSurface(sid, s) { surfaces[sid] = s }
     function unregisterSurface(sid, s) { if (surfaces[sid] === s) delete surfaces[sid] }

@@ -1261,11 +1261,6 @@ class App:
                 win.setGeometry(target.geometry())
                 log.info("display %d: %s", idx, target.name())
         if not self.args.windowed:
-            if getattr(ops, "HIDE_CURSOR", False):
-                # A kiosk Mac shows the arrow over content otherwise; input injection does not need it.
-                from PySide6.QtCore import Qt
-                from PySide6.QtGui import QCursor
-                self.qt.setOverrideCursor(QCursor(Qt.CursorShape.BlankCursor))
             if sys.platform == "win32":
                 # Fullscreen alone sits UNDER the taskbar and Start menu on Windows (seen in the VM);
                 # a kiosk surface must be topmost.
@@ -1418,6 +1413,13 @@ def _main(argv=None):
     from PySide6.QtQml import QQmlApplicationEngine
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("stage", app.stage)
+    # A kiosk Mac or a Pi desktop shows the arrow over content otherwise; it comes back while someone
+    # is moving the mouse (Main.qml reports the moves). Input injection does not need it.
+    idle_cursor = None
+    if not args.windowed and getattr(ops, "HIDE_CURSOR", False):
+        from .ui.idle_cursor import IdleCursor
+        idle_cursor = IdleCursor(qt)
+    engine.rootContext().setContextProperty("idleCursor", idle_cursor)
     engine.load(QUrl.fromLocalFile(os.path.join(HERE, "ui", "qml", "Main.qml")))
     signal.signal(signal.SIGTERM, lambda *a: qt.exit(0))
     signal.signal(signal.SIGINT, lambda *a: qt.exit(0))

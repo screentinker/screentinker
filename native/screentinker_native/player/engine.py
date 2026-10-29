@@ -202,7 +202,9 @@ class ZoneRunner:
         self.token = rendered
         if not self.multi:
             return
-        if it.mime_type.startswith("video/") and it.mime_type != "video/youtube":
+        # ⚠️ A widget arrives with no mime_type and Item defaults it to video/mp4, so ask is_widget
+        # first: a web page never sends "ended", and a zone that waited for one never rotated.
+        if it.mime_type.startswith("video/") and it.mime_type != "video/youtube" and not it.is_widget:
             if it.is_live:
                 if it.duration_sec > 0:
                     self.timer.start(it.duration_sec * 1000)

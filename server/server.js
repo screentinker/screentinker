@@ -732,9 +732,10 @@ app.use(express.static(config.frontendDir, { index: false, etag: true, lastModif
   } else if (/\.(png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot|webp|mp4|webm)$/i.test(filePath)) {
     res.setHeader('Cache-Control', 'public, max-age=2592000'); // 30 days
   }
-  // The Power BI client is loaded by the bi-dashboard widget page, which a player frames in a
-  // sandboxed (opaque-origin) iframe — helmet's same-origin CORP would block the script there.
-  if (filePath.includes(`${path.sep}vendor${path.sep}powerbi${path.sep}`)) res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  // The Power BI client and Leaflet are loaded by widget pages (bi-dashboard, radar) that a player
+  // frames in a sandboxed (opaque-origin) iframe — helmet's same-origin CORP would block them there.
+  if (filePath.includes(`${path.sep}vendor${path.sep}powerbi${path.sep}`)
+      || filePath.includes(`${path.sep}vendor${path.sep}leaflet${path.sep}`)) res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 }}));
 
 // Player HTML: dynamic route. Injects a small inline window.__playerConfig

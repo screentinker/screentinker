@@ -692,6 +692,7 @@ function renderWidgetHtml(type, config, opts = {}) {
   switch (type) {
     case 'clock': return renderClock(config);
     case 'weather': return renderWeather(config);
+    case 'radar': return require('../lib/radar/widget').previewHtml(config, { origin: opts.origin });
     case 'rss': return renderRSS(config, { seed: opts.seed });
     case 'text': return renderText(config, iframeSandbox);
     case 'webpage': return renderWebpage(config, iframeSandbox, opts.origin);
@@ -779,7 +780,12 @@ function widgetIframeSandboxForWorkspace(workspaceId) {
 router.get('/:id/render', (req, res) => {
   const widget = db.prepare('SELECT * FROM widgets WHERE id = ?').get(req.params.id);
   if (!widget) return res.status(404).send('Widget not found');
-  const config = JSON.parse(widget.config || '{}');
+  // A weather, clock or radar widget set to follow the screen takes its place from the screen that
+  // asked (?device=, sent by every player); see lib/widget-location.js.
+  const widgetLocation = require('../lib/widget-location');
+  const place = widgetLocation.followsScreen(widget.widget_type, JSON.parse(widget.config || '{}'))
+    ? widgetLocation.screenPlace(db, req.query.device, widget.workspace_id) : null;
+  const config = widgetLocation.applyPlace(widget.widget_type, JSON.parse(widget.config || '{}'), place);
   const iframeSandbox = widgetIframeSandboxForWorkspace(widget.workspace_id);
   // This page is DESIGNED to be embedded by the player, which frames it in a
   // sandboxed (allow-scripts, no allow-same-origin) iframe = a null origin. The
@@ -856,6 +862,17 @@ router.get('/:id/render', (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     if (req.query.rev) res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    return res.send(out.html);
+  }
+  /*
+   * A weather radar (lib/radar/widget.js): our own map page, image tiles plus one CORS-open JSON
+   * index, so it runs in the opaque-origin sandbox a third-party radar site does not.
+   */
+  if (widget.widget_type === 'radar') {
+    const out = require('../lib/radar/widget').render(config, { origin: `${req.protocol}://${req.get('host')}` });
+    res.setHeader('Content-Security-Policy', out.csp);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
     return res.send(out.html);
   }
   if (widget.widget_type === 'bi-dashboard') {
@@ -1066,6 +1083,7 @@ router.post('/preview', (req, res) => {
     iframeSandbox: PREVIEW_IFRAME_SANDBOX,
     resolveData,
     resolveFont,
+    origin: `${req.protocol}://${req.get('host')}`,
   });
   if (req.workspaceId) html = inlineUserContent(html, req.workspaceId);
   res.setHeader('Content-Type', 'text/html');
@@ -1100,6 +1118,7 @@ router.post('/preview-session', (req, res) => {
     iframeSandbox: PREVIEW_IFRAME_SANDBOX,
     resolveData,
     resolveFont,
+    origin: `${req.protocol}://${req.get('host')}`,
   });
   previewStore.set(id, { html, widget_type, created: Date.now() });
   res.json({ id, url: `/api/widgets/preview-session/${id}` });
@@ -1194,7 +1213,9 @@ async function load() {
   try {
     // #324: wttr.in accepts lang=, so "Sunny" can arrive in the operator's language rather than
     // always English. Same locale field the clock gained in #323; blank leaves wttr.in's default.
-    const r = await fetch('https://wttr.in/${encodeURIComponent(c.location || 'New York')}?format=j1${/^[A-Za-z]{2}$/.test(String(c.locale || '').slice(0, 2)) ? '&lang=' + encodeURIComponent(String(c.locale).slice(0, 2).toLowerCase()) : ''}');
+    // A widget following its screen fetches by the screen's coordinates (lib/widget-location.js);
+    // the label still shows the place name.
+    const r = await fetch('https://wttr.in/${encodeURIComponent(c.__place_query || c.location || 'New York')}?format=j1${/^[A-Za-z]{2}$/.test(String(c.locale || '').slice(0, 2)) ? '&lang=' + encodeURIComponent(String(c.locale).slice(0, 2).toLowerCase()) : ''}');
     const d = await r.json();
     const cur = d.current_condition[0];
     const unit = '${c.units === 'metric' ? 'temp_C' : 'temp_F'}';
