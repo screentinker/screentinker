@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Now in the app stores
+
+- **ScreenTinker Manager for Android** is live on Google Play:
+  https://play.google.com/store/apps/details?id=com.screentinker.manager
+- **ScreenTinker for Roku** is live in the Roku Channel Store:
+  https://channelstore.roku.com/details/98fb89abc05a84cc78520fdc14e8fd79:ef71cd8aff14d28478d2a5c1c02cfc63/screentinker
+- **ScreenTinker on Amazon** is live for both **Fire TV (Fire OS)** and **Vega OS**:
+  https://www.amazon.com/dp/B0HM6M17S8 (Fire OS) · https://www.amazon.com/dp/B0HLK3PCPG (Vega OS)
+- **ScreenTinker for e-ink** is live in the Seeed Studio Sticky Playground:
+  https://www.seeedstudio.com/sticky/playground/screentinker/
+
 ### Added
 
 - **Single-item image fit modes (`cover`, `contain`, `fill`), 1-zone layout inheritance, and
