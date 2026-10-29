@@ -100,8 +100,9 @@ export default {
   'wifi.reason.hidden_needs_android_11': "Una rete nascosta può essere suggerita solo da Android 11 in poi.",
   'wifi.reason.rejected_by_android': "Android ha rifiutato la rete.",
   'wifi.reason.permission_denied': "Il player non ha il permesso di modificare il Wi-Fi.",
-  'wifi.reason.not_device_owner': "Serve che il player sia proprietario del dispositivo.",
   'wifi.reason.wifi_off': "Il Wi-Fi è disattivato sullo schermo.",
+  'wifi.reason.already_configured_by_hand': "Una rete con questo nome è stata configurata a mano sullo schermo. Non viene toccata; rimuovila sullo schermo per gestirla da qui.",
+  'wifi.reason.connected_network_unknown': "Lo schermo non riesce a sapere a quale Wi-Fi è connesso (Android lo nasconde senza il permesso di posizione), quindi non modifica nulla finché il Wi-Fi è la sua connessione. Concedi al player l'accesso alla posizione per superare questo limite.",
 
   'nav.group.devices': 'Schermi',
   'nav.group.publish': 'Pubblica',

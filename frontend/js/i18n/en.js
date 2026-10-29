@@ -314,8 +314,9 @@ export default {
   'wifi.reason.hidden_needs_android_11': "A hidden network can only be suggested on Android 11 or newer.",
   'wifi.reason.rejected_by_android': "Android refused the network.",
   'wifi.reason.permission_denied': "The player is not allowed to change Wi-Fi.",
-  'wifi.reason.not_device_owner': "This needs the player to be device owner.",
   'wifi.reason.wifi_off': "Wi-Fi is switched off on the screen.",
+  'wifi.reason.already_configured_by_hand': "A network with this name was set up on the screen by hand. It is left alone; remove it on the screen to manage it from here.",
+  'wifi.reason.connected_network_unknown': "The screen cannot tell which Wi-Fi it is on (Android hides it without the location permission), so it changes nothing while Wi-Fi is its connection. Grant the player location access to lift this.",
 
   'nav.group.devices': 'Screens',
   'nav.group.publish': 'Publish',

@@ -100,8 +100,9 @@ export default {
   'wifi.reason.hidden_needs_android_11': "Una red oculta solo se puede sugerir en Android 11 o posterior.",
   'wifi.reason.rejected_by_android': "Android rechazó la red.",
   'wifi.reason.permission_denied': "El reproductor no tiene permiso para cambiar el Wi-Fi.",
-  'wifi.reason.not_device_owner': "Esto requiere que el reproductor sea propietario del dispositivo.",
   'wifi.reason.wifi_off': "El Wi-Fi está desactivado en la pantalla.",
+  'wifi.reason.already_configured_by_hand': "Una red con este nombre se configuró a mano en la pantalla. No se toca; elimínala en la pantalla para gestionarla desde aquí.",
+  'wifi.reason.connected_network_unknown': "La pantalla no puede saber a qué Wi-Fi está conectada (Android lo oculta sin el permiso de ubicación), así que no cambia nada mientras el Wi-Fi sea su conexión. Concede al reproductor acceso a la ubicación para evitarlo.",
 
   'nav.group.devices': 'Pantallas',
   'nav.group.publish': 'Publicar',

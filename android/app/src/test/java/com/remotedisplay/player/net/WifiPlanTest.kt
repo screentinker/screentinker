@@ -1,0 +1,166 @@
+package com.remotedisplay.player.net
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * #720 WifiPlan / WifiModeLogic. The vectors that matter most are the stranding ones: a panel must
+ * never change or remove the network it is connected on, and must assume the worst when it cannot
+ * tell which one that is.
+ */
+class WifiPlanTest {
+
+    private fun d(id: String, ssid: String = id, security: String = "wpa2", password: String? = "password-$id",
+                  hidden: Boolean = false, priority: Int? = null) =
+        WifiDesired(id, ssid, security, hidden, priority, if (security == "open") null else password)
+
+    private fun m(id: String, ssid: String = id, security: String = "wpa2", password: String? = "password-$id",
+                  netId: Int = 10, hidden: Boolean = false, priority: Int? = null) =
+        WifiManaged(id, ssid, security, hidden, priority, if (security == "open") null else password, netId)
+
+    private fun sit(mode: String = WifiModeLogic.DIRECT, sdk: Int = 28, wifiActive: Boolean = true,
+                    netId: Int? = null, ssid: String? = null) = WifiSituation(mode, sdk, wifiActive, netId, ssid)
+
+    // ── mode ──────────────────────────────────────────────────────────────────────────────────────
+
+    @Test fun `owner wins on any Android version`() {
+        assertEquals("owner", WifiModeLogic.mode(34, isOwner = true, hasWifi = true))
+        assertEquals("owner", WifiModeLogic.mode(23, isOwner = true, hasWifi = true))
+    }
+
+    @Test fun `not owner - direct up to Android 9, suggestions from Android 10`() {
+        assertEquals("direct", WifiModeLogic.mode(23, isOwner = false, hasWifi = true))
+        assertEquals("direct", WifiModeLogic.mode(28, isOwner = false, hasWifi = true))
+        assertEquals("suggestions", WifiModeLogic.mode(29, isOwner = false, hasWifi = true))
+        assertEquals("suggestions", WifiModeLogic.mode(34, isOwner = false, hasWifi = true))
+    }
+
+    @Test fun `no Wi-Fi hardware is unsupported, owner or not`() {
+        assertEquals("unsupported", WifiModeLogic.mode(34, isOwner = true, hasWifi = false))
+        assertEquals("unsupported", WifiModeLogic.mode(28, isOwner = false, hasWifi = false))
+    }
+
+    // ── what a panel cannot do ────────────────────────────────────────────────────────────────────
+
+    @Test fun `WPA3 needs Android 10`() {
+        assertEquals("wpa3_needs_android_10", WifiPlan.unsupportedReason(d("a", security = "wpa3"), "direct", 28))
+        assertNull(WifiPlan.unsupportedReason(d("a", security = "wpa3"), "owner", 29))
+    }
+
+    @Test fun `a hidden network can be suggested only from Android 11`() {
+        assertEquals("hidden_needs_android_11", WifiPlan.unsupportedReason(d("a", hidden = true), "suggestions", 29))
+        assertNull(WifiPlan.unsupportedReason(d("a", hidden = true), "suggestions", 30))
+        // Saved directly or as owner, hidden works on any version.
+        assertNull(WifiPlan.unsupportedReason(d("a", hidden = true), "direct", 23))
+        assertNull(WifiPlan.unsupportedReason(d("a", hidden = true), "owner", 29))
+    }
+
+    @Test fun `an unknown security type is refused, not guessed`() {
+        assertEquals("rejected_by_android", WifiPlan.unsupportedReason(d("a", security = "wep"), "direct", 28))
+    }
+
+    @Test fun `an unsupported network gets no step and is reported as such`() {
+        val r = WifiPlan.plan(listOf(d("a", security = "wpa3")), emptyList(), sit(sdk = 28))
+        assertTrue(r.steps.isEmpty())
+        assertEquals(listOf(WifiOutcome("a", "unsupported", "wpa3_needs_android_10")), r.outcomes)
+    }
+
+    // ── order ─────────────────────────────────────────────────────────────────────────────────────
+
+    @Test fun `adds come before changes, and changes before removes`() {
+        val managed = listOf(m("keep", netId = 1), m("change", netId = 2), m("drop", netId = 3))
+        val desired = listOf(d("change", password = "new-password"), d("keep"), d("new"))
+        val r = WifiPlan.plan(desired, managed, sit(wifiActive = false))
+        assertEquals(listOf("Add", "Update", "Remove"), r.steps.map { it::class.simpleName })
+        assertEquals(WifiOutcome("keep", "applied"), r.outcomes.single())
+    }
+
+    @Test fun `an unchanged network reports suggested in suggestions mode`() {
+        val r = WifiPlan.plan(listOf(d("a")), listOf(m("a", netId = -1)), sit(mode = "suggestions", sdk = 30, wifiActive = false))
+        assertEquals(listOf(WifiOutcome("a", "suggested")), r.outcomes)
+    }
+
+    // ── stranding ─────────────────────────────────────────────────────────────────────────────────
+
+    @Test fun `THE ONE THAT MATTERS - the network in use is never removed`() {
+        // The operator replaced the van's network: added "new", deleted "old" — and the panel is on "old".
+        val r = WifiPlan.plan(listOf(d("new")), listOf(m("old", netId = 7)), sit(netId = 7))
+        assertEquals(listOf("Add"), r.steps.map { it::class.simpleName })
+        assertEquals(listOf("old"), r.removalsWaiting.map { it.id })
+    }
+
+    @Test fun `once the panel is on another network, the old one goes`() {
+        val r = WifiPlan.plan(listOf(d("new")), listOf(m("old", netId = 7), m("new", netId = 8)), sit(netId = 8))
+        assertEquals(listOf("Remove"), r.steps.map { it::class.simpleName })
+        assertEquals("old", (r.steps.single() as WifiStep.Remove).managed.id)
+        assertTrue(r.removalsWaiting.isEmpty())
+    }
+
+    @Test fun `a new password for the network in use waits until that connection is gone`() {
+        val managed = listOf(m("van", netId = 7))
+        val desired = listOf(d("van", password = "typo-in-the-new-one"))
+        val held = WifiPlan.plan(desired, managed, sit(netId = 7))
+        assertTrue(held.steps.isEmpty())
+        assertEquals(listOf(WifiOutcome("van", "deferred", "connected_network_in_use")), held.outcomes)
+        // The router's password changed, the old one stopped working, Wi-Fi is down: NOW apply it.
+        val dropped = WifiPlan.plan(desired, managed, sit(wifiActive = false))
+        assertEquals(listOf("Update"), dropped.steps.map { it::class.simpleName })
+    }
+
+    @Test fun `changes to OTHER networks are not held back by the one in use`() {
+        val managed = listOf(m("inuse", netId = 7), m("other", netId = 8))
+        val desired = listOf(d("inuse"), d("other", password = "changed"))
+        val r = WifiPlan.plan(desired, managed, sit(netId = 7))
+        assertEquals(listOf("Update"), r.steps.map { it::class.simpleName })
+        assertEquals("other", (r.steps.single() as WifiStep.Update).desired.id)
+    }
+
+    @Test fun `in suggestions mode the SSID identifies the network in use`() {
+        val managed = listOf(m("a", ssid = "Depot", netId = -1), m("b", ssid = "Yard", netId = -1))
+        val r = WifiPlan.plan(emptyList(), managed, sit(mode = "suggestions", sdk = 30, ssid = "Depot"))
+        assertEquals(listOf("b"), r.steps.map { (it as WifiStep.Remove).managed.id })
+        assertEquals(listOf("a"), r.removalsWaiting.map { it.id })
+    }
+
+    @Test fun `CANNOT TELL which network - nothing is changed or removed while Wi-Fi is up`() {
+        val managed = listOf(m("a", netId = -1), m("b", netId = -1))
+        val desired = listOf(d("a", password = "changed"))
+        val r = WifiPlan.plan(desired, managed, sit(mode = "suggestions", sdk = 30))
+        assertTrue("nothing may run blind", r.steps.isEmpty())
+        assertEquals(listOf(WifiOutcome("a", "deferred", "connected_network_unknown")), r.outcomes)
+        assertEquals(listOf("b"), r.removalsWaiting.map { it.id })
+        // Adds are never blind — a new network cannot strand anything.
+        val withAdd = WifiPlan.plan(desired + d("c"), managed, sit(mode = "suggestions", sdk = 30))
+        assertEquals(listOf("Add"), withAdd.steps.map { it::class.simpleName })
+    }
+
+    @Test fun `on Ethernet (Wi-Fi not the active link) everything can run`() {
+        val managed = listOf(m("a", netId = 3))
+        val r = WifiPlan.plan(emptyList(), managed, sit(wifiActive = false))
+        assertEquals(listOf("Remove"), r.steps.map { it::class.simpleName })
+    }
+
+    @Test fun `an empty list on a panel that manages nothing is a no-op`() {
+        val r = WifiPlan.plan(emptyList(), emptyList(), sit())
+        assertTrue(r.steps.isEmpty() && r.outcomes.isEmpty() && r.removalsWaiting.isEmpty())
+    }
+
+    // ── small helpers ─────────────────────────────────────────────────────────────────────────────
+
+    @Test fun `a 64-hex key goes in raw, a passphrase in quotes`() {
+        val hex = "ab".repeat(32)
+        assertEquals(hex, WifiPlan.pskForConfig(hex))
+        assertEquals("\"correct horse\"", WifiPlan.pskForConfig("correct horse"))
+        assertEquals("\"" + "g".repeat(64) + "\"", WifiPlan.pskForConfig("g".repeat(64)))
+    }
+
+    @Test fun `the SSID from WifiInfo is unquoted, and a redacted one is unknown`() {
+        assertEquals("Depot", WifiPlan.ssidFromWifiInfo("\"Depot\""))
+        assertNull(WifiPlan.ssidFromWifiInfo("<unknown ssid>"))
+        assertNull(WifiPlan.ssidFromWifiInfo(null))
+        assertNull(WifiPlan.ssidFromWifiInfo("0x"))
+        assertNull("a hex SSID is not something we compare against", WifiPlan.ssidFromWifiInfo("4465706f74"))
+    }
+}

@@ -122,8 +122,9 @@ export default {
   'wifi.reason.hidden_needs_android_11': "छिपा नेटवर्क केवल Android 11 या नए पर ही सुझाया जा सकता है।",
   'wifi.reason.rejected_by_android': "Android ने नेटवर्क अस्वीकार कर दिया।",
   'wifi.reason.permission_denied': "प्लेयर को वाई-फ़ाई बदलने की अनुमति नहीं है।",
-  'wifi.reason.not_device_owner': "इसके लिए प्लेयर का डिवाइस ओनर होना ज़रूरी है।",
   'wifi.reason.wifi_off': "स्क्रीन पर वाई-फ़ाई बंद है।",
+  'wifi.reason.already_configured_by_hand': "इस नाम का नेटवर्क स्क्रीन पर हाथ से सेट किया गया था। इसे बदला नहीं जाता; यहाँ से प्रबंधित करने के लिए इसे स्क्रीन पर हटाएँ।",
+  'wifi.reason.connected_network_unknown': "स्क्रीन यह नहीं जान सकती कि वह किस Wi-Fi से जुड़ी है (लोकेशन अनुमति के बिना Android इसे छिपाता है), इसलिए जब तक Wi-Fi उसका कनेक्शन है, वह कुछ नहीं बदलती। इसे हटाने के लिए प्लेयर को लोकेशन की अनुमति दें।",
 
   'dashboard.select_all': 'सभी',
   'dashboard.invert_selection': 'चयन उलटें',

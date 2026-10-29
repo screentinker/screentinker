@@ -107,8 +107,9 @@ export default {
   'wifi.reason.hidden_needs_android_11': "非公開ネットワークは Android 11 以降でのみ提案できます。",
   'wifi.reason.rejected_by_android': "Android がネットワークを拒否しました。",
   'wifi.reason.permission_denied': "プレーヤーに Wi-Fi を変更する権限がありません。",
-  'wifi.reason.not_device_owner': "プレーヤーがデバイス所有者である必要があります。",
   'wifi.reason.wifi_off': "画面の Wi-Fi がオフになっています。",
+  'wifi.reason.already_configured_by_hand': "この名前のネットワークは画面上で手動で設定されています。変更しません。ここから管理するには、画面上で削除してください。",
+  'wifi.reason.connected_network_unknown': "画面は接続中の Wi-Fi を判別できません(位置情報の権限がないと Android が隠します)。そのため Wi-Fi で接続している間は何も変更しません。プレーヤーに位置情報へのアクセスを許可すると解除されます。",
 
   'nav.members': "メンバー",
   'common.close': "閉じる",

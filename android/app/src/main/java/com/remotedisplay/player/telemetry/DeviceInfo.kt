@@ -103,6 +103,8 @@ class DeviceInfo(private val context: Context) {
                 put("can_install_silently", policy.canInstallSilently())
                 put("foreign_device_owner", policy.hasForeignDeviceOwner())
             } catch (_: Throwable) { put("tier", 0) }
+            // #720: how this player can manage Wi-Fi (owner / direct / suggestions / unsupported).
+            try { put("wifi_mode", com.remotedisplay.player.net.WifiNetworkManager.modeFor(context)) } catch (_: Throwable) { }
             // #160 Track-A capability flags (NO device-owner dependency) — let the dashboard gate the
             // no-privilege system controls and show the operator exactly what's grantable per panel.
             try {

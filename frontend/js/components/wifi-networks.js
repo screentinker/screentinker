@@ -27,9 +27,10 @@ const STATUS_TONE = {
   deferred: 'var(--warning)', unsupported: 'var(--warning)', failed: 'var(--danger)', not_delivered: 'var(--danger)',
 };
 const STATUSES = Object.keys(STATUS_TONE);
-// Reason codes the server and the player send (lib/device-wifi.js, WifiManagerPolicy on the player).
+// Reason codes the server (lib/device-wifi.js) and the player (net/WifiPlan.kt, net/WifiNetworkManager.kt) send.
 const REASONS = ['insecure_connection', 'password_unreadable', 'connected_network_in_use', 'wpa3_needs_android_10',
-  'hidden_needs_android_11', 'rejected_by_android', 'permission_denied', 'not_device_owner', 'wifi_off'];
+  'hidden_needs_android_11', 'rejected_by_android', 'permission_denied', 'wifi_off',
+  'already_configured_by_hand', 'connected_network_unknown'];
 
 function statusChip(n) {
   const status = STATUSES.includes(n.status) ? n.status : 'pending';

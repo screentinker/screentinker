@@ -211,6 +211,15 @@ class WebSocketService : Service() {
             }
         }.also { it.restore(); it.start() }
 
+        // #720: the Wi-Fi networks the operator lists on the device page. Service-owned for the same
+        // reason as the power schedule: it must keep re-planning while no Activity is alive.
+        wifiNetworks = com.remotedisplay.player.net.WifiNetworkManager(applicationContext) { body ->
+            handler.post {
+                try { socket?.emit("device:wifi-result", body.put("device_id", config.deviceId)) }
+                catch (e: Throwable) { Log.w("WebSocketService", "wifi result emit: ${e.message}") }
+            }
+        }.also { it.restore() }
+
         powerSchedule = com.remotedisplay.player.power.PowerScheduleManager(
             applicationContext,
             onApply = { off -> applyScheduledPower(off) },
@@ -593,6 +602,14 @@ class WebSocketService : Service() {
                     }
                 }
                 
+                // #720: the full managed Wi-Fi list (passwords included — the server only sends it over
+                // TLS). Applied on the main thread by WifiNetworkManager; never logged beyond a count.
+                safeOn("device:wifi-networks") { args ->
+                    val data = args.getOrNull(0) as? JSONObject ?: return@safeOn
+                    Log.i("WebSocketService", "Wi-Fi list received: ${data.optJSONArray("networks")?.length() ?: 0} network(s)")
+                    handler.post { try { wifiNetworks?.apply(data) } catch (e: Throwable) { Log.w("WebSocketService", "wifi apply: ${e.javaClass.simpleName}") } }
+                }
+
                 safeOn("device:playlist-update") { args ->
                     val data = args.firstOrNull() as? JSONObject ?: run {
                         Log.w("WebSocketService", "playlist-update with non-JSONObject payload: ${args.firstOrNull()}")
@@ -1130,6 +1147,7 @@ class WebSocketService : Service() {
      * screen_on branch above already carries in writing.
      */
     private var powerSchedule: com.remotedisplay.player.power.PowerScheduleManager? = null
+    private var wifiNetworks: com.remotedisplay.player.net.WifiNetworkManager? = null
 
     /** Saved REST endpoints this panel runs on its own clock. See EndpointPoller for why it lives here. */
     private var endpointPoller: com.remotedisplay.player.net.EndpointPoller? = null
@@ -2052,6 +2070,8 @@ class WebSocketService : Service() {
         } catch (e: Throwable) { /* never let the last gasp block teardown */ }
         val ctx = applicationContext
         Thread { ExitSignal.send(ctx, "clean_exit", "onDestroy") }.apply { start(); try { join(1500) } catch (e: InterruptedException) { /* proceed with teardown */ } }
+        try { wifiNetworks?.stop() } catch (e: Throwable) { /* teardown is best-effort */ }
+        wifiNetworks = null
         try { powerSchedule?.stop() } catch (e: Throwable) { /* teardown is best-effort */ }
         powerSchedule = null
         try { endpointPoller?.stop() } catch (e: Throwable) { /* teardown is best-effort */ }

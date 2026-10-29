@@ -100,8 +100,9 @@ export default {
   'wifi.reason.hidden_needs_android_11': "Un réseau masqué ne peut être suggéré qu’à partir d’Android 11.",
   'wifi.reason.rejected_by_android': "Android a refusé le réseau.",
   'wifi.reason.permission_denied': "Le lecteur n’est pas autorisé à modifier le Wi-Fi.",
-  'wifi.reason.not_device_owner': "Le lecteur doit être propriétaire de l’appareil pour cela.",
   'wifi.reason.wifi_off': "Le Wi-Fi est désactivé sur l’écran.",
+  'wifi.reason.already_configured_by_hand': "Un réseau portant ce nom a été configuré à la main sur l'écran. Il n'est pas modifié ; supprimez-le sur l'écran pour le gérer d'ici.",
+  'wifi.reason.connected_network_unknown': "L'écran ne peut pas savoir à quel Wi-Fi il est connecté (Android le masque sans l'autorisation de localisation) ; il ne modifie donc rien tant que le Wi-Fi est sa connexion. Accordez l'accès à la localisation au lecteur pour lever cette limite.",
 
   'nav.group.devices': 'Écrans',
   'nav.group.publish': 'Publier',

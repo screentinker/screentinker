@@ -207,6 +207,10 @@ object PlayerCapabilities {
              */
             caps += "net.http_request"
 
+            // #720: the Wi-Fi networks listed on the device page. HOW (owner / direct / suggestions) is
+            // device_info.wifi_mode; the capability only says the player can manage them at all.
+            if (com.remotedisplay.player.net.WifiNetworkManager.modeFor(context) != com.remotedisplay.player.net.WifiModeLogic.UNSUPPORTED) caps += "net.wifi"
+
             // Owner-only reboot. Off-owner it degrades to an accessibility power DIALOG, which needs
             // someone standing at the screen — not a remote capability.
             if (isOwner) caps += "system.reboot"

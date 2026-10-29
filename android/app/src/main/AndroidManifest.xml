@@ -36,6 +36,9 @@
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- #720: add / update / remove the Wi-Fi networks an operator lists on the device page
+         (net/WifiNetworkManager). A normal permission, granted at install. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <!-- ONVIF camera discovery (net/OnvifRelay.kt): a WifiManager.MulticastLock while a
          WS-Discovery probe listens. Normal permission, granted at install. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />

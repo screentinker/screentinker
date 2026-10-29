@@ -101,8 +101,9 @@ export default {
   'wifi.reason.hidden_needs_android_11': "Ein verstecktes Netz kann erst ab Android 11 vorgeschlagen werden.",
   'wifi.reason.rejected_by_android': "Android hat das Netz abgelehnt.",
   'wifi.reason.permission_denied': "Der Player darf das WLAN nicht ändern.",
-  'wifi.reason.not_device_owner': "Dafür muss der Player Geräteeigentümer (Device Owner) sein.",
   'wifi.reason.wifi_off': "WLAN ist am Bildschirm ausgeschaltet.",
+  'wifi.reason.already_configured_by_hand': "Ein Netz mit diesem Namen wurde am Bildschirm von Hand eingerichtet. Es bleibt unberührt; entfernen Sie es am Bildschirm, um es von hier aus zu verwalten.",
+  'wifi.reason.connected_network_unknown': "Der Bildschirm kann nicht erkennen, mit welchem WLAN er verbunden ist (Android verbirgt das ohne Standortberechtigung). Solange WLAN seine Verbindung ist, ändert er deshalb nichts. Erteilen Sie dem Player die Standortberechtigung, um das aufzuheben.",
 
   'nav.group.devices': 'Bildschirme',
   'nav.group.publish': 'Veröffentlichen',
