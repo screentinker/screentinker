@@ -14,15 +14,15 @@ publishers work. The change is a single patch to one function — see `vp8-vp9-c
 ## Build
 
 ```sh
-docker build -t screentinker/go2rtc-vp8:1.9.14 docker/go2rtc-vp8
+docker build -t screentinker/go2rtc-vp8:1.9.15 docker/go2rtc-vp8
 ```
 
-Pin a different upstream tag with `--build-arg GO2RTC_VERSION=v1.9.14` (keep it in sync with the
+Pin a different upstream tag with `--build-arg GO2RTC_VERSION=v1.9.15` (keep it in sync with the
 `alexxit/go2rtc` tag the final stage pulls).
 
 ## Use
 
-Replace `alexxit/go2rtc:latest` with `screentinker/go2rtc-vp8:1.9.14` in your compose file / live
+Replace `alexxit/go2rtc:latest` with `screentinker/go2rtc-vp8:1.9.15` in your compose file / live
 video sidecar (see `docs/live-video.md`). No config change is needed; the extra codecs are additive.
 
 ## Caveat
