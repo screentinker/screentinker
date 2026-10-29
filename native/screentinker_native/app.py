@@ -1262,10 +1262,10 @@ class App:
                 log.info("display %d: %s", idx, target.name())
         if not self.args.windowed:
             if getattr(ops, "HIDE_CURSOR", False):
-                # A kiosk Mac shows the arrow over content otherwise; input injection does not need it.
-                from PySide6.QtCore import Qt
-                from PySide6.QtGui import QCursor
-                self.qt.setOverrideCursor(QCursor(Qt.CursorShape.BlankCursor))
+                # A kiosk Mac or a Pi desktop shows the arrow over content otherwise; it comes back
+                # while someone is moving the mouse. Input injection does not need it.
+                from .ui.idle_cursor import IdleCursor
+                self._idle_cursor = IdleCursor(self.qt)
             if sys.platform == "win32":
                 # Fullscreen alone sits UNDER the taskbar and Start menu on Windows (seen in the VM);
                 # a kiosk surface must be topmost.

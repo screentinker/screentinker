@@ -39,6 +39,13 @@
 
 ### Fixed
 
+- **The native Raspberry Pi player no longer leaves the mouse pointer over the sign in Desktop
+  mode.** A Pi running the full desktop (labwc) showed the arrow on top of the content, because
+  only Lite mode hid it. The player now hides the pointer after 3 seconds without movement and
+  shows it again as soon as someone moves the mouse, so a technician or a visitor on an interactive
+  page can still see where it is. The macOS player follows the same rule (it used to hide the
+  pointer permanently).
+
 - **A web player in a multi-zone layout now applies a published change to a zone without a manual
   reload** (#725, reported from the field with a nested slide deck). Editing and publishing a slide
   (or adding or removing an item) in one zone of a multi-zone layout updated the player's playlist
