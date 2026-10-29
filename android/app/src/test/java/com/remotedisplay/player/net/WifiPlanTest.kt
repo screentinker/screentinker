@@ -242,17 +242,12 @@ class WifiPlanTest {
         assertEquals(WifiOutcome("a", "deferred", "waiting_for_other_network"), free.outcomes.single())
     }
 
-    @Test fun `renamed onto a released network - the released one is taken over, the old entry retired`() {
+    @Test fun `renamed onto a released network - refused like one set up by hand, nothing given up`() {
         val managed = listOf(m("a", ssid = "Alpha", netId = 1), m("x", ssid = "Bravo", netId = 5).copy(released = true))
-        val desired = listOf(d("a", ssid = "Bravo", password = "password-x"))
-        val r = WifiPlan.plan(desired, managed, sit(wifiActive = false))
-        val now = r.managed.associateBy { it.id }
-        assertEquals(5, now.getValue("a").netId)
-        assertEquals(false, now.getValue("a").released)
-        assertTrue(now.containsKey(WifiPlan.RETIRED_PLAN_PREFIX + "a"))
-        // The taken-over network already has those credentials: nothing to write; the retired Alpha is removed.
-        assertEquals(listOf(WifiOutcome("a", "applied")), r.outcomes)
-        assertEquals(listOf(WifiPlan.RETIRED_PLAN_PREFIX + "a"), r.steps.map { (it as WifiStep.Remove).managed.id })
+        val r = WifiPlan.plan(listOf(d("a", ssid = "Bravo", password = "password-x")), managed, sit(wifiActive = false))
+        assertTrue("Alpha keeps working, Bravo is not touched", r.steps.isEmpty())
+        assertEquals(listOf(WifiOutcome("a", "failed", "already_configured_by_hand")), r.outcomes)
+        assertEquals(managed, r.managed)
     }
 
     @Test fun `two desired networks with one SSID are never both written`() {

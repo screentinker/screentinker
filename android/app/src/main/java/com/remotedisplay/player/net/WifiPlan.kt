@@ -152,8 +152,9 @@ object WifiPlan {
      * id. Matched by id alone that is "add the new one, remove the old one" — and the add overwrites
      * the very configuration the panel may be connected on, past the in-use guard. A desired network
      * without an id match takes over an unclaimed managed entry with the same SSID instead (a released
-     * one included). So does a network RENAMED onto the SSID of a released entry: the released entry
-     * is taken over and the renamed one's old entry is retired. [WifiPlanResult.managed] carries both.
+     * one included); [WifiPlanResult.managed] carries the new id. Only a NEW entry takes over: a
+     * network renamed onto a released one's SSID is refused like one set up by hand, because taking
+     * that over would mean giving up the renamed network's own, working entry first.
      *
      * ⚠️ NEVER WRITE OVER ANOTHER MANAGED NETWORK. Android keys a saved network or a suggestion by
      * SSID and security, so writing a network under an SSID that another managed entry holds would
@@ -172,11 +173,9 @@ object WifiPlan {
         val wantedIds = wanted.map { it.id }.toSet()
         val rebound = managed.toMutableList()
         for (d in wanted) {
-            val own = rebound.indexOfFirst { it.id == d.id }
-            val free = rebound.indexOfFirst { it.ssid == d.ssid && it.id !in wantedIds && (own < 0 || it.released) }
-            if (free < 0) continue
-            if (own >= 0) rebound[own] = rebound[own].copy(id = RETIRED_PLAN_PREFIX + rebound[own].id)
-            rebound[free] = rebound[free].copy(id = d.id, released = false)
+            if (rebound.any { it.id == d.id }) continue
+            val free = rebound.indexOfFirst { it.ssid == d.ssid && it.id !in wantedIds }
+            if (free >= 0) rebound[free] = rebound[free].copy(id = d.id, released = false)
         }
         val byId = rebound.associateBy { it.id }
         val adds = mutableListOf<WifiStep>()
@@ -194,6 +193,8 @@ object WifiPlan {
                 unsupported != null -> outcomes += WifiOutcome(d.id, "unsupported", unsupported)
                 m != null && m.sameAs(d) && rightKind(m, s.mode) -> outcomes += WifiOutcome(d.id, if (m.netId >= 0) "applied" else appliedState)
                 m != null && inUse(m, s) -> outcomes += WifiOutcome(d.id, "deferred", waitReason(m, s))
+                // A released network is never removed, so waiting for it would be for ever.
+                holder != null && holder.released -> outcomes += WifiOutcome(d.id, "failed", "already_configured_by_hand")
                 holder != null -> outcomes += WifiOutcome(d.id, "deferred", "waiting_for_other_network")
                 m == null -> adds += WifiStep.Add(d)
                 else -> updates += WifiStep.Update(m, d)
@@ -205,9 +206,6 @@ object WifiPlan {
         }
         return WifiPlanResult(adds + updates + removes, outcomes, waiting, rebound)
     }
-
-    /** A managed entry the plan retired (its network was renamed onto a released one); removed like any other. */
-    const val RETIRED_PLAN_PREFIX = "retired-plan:"
 
     /**
      * "ssid" in quotes, the form WifiConfiguration.SSID and preSharedKey take. No escaping: the

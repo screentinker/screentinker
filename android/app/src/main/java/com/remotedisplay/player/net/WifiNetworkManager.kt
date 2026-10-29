@@ -151,7 +151,8 @@ class WifiNetworkManager(
         val mode = mode()
         dropVanished(mode)
         val plan = WifiPlan.plan(desired, managed, situation(mode))
-        managed = plan.managed
+        // While the stored state is suspect only adds run; the plan's re-matching waits for a real list too.
+        if (!destructiveBlocked) managed = plan.managed
         val outcomes = plan.outcomes.toMutableList()
         retiredThisRun = false
         removedThisRun = false
