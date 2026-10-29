@@ -59,6 +59,7 @@ class WifiNetworkManager(
     private var managed: List<WifiManaged> = emptyList()
     private var callback: ConnectivityManager.NetworkCallback? = null
     private var lastReport: String? = null
+    private var memoryDevice: String? = null
     private val reconcileSoon = Runnable { reconcile(force = false) }
 
     /** Load what was persisted, watch connectivity, and finish any step that was waiting. */
@@ -73,8 +74,23 @@ class WifiNetworkManager(
         if (desired.isNotEmpty() || managed.isNotEmpty()) reconcile(force = false)
     }
 
-    /** The list from the server. Malformed entries are skipped; the rest still apply. */
-    fun apply(payload: JSONObject) {
+    /**
+     * The list from the server for [deviceId]. Malformed entries are skipped; the rest still apply.
+     *
+     * ⚠️ A NEW PAIRING LETS GO, IT DOES NOT WIPE. If this panel was deleted and paired again as a
+     * new screen (a new device id), the networks the old one managed stay on the panel and become
+     * ordinary saved networks: the new screen starts with an empty list, and removing the old ones
+     * would cut off exactly the link the re-pairing came in on.
+     */
+    fun apply(payload: JSONObject, deviceId: String) {
+        val owner = try { store?.getString(KEY_DEVICE, null) } catch (_: Throwable) { null } ?: memoryDevice
+        if (owner != null && owner != deviceId && managed.isNotEmpty()) {
+            Log.i(TAG, "wifi: paired as a new screen; ${managed.size} network(s) stay on the panel, no longer managed")
+            managed = emptyList()
+            write(KEY_MANAGED, JSONArray())
+        }
+        memoryDevice = deviceId
+        try { store?.edit()?.putString(KEY_DEVICE, deviceId)?.apply() } catch (_: Throwable) { }
         val arr = payload.optJSONArray("networks") ?: return
         val list = mutableListOf<WifiDesired>()
         for (i in 0 until arr.length()) {
@@ -311,6 +327,7 @@ class WifiNetworkManager(
         private const val TAG = "WifiNetworks"
         private const val KEY_DESIRED = "desired"
         private const val KEY_MANAGED = "managed"
+        private const val KEY_DEVICE = "device_id"
         private const val SETTLE_MS = 4000L
 
         /** owner / direct / suggestions / unsupported — what device_info.wifi_mode reports. */

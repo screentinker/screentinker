@@ -109,9 +109,9 @@ test('every reason code the player can send has words in the dashboard (Kotlin â
   const kt = ['WifiPlan.kt', 'WifiNetworkManager.kt']
     .map((f) => fs.readFileSync(path.join(__dirname, '..', '..', 'android', 'app', 'src', 'main', 'java', 'com', 'remotedisplay', 'player', 'net', f), 'utf8'))
     .join('\n');
-  // snake_case string literals with an underscore; the two below are a JSON key and a prefs file name.
+  // snake_case string literals with an underscore; the ones below are JSON/prefs keys and a prefs file name.
   const codes = new Set([...kt.matchAll(/"([a-z0-9]+(?:_[a-z0-9]+)+)"/g)].map((m) => m[1]));
-  for (const notAReason of ['net_id', 'wifi_networks_secure']) codes.delete(notAReason);
+  for (const notAReason of ['net_id', 'device_id', 'wifi_networks_secure']) codes.delete(notAReason);
   assert.ok(codes.size >= 6, `found only ${[...codes].join(', ')}`);
   const reasons = SRC.match(/const REASONS = \[([\s\S]*?)\];/)[1];
   const en = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'i18n', 'en.js'), 'utf8');

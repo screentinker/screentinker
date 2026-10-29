@@ -607,7 +607,7 @@ class WebSocketService : Service() {
                 safeOn("device:wifi-networks") { args ->
                     val data = args.getOrNull(0) as? JSONObject ?: return@safeOn
                     Log.i("WebSocketService", "Wi-Fi list received: ${data.optJSONArray("networks")?.length() ?: 0} network(s)")
-                    handler.post { try { wifiNetworks?.apply(data) } catch (e: Throwable) { Log.w("WebSocketService", "wifi apply: ${e.javaClass.simpleName}") } }
+                    handler.post { try { wifiNetworks?.apply(data, config.deviceId) } catch (e: Throwable) { Log.w("WebSocketService", "wifi apply: ${e.javaClass.simpleName}") } }
                 }
 
                 safeOn("device:playlist-update") { args ->
