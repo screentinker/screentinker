@@ -30,14 +30,6 @@ def test_cursor_in_a_gui_process():
     assert " passed" in r.stdout and "skipped" not in r.stdout.splitlines()[-1], r.stdout[-500:]
 
 
-def _move(qapp, win):
-    from PySide6.QtCore import QEvent, QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-    ev = QMouseEvent(QEvent.Type.MouseMove, QPointF(5, 5), QPointF(5, 5),
-                     Qt.MouseButton.NoButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
-    qapp.sendEvent(win, ev)
-
-
 def _pump(qapp, seconds):
     end = time.monotonic() + seconds
     while time.monotonic() < end:
@@ -55,41 +47,69 @@ def _override_depth(qapp):
 
 def test_qt_hidden_at_start_shown_on_move_hidden_again_when_idle(qapp):
     from PySide6.QtCore import Qt
-    from PySide6.QtGui import QWindow
     from screentinker_native.ui.idle_cursor import IdleCursor
-    win = QWindow()
     ic = IdleCursor(qapp, idle_ms=80)
     try:
         assert ic.hidden and qapp.overrideCursor().shape() == Qt.CursorShape.BlankCursor
-        _move(qapp, win)
+        ic.moved(10, 10)
         assert not ic.hidden and qapp.overrideCursor() is None
         _pump(qapp, 0.03)
-        _move(qapp, win)  # still moving: the idle clock restarts, the pointer stays
+        ic.moved(12, 10)  # still moving: the idle clock restarts, the pointer stays
         _pump(qapp, 0.05)
         assert not ic.hidden
         _pump(qapp, 0.2)
         assert ic.hidden and qapp.overrideCursor().shape() == Qt.CursorShape.BlankCursor
     finally:
-        qapp.removeEventFilter(ic)
+        _override_depth(qapp)
+
+
+def test_qt_a_still_pointer_reported_again_is_not_a_move(qapp):
+    # Qt Quick re-sends a hover whenever the scene under a still mouse changes (a ticker, a video).
+    # If that counted as a move the pointer would never hide.
+    from screentinker_native.ui.idle_cursor import IdleCursor
+    ic = IdleCursor(qapp, idle_ms=60)
+    try:
+        ic.moved(100, 200)
+        assert not ic.hidden
+        end = time.monotonic() + 0.25
+        while time.monotonic() < end:
+            ic.moved(100.2, 199.8)  # same pixel, every frame
+            qapp.processEvents()
+            time.sleep(0.01)
+        assert ic.hidden
+    finally:
         _override_depth(qapp)
 
 
 def test_qt_never_stacks_or_pops_someone_elses_override(qapp):
     from PySide6.QtCore import Qt
-    from PySide6.QtGui import QCursor, QWindow
+    from PySide6.QtGui import QCursor
     from screentinker_native.ui.idle_cursor import IdleCursor
     qapp.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))  # someone else's
-    win = QWindow()
     ic = IdleCursor(qapp, idle_ms=40)
     try:
-        for _ in range(5):
+        for i in range(5):
             _pump(qapp, 0.08)  # hide
-            _move(qapp, win)   # show
+            ic.moved(i, 0)     # show
         _pump(qapp, 0.15)
         assert ic.hidden
-        qapp.removeEventFilter(ic)
         # Ours (blank) on top of theirs (wait), exactly one each.
         assert qapp.overrideCursor().shape() == Qt.CursorShape.BlankCursor
         assert _override_depth(qapp) == 2
     finally:
         _override_depth(qapp)
+
+
+HERE = os.path.dirname(__file__)
+PKG = os.path.join(HERE, "..", "screentinker_native")
+
+
+def test_moves_come_from_qml_never_an_application_event_filter():
+    # ⚠️ An app-wide Python eventFilter wraps QtWebEngine's internal events too, and segfaulted the
+    # player on a Pi 5 within a minute of a layout with a web widget. Main.qml reports the moves.
+    src = open(os.path.join(PKG, "ui", "idle_cursor.py")).read()
+    assert "installEventFilter" not in src and "def eventFilter" not in src
+    qml = open(os.path.join(PKG, "ui", "qml", "Main.qml")).read()
+    assert "HoverHandler" in qml and "idleCursor.moved(" in qml
+    app = open(os.path.join(PKG, "app.py")).read()
+    assert 'setContextProperty("idleCursor"' in app
