@@ -4,6 +4,19 @@
 
 ### Added
 
+- **Weather, clock and radar widgets can follow the screen they are on.** A weather widget used
+  to show only the place typed into it, so one widget could not serve screens in different towns,
+  and moving a screen in Device Info changed nothing. Set the weather widget's Location to "The
+  screen's location", or tick "Use the screen's time zone" on a clock, and each screen shows its own
+  place or local time from Device Info. A screen with no location set falls back to the widget's own
+  setting. This works on every player already in the field: no app update is needed.
+
+- **A Weather radar widget.** An animated rain radar for the last two hours on a dark (or light) map
+  with state and country lines, lakes and city names, centred on the screen's location or on a
+  latitude and longitude you pin. Pair it with a playlist condition ("weather is rain") to show it
+  only when it is raining. Radar frames come from RainViewer; the map is built in (Natural Earth,
+  public domain), so it needs no map account, or you can point it at your own map tiles.
+
 - **The MCP server can read and write a screen's tags, location and Device Info settings** (#732,
   requested by a customer rolling out a large fleet). `list_displays` and `get_display` now return
   each screen's tags, location and notes (and `get_display` its orientation, background colour,

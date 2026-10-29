@@ -109,6 +109,7 @@ Some outbound traffic does not go through Node's HTTP stack, so the ledger does 
 Some network calls are made by players and browsers, not by the server:
 
 - the weather widget (`wttr.in`);
+- the radar widget (`api.rainviewer.com` and `tilecache.rainviewer.com` for radar frames, or an org's own map-tile host if one is set; the built-in map is bundled Natural Earth data and makes no request);
 - room panel and live-publish code;
 - the STUN server handed to WebRTC.
 

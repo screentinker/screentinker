@@ -98,3 +98,22 @@ be kept as a separate file next to it. Record the licence below and add a `<name
   cp package/LICENSE.txt <repo>/frontend/vendor/powerbi/powerbi.LICENSE
   sed -i '/sourceMappingURL=/d' <repo>/frontend/vendor/powerbi/powerbi.min.js
   ```
+
+## leaflet/
+- **Library:** Leaflet — draws the radar widget's map (`server/lib/radar/widget.js`).
+- **Version:** 1.9.4
+- **Licence:** BSD-2-Clause — Copyright (c) 2010-2023 Volodymyr Agafonkin, (c) 2010-2011 CloudMade.
+  Full text in [`leaflet/leaflet.LICENSE`](leaflet/leaflet.LICENSE). The bundle keeps its `@preserve`
+  header, and the notice is kept separately as well.
+- **Files:** `leaflet.js`, `leaflet.css` (the marker images are not vendored; the widget draws none).
+- **Source:** https://unpkg.com/leaflet@1.9.4/dist/ (sha256 of leaflet.js:
+  `db49d009c841f5ca34a888c96511ae936fd9f5533e90d8b2c4d57596f4e5641a`)
+- **Why committed:** the radar page runs in a screen's sandboxed frame with a CSP naming this server;
+  a CDN would be one more host and would fail offline. Served with `Cross-Origin-Resource-Policy:
+  cross-origin` (server.js) because a sandboxed page is an opaque origin.
+- **Regenerate / update:**
+  ```sh
+  curl -sL https://unpkg.com/leaflet@1.9.4/dist/leaflet.js  -o frontend/vendor/leaflet/leaflet.js
+  curl -sL https://unpkg.com/leaflet@1.9.4/dist/leaflet.css -o frontend/vendor/leaflet/leaflet.css
+  curl -sL https://raw.githubusercontent.com/Leaflet/Leaflet/v1.9.4/LICENSE -o frontend/vendor/leaflet/leaflet.LICENSE
+  ```
