@@ -117,6 +117,7 @@ export default {
   'wifi.reason.connected_network_unknown': "屏幕无法判断当前连接的是哪个 Wi-Fi（没有位置权限时 Android 会隐藏该信息），因此在使用 Wi-Fi 连接期间不会做任何更改。授予播放器位置权限即可解除此限制。",
   'wifi.reason.wpa3_needs_android_11': "保存的 WPA3 网络需要 Android 11 或更高版本（作为建议，Android 10 即可）。",
   'wifi.reason.hex_key_needs_saved_network': "64 位十六进制密钥只能保存，不能建议。请使用密码短语，或将播放器设为设备所有者。",
+  'wifi.reason.waiting_for_other_network': "此屏幕上另一个受管网络仍在使用此名称。该网络删除后将执行此更改。",
 
   'nav.members': '成员', 'nav.displays': '屏幕', 'nav.content': '内容', 'nav.playlists': '播放列表',
   'dashboard.select_all': '全选', 'dashboard.invert_selection': '反选', 'dashboard.add_to_group': '加入分组', 'dashboard.create_group_and_add': '创建并加入分组', 'dashboard.remove_from_group': '移出分组', 'dashboard.cancel_selection': '取消', 'dashboard.create_wall': '创建视频墙',

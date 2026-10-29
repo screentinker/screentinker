@@ -319,6 +319,7 @@ export default {
   'wifi.reason.connected_network_unknown': "The screen cannot tell which Wi-Fi it is on (Android hides it without the location permission), so it changes nothing while Wi-Fi is its connection. Grant the player location access to lift this.",
   'wifi.reason.wpa3_needs_android_11': "A saved WPA3 network needs Android 11 or newer (as a suggestion, Android 10 is enough).",
   'wifi.reason.hex_key_needs_saved_network': "A 64-digit hexadecimal key can only be saved, not suggested. Use the passphrase, or make the player device owner.",
+  'wifi.reason.waiting_for_other_network': "Another managed network on this screen still has this name. The change follows once that one is gone.",
 
   'nav.group.devices': 'Screens',
   'nav.group.publish': 'Publish',

@@ -105,6 +105,7 @@ export default {
   'wifi.reason.connected_network_unknown': "L'écran ne peut pas savoir à quel Wi-Fi il est connecté (Android le masque sans l'autorisation de localisation) ; il ne modifie donc rien tant que le Wi-Fi est sa connexion. Accordez l'accès à la localisation au lecteur pour lever cette limite.",
   'wifi.reason.wpa3_needs_android_11': "Un réseau WPA3 enregistré nécessite Android 11 ou plus récent (en suggestion, Android 10 suffit).",
   'wifi.reason.hex_key_needs_saved_network': "Une clé hexadécimale de 64 chiffres peut seulement être enregistrée, pas suggérée. Utilisez la phrase de passe ou faites du lecteur le propriétaire de l'appareil.",
+  'wifi.reason.waiting_for_other_network': "Un autre réseau géré sur cet écran porte encore ce nom. La modification suivra dès qu'il aura été retiré.",
 
   'nav.group.devices': 'Écrans',
   'nav.group.publish': 'Publier',

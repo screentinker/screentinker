@@ -127,6 +127,7 @@ export default {
   'wifi.reason.connected_network_unknown': "स्क्रीन यह नहीं जान सकती कि वह किस Wi-Fi से जुड़ी है (लोकेशन अनुमति के बिना Android इसे छिपाता है), इसलिए जब तक Wi-Fi उसका कनेक्शन है, वह कुछ नहीं बदलती। इसे हटाने के लिए प्लेयर को लोकेशन की अनुमति दें।",
   'wifi.reason.wpa3_needs_android_11': "सहेजे गए WPA3 नेटवर्क के लिए Android 11 या नया चाहिए (सुझाव के रूप में Android 10 काफ़ी है)।",
   'wifi.reason.hex_key_needs_saved_network': "64 अंकों की हेक्साडेसिमल कुंजी केवल सहेजी जा सकती है, सुझाई नहीं जा सकती। पासफ़्रेज़ का उपयोग करें या प्लेयर को डिवाइस ओनर बनाएँ।",
+  'wifi.reason.waiting_for_other_network': "इस स्क्रीन का एक और प्रबंधित नेटवर्क अभी भी इसी नाम का है। उसके हटते ही बदलाव लागू होगा।",
 
   'dashboard.select_all': 'सभी',
   'dashboard.invert_selection': 'चयन उलटें',

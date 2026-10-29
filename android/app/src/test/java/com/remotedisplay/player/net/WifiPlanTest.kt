@@ -177,7 +177,8 @@ class WifiPlanTest {
         val managed = listOf(m("a", ssid = "X", netId = 1))
         val r = WifiPlan.plan(listOf(d("a", ssid = "X"), d("b", ssid = "X")), managed, sit(wifiActive = false))
         assertEquals(listOf("a"), r.managed.map { it.id })
-        assertEquals(listOf("Add"), r.steps.map { it::class.simpleName })
+        assertTrue("b must not write over a's network", r.steps.isEmpty())
+        assertEquals(WifiOutcome("b", "failed", "rejected_by_android"), r.outcomes.first { it.id == "b" })
     }
 
     @Test fun `a suggestion is moved over to a saved network once the player is owner`() {
@@ -213,17 +214,51 @@ class WifiPlanTest {
         val desired = listOf(d("a", ssid = "Bravo", password = "password-a"))
         val held = WifiPlan.plan(desired, managed, sit(netId = 2))
         assertTrue("nothing may write over Bravo while the panel is on it", held.steps.isEmpty())
-        assertEquals(listOf(WifiOutcome("a", "deferred", "connected_network_in_use")), held.outcomes)
+        assertEquals(listOf(WifiOutcome("a", "deferred", "waiting_for_other_network")), held.outcomes)
         assertEquals(listOf("b"), held.removalsWaiting.map { it.id })
     }
 
-    @Test fun `and when that one is not in use it is removed FIRST, then the rename runs`() {
+    @Test fun `when the other one is not in use it is removed, and the rename follows on the NEXT run`() {
         val managed = listOf(m("a", ssid = "Alpha", netId = 1), m("b", ssid = "Bravo", netId = 2))
         val desired = listOf(d("a", ssid = "Bravo", password = "password-a"))
-        val r = WifiPlan.plan(desired, managed, sit(netId = 1 + 100))   // on some other network
-        assertEquals(listOf("Remove", "Update"), r.steps.map { it::class.simpleName })
-        assertEquals("b", (r.steps[0] as WifiStep.Remove).managed.id)
-        assertTrue("removed once, not twice", r.steps.count { it is WifiStep.Remove } == 1)
+        val first = WifiPlan.plan(desired, managed, sit(wifiActive = false))
+        assertEquals(listOf("Remove"), first.steps.map { it::class.simpleName })
+        assertEquals("b", (first.steps.single() as WifiStep.Remove).managed.id)
+        assertEquals("waiting_for_other_network", first.outcomes.single().reason)
+        val next = WifiPlan.plan(desired, listOf(m("a", ssid = "Alpha", netId = 1)), sit(wifiActive = false))
+        assertEquals(listOf("Update"), next.steps.map { it::class.simpleName })
+    }
+
+    @Test fun `a swap A to Bravo and B to Charlie never writes Bravo while B holds it`() {
+        val managed = listOf(m("a", ssid = "Alpha", netId = 1), m("b", ssid = "Bravo", netId = 2))
+        val desired = listOf(d("a", ssid = "Bravo", password = "password-a"), d("b", ssid = "Charlie", password = "password-b"))
+        // B in use: its own rename waits, and A waits for B.
+        val held = WifiPlan.plan(desired, managed, sit(netId = 2))
+        assertTrue(held.steps.isEmpty())
+        assertEquals(setOf("deferred"), held.outcomes.map { it.state }.toSet())
+        // Not in use: B moves away first; A only when Bravo is free.
+        val free = WifiPlan.plan(desired, managed, sit(wifiActive = false))
+        assertEquals(listOf("b"), free.steps.map { (it as WifiStep.Update).managed.id })
+        assertEquals(WifiOutcome("a", "deferred", "waiting_for_other_network"), free.outcomes.single())
+    }
+
+    @Test fun `renamed onto a released network - the released one is taken over, the old entry retired`() {
+        val managed = listOf(m("a", ssid = "Alpha", netId = 1), m("x", ssid = "Bravo", netId = 5).copy(released = true))
+        val desired = listOf(d("a", ssid = "Bravo", password = "password-x"))
+        val r = WifiPlan.plan(desired, managed, sit(wifiActive = false))
+        val now = r.managed.associateBy { it.id }
+        assertEquals(5, now.getValue("a").netId)
+        assertEquals(false, now.getValue("a").released)
+        assertTrue(now.containsKey(WifiPlan.RETIRED_PLAN_PREFIX + "a"))
+        // The taken-over network already has those credentials: nothing to write; the retired Alpha is removed.
+        assertEquals(listOf(WifiOutcome("a", "applied")), r.outcomes)
+        assertEquals(listOf(WifiPlan.RETIRED_PLAN_PREFIX + "a"), r.steps.map { (it as WifiStep.Remove).managed.id })
+    }
+
+    @Test fun `two desired networks with one SSID are never both written`() {
+        val r = WifiPlan.plan(listOf(d("a", ssid = "Same"), d("b", ssid = "Same")), emptyList(), sit(wifiActive = false))
+        assertEquals(1, r.steps.size)
+        assertEquals(WifiOutcome("b", "failed", "rejected_by_android"), r.outcomes.single())
     }
 
     @Test fun `a released network is never removed, but a new list with its SSID takes it over`() {

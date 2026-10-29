@@ -65,7 +65,8 @@ A wrong password must not take a panel offline that nobody can reach. So:
   because that connection dropped on its own. A new password for the network in use is therefore
   applied exactly when the old one stops working, for example after the router's password changed.
 - A change that would give a network the name of another managed network waits until that other
-  one is removed, because Android keeps only one network per name.
+  one is removed (under the same rules), because Android keeps only one network per name. Renaming
+  a network onto the name of a released one (see below) takes that one over instead.
 - A change the screen cannot carry out (for example WPA3 on Android 9) leaves the previous version
   of that network in place and is reported as not supported.
 - When a screen is connected to two Wi-Fi networks at once (possible on Android 12 and newer), it

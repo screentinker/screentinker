@@ -106,6 +106,7 @@ export default {
   'wifi.reason.connected_network_unknown': "Der Bildschirm kann nicht erkennen, mit welchem WLAN er verbunden ist (Android verbirgt das ohne Standortberechtigung). Solange WLAN seine Verbindung ist, ändert er deshalb nichts. Erteilen Sie dem Player die Standortberechtigung, um das aufzuheben.",
   'wifi.reason.wpa3_needs_android_11': "Ein gespeichertes WPA3-Netz braucht Android 11 oder neuer (als Vorschlag reicht Android 10).",
   'wifi.reason.hex_key_needs_saved_network': "Ein 64-stelliger Hex-Schlüssel kann nur gespeichert, nicht vorgeschlagen werden. Verwenden Sie die Passphrase oder richten Sie den Player als Geräteeigentümer (Device Owner) ein.",
+  'wifi.reason.waiting_for_other_network': "Ein anderes verwaltetes Netz auf diesem Bildschirm trägt noch diesen Namen. Die Änderung folgt, sobald es entfernt ist.",
 
   'nav.group.devices': 'Bildschirme',
   'nav.group.publish': 'Veröffentlichen',

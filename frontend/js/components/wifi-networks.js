@@ -30,7 +30,8 @@ const STATUSES = Object.keys(STATUS_TONE);
 // Reason codes the server (lib/device-wifi.js) and the player (net/WifiPlan.kt, net/WifiNetworkManager.kt) send.
 const REASONS = ['insecure_connection', 'password_unreadable', 'connected_network_in_use', 'wpa3_needs_android_10',
   'hidden_needs_android_11', 'rejected_by_android', 'permission_denied', 'wifi_off',
-  'already_configured_by_hand', 'connected_network_unknown', 'wpa3_needs_android_11', 'hex_key_needs_saved_network'];
+  'already_configured_by_hand', 'connected_network_unknown', 'wpa3_needs_android_11', 'hex_key_needs_saved_network',
+  'waiting_for_other_network'];
 
 function statusChip(n) {
   const status = STATUSES.includes(n.status) ? n.status : 'pending';

@@ -67,6 +67,7 @@ class WifiNetworkManager(
      */
     private var destructiveBlocked = false
     private var retiredThisRun = false
+    private var removedThisRun = false
     private val reconcileSoon = Runnable { reconcile(force = false) }
 
     /**
@@ -153,6 +154,7 @@ class WifiNetworkManager(
         managed = plan.managed
         val outcomes = plan.outcomes.toMutableList()
         retiredThisRun = false
+        removedThisRun = false
         for (step in plan.steps) {
             if (destructiveBlocked && step !is WifiStep.Add) continue
             /*
@@ -177,8 +179,9 @@ class WifiNetworkManager(
             @Suppress("DEPRECATION") try { wifi?.saveConfiguration() } catch (_: Throwable) { }
         }
         write(KEY_MANAGED, JSONArray(managed.map(::toJson)))
-        // A replaced network is removed by the next run, through the same in-use guard as any removal.
-        if (retiredThisRun) { handler.removeCallbacks(reconcileSoon); handler.postDelayed(reconcileSoon, SETTLE_MS) }
+        // A replaced network is removed by the next run, through the same in-use guard as any removal;
+        // a removal may have freed an SSID another step was waiting for.
+        if (retiredThisRun || removedThisRun) { handler.removeCallbacks(reconcileSoon); handler.postDelayed(reconcileSoon, SETTLE_MS) }
         // Wi-Fi switched off is said on every network that is in place, unchanged ones included.
         val wifiOff = wifi?.isWifiEnabled == false
         report(outcomes.map { if (wifiOff && it.state in listOf("applied", "suggested")) it.copy(reason = "wifi_off") else it }, force)
@@ -272,10 +275,13 @@ class WifiNetworkManager(
                 }
             }
             // A saved network from when this player was owner: a non-owner may not remove it on
-            // Android 10+. It is let go — honestly, as released — rather than reported as removed.
+            // Android 10+. It is kept as RELEASED (never removed, taken over by SSID) — not reported
+            // as removed, and not forgotten, or a later owner would see it as set up by hand.
             mode == WifiModeLogic.SUGGESTIONS -> {
                 Log.i(TAG, "wifi: cannot remove a saved network without device owner; it stays on the panel, released")
-                true
+                managed = managed.map { if (it.id == m.id) it.copy(released = true) else it }
+                removedThisRun = true
+                return true
             }
             else -> {
                 @Suppress("DEPRECATION")
@@ -284,7 +290,7 @@ class WifiNetworkManager(
                 ok || savedNetIds()?.contains(m.netId) == false
             }
         }
-        if (gone) managed = managed.filter { it.id != m.id }
+        if (gone) { managed = managed.filter { it.id != m.id }; removedThisRun = true }
         return gone
     }
 

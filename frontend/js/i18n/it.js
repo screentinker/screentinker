@@ -105,6 +105,7 @@ export default {
   'wifi.reason.connected_network_unknown': "Lo schermo non riesce a sapere a quale Wi-Fi è connesso (Android lo nasconde senza il permesso di posizione), quindi non modifica nulla finché il Wi-Fi è la sua connessione. Concedi al player l'accesso alla posizione per superare questo limite.",
   'wifi.reason.wpa3_needs_android_11': "Una rete WPA3 salvata richiede Android 11 o successivo (come suggerimento basta Android 10).",
   'wifi.reason.hex_key_needs_saved_network': "Una chiave esadecimale di 64 cifre può essere solo salvata, non suggerita. Usa la passphrase o rendi il player proprietario del dispositivo.",
+  'wifi.reason.waiting_for_other_network': "Un'altra rete gestita su questo schermo ha ancora questo nome. La modifica seguirà appena quella sarà rimossa.",
 
   'nav.group.devices': 'Schermi',
   'nav.group.publish': 'Pubblica',

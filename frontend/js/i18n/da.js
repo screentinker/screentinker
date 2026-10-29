@@ -314,6 +314,7 @@ export default {
   'wifi.reason.connected_network_unknown': "Skærmen kan ikke se, hvilket wi-fi den er forbundet til (Android skjuler det uden placeringstilladelse), så den ændrer intet, så længe wi-fi er dens forbindelse. Giv afspilleren adgang til placering for at ophæve dette.",
   'wifi.reason.wpa3_needs_android_11': "Et gemt WPA3-netværk kræver Android 11 eller nyere (som forslag er Android 10 nok).",
   'wifi.reason.hex_key_needs_saved_network': "En hexadecimal nøgle på 64 tegn kan kun gemmes, ikke foreslås. Brug adgangssætningen, eller gør afspilleren til enhedsejer.",
+  'wifi.reason.waiting_for_other_network': "Et andet administreret netværk på denne skærm har stadig dette navn. Ændringen følger, så snart det er fjernet.",
   'nav.group.devices': "Skærme",
   'nav.group.publish': "Udgiv",
   'nav.group.create': "Opret",

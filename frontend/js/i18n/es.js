@@ -105,6 +105,7 @@ export default {
   'wifi.reason.connected_network_unknown': "La pantalla no puede saber a qué Wi-Fi está conectada (Android lo oculta sin el permiso de ubicación), así que no cambia nada mientras el Wi-Fi sea su conexión. Concede al reproductor acceso a la ubicación para evitarlo.",
   'wifi.reason.wpa3_needs_android_11': "Una red WPA3 guardada necesita Android 11 o posterior (como sugerencia basta Android 10).",
   'wifi.reason.hex_key_needs_saved_network': "Una clave hexadecimal de 64 dígitos solo se puede guardar, no sugerir. Usa la frase de contraseña o configura el reproductor como propietario del dispositivo.",
+  'wifi.reason.waiting_for_other_network': "Otra red gestionada de esta pantalla todavía tiene este nombre. El cambio se aplicará cuando esa red ya no esté.",
 
   'nav.group.devices': 'Pantallas',
   'nav.group.publish': 'Publicar',
