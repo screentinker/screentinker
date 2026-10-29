@@ -79,6 +79,10 @@ Draft → Submitted → Approved → Published, with **Changes requested** and *
 - **History** on an item lists revisions, previews one (widget render, image or video bytes, playlist items, layout zones, deck slides), compares two, and **Restore**s one. Restore creates a **new draft revision** attributed to the restorer. It never rewrites history and never touches the live version. Under approval, a restored draft goes through review like any other change. For content, the draft carries every captured field except folder, and releasing the draft applies exactly that set, so the released row matches the restored revision.
 - **Discarding a draft** removes the pending file only when no revision describes it. A pending file that history references (the restore's own revision, a replaced-file draft) is moved into the retention directory and the revision follows it. The live file is never touched.
 
+### Bursts of the same edit
+
+Repeated saves of the same kind of edit by the same person within `REVISION_COALESCE_SEC` (default 120, `0` turns it off) fold into that person's latest revision instead of adding one per save. Stepping a duration from 10 to 20 is one "Edited item" revision holding the final value, still attributed to whoever made it. The window is fixed from the revision's creation time, so a long editing session still lands as several versions. A revision is never folded into when it is published, the baseline, referenced by a submission, or carries a different file.
+
 ### Retention
 
 `server/lib/revision-retention.js` runs daily and keeps, per resource:

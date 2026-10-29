@@ -95,6 +95,14 @@
 
 ### Fixed
 
+- **Playlist durations no longer redraw the page on every click.** Stepping an item's duration up
+  or down used to save, record a history entry, and rebuild the whole playlist view on each click,
+  so the input lost focus mid-adjustment. It now saves once the clicking stops (or on Enter / leaving
+  the field) and updates in place. Thanks to Jay for the report on Discord.
+- **Version history keeps bursts of the same edit as one revision.** Repeated saves of the same
+  edit by the same person within two minutes fold into one revision, still attributed to them, so
+  a run of small tweaks no longer pushes older history out of the 20 kept per item.
+  `REVISION_COALESCE_SEC` tunes the window (`0` turns it off).
 - **A fisheye camera on the native player zooms with the mouse wheel.** With "Let people move it
   by touch on the screen" on, a mouse could already drag the view and double-click it back, but
   only a pinch could zoom. One wheel notch now zooms 15% (up = in).

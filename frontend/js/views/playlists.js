@@ -1576,20 +1576,46 @@ function renderItems(items) {
   bindSlotRows(itemsEl);
   if (corpReadOnly) lockCorporateRows(itemsEl);
 
+  // Duration saves once the clicking stops, and does not rebuild the page. Each spinner click fires
+  // input/change, and saving + re-rendering on every one cost a request, a revision and a full
+  // redraw per click: the input under the cursor was replaced, so you lost focus mid-adjustment.
+  // The edit only changes the draft (screens update on Publish), so there is nothing to rush.
   itemsEl.querySelectorAll('.item-duration').forEach(input => {
-    input.addEventListener('change', async (e) => {
-      const itemId = e.target.dataset.itemId;
-      // A live stream accepts 0 (dwell 0 = stay until skipped); everything else needs >= 1.
-      const isLive = e.target.dataset.live === '1';
-      const val = parseInt(e.target.value, 10);
-      if (Number.isNaN(val) || val < (isLive ? 0 : 1)) { e.target.value = isLive ? 0 : 10; return; }
+    const itemId = input.dataset.itemId;
+    // A live stream accepts 0 (dwell 0 = stay until skipped); everything else needs >= 1.
+    const isLive = input.dataset.live === '1';
+    const playlistId = currentPlaylistId;   // a save that lands after navigating away stays on this playlist
+    let saved = parseInt(input.value, 10);
+    let timer = null;
+    const flush = async () => {
+      clearTimeout(timer); timer = null;
+      const val = parseInt(input.value, 10);
+      if (Number.isNaN(val) || val < (isLive ? 0 : 1)) { input.value = Number.isNaN(saved) ? (isLive ? 0 : 10) : saved; return; }
+      if (val === saved) return;
+      const was = saved;
+      saved = val;
       try {
-        await api.updatePlaylistItem(currentPlaylistId, itemId, { duration_sec: val });
-        refreshAfterMutation();
+        await api.updatePlaylistItem(playlistId, itemId, { duration_sec: val });
+        if (playlistId !== currentPlaylistId) return;
+        const item = currentPlaylistItems.find((it) => String(it.id) === itemId);
+        if (item) item.duration_sec = val;
+        // The first edit of a published playlist turns it into a draft, and head office's slot
+        // meter sums durations: those two still need the full render (banner, totals).
+        if (!document.getElementById('draftBanner') || corpEditor) {
+          await refreshAfterMutation();
+          const again = document.querySelector(`.item-duration[data-item-id="${CSS.escape(itemId)}"]`);
+          if (again && document.activeElement === document.body) again.focus();
+        }
       } catch (err) {
+        saved = was;
         showToast(err.message, 'error');
+        refreshAfterMutation();   // put the input back to what is actually stored
       }
-    });
+    };
+    input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(flush, 700); });
+    input.addEventListener('change', () => { clearTimeout(timer); timer = setTimeout(flush, 700); });
+    input.addEventListener('blur', () => { if (timer) flush(); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); flush(); } });
   });
 
   itemsEl.querySelectorAll('.item-play-to-end').forEach(box => {

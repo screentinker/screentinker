@@ -224,6 +224,33 @@ function latest(db, type, id) {
   return db.prepare('SELECT * FROM revisions WHERE resource_type = ? AND resource_id = ? ORDER BY rev_no DESC LIMIT 1').get(type, id) || null;
 }
 
+/*
+ * A burst of the same edit by the same person folds into one revision. Clicking a duration
+ * spinner from 10 to 20 used to write ten revisions, and with retention keeping the newest
+ * REVISION_KEEP per resource that pushed the meaningful history out. The folded revision still
+ * names who did it and holds the final state; the window is fixed from the revision's
+ * created_at, so a long session still lands as several versions you can roll back to.
+ *
+ * Only an unpublished, non-baseline revision with no file change and no submission pointing at
+ * it is folded into: anything a release or a review refers to stays exactly as it was.
+ */
+const COALESCE_SEC = Math.max(0, parseInt(process.env.REVISION_COALESCE_SEC || '120', 10) || 0);
+
+function canCoalesce(db, prev, { actor, summary, fileRef, submissionId }) {
+  if (!COALESCE_SEC || !prev || !actor || !actor.userId) return false;
+  if (prev.published_at || prev.is_baseline || prev.submission_id || submissionId) return false;
+  if (prev.actor_user_id !== actor.userId || (prev.actor_kind || 'user') !== (actor.kind || 'user')) return false;
+  if (prev.summary !== String(summary || '').slice(0, 300)) return false;
+  if ((prev.file_ref || null) !== (fileRef || null)) return false;
+  if (nowSec() - prev.created_at > COALESCE_SEC) return false;
+  try {
+    if (db.prepare('SELECT 1 FROM submissions WHERE revision_id = ? LIMIT 1').get(prev.id)) return false;
+  } catch (e) {
+    if (!/no such table: submissions/.test(String(e && e.message))) throw e;
+  }
+  return true;
+}
+
 /**
  * Append a revision. Identical state to the latest revision (same hash, same file) records
  * nothing and returns the existing row: a Save that changed nothing is not a version.
@@ -234,6 +261,11 @@ function record(db, { type, id, workspaceId, actor = {}, summary = '', state, fi
   const hash = hashState(state);
   const prev = latest(db, type, id);
   if (!force && prev && prev.state_hash === hash && (prev.file_ref || null) === (fileRef || null) && !publishedAt) return prev;
+  if (!force && !publishedAt && !isBaseline && canCoalesce(db, prev, { actor, summary, fileRef, submissionId })) {
+    db.prepare('UPDATE revisions SET state = ?, state_hash = ?, thumb_ref = ? WHERE id = ?')
+      .run(JSON.stringify(state), hash, thumbRef || null, prev.id);
+    return { ...prev, state: JSON.stringify(state), state_hash: hash, thumb_ref: thumbRef || null };
+  }
   const rev = {
     id: uuid(), workspace_id: workspaceId || null, resource_type: type, resource_id: id,
     rev_no: prev ? prev.rev_no + 1 : 1, created_at: createdAt || nowSec(),
