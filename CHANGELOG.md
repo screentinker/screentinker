@@ -39,6 +39,10 @@
 
 ### Fixed
 
+- **A fisheye camera on the native player zooms with the mouse wheel.** With "Let people move it
+  by touch on the screen" on, a mouse could already drag the view and double-click it back, but
+  only a pinch could zoom. One wheel notch now zooms 15% (up = in).
+
 - **A web player in a multi-zone layout now applies a published change to a zone without a manual
   reload** (#725, reported from the field with a nested slide deck). Editing and publishing a slide
   (or adding or removing an item) in one zone of a multi-zone layout updated the player's playlist
