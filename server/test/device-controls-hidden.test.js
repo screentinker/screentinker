@@ -133,6 +133,9 @@ function render(device, telemetry) {
     // screen" + revert). It is not platform-dependent, so it is not this file's subject; it has
     // its own coverage in test/device-playlist-source-badge.test.js.
     playlistSourceBadge: () => '',
+    // The web player's offline-cache card: a status card, not a control, and covered by
+    // test/offline-cache-report.test.js.
+    offlineCacheCard: () => '',
     // Same again for the capture-tier notice ("this panel is only showing the player's own
     // window"). It explains a capture STATE the panel reported, not a control the platform is or
     // is not offered, so it is not this file's subject; it is covered in test/capture-mode.test.js.
