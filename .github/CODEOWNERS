@@ -1,0 +1,21 @@
+# Who reviews what. main requires one approving review from a code owner (repository ruleset
+# "main protection"); the last matching line wins.
+
+* @screentinker
+
+# Embedded / e-paper renderer: @renebohne's area.
+/server/lib/embedded-*.js @renebohne @screentinker
+/server/lib/slide-render.js @renebohne @screentinker
+/server/routes/embedded.js @renebohne @screentinker
+/server/test/embedded-*.test.js @renebohne @screentinker
+/docs/embedded-renderer.md @renebohne @screentinker
+/Dockerfile.embedded @renebohne @screentinker
+/docker-compose.embedded.yml @renebohne @screentinker
+
+# ⚠️ Firmware images are flashed onto customers' panels over the air: the project owner signs off on
+# every one, whoever wrote it.
+/server/firmware/ @screentinker
+
+# CI, release and repository settings.
+/.github/ @screentinker
+/VERSION @screentinker
