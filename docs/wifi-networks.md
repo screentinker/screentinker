@@ -101,7 +101,12 @@ above.
 > ⚠️ **The list is only sent over HTTPS.** The server hands it to a screen only when that screen's
 > connection is TLS: either ScreenTinker itself serves HTTPS (`certs/cert.pem`), or a reverse proxy
 > on the same machine, on your LAN or Cloudflare terminates TLS and sends `X-Forwarded-Proto: https`.
-> The forwarded header is believed only from those proxies, never from any other address. Without
+> The forwarded header is believed only from those addresses, never from a public address outside
+> Cloudflare. "Your LAN" here means every private and link-local address (`10.0.0.0/8`,
+> `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `fc00::/7`, `fe80::/10`), not only the machine
+> that runs your proxy. So on a LAN, any device that connects to the server directly can claim HTTPS.
+> In practice the header has to arrive on the screen's own connection to the server, so a device that
+> only listens on the network cannot add it. Without
 > HTTPS the section says **Not delivered: this screen's connection to the server is not HTTPS**.
 >
 > An install that only runs on a LAN it trusts end to end can set `WIFI_ALLOW_INSECURE=1`. Wi-Fi
