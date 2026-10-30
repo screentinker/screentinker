@@ -131,6 +131,9 @@ function clockDatePosition(position) {
  * own locale — the right default for a screen standing in a particular country.
  */
 const LOCALE_RE = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/;
+// fixHourCycle (lib/hour-cycle.js): a 12-hour clock never shows 00:38 pm.
+const { FIX_HOUR_CYCLE_JS } = require('../lib/hour-cycle');
+
 function safeLocale(l) {
   if (!l || typeof l !== 'string') return 'undefined';      // literal `undefined` in the emitted JS
   return LOCALE_RE.test(l) ? `'${l}'` : 'undefined';
@@ -1167,9 +1170,10 @@ ${dateFirst ? dateHtml : ''}
 <div id="time"></div>
 ${dateFirst ? '' : dateHtml}
 <script>
+${FIX_HOUR_CYCLE_JS}
 function update() {
   // show_seconds defaults TRUE so existing widgets keep the clock they already had (#323).
-  const opts = { hour12: ${c.format !== '24h'}, timeZone: '${safeTimezone(c.timezone)}', hour:'2-digit', minute:'2-digit'${c.show_seconds === false ? '' : ", second:'2-digit'"} };
+  const opts = fixHourCycle(${safeLocale(c.locale)}, { hour12: ${c.format !== '24h'}, timeZone: '${safeTimezone(c.timezone)}', hour:'2-digit', minute:'2-digit'${c.show_seconds === false ? '' : ", second:'2-digit'"} });
   document.getElementById('time').textContent = new Date().toLocaleTimeString(${safeLocale(c.locale)}, opts);
   ${c.show_date !== false ? `document.getElementById('date').textContent = new Date().toLocaleDateString(${safeLocale(c.locale)}, { timeZone: '${safeTimezone(c.timezone)}', ${clockDateFormat(c.date_format)} });` : ''}
 }

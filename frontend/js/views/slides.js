@@ -1032,10 +1032,24 @@ function liveText(e, now) {
       : { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
   }
   const loc = e.locale || undefined;
+  if (e.kind === 'clock') fixHourCycle(loc, o);
   if (e.tz) {
     try { return new Intl.DateTimeFormat(loc, { ...o, timeZone: e.tz }).format(new Date(now)); } catch (err) { /* fall through */ }
   }
   try { return new Intl.DateTimeFormat(loc, o).format(new Date(now)); } catch (err) { return ''; }
+}
+
+/*
+ * hour12: true resolves to hourCycle 'h11' (0-11, "00:38 pm") in a locale whose default clock is
+ * 24-hour. Same rule as server/lib/hour-cycle.js, which the rendered slide uses; kept equal to it.
+ */
+function fixHourCycle(loc, o) {
+  if (typeof o.hour12 !== 'boolean') return o;
+  try {
+    const hc = new Intl.DateTimeFormat(loc, o).resolvedOptions().hourCycle;
+    if (hc === 'h11' || hc === 'h24') { const want = o.hour12 ? 'h12' : 'h23'; delete o.hour12; o.hourCycle = want; }
+  } catch (err) { /* hour12 as given */ }
+  return o;
 }
 
 function paintLive(host, e) {

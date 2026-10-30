@@ -95,6 +95,12 @@
 
 ### Fixed
 
+- **A 12-hour clock no longer shows 12 o'clock as "00" in a 24-hour locale.** At 12:38 PM the clock
+  widget and live clocks in slides showed "00:38:22 pm" on a Raspberry Pi whose locale was en-GB (the
+  Pi installer's default). Browsers before ICU 76 read `hour12: true` as a 0-11 clock in locales
+  that default to 24-hour time (en-GB, German, French, Japanese and others). The clock now asks for
+  1-12 explicitly where that happens, and still works on players too old to understand it.
+
 - **Web players on screens with little storage keep playing when the network drops (LG webOS,
   Tizen, BrightSign and browsers).** Reported by a customer evaluating ScreenTinker on LG webOS
   panels: with the network unplugged the video paused, then the screen went black, both in the

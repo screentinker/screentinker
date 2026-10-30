@@ -72,6 +72,7 @@ const EASINGS = Object.freeze({
  * screens and must not silently reset.
  */
 const slideFonts = require('./slide-fonts');
+const { FIX_HOUR_CYCLE_JS } = require('./hour-cycle');
 
 /*
  * ⚠️ FOUR FLAGS, AND `text` AND `glyphs` ARE NOT THE SAME QUESTION.
@@ -669,6 +670,7 @@ const FIT_SCRIPT = `<script>
 </script>`;
 
 const LIVE_SCRIPT = `<script>
+${FIX_HOUR_CYCLE_JS}
 (function () {
   var els = document.querySelectorAll('.live');
   if (!els.length) return;
@@ -727,6 +729,7 @@ const LIVE_SCRIPT = `<script>
     var loc = at(el, 'data-loc', '') || undefined;
     var tz = at(el, 'data-tz', '');
     var o = opts(el, kind);
+    if (kind === 'clock') o = fixHourCycle(loc, o);   // lib/hour-cycle.js: 12-hour never shows 00:38
     var when = new Date(now);
     if (tz) {
       o.timeZone = tz;
