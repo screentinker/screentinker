@@ -60,7 +60,7 @@ const RETRY_BACKOFF_MS = [1_000, 5_000, 15_000, 30_000, 60_000];
  * Proof-of-play lives in 'play-event'. 'log' is a live debug stream the primary never persists
  * either, so it is sent when the link is up and dropped when it is not — the one deliberate drop.
  */
-const COALESCE_KINDS = new Set(['heartbeat', 'playback-state', 'info', 'ota-status', 'trigger-status', 'screenshot']);
+const COALESCE_KINDS = new Set(['heartbeat', 'playback-state', 'info', 'ota-status', 'trigger-status', 'cache-status', 'screenshot']);
 const EPHEMERAL_KINDS = new Set(['log']);
 
 const asList = (v) => (Array.isArray(v) ? v : store.safeParseArray(v));

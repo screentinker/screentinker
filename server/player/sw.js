@@ -28,7 +28,10 @@
 // self-heal is the durable fix, this just gives already-warm players a second, immediate nudge.
 // v30: 3.0 site cache — the worker can fetch media from the site's LAN cache box (verified by sha256,
 // origin fallback) and the page posts it st-site-cache. Bumped so warm players take the new shell.
-const CACHE_NAME = 'rd-player-v30';
+// v31: chunked downloads are no longer joined into a second copy (twice the quota, which an LG webOS
+// panel did not have), cached media is served by Blob.slice, and the page can ask how offline-ready
+// it is (st-cache-status). Bumped so warm players take the new shell.
+const CACHE_NAME = 'rd-player-v31';
 // Content lives in its own cache so the shell can be re-versioned (the activate handler deletes
 // every cache that is not CACHE_NAME) WITHOUT throwing away megabytes of media that are still
 // perfectly valid. Rolling the shell used to mean a player re-downloaded its entire playlist.
@@ -193,6 +196,14 @@ self.addEventListener('message', (event) => {
     prefetchChain = prefetchChain.then(() => pruneToPlaylist(data.keep, data.scope)).catch(() => {});
     return;
   }
+  // How ready this display is to run offline (the page reports it to the server, device page "Offline
+  // cache"). Answered on the MessageChannel port the page sends; read-only, so it is never queued
+  // behind the prefetch chain.
+  if (data && data.type === 'st-cache-status' && Array.isArray(data.urls) && event.ports && event.ports[0]) {
+    const port = event.ports[0];
+    cacheStatus(data.urls).then((s) => port.postMessage(s), (e) => port.postMessage({ error: String(e && e.message || e) }));
+    return;
+  }
   if (data && data.type === 'st-site-cache') {
     setSiteCache(data.config, data.scope);
     return;
@@ -226,10 +237,62 @@ self.addEventListener('message', (event) => {
     // three unfinished downloads instead of one finished one.
     prefetchChain = prefetchChain
       .then(() => ensureCached(url))
-      .catch(() => {})
+      .catch(noteCacheError)
       .then(() => { prefetching.delete(url); });
   }
 });
+
+/*
+ * The last thing that stopped the cache from filling (QuotaExceededError above all), for the page's
+ * status report. Before this every such failure was swallowed: playback carried on from the network
+ * and nobody could tell that the screen would go dark the moment the network did.
+ */
+let lastCacheError = null;
+function noteCacheError(e) {
+  if (!e) return;
+  lastCacheError = { name: String(e.name || 'Error').slice(0, 40), message: String(e.message || '').slice(0, 160), at: Date.now() };
+}
+
+/*
+ * { wanted, ready, ready_bytes, partial, partial_bytes, usage, quota, error } for the media URLs
+ * the page needs. "ready" is exactly what handleContent would serve with the network gone.
+ */
+async function cacheStatus(urls) {
+  const cache = await caches.open(CONTENT_CACHE);
+  const out = { wanted: 0, ready: 0, ready_bytes: 0, partial: 0, partial_bytes: 0, usage: null, quota: null, error: lastCacheError };
+  const seen = new Set();
+  for (const url of urls.slice(0, 500)) {
+    if (typeof url !== 'string' || seen.has(url) || !POLICY || !POLICY.isCacheableContent(url, 'GET')) continue;
+    seen.add(url);
+    out.wanted++;
+    const asset = await cachedAsset(cache, url);
+    if (asset) { out.ready++; out.ready_bytes += asset.blob.size; continue; }
+    const metaHit = await cache.match(POLICY.chunkKey(url, 'meta'));
+    if (!metaHit) continue;
+    let meta = null;
+    try { meta = await metaHit.json(); } catch (e) { meta = null; }
+    if (!meta || !(meta.total > 0)) continue;
+    let have = 0;
+    for (const r of POLICY.chunkRanges(meta.total, meta.chunk > 0 ? meta.chunk : POLICY.CHUNK_BYTES)) {
+      const hit = await cache.match(POLICY.chunkKey(url, r.start));
+      if (hit) have += Number(hit.headers.get('content-length')) || (r.end - r.start + 1);
+    }
+    if (have > 0) { out.partial++; out.partial_bytes += have; }
+  }
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const est = await navigator.storage.estimate();
+      out.usage = Number(est.usage) || 0;
+      out.quota = Number(est.quota) || 0;
+    }
+  } catch (e) { /* not on every build */ }
+  return out;
+}
+
+/* A chunk, with its size on it: evictOldest frees by Content-Length, and a chunk without one counts as 0. */
+async function putChunk(cache, key, blob) {
+  await cache.put(key, new Response(blob, { headers: { 'Content-Length': String(blob.size) } }));
+}
 
 /*
  * Fetch [url] into the content cache, one chunk at a time, resuming across calls.
@@ -240,7 +303,7 @@ self.addEventListener('message', (event) => {
  */
 async function ensureCached(url) {
   const cache = await caches.open(CONTENT_CACHE);
-  if (await cache.match(url, { ignoreVary: true })) { await sweepOldRevisions(cache, url); return; }
+  if (await cachedAsset(cache, url)) { await sweepOldRevisions(cache, url); return; }
 
   // 3.0: the site's LAN cache first. Only ever a VERIFIED whole body; anything else falls through
   // to the origin below exactly as before.
@@ -267,7 +330,8 @@ async function ensureCached(url) {
     }
     const cr = POLICY.parseContentRange(probe.headers.get('Content-Range'));
     if (probe.status !== 206 || !cr || !(cr.total > 0)) return;
-    meta = { total: cr.total, validator: POLICY.validatorOf(probe.headers), type: probe.headers.get('Content-Type') || '' };
+    // chunk: the size these pieces were cut at, so a later CHUNK_BYTES change still finds them.
+    meta = { total: cr.total, validator: POLICY.validatorOf(probe.headers), type: probe.headers.get('Content-Type') || '', chunk: POLICY.CHUNK_BYTES };
     if (!meta.validator) {
       // Nothing to detect a changed asset with, so a resume would be a guess. Store this one whole
       // if it happens to fit in a chunk; otherwise leave it to the fetch path.
@@ -280,10 +344,12 @@ async function ensureCached(url) {
       return;
     }
     await cache.put(metaKey, new Response(JSON.stringify(meta), { headers: { 'Content-Type': 'application/json' } }));
-    await cache.put(POLICY.chunkKey(url, 0), new Response(await probe.blob()));
+    await putChunk(cache, POLICY.chunkKey(url, 0), await probe.blob());
   }
 
-  const ranges = POLICY.chunkRanges(meta.total, POLICY.CHUNK_BYTES);
+  // A transfer started before meta recorded its chunk size was cut at the size of the day.
+  const chunkSize = meta.chunk > 0 ? meta.chunk : POLICY.CHUNK_BYTES;
+  const ranges = POLICY.chunkRanges(meta.total, chunkSize);
   for (const r of ranges) {
     const key = POLICY.chunkKey(url, r.start);
     if (await cache.match(key)) continue;                    // already have it — this is the resume
@@ -308,24 +374,22 @@ async function ensureCached(url) {
       await dropChunks(cache, url);
       return;
     }
-    await cache.put(key, new Response(await response.blob()));
+    await putChunk(cache, key, await response.blob());
   }
 
-  // Every piece present: assemble once, atomically as far as the player is concerned — the full
-  // entry appears only when it is genuinely whole, so a cache hit can never be a fragment.
-  const parts = [];
+  // Every piece present: mark the copy complete. NOT joined into a whole entry (see cachedAsset):
+  // the marker is what makes these chunks playable, and it is written only once all of them are
+  // here and add up to the size the server announced, so a cache hit is never a fragment.
+  let size = 0;
   for (const r of ranges) {
     const hit = await cache.match(POLICY.chunkKey(url, r.start));
-    if (!hit) return;                                        // evicted mid-assembly; try again later
-    parts.push(await hit.blob());
+    if (!hit) return;                                        // evicted meanwhile; try again later
+    size += (await hit.blob()).size;
   }
-  const whole = new Blob(parts, { type: meta.type || 'application/octet-stream' });
-  if (whole.size !== meta.total) { await dropChunks(cache, url); return; }
-  await cache.put(new Request(url), new Response(whole, {
-    status: 200,
-    headers: { 'Content-Type': meta.type || 'application/octet-stream', 'Content-Length': String(meta.total) }
-  }));
-  await dropChunks(cache, url);
+  if (size !== meta.total) { await dropChunks(cache, url); return; }
+  await cache.put(POLICY.chunkKey(url, 'done'), new Response(JSON.stringify({
+    total: meta.total, type: meta.type || '', chunk: chunkSize,
+  }), { headers: { 'Content-Type': 'application/json' } }));
   await sweepOldRevisions(cache, url);
 }
 
@@ -399,18 +463,75 @@ function revOf(url) {
   try { return new URL(url, self.location.href).searchParams.get('rev') || ''; } catch (e) { return ''; }
 }
 
+/*
+ * The cached copy of [url] as one Blob, or null. Two shapes count as cached:
+ *
+ *   - a whole entry under the URL itself (a single fetch that completed, or the site cache);
+ *   - a CHUNKED copy: every chunk of a resumable transfer plus its 'done' marker.
+ *
+ * ⚠️ CHUNKS ARE THE FINAL FORM, they are not joined into a whole entry any more. Joining needed
+ * the chunks AND the joined copy on disk at once, twice the asset's size, and on an LG webOS panel
+ * with a small storage quota that second copy never fit: the join failed silently on every sweep,
+ * nothing was ever cached, and the screen went black the moment its network did (NCH, 2026-10-30).
+ * new Blob(parts) only references the stored chunks, so serving from them costs no extra space.
+ *
+ * A chunk the quota evicted makes the copy incomplete: the marker goes, so this reads as a miss
+ * and the next sweep fetches only the missing piece.
+ */
+async function cachedAsset(cache, url) {
+  const whole = await cache.match(url, { ignoreVary: true });
+  if (whole) {
+    const blob = await whole.blob();
+    return { blob, type: whole.headers.get('content-type') || blob.type || '' };
+  }
+  const doneKey = POLICY.chunkKey(url, 'done');
+  const done = await cache.match(doneKey);
+  if (!done) return null;
+  let meta = null;
+  try { meta = await done.json(); } catch (e) { meta = null; }
+  if (!meta || !(meta.total > 0) || !(meta.chunk > 0)) { await cache.delete(doneKey); return null; }
+  const parts = [];
+  for (const r of POLICY.chunkRanges(meta.total, meta.chunk)) {
+    const hit = await cache.match(POLICY.chunkKey(url, r.start));
+    if (!hit) { await cache.delete(doneKey); return null; }
+    parts.push(await hit.blob());
+  }
+  const blob = new Blob(parts, { type: meta.type || 'application/octet-stream' });
+  if (blob.size !== meta.total) { await dropChunks(cache, url); return null; }
+  return { blob, type: meta.type || '' };
+}
+
+/* A 200, or a 206 for [range], built from a cached asset. Null when the range cannot be served. */
+function respondFromBlob(asset, range) {
+  const size = asset.blob.size;
+  const parsed = range ? POLICY.parseRange(range, size) : null;
+  if (parsed === 'unsatisfiable') return null;
+  if (parsed === null) {
+    const headers = { 'Content-Length': String(size), 'Accept-Ranges': 'bytes' };
+    if (asset.type) headers['Content-Type'] = asset.type;
+    return new Response(asset.blob, { status: 200, headers });
+  }
+  // Blob.slice references the stored bytes; nothing is read into memory until the media element
+  // consumes the body. The old arrayBuffer() read the WHOLE file per range request, which on a TV's
+  // SoC meant 40MB+ copied for every seek and every buffer refill.
+  return new Response(asset.blob.slice(parsed.start, parsed.end + 1), {
+    status: 206,
+    statusText: 'Partial Content',
+    headers: POLICY.partialHeaders(parsed.start, parsed.end, size, asset.type),
+  });
+}
+
 async function handleContent(request) {
   const range = request.headers.get('range');
   const cache = await caches.open(CONTENT_CACHE);
 
   // Keyed WITHOUT the range header (Cache API ignores request headers by default), so one stored
-  // full body serves every range of that file rather than one entry per seek position.
-  const cached = await cache.match(request, { ignoreVary: true });
+  // copy serves every range of that file rather than one entry per seek position.
+  const cached = await cachedAsset(cache, request.url);
 
   if (cached) {
-    if (!range) return cached;
-    const sliced = await sliceCached(cached, range);
-    if (sliced) return sliced;
+    const served = respondFromBlob(cached, range);
+    if (served) return served;
     // Unsatisfiable against the cached copy: fall through to the network rather than inventing a
     // 416 that might be wrong if the cached copy is somehow stale.
   }
@@ -424,11 +545,10 @@ async function handleContent(request) {
     if (fromSite) {
       try {
         await storeContent(cache, new Request(request.url), fromSite.clone());
-        const stored = await cache.match(request.url, { ignoreVary: true });
+        const stored = await cachedAsset(cache, request.url);
         if (stored) {
-          if (!range) return stored;
-          const sliced = await sliceCached(stored, range);
-          if (sliced) return sliced;
+          const served = respondFromBlob(stored, range);
+          if (served) return served;
         }
       } catch (e) { /* fall through to the origin */ }
       if (!range) return fromSite;
@@ -451,27 +571,9 @@ async function handleContent(request) {
   } catch (err) {
     // Offline with nothing cached. A 504 is more honest than a 200 with an empty body — the player
     // treats a failed media load as an item to skip, and an empty 200 would hang on a dead element.
-    if (cached) return cached;
+    if (cached) return respondFromBlob(cached, null);
     return new Response('', { status: 504, statusText: 'Offline and not cached' });
   }
-}
-
-/* Build a correct 206 from a stored full body. */
-async function sliceCached(cached, rangeHeader) {
-  const buf = await cached.arrayBuffer();
-  const parsed = POLICY.parseRange(rangeHeader, buf.byteLength);
-
-  if (parsed === null) return new Response(buf, { status: 200, headers: cached.headers });
-  if (parsed === 'unsatisfiable') return null;
-
-  const body = buf.slice(parsed.start, parsed.end + 1);
-  return new Response(body, {
-    status: 206,
-    statusText: 'Partial Content',
-    headers: POLICY.partialHeaders(
-      parsed.start, parsed.end, buf.byteLength, cached.headers.get('content-type')
-    )
-  });
 }
 
 /* Store a full response, evicting oldest-first when the quota is close rather than waiting for a
@@ -492,7 +594,7 @@ async function storeContent(cache, request, response) {
     // Quota exceeded despite the check (or no estimate available). Make room once and retry — but
     // only once, so a pathologically large item cannot spin evicting the whole cache.
     await evictOldest(cache, len);
-    try { await cache.put(request, response); } catch (e2) { /* give up: playback still works live */ }
+    try { await cache.put(request, response); } catch (e2) { noteCacheError(e2); /* playback still works live */ }
   }
 }
 

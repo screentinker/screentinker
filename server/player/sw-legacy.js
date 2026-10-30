@@ -18,7 +18,7 @@ var __async = (__this, __arguments, generator) => {
     step((generator = generator.apply(__this, __arguments)).next());
   });
 };
-const CACHE_NAME = "rd-player-v30";
+const CACHE_NAME = "rd-player-v31";
 const CONTENT_CACHE = "rd-content-v1";
 const SITE_CACHE_STORE = "rd-site-cache-v1";
 const SITE_CACHE_KEY = "/__st_site_cache__";
@@ -93,6 +93,11 @@ self.addEventListener("message", (event) => {
     });
     return;
   }
+  if (data && data.type === "st-cache-status" && Array.isArray(data.urls) && event.ports && event.ports[0]) {
+    const port = event.ports[0];
+    cacheStatus(data.urls).then((s) => port.postMessage(s), (e) => port.postMessage({ error: String(e && e.message || e) }));
+    return;
+  }
   if (data && data.type === "st-site-cache") {
     setSiteCache(data.config, data.scope);
     return;
@@ -106,16 +111,70 @@ self.addEventListener("message", (event) => {
     if (typeof url !== "string" || !POLICY || !POLICY.isCacheableContent(url, "GET")) continue;
     if (prefetching.has(url)) continue;
     prefetching.add(url);
-    prefetchChain = prefetchChain.then(() => ensureCached(url)).catch(() => {
-    }).then(() => {
+    prefetchChain = prefetchChain.then(() => ensureCached(url)).catch(noteCacheError).then(() => {
       prefetching.delete(url);
     });
   }
 });
+let lastCacheError = null;
+function noteCacheError(e) {
+  if (!e) return;
+  lastCacheError = { name: String(e.name || "Error").slice(0, 40), message: String(e.message || "").slice(0, 160), at: Date.now() };
+}
+function cacheStatus(urls) {
+  return __async(this, null, function* () {
+    const cache = yield caches.open(CONTENT_CACHE);
+    const out = { wanted: 0, ready: 0, ready_bytes: 0, partial: 0, partial_bytes: 0, usage: null, quota: null, error: lastCacheError };
+    const seen = /* @__PURE__ */ new Set();
+    for (const url of urls.slice(0, 500)) {
+      if (typeof url !== "string" || seen.has(url) || !POLICY || !POLICY.isCacheableContent(url, "GET")) continue;
+      seen.add(url);
+      out.wanted++;
+      const asset = yield cachedAsset(cache, url);
+      if (asset) {
+        out.ready++;
+        out.ready_bytes += asset.blob.size;
+        continue;
+      }
+      const metaHit = yield cache.match(POLICY.chunkKey(url, "meta"));
+      if (!metaHit) continue;
+      let meta = null;
+      try {
+        meta = yield metaHit.json();
+      } catch (e) {
+        meta = null;
+      }
+      if (!meta || !(meta.total > 0)) continue;
+      let have = 0;
+      for (const r of POLICY.chunkRanges(meta.total, meta.chunk > 0 ? meta.chunk : POLICY.CHUNK_BYTES)) {
+        const hit = yield cache.match(POLICY.chunkKey(url, r.start));
+        if (hit) have += Number(hit.headers.get("content-length")) || r.end - r.start + 1;
+      }
+      if (have > 0) {
+        out.partial++;
+        out.partial_bytes += have;
+      }
+    }
+    try {
+      if (navigator.storage && navigator.storage.estimate) {
+        const est = yield navigator.storage.estimate();
+        out.usage = Number(est.usage) || 0;
+        out.quota = Number(est.quota) || 0;
+      }
+    } catch (e) {
+    }
+    return out;
+  });
+}
+function putChunk(cache, key, blob) {
+  return __async(this, null, function* () {
+    yield cache.put(key, new Response(blob, { headers: { "Content-Length": String(blob.size) } }));
+  });
+}
 function ensureCached(url) {
   return __async(this, null, function* () {
     const cache = yield caches.open(CONTENT_CACHE);
-    if (yield cache.match(url, { ignoreVary: true })) {
+    if (yield cachedAsset(cache, url)) {
       yield sweepOldRevisions(cache, url);
       return;
     }
@@ -143,7 +202,7 @@ function ensureCached(url) {
       }
       const cr = POLICY.parseContentRange(probe.headers.get("Content-Range"));
       if (probe.status !== 206 || !cr || !(cr.total > 0)) return;
-      meta = { total: cr.total, validator: POLICY.validatorOf(probe.headers), type: probe.headers.get("Content-Type") || "" };
+      meta = { total: cr.total, validator: POLICY.validatorOf(probe.headers), type: probe.headers.get("Content-Type") || "", chunk: POLICY.CHUNK_BYTES };
       if (!meta.validator) {
         if (cr.total <= POLICY.CHUNK_BYTES) {
           yield cache.put(new Request(url), new Response(yield probe.blob(), {
@@ -155,9 +214,10 @@ function ensureCached(url) {
         return;
       }
       yield cache.put(metaKey, new Response(JSON.stringify(meta), { headers: { "Content-Type": "application/json" } }));
-      yield cache.put(POLICY.chunkKey(url, 0), new Response(yield probe.blob()));
+      yield putChunk(cache, POLICY.chunkKey(url, 0), yield probe.blob());
     }
-    const ranges = POLICY.chunkRanges(meta.total, POLICY.CHUNK_BYTES);
+    const chunkSize = meta.chunk > 0 ? meta.chunk : POLICY.CHUNK_BYTES;
+    const ranges = POLICY.chunkRanges(meta.total, chunkSize);
     for (const r of ranges) {
       const key = POLICY.chunkKey(url, r.start);
       if (yield cache.match(key)) continue;
@@ -181,24 +241,23 @@ function ensureCached(url) {
         yield dropChunks(cache, url);
         return;
       }
-      yield cache.put(key, new Response(yield response.blob()));
+      yield putChunk(cache, key, yield response.blob());
     }
-    const parts = [];
+    let size = 0;
     for (const r of ranges) {
       const hit = yield cache.match(POLICY.chunkKey(url, r.start));
       if (!hit) return;
-      parts.push(yield hit.blob());
+      size += (yield hit.blob()).size;
     }
-    const whole = new Blob(parts, { type: meta.type || "application/octet-stream" });
-    if (whole.size !== meta.total) {
+    if (size !== meta.total) {
       yield dropChunks(cache, url);
       return;
     }
-    yield cache.put(new Request(url), new Response(whole, {
-      status: 200,
-      headers: { "Content-Type": meta.type || "application/octet-stream", "Content-Length": String(meta.total) }
-    }));
-    yield dropChunks(cache, url);
+    yield cache.put(POLICY.chunkKey(url, "done"), new Response(JSON.stringify({
+      total: meta.total,
+      type: meta.type || "",
+      chunk: chunkSize
+    }), { headers: { "Content-Type": "application/json" } }));
     yield sweepOldRevisions(cache, url);
   });
 }
@@ -263,15 +322,66 @@ function revOf(url) {
     return "";
   }
 }
+function cachedAsset(cache, url) {
+  return __async(this, null, function* () {
+    const whole = yield cache.match(url, { ignoreVary: true });
+    if (whole) {
+      const blob2 = yield whole.blob();
+      return { blob: blob2, type: whole.headers.get("content-type") || blob2.type || "" };
+    }
+    const doneKey = POLICY.chunkKey(url, "done");
+    const done = yield cache.match(doneKey);
+    if (!done) return null;
+    let meta = null;
+    try {
+      meta = yield done.json();
+    } catch (e) {
+      meta = null;
+    }
+    if (!meta || !(meta.total > 0) || !(meta.chunk > 0)) {
+      yield cache.delete(doneKey);
+      return null;
+    }
+    const parts = [];
+    for (const r of POLICY.chunkRanges(meta.total, meta.chunk)) {
+      const hit = yield cache.match(POLICY.chunkKey(url, r.start));
+      if (!hit) {
+        yield cache.delete(doneKey);
+        return null;
+      }
+      parts.push(yield hit.blob());
+    }
+    const blob = new Blob(parts, { type: meta.type || "application/octet-stream" });
+    if (blob.size !== meta.total) {
+      yield dropChunks(cache, url);
+      return null;
+    }
+    return { blob, type: meta.type || "" };
+  });
+}
+function respondFromBlob(asset, range) {
+  const size = asset.blob.size;
+  const parsed = range ? POLICY.parseRange(range, size) : null;
+  if (parsed === "unsatisfiable") return null;
+  if (parsed === null) {
+    const headers = { "Content-Length": String(size), "Accept-Ranges": "bytes" };
+    if (asset.type) headers["Content-Type"] = asset.type;
+    return new Response(asset.blob, { status: 200, headers });
+  }
+  return new Response(asset.blob.slice(parsed.start, parsed.end + 1), {
+    status: 206,
+    statusText: "Partial Content",
+    headers: POLICY.partialHeaders(parsed.start, parsed.end, size, asset.type)
+  });
+}
 function handleContent(request) {
   return __async(this, null, function* () {
     const range = request.headers.get("range");
     const cache = yield caches.open(CONTENT_CACHE);
-    const cached = yield cache.match(request, { ignoreVary: true });
+    const cached = yield cachedAsset(cache, request.url);
     if (cached) {
-      if (!range) return cached;
-      const sliced = yield sliceCached(cached, range);
-      if (sliced) return sliced;
+      const served = respondFromBlob(cached, range);
+      if (served) return served;
     }
     yield loadSiteCache();
     const siteEntry = siteEntryFor(request.url);
@@ -280,11 +390,10 @@ function handleContent(request) {
       if (fromSite) {
         try {
           yield storeContent(cache, new Request(request.url), fromSite.clone());
-          const stored = yield cache.match(request.url, { ignoreVary: true });
+          const stored = yield cachedAsset(cache, request.url);
           if (stored) {
-            if (!range) return stored;
-            const sliced = yield sliceCached(stored, range);
-            if (sliced) return sliced;
+            const served = respondFromBlob(stored, range);
+            if (served) return served;
           }
         } catch (e) {
         }
@@ -300,28 +409,9 @@ function handleContent(request) {
       }
       return response;
     } catch (err) {
-      if (cached) return cached;
+      if (cached) return respondFromBlob(cached, null);
       return new Response("", { status: 504, statusText: "Offline and not cached" });
     }
-  });
-}
-function sliceCached(cached, rangeHeader) {
-  return __async(this, null, function* () {
-    const buf = yield cached.arrayBuffer();
-    const parsed = POLICY.parseRange(rangeHeader, buf.byteLength);
-    if (parsed === null) return new Response(buf, { status: 200, headers: cached.headers });
-    if (parsed === "unsatisfiable") return null;
-    const body = buf.slice(parsed.start, parsed.end + 1);
-    return new Response(body, {
-      status: 206,
-      statusText: "Partial Content",
-      headers: POLICY.partialHeaders(
-        parsed.start,
-        parsed.end,
-        buf.byteLength,
-        cached.headers.get("content-type")
-      )
-    });
   });
 }
 function storeContent(cache, request, response) {
@@ -341,6 +431,7 @@ function storeContent(cache, request, response) {
       try {
         yield cache.put(request, response);
       } catch (e2) {
+        noteCacheError(e2);
       }
     }
   });

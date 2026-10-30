@@ -108,9 +108,10 @@ function load(srv, chunkBytes) {
 }
 
 const bytes = (n, fill) => Buffer.alloc(n, fill);
+// What playback would get: a whole entry or a completed chunked copy (sw.js cachedAsset).
 async function cachedBody(url = ASSET) {
-  const hit = await caches._content.match(url);
-  return hit ? Buffer.from(await hit.arrayBuffer()) : null;
+  const asset = await sandbox.cachedAsset(caches._content, url);
+  return asset ? Buffer.from(await asset.blob.arrayBuffer()) : null;
 }
 const internalKeys = () => [...caches._content.map.keys()].filter((k) => k.includes('__st_part'));
 
@@ -147,12 +148,18 @@ test('the full entry appears only when whole — a fragment is never published',
   assert.deepEqual(await cachedBody(), body);
 });
 
-test('bookkeeping entries are cleaned up once the asset is whole', async () => {
+test('a finished transfer is its chunks plus a marker, never a second joined copy', async () => {
+  // Joining the chunks into one entry needed twice the asset on disk at once; an LG webOS panel's
+  // quota could not hold that, so the join failed on every sweep and nothing was ever cached (NCH).
   const body = bytes(500, 0x43);
   const sw = load(makeServer(body), 100);
   await sw.ensureCached(ASSET);
   assert.deepEqual(await cachedBody(), body);
-  assert.deepEqual(internalKeys(), [], 'chunks and meta must not outlive the assembled asset');
+  assert.equal(caches._content.map.has(ASSET), false, 'no whole entry beside the chunks');
+  assert.ok(internalKeys().some((k) => k.endsWith('__st_part=done')), 'the copy is marked complete');
+  let chunkBytes = 0;
+  for (const [k, res] of caches._content.map) if (/__st_part=\d+$/.test(k)) chunkBytes += (await res.clone().arrayBuffer()).byteLength;
+  assert.equal(chunkBytes, body.length, 'exactly one copy of the bytes is stored');
 });
 
 test('an already-cached asset costs no requests at all', async () => {

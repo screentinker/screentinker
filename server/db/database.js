@@ -5178,6 +5178,17 @@ migrationStep('#714 admin-only playlists', () => {
   try { db.prepare('ALTER TABLE playlists ADD COLUMN admin_locked INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] playlists.admin_locked added'); } catch (_) { /* present */ }
 });
 
+migrationStep('web player offline-cache report', () => {
+  /*
+   * What a web player last reported about its offline cache (ws/deviceSocket.js 'cache-status'):
+   * JSON { wanted, ready, ready_bytes, partial, partial_bytes, usage, quota, persisted, error }.
+   * Shown on the device page so a screen that would go dark without its network is visible BEFORE
+   * the network goes (an LG webOS panel whose cache never filled, 2026-10-30). NULL = never reported.
+   */
+  try { db.prepare('ALTER TABLE devices ADD COLUMN offline_cache TEXT').run(); console.log('[migrate] devices.offline_cache added'); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE devices ADD COLUMN offline_cache_at INTEGER').run(); } catch (_) { /* present */ }
+});
+
 migrationStep('#720 device Wi-Fi networks', () => {
   /*
    * #720: the Wi-Fi networks a screen should know (lib/device-wifi.js). Its own table on purpose, not

@@ -444,6 +444,30 @@ function formatBytes(mb) {
   return `${mb} MB`;
 }
 
+/*
+ * The web player's offline-cache report (devices.offline_cache, ws/deviceSocket.js 'cache-status'):
+ * whether this screen would keep playing with its network gone. Amber when it would not.
+ */
+function offlineCacheCard(device) {
+  let r = null;
+  try { r = device && device.offline_cache ? JSON.parse(device.offline_cache) : null; } catch (e) { r = null; }
+  if (!r || !(r.wanted >= 0)) return '';
+  const size = (b) => (b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB` : `${Math.max(0, Math.round((b || 0) / 1048576))} MB`);
+  const short = r.ready < r.wanted || !!r.error;
+  const lines = [];
+  if (r.partial > 0) lines.push(t('device.info.offline_cache_partial', { n: r.partial, size: size(r.partial_bytes) }));
+  if (r.quota > 0) lines.push(t('device.info.offline_cache_quota', { used: size(r.usage), quota: size(r.quota) }));
+  if (r.error) lines.push(t('device.info.offline_cache_error', { name: r.error }));
+  if (r.persisted === false) lines.push(t('device.info.offline_cache_not_persisted'));
+  const at = device.offline_cache_at ? new Date(device.offline_cache_at * 1000).toLocaleString() : '';
+  return `
+          <div class="info-card" title="${esc(at)}">
+            <div class="info-card-label">${t('device.info.offline_cache')} <span class="help-tip" data-tip="${t('device.info.offline_cache_tip')}">?</span></div>
+            <div class="info-card-value small" style="${short ? 'color:var(--warning)' : ''}">${esc(t('device.info.offline_cache_ready', { ready: r.ready, wanted: r.wanted, size: size(r.ready_bytes) }))}</div>
+            ${lines.map((l) => `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(l)}</div>`).join('')}
+          </div>`;
+}
+
 function formatUptime(seconds) {
   if (!seconds) return '--';
   const d = Math.floor(seconds / 86400);
@@ -1217,6 +1241,7 @@ async function loadDevice(deviceId, activeTab = null) {
             <div class="info-card-label">${t('device.info.player_type')}</div>
             <div class="info-card-value small">${isEmbeddedDevice(device) ? (String(device.screen_profile || '').includes('seeed-reterminal-sticky') ? t('device.info.reterminal_sticky_player') : t('device.info.embedded_player')) : isBrightSignDevice(device) ? t('device.info.brightsign_player') : isLinuxDevice(device) ? t('device.info.linux_player') : isWindowsDevice(device) ? t('device.info.windows_player') : isRokuDevice(device) ? t('device.info.roku_player') : t('device.info.web_player')}</div>
           </div>
+          ${offlineCacheCard(device)}
           ${device.hardware_model ? `
           <div class="info-card">
             <div class="info-card-label">${t('device.info.hardware_model')}</div>

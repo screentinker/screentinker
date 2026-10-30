@@ -41,6 +41,7 @@ const PLAYER_OWNED = new Set([
   'offline_detail', 'heartbeat_expected_by', 'created_at', 'render_width', 'render_height', 'ota_status', 'ota_target_version',
   'ota_attempts', 'ota_updated_at', 'ota_channel_served', 'attached_node_id', 'power_source', 'trigger_status',
   'trigger_status_at', 'claim_secret', 'view_token_hash', 'view_token_enc', 'screen_profile', 'reported_orientation', 'reported_board',
+  'offline_cache', 'offline_cache_at',
 ]);
 
 function jobWorkspaces(db, job) {

@@ -95,6 +95,22 @@
 
 ### Fixed
 
+- **Web players on screens with little storage keep playing when the network drops (LG webOS,
+  Tizen, BrightSign and browsers).** Reported by a customer evaluating ScreenTinker on LG webOS
+  panels: with the network unplugged the video paused, then the screen went black, both in the
+  webOS app and with Play via URL.
+  - **Cause:** the offline cache downloads large files in pieces and then joined them into a second
+    copy, so a moment of every download needed twice the file's size. On a panel with a small
+    browser storage quota the join failed, quietly, every time. Nothing was ever cached and the
+    video streamed from the server, so it looked fine until the network went.
+  - **Fix:** the pieces are now the stored copy, so the cache needs the file's size once. Cached
+    video is served without reading the whole file into memory on every seek. The player also asks
+    the browser for persistent storage, so the cache is less likely to be cleared under pressure.
+  - **New, Offline cache on the device page:** each web player reports how many of its files would
+    play offline, the bytes, its browser storage quota and the last error that stopped the cache
+    filling (for example `QuotaExceededError`). A screen that would go dark without its network is
+    now visible before the network goes.
+
 - **Screen share and the meeting-room code now reach the Raspberry Pi, Windows and macOS players.**
   The native player handled `device:screenshare-start/stop/code` but its connection never subscribed
   to them, so ticking "show the meeting-room code" put nothing on the screen and a share never

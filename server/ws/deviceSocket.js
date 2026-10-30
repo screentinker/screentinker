@@ -1750,6 +1750,27 @@ const EVENT_APPLIERS = Object.freeze({
     }
   },
 
+  /*
+   * The web player's offline-cache report (player index.html reportOfflineCache): how many of its
+   * media files would play with the network gone, the bytes, its storage quota and the last error
+   * that stopped the cache filling. Numbers and one short error name only, nothing free-form.
+   */
+  'cache-status'(deviceId, data, ctx) {
+    if (!data || (data.device_id && data.device_id !== deviceId)) return;
+    if (!deviceExists(deviceId)) return;
+    const n = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 && v !== null && v !== '' ? Math.floor(Number(v)) : null);
+    const report = {
+      wanted: n(data.wanted), ready: n(data.ready), ready_bytes: n(data.ready_bytes),
+      partial: n(data.partial), partial_bytes: n(data.partial_bytes), usage: n(data.usage), quota: n(data.quota),
+      persisted: typeof data.persisted === 'boolean' ? data.persisted : null,
+      error: typeof data.error === 'string' && /^[A-Za-z]{1,40}$/.test(data.error) ? data.error : null,
+    };
+    try {
+      db.prepare('UPDATE devices SET offline_cache = ?, offline_cache_at = ? WHERE id = ?')
+        .run(JSON.stringify(report), Math.floor(Date.now() / 1000), deviceId);
+    } catch (e) { console.warn(`[cache] could not store the offline-cache report for ${deviceId}: ${e && e.message}`); }
+  },
+
   'heartbeat'(deviceId, data, ctx) {
     const { device_id, telemetry } = data || {};
     // The heartbeat ACK is sent by the socket handler, before authentication (see below).
@@ -3542,6 +3563,7 @@ module.exports = function setupDeviceSocket(io) {
     });
 
     socket.on('device:trigger-status', (data) => dispatch('trigger-status', data));
+    socket.on('device:cache-status', (data) => dispatch('cache-status', data));
     socket.on('device:wifi-result', (data) => dispatch('wifi-result', data));
 
     socket.on('device:heartbeat', (data) => {

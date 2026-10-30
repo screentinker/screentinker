@@ -1144,6 +1144,60 @@ function postSiteCache(items) {
   } catch (e) {
   }
 }
+var OFFLINE_REPORT_AFTER_PIN_MS = 3e4;
+var OFFLINE_REPORT_EVERY_MS = 10 * 60 * 1e3;
+var offlineCacheUrls = null;
+var offlineReportTimer = null;
+var lastOfflineReport = "";
+var storagePersisted = null;
+function scheduleOfflineCacheReport(ms) {
+  if (offlineReportTimer) clearTimeout(offlineReportTimer);
+  offlineReportTimer = setTimeout(() => {
+    offlineReportTimer = null;
+    reportOfflineCache();
+    scheduleOfflineCacheReport(OFFLINE_REPORT_EVERY_MS);
+  }, ms);
+}
+function reportOfflineCache() {
+  try {
+    const sw = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (!sw || !Array.isArray(offlineCacheUrls) || typeof MessageChannel !== "function") return;
+    const ch = new MessageChannel();
+    const timer = setTimeout(() => {
+      try {
+        ch.port1.close();
+      } catch (e) {
+      }
+    }, 15e3);
+    ch.port1.onmessage = (e) => {
+      clearTimeout(timer);
+      try {
+        ch.port1.close();
+      } catch (err) {
+      }
+      const s = e.data;
+      if (!s || typeof s !== "object" || s.error && typeof s.error === "string") return;
+      const report = {
+        wanted: s.wanted,
+        ready: s.ready,
+        ready_bytes: s.ready_bytes,
+        partial: s.partial,
+        partial_bytes: s.partial_bytes,
+        usage: s.usage,
+        quota: s.quota,
+        persisted: storagePersisted,
+        error: s.error && s.error.name ? s.error.name : null
+      };
+      const sig = JSON.stringify(report);
+      if (sig === lastOfflineReport || !socket || !socket.connected || !config.deviceId) return;
+      lastOfflineReport = sig;
+      socket.emit("device:cache-status", __spreadValues({ device_id: config.deviceId }, report));
+      if (s.error && s.error.name) console.warn("[cache] " + s.ready + "/" + s.wanted + " offline-ready; last error: " + s.error.name + " " + (s.error.message || ""));
+    };
+    sw.postMessage({ type: "st-cache-status", urls: offlineCacheUrls }, [ch.port2]);
+  } catch (e) {
+  }
+}
 function requestOfflineCache(items, extraItems) {
   try {
     const sw = navigator.serviceWorker && navigator.serviceWorker.controller;
@@ -1152,6 +1206,8 @@ function requestOfflineCache(items, extraItems) {
     const urls = all.filter((it) => it && it.filepath && !it.remote_url).map((it) => mediaUrl(it));
     postSiteCache(all);
     sw.postMessage({ type: "st-cache-playlist", urls, prune: true, scope: SCREEN_SUFFIX });
+    offlineCacheUrls = urls;
+    scheduleOfflineCacheReport(OFFLINE_REPORT_AFTER_PIN_MS);
     for (const it of all) {
       if (!it || it.mime_type !== BUNDLE_MIME || !it.content_id) continue;
       fetch(
@@ -8372,6 +8428,16 @@ if ("serviceWorker" in navigator && !VIEWER_MODE) {
   const serviceWorkerUrl = IS_LEGACY_PLAYER ? "/sw-legacy.js" : "/sw.js";
   navigator.serviceWorker.register(serviceWorkerUrl).then((reg) => {
     console.log("Service Worker registered");
+    try {
+      if (navigator.storage && typeof navigator.storage.persist === "function") {
+        navigator.storage.persist().then((ok) => {
+          storagePersisted = !!ok;
+        }, () => {
+          storagePersisted = false;
+        });
+      }
+    } catch (e) {
+    }
     navigator.serviceWorker.ready.then(() => {
       try {
         if (Array.isArray(playlist) && playlist.length) {

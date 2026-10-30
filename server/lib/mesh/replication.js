@@ -143,7 +143,7 @@ const DEVICE_VOLATILE = Object.freeze([
   'offline_alert_heartbeat', 'hardware_model', 'hardware_serial', 'hardware_os_version',
   'hardware_edid', 'capabilities', 'trigger_status', 'trigger_status_at', 'capture_mode',
   'updated_at', 'tier', 'foreign_device_owner', 'can_write_settings', 'media_volume',
-  'system_brightness', 'window_brightness', 'screen_off_timeout_ms',
+  'system_brightness', 'window_brightness', 'screen_off_timeout_ms', 'offline_cache', 'offline_cache_at',
 ]);
 
 /**

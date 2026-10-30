@@ -91,9 +91,10 @@ function load({ box = 'ok' } = {}) {
 }
 
 const config = (over = {}) => ({ url: BOX, token: 'stc1.t', expires_at: Math.floor(Date.now() / 1000) + 3600, files: { [PATHNAME]: { sha256: SHA, size: BODY.length } }, ...over });
+// What playback would get: a whole entry or a completed chunked copy (sw.js cachedAsset).
 async function stored(env) {
-  const hit = await (await env.content()).match(ASSET);
-  return hit ? Buffer.from(await hit.arrayBuffer()) : null;
+  const asset = await env.sandbox.cachedAsset(await env.content(), ASSET);
+  return asset ? Buffer.from(await asset.blob.arrayBuffer()) : null;
 }
 
 test('a verified copy from the box is kept, with the screen token, and the origin is never asked', async () => {
