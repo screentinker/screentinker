@@ -110,6 +110,12 @@
     play offline, the bytes, its browser storage quota and the last error that stopped the cache
     filling (for example `QuotaExceededError`). A screen that would go dark without its network is
     now visible before the network goes.
+- **An embedded screen profile can no longer ask for an oversized render.** A profile is operator
+  JSON, and one could switch off the size cap for LED controllers (`parameterizedDimensions: false`)
+  or skip it with no preset, up to 10000×10000: about 400 MB of server memory per render. Every
+  profile is now held to a 4K panel (4096 per side, 3840×2160 pixels in all), and LED or raw-RGB888
+  output to 512 per side and 16,384 pixels, decided by the preset rather than the profile. The
+  largest real panel (reTerminal E1003, 1872×1404) is well inside it. Found reviewing #758.
 
 - **Screen share and the meeting-room code now reach the Raspberry Pi, Windows and macOS players.**
   The native player handled `device:screenshare-start/stop/code` but its connection never subscribed

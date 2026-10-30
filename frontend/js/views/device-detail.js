@@ -3112,7 +3112,7 @@ function setupActions(device) {
         if (isParamPreset && (!existingProfileObj.width || !existingProfileObj.height) && device.screen_width && device.screen_height) {
           const w = parseInt(device.screen_width);
           const h = parseInt(device.screen_height);
-          if (w > 0 && h > 0 && (w !== 5 || h !== 1)) {
+          if (w > 0 && h > 0) {   // the preset's own default size included: writing it is harmless
             existingProfileObj.width = w;
             existingProfileObj.height = h;
           }

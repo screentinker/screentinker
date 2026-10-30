@@ -1075,13 +1075,16 @@ describe('Issue #337 Follow-ups: Robustness, Parity & Deduplication', () => {
   } = require('../lib/embedded-render');
   const { parseProfile } = require('../lib/embedded-profiles');
 
-  test('parseProfile enforces 10000 dimension ceiling', () => {
+  // Was a 10000×10000 ceiling, ~400 MB per render on a shared server; now at most a 4K panel
+  // (test/embedded-profile-size-cap.test.js covers the limits in full).
+  test('parseProfile enforces the dimension ceiling', () => {
     assert.equal(parseProfile({ width: 10001, height: 480 }), null);
     assert.equal(parseProfile({ width: 800, height: 10001 }), null);
-    const valid = parseProfile({ width: 10000, height: 10000 });
+    assert.equal(parseProfile({ width: 10000, height: 10000 }), null);
+    const valid = parseProfile({ width: 3840, height: 2160 });
     assert.ok(valid);
-    assert.equal(valid.width, 10000);
-    assert.equal(valid.height, 10000);
+    assert.equal(valid.width, 3840);
+    assert.equal(valid.height, 2160);
     assert.equal(safeDimension(10001, 800), 800);
     assert.equal(safeDimension(500, 800), 500);
   });

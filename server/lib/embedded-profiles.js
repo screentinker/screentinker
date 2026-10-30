@@ -183,6 +183,31 @@ const CRUMB_DEPTHS  = new Set(['gray4']);
  * @param {object|string} [overrides] Optional stated { orientation, rotation }.
  * @returns {object|null}  Validated profile, or null if raw is empty/unparseable/missing dims.
  */
+/*
+ * ⚠️ HOW BIG A RENDER MAY BE, decided by the PRESET, never by the profile. Every render is a headless
+ * Chromium screenshot plus a full RGBA bitmap in this process, so a 10000×10000 profile was ~400 MB
+ * per request on a shared server. A profile is operator JSON (PUT /devices, or what a panel sent at
+ * pairing), so a flag it carries cannot relax a limit: `parameterizedDimensions: false` in a profile
+ * used to switch the LED cap off. The LED cap comes from the preset's own definition, and raw RGB888
+ * output (what an LED controller takes) is held to it whatever the preset.
+ *
+ *   any profile        at most MAX_SIDE per side and MAX_PIXELS in all (a 4K panel; the largest
+ *                      real e-paper, reTerminal E1003, is 1872×1404)
+ *   LED / raw RGB888   at most LED_MAX_SIDE per side and LED_MAX_PIXELS in all
+ */
+const MAX_SIDE = 4096;
+const MAX_PIXELS = 3840 * 2160;
+const LED_MAX_SIDE = 512;
+const LED_MAX_PIXELS = 16384;
+function withinSizeLimit(presetName, obj, width, height) {
+  if (width > MAX_SIDE || height > MAX_SIDE || width * height > MAX_PIXELS) return false;
+  const preset = presetName ? PRESETS[presetName] : null;
+  const led = !!(preset && preset.parameterizedDimensions) ||
+    ((obj.colorDepth === '24bit-rgb888' || obj.colorDepth === 'rgb888') && obj.outputFormat === 'raw');
+  if (led && (width > LED_MAX_SIDE || height > LED_MAX_SIDE || width * height > LED_MAX_PIXELS)) return false;
+  return true;
+}
+
 function parseProfile(raw, overrides = {}) {
   if (!raw) return null;
   const opts = typeof overrides === 'string' ? { orientation: overrides } : (overrides || {});
@@ -219,12 +244,9 @@ function parseProfile(raw, overrides = {}) {
     obj = { ...PRESETS[obj.preset], ...obj };
   }
 
-  let width  = Number.isInteger(obj.width)  && obj.width  > 0 && obj.width  <= 10000 ? obj.width  : null;
-  let height = Number.isInteger(obj.height) && obj.height > 0 && obj.height <= 10000 ? obj.height : null;
-  if (!width || !height) return null;
-  if (obj.parameterizedDimensions && (width > 512 || height > 512 || width * height > 16384)) {
-    return null;
-  }
+  let width  = Number.isInteger(obj.width)  && obj.width  > 0 ? obj.width  : null;
+  let height = Number.isInteger(obj.height) && obj.height > 0 ? obj.height : null;
+  if (!width || !height || !withinSizeLimit(presetName, obj, width, height)) return null;
 
   // A stated orientation wins; otherwise the profile's own `orientation` field, if it has one.
   const profileOrientation = VALID_ORIENTATIONS.has(obj.orientation) ? obj.orientation : null;
@@ -344,4 +366,4 @@ function listPresets() {
   return Object.keys(PRESETS).map(key => ({ key, ...PRESETS[key] }));
 }
 
-module.exports = { PRESETS, parseProfile, getPreset, listPresets, DEFAULTS, frameDimensions, frameOrientation };
+module.exports = { PRESETS, parseProfile, getPreset, listPresets, DEFAULTS, frameDimensions, frameOrientation, SIZE_LIMITS: { MAX_SIDE, MAX_PIXELS, LED_MAX_SIDE, LED_MAX_PIXELS } };
