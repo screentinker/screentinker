@@ -14,6 +14,10 @@ Item {
     property bool front: false
     property real volume: 1.0
     property bool forceMute: false
+    // True while something is drawn over the content that must get the clicks (the settings menu):
+    // Qt Quick offers a press to pointer handlers under the point BEFORE the items above, so a
+    // fisheye camera's DragHandler took every click meant for the menu's buttons.
+    property bool steeringPaused: false
     property string kind: item ? item.kind : ""
     property bool isReady: false
     signal ready()
@@ -171,10 +175,10 @@ Item {
                 onStatusChanged: if (status === ShaderEffect.Error) console.warn("fisheye shader error: " + log)
             }
             // Touch steering, only when the item allows it: drag moves the picture with the finger,
-            // pinch zooms, double-tap goes back to the saved view.
+            // pinch zooms, double-tap goes back to the saved view. Off while steeringPaused.
             DragHandler {
                 target: null
-                enabled: !!(videoRoot.fish && videoRoot.fish.touch)
+                enabled: !!(videoRoot.fish && videoRoot.fish.touch) && !slot.steeringPaused
                 property point last: Qt.point(0, 0)
                 onActiveChanged: last = Qt.point(0, 0)
                 onTranslationChanged: {
@@ -186,7 +190,7 @@ Item {
             }
             PinchHandler {
                 target: null
-                enabled: !!(videoRoot.fish && videoRoot.fish.touch)
+                enabled: !!(videoRoot.fish && videoRoot.fish.touch) && !slot.steeringPaused
                 property real last: 1
                 onActiveChanged: last = 1
                 onActiveScaleChanged: {
@@ -194,14 +198,14 @@ Item {
                 }
             }
             TapHandler {
-                enabled: !!(videoRoot.fish && videoRoot.fish.touch)
+                enabled: !!(videoRoot.fish && videoRoot.fish.touch) && !slot.steeringPaused
                 onDoubleTapped: slot.fisheyeTouch("reset")
             }
             // A mouse gets the same steering: DragHandler and TapHandler already take it, and the
             // wheel zooms like a pinch (one notch = 15%, up = in).
             WheelHandler {
                 target: null
-                enabled: !!(videoRoot.fish && videoRoot.fish.touch)
+                enabled: !!(videoRoot.fish && videoRoot.fish.touch) && !slot.steeringPaused
                 onWheel: (event) => {
                     if (event.angleDelta.y !== 0) slot.fisheyeTouch("pinch " + Math.pow(1.15, event.angleDelta.y / 120))
                 }

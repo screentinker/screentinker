@@ -95,6 +95,14 @@
 
 ### Fixed
 
+- **Screen share and the meeting-room code now reach the Raspberry Pi, Windows and macOS players.**
+  The native player handled `device:screenshare-start/stop/code` but its connection never subscribed
+  to them, so ticking "show the meeting-room code" put nothing on the screen and a share never
+  appeared. A test now fails if the player handles an event it does not subscribe to.
+- **The native player's settings menu can be clicked over a fisheye camera.** With mouse/touch
+  steering on, the camera's drag handler took every press under the menu (Qt Quick offers a press to
+  pointer handlers below before the buttons above), so neither the dashboard's remote clicks nor a
+  real mouse could press Close or any menu item. Steering pauses while the menu is open.
 - **Playlist durations no longer redraw the page on every click.** Stepping an item's duration up
   or down used to save, record a history entry, and rebuild the whole playlist view on each click,
   so the input lost focus mid-adjustment. It now saves once the clicking stops (or on Enter / leaving

@@ -206,6 +206,7 @@ class DeviceLink:
                    "device:screenshot-request", "device:remote-start", "device:remote-stop",
                    "device:remote-touch", "device:remote-key", "device:live-publish",
                    "device:talk-start", "device:talk-stop", "device:pip-show", "device:pip-clear",
+                   "device:screenshare-start", "device:screenshare-stop", "device:screenshare-code",
                    "device:mute-changed", "device:trigger-wire",
                    "wall:sync", "wall:sync-request", "group:sync", "group:sync-request", "group:resync",
                    "device:pty-open", "device:pty-input", "device:pty-resize", "device:pty-close",

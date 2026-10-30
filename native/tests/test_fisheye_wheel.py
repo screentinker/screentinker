@@ -94,3 +94,20 @@ def test_qt_no_steering_no_zoom(slot):
     _load(app, root, _camera(False))
     _wheel(app, view, 1)
     assert got == []
+
+
+def test_qt_paused_steering_takes_nothing(slot):
+    # The settings menu is drawn over the camera (Surface.qml binds steeringPaused to stage.menuOpen):
+    # handlers under the point get a press before the menu's buttons, so they must be off.
+    app, view, root = slot
+    got = []
+    root.fisheyeTouch.connect(got.append)
+    _load(app, root, _camera(True))
+    root.setProperty("steeringPaused", True)
+    app.processEvents()
+    _wheel(app, view, 1)
+    assert got == []
+    root.setProperty("steeringPaused", False)
+    app.processEvents()
+    _wheel(app, view, 1)
+    assert [d.split()[0] for d in got] == ["pinch"], got

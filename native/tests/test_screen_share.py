@@ -66,3 +66,18 @@ def test_rtc_page_loads_the_servers_receiver_and_reports_per_session():
 def test_screen_share_is_declared():
     src = open(os.path.join(os.path.dirname(__file__), "..", "screentinker_native", "capabilities.py")).read()
     assert '"remote.screen_share"' in src
+
+
+def test_every_event_the_app_handles_is_subscribed():
+    # net/link.py forwards only the events it names to App.on_event. The screen-share events were
+    # handled in app.py but never subscribed, so no code badge or share ever reached a native player.
+    here = os.path.join(os.path.dirname(__file__), "..", "screentinker_native")
+    app = open(os.path.join(here, "app.py"), encoding="utf-8").read()
+    body = app[app.index("    def on_event(self, event, d):"):]
+    body = body[:body.index("\n    def ", 10)]
+    handled = set(re.findall(r'"((?:device|wall|group):[a-z-]+)"', body))
+    link = open(os.path.join(here, "net", "link.py"), encoding="utf-8").read()
+    start = link.index("# Everything else is the application's business.")
+    subscribed = set(re.findall(r'"((?:device|wall|group):[a-z-]+)"', link[start:link.index("async def", start)]))
+    assert {"device:screenshare-start", "device:screenshare-stop", "device:screenshare-code"} <= handled
+    assert handled - subscribed == set()

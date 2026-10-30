@@ -61,6 +61,7 @@ class Stage(QObject):
     shareCodeUrlChanged = Signal()
     shareCodeQrChanged = Signal()
     shareActiveChanged = Signal()
+    menuOpenChanged = Signal()
 
     def __init__(self, engine_cb):
         super().__init__()
@@ -115,6 +116,9 @@ class Stage(QObject):
     shareCodeUrl = Property(str, fget=_g("shareCodeUrl", ""), notify=shareCodeUrlChanged)
     shareCodeQr = Property(str, fget=_g("shareCodeQr", ""), notify=shareCodeQrChanged)
     shareActive = Property(bool, fget=_g("shareActive", False), notify=shareActiveChanged)
+    # The settings menu / PIN pad is up (SettingsMenu.qml). A fisheye camera's steering pauses while
+    # it is (Slot.qml steeringPaused): the camera's DragHandler took every click meant for the menu.
+    menuOpen = Property(bool, fget=_g("menuOpen", False), notify=menuOpenChanged)
     del _g
 
     def set(self, name, value):
@@ -124,6 +128,10 @@ class Stage(QObject):
             getattr(self, name + "Changed").emit()
 
     # --- slots QML calls ---------------------------------------------------------------------
+    @Slot(bool)
+    def setMenuOpen(self, is_open):
+        self.set("menuOpen", bool(is_open))
+
     @Slot(str, str, str, str)
     def slotEvent(self, surface_id, token, event, detail):
         try:

@@ -11,6 +11,7 @@ Item {
     // ⚠️ The root stays VISIBLE: an invisible item receives no key events, so hiding it would make
     // the Esc-Esc opener unreachable. Only the panel below is hidden.
     focus: true
+    onStageNoChanged: stage.setMenuOpen(stageNo > 0)
 
     Keys.onPressed: function(ev) {
         if (ev.key === Qt.Key_Escape || ev.key === Qt.Key_Back) {

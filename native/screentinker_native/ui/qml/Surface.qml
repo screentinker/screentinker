@@ -93,6 +93,7 @@ Item {
         anchors.fill: parent
         volume: surface.volume
         forceMute: surface.forceMute
+        steeringPaused: stage.menuOpen
         onReady: { stage.slotEvent(surface.surfaceId, item ? item.token : "", "ready", ""); if (surface.isCurrent(item)) surface.reveal(slotA) }
         onEnded: stage.slotEvent(surface.surfaceId, item ? item.token : "", "ended", "")
         onYtLength: function(sec) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "yt_length", String(sec)) }
@@ -107,6 +108,7 @@ Item {
         visible: false
         volume: surface.volume
         forceMute: surface.forceMute
+        steeringPaused: stage.menuOpen
         onReady: { stage.slotEvent(surface.surfaceId, item ? item.token : "", "ready", ""); if (surface.isCurrent(item)) surface.reveal(slotB) }
         onEnded: stage.slotEvent(surface.surfaceId, item ? item.token : "", "ended", "")
         onYtLength: function(sec) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "yt_length", String(sec)) }
