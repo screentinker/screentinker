@@ -563,7 +563,8 @@ function refreshWidgetRevs(assignments, deviceId = null) {
         const tok = require('../lib/rooms/service').panelToken(a.widget_id, panelDevice);
         if (tok) a.widget_panel = tok;
       }
-      let rev = facts.rev ?? a.widget_rev ?? 0;
+      // + the render epoch (lib/widget-render-epoch.js): a fix to a widget's page reaches screens that cached it.
+      let rev = Number(facts.rev ?? a.widget_rev ?? 0) + require('../lib/widget-render-epoch');
       // A widget following its screen renders differently per place, and its page is cached by URL:
       // the place goes into the rev, so moving the screen reloads it and nothing else does.
       if (deviceId) {

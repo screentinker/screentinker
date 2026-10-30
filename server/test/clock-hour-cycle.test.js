@@ -71,3 +71,10 @@ test('the slide editor preview has the same rule', () => {
   assert.match(fmt(NOON, 'en-GB', ctx.fixHourCycle('en-GB', twelve())), /^12:38:22/);
   assert.match(src, /if \(e\.kind === 'clock'\) fixHourCycle\(loc, o\);/);
 });
+
+test('a renderer fix reaches screens that cached the old page: the render epoch is in every rev', () => {
+  const epoch = require('../lib/widget-render-epoch');
+  assert.ok(Number.isInteger(epoch) && epoch >= 1, 'bumped for this fix');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'ws', 'deviceSocket.js'), 'utf8');
+  assert.match(src, /let rev = Number\(facts\.rev \?\? a\.widget_rev \?\? 0\) \+ require\('\.\.\/lib\/widget-render-epoch'\);/);
+});
