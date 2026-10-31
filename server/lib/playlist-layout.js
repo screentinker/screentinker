@@ -83,6 +83,26 @@ function zoneForNewItem(db, playlistId, zoneId = null) {
 }
 
 /**
+ * The main zone of the layout a new item will play in: the playlist's own layout, else `screenLayoutId`
+ * (a device playlist often has none of its own; the layout is on the device). Null for no layout or a
+ * single zone, where the payload strips zone ids anyway (fillMainZone). Used for uploads from the
+ * Manager app, which picks no zone: naming the main zone makes the editor show "Main" rather than
+ * "Main zone (Main)". The item plays in the same place either way.
+ */
+function mainZoneIdForNewItem(db, playlistId, screenLayoutId = null) {
+  try {
+    const pl = db.prepare('SELECT layout_id FROM playlists WHERE id = ?').get(playlistId);
+    const layoutId = (pl && pl.layout_id) || screenLayoutId;
+    const layout = layoutId ? loadLayout(db, layoutId) : null;
+    if (!layout || !Array.isArray(layout.zones) || layout.zones.length < 2) return null;
+    const main = mainZone(layout.zones);
+    return main ? main.id : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
  * Is `layoutId` one this workspace may put on a playlist? A template (shared by every tenant), or a
  * layout of the same workspace. Anything else would render another tenant's zones and dimensions.
  * @returns {string|null} an error message, or null when allowed
@@ -160,4 +180,4 @@ function layoutForPayload(db, layoutId, variant = null) {
   return layout;
 }
 
-module.exports = { loadLayout, layoutForPayload, mainZone, fillMainZone, zoneForNewItem, layoutRefusal, suggestZoneMap, overlap };
+module.exports = { loadLayout, layoutForPayload, mainZone, fillMainZone, zoneForNewItem, mainZoneIdForNewItem, layoutRefusal, suggestZoneMap, overlap };

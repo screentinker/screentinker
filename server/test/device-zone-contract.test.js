@@ -173,3 +173,25 @@ test('POST assignment clears a stale zone_id and keeps a valid one', async () =>
   assert.equal(ok.status, 201);
   assert.equal(ok.body.zone_id, S.Z2, 'a zone_id in the active layout is kept');
 });
+
+// An upload from the Manager app (its WebView user agent) with no zone is stored in the main zone of
+// the layout the screen draws, even when the layout is on the device and the playlist has none of its
+// own: the editor then shows "Main", not "Main zone (Main)". Other clients still add it zone-less.
+test('POST assignment from the Manager app without a zone names the device layout\'s main zone', async () => {
+  const mk = (name) => {
+    const id = crypto.randomUUID();
+    db.prepare("INSERT INTO content (id, filename, filepath, mime_type, file_size, remote_url) VALUES (?,?,?,?,0,?)")
+      .run(id, name, '', 'image/png', 'https://example.com/' + name + '.png');
+    return id;
+  };
+  const ua = 'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/141.0 Mobile Safari/537.36 ScreenTinkerManager/1.4.0';
+  const opts = post(S.jwt, { content_id: mk('manager-upload'), duration_sec: 10 });
+  opts.headers = { ...opts.headers, 'User-Agent': ua };
+  const m = await jfetch(`/api/assignments/device/${S.deviceId}`, opts);
+  assert.equal(m.status, 201);
+  assert.equal(m.body.zone_id, S.Z1, 'the main (largest) zone of L1');
+
+  const d = await jfetch(`/api/assignments/device/${S.deviceId}`, post(S.jwt, { content_id: mk('dashboard-upload'), duration_sec: 10 }));
+  assert.equal(d.status, 201);
+  assert.equal(d.body.zone_id, null, 'the dashboard and the API are unchanged');
+});
