@@ -200,6 +200,15 @@ router.post('/device/:deviceId', (req, res) => {
   const activeLayout = require('../lib/resolve-device-playlist').resolvedLayoutId(req.params.deviceId) ?? devLayout?.layout_id;
   const effZone = validZoneForLayout(zone_id, activeLayout, `on add to device ${req.params.deviceId}`);
 
+  // Given no zone, the playlist's default zone. From the Manager app (its WebView user agent names it),
+  // failing that, the main zone of the layout the screen draws, so the upload is stored as "Main"
+  // rather than with no zone ("Main zone (Main)"). Other clients keep adding zone-less items.
+  const playlistLayout = require('../lib/playlist-layout');
+  let newZone = playlistLayout.zoneForNewItem(db, playlistId, effZone);
+  if (!newZone && /\bScreenTinkerManager\//.test(req.get('user-agent') || '')) {
+    newZone = playlistLayout.mainZoneIdForNewItem(db, playlistId, activeLayout);
+  }
+
   let order = sort_order;
   if (order === undefined || order === null) {
     const max = db.prepare('SELECT MAX(sort_order) as max_order FROM playlist_items WHERE playlist_id = ?')
@@ -211,7 +220,7 @@ router.post('/device/:deviceId', (req, res) => {
     const result = db.prepare(`
       INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_to_end)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(playlistId, content_id || null, widget_id || null, child_playlist_id || null, require('../lib/playlist-layout').zoneForNewItem(db, playlistId, effZone), order, duration_sec, playToEndValue);
+    `).run(playlistId, content_id || null, widget_id || null, child_playlist_id || null, newZone, order, duration_sec, playToEndValue);
 
     markDraft(playlistId);
 

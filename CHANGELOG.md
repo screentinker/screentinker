@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- An upload from the Manager app now goes into the layout's main zone by name ("Main"), instead of
+  being saved with no zone and shown as "Main zone (Main)". This also works when the layout is set
+  on the screen rather than on its playlist. A playlist's own default zone still comes first, and
+  uploads from the dashboard and the API are unchanged.
+
 ## 3.1.0
 
 Per-device Wi-Fi for Android screens, three new families of embedded displays (Seeed XIAO LED
