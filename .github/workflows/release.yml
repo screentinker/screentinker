@@ -48,6 +48,8 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: server/package-lock.json
+      # The filter test needs fail2ban-regex installed, as in ci.yml.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq fail2ban
       - run: npm ci
       - run: npm test
 
