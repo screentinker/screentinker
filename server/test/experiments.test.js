@@ -356,7 +356,7 @@ test('another workspace sees nothing; a viewer reads results but cannot change a
 const SQ_ORDERS = {
   orders: [
     { id: 'ORD1', location_id: 'L1', state: 'COMPLETED', created_at: '2026-10-01T15:01:00Z', closed_at: '2026-10-01T15:05:12.345Z',
-      customer_id: 'CUST-SECRET-1', tenders: [{ id: 't', type: 'CARD', card_details: { card: { last_4: '1111' } } }],
+      customer_id: 'CUST-SECRET-1', tenders: [{ id: 't', type: 'CARD', card_details: { card: { last_4: 'CARD-L4-SENTINEL' } } }],
       line_items: [
         { uid: 'a', name: 'Iced Latte', variation_name: 'Large', quantity: '2', catalog_object_id: 'VAR-ICED-L', base_price_money: { amount: 500, currency: 'USD' }, total_money: { amount: 1000, currency: 'USD' } },
         { uid: 'b', name: 'Croissant', quantity: '1', catalog_object_id: 'VAR-CROI', total_money: { amount: 350, currency: 'USD' } },
@@ -481,7 +481,8 @@ test('sales import through a saved data source: token only to the fixed host, ag
   assert.equal(val('shopify', 'units', main, h9), 2);
   // Privacy: no customer id, card digit, order id or item name anywhere in what was stored.
   const dump = JSON.stringify([db.prepare('SELECT * FROM experiment_outcomes').all(), db.prepare('SELECT * FROM experiments').all(), db.prepare('SELECT * FROM experiment_units').all()]);
-  for (const s of ['CUST-SECRET', '1111', 'ORD1', 'Croissant', SQ_TOKEN, SHP_TOKEN]) assert.ok(!dump.includes(s), `${s} must not be stored`);
+  // A non-numeric card sentinel: '1111' also turned up by chance inside random UUIDs and timestamps (#763).
+  for (const s of ['CUST-SECRET', 'CARD-L4-SENTINEL', 'ORD1', 'Croissant', SQ_TOKEN, SHP_TOKEN]) assert.ok(!dump.includes(s), `${s} must not be stored`);
   assert.deepEqual(db.prepare('PRAGMA table_info(experiment_outcomes)').all().map((c) => c.name).sort(), ['experiment_id', 'hour_utc', 'metric', 'source', 'unit_key', 'value']);
 
   // A refused token: the error is ours, names the permission, carries no token.
