@@ -549,6 +549,8 @@ export default {
   'device.color_mode.spectra6_tip': 'Spectra 6 Farbe',
   'device.color_mode.24bit_badge': '24-Bit RGB',
   'device.color_mode.24bit_tip': '24-Bit RGB (Echtfarben)',
+  'device.color_mode.16bit_badge': '16-Bit RGB565',
+  'device.color_mode.16bit_tip': '16-Bit RGB565 (High-Color LCD)',
   'device.form.color_mode_label': 'Farbmodus',
   'device.form.color_mode_1bit': '1-Bit Monochrom (schneller Refresh, 48 KB)',
   'device.form.color_mode_gray4': '4 Graustufen (weiche Verläufe, 96 KB)',

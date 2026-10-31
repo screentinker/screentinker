@@ -39,7 +39,7 @@ const h = require('./helpers/embedded-real-db').boot({
 const queue = require('../lib/command-queue');
 const otaBreaker = require('../lib/ota-breaker');
 const { Jimp } = require('jimp');
-const { toRGB888, postprocess } = require('../lib/embedded-postprocess');
+const { toRGB888, toRGB565, postprocess } = require('../lib/embedded-postprocess');
 
 after(async () => { queue._resetForTests(); await h.close(); fs.rmSync(fwRoot, { recursive: true, force: true }); });
 
@@ -239,6 +239,98 @@ test('seeed-xiao-led end-to-end render with custom dimensions and dimension pres
   assert.equal(afterUpdateRes.status, 200);
   const afterBuf = Buffer.from(await afterUpdateRes.arrayBuffer());
   assert.equal(afterBuf.length, 64 * 64 * 3);
+});
+
+test('toRGB565 packs RGBA to little-endian RGB565', () => {
+  const rgba = Buffer.from([
+    255, 0, 0, 255,     // Red: (31 << 11) = 0xF800 -> LE [0x00, 0xF8]
+    0, 255, 0, 255,     // Green: (63 << 5) = 0x07E0 -> LE [0xE0, 0x07]
+    0, 0, 255, 255,     // Blue: 31 = 0x001F -> LE [0x1F, 0x00]
+    255, 255, 255, 255, // White: 0xFFFF -> LE [0xFF, 0xFF]
+  ]);
+  const packed = toRGB565(rgba);
+  assert.equal(packed.length, 8);
+  assert.deepEqual(Array.from(packed), [
+    0x00, 0xF8,
+    0xE0, 0x07,
+    0x1F, 0x00,
+    0xFF, 0xFF,
+  ]);
+});
+
+test('postprocess() handles 16bit-rgb565: raw RGB565 and format=jpeg/png override', async () => {
+  const img = new Jimp({ width: 4, height: 2, color: 0xFF0000FF });
+  const png = await img.getBuffer('image/png');
+
+  // Raw RGB565 output (4 * 2 * 2 = 16 bytes)
+  const rawRes = await postprocess(png, {
+    width: 4,
+    height: 2,
+    colorDepth: '16bit-rgb565',
+    outputFormat: 'raw',
+  });
+  assert.equal(rawRes.contentType, 'application/octet-stream');
+  assert.equal(rawRes.buffer.length, 4 * 2 * 2);
+
+  // JPEG format override output
+  const jpegRes = await postprocess(png, {
+    width: 4,
+    height: 2,
+    colorDepth: '16bit-rgb565',
+    outputFormat: 'jpeg',
+  });
+  assert.equal(jpegRes.contentType, 'image/jpeg');
+  assert.equal(jpegRes.buffer[0], 0xFF);
+  assert.equal(jpegRes.buffer[1], 0xD8);
+  assert.equal(jpegRes.buffer[2], 0xFF);
+
+  // PNG format override output
+  const pngRes = await postprocess(png, {
+    width: 4,
+    height: 2,
+    colorDepth: '16bit-rgb565',
+    outputFormat: 'png',
+  });
+  assert.equal(pngRes.contentType, 'image/png');
+  assert.equal(pngRes.buffer[0], 0x89);
+  assert.equal(pngRes.buffer[1], 0x50);
+});
+
+test('elecrow-crowpanel-43 end-to-end render: 480x272 raw RGB565 and ?format=jpeg preview', async () => {
+  const base = await h.ready();
+  const p = await h.mkPanel('elecrow-crowpanel-43', { extra: { power_source: 'usb' } });
+
+  // 1. Initial render -> 480x272 raw RGB565 (261,120 bytes)
+  const res = await fetch(`${base}/render?device_id=${p.id}`, {
+    headers: { Authorization: `Bearer ${p.token}` },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'application/octet-stream');
+  assert.equal(res.headers.get('x-st-color-mode'), '16bit-rgb565');
+  const buf = Buffer.from(await res.arrayBuffer());
+  assert.equal(buf.length, 480 * 272 * 2); // 261,120 bytes
+
+  // 2. Format override ?format=jpeg returns real JPEG bytes and image/jpeg Content-Type
+  const jpegRes = await fetch(`${base}/render?device_id=${p.id}&format=jpeg`, {
+    headers: { Authorization: `Bearer ${p.token}` },
+  });
+  assert.equal(jpegRes.status, 200);
+  assert.equal(jpegRes.headers.get('content-type'), 'image/jpeg');
+  const jpegBuf = Buffer.from(await jpegRes.arrayBuffer());
+  assert.equal(jpegBuf[0], 0xFF);
+  assert.equal(jpegBuf[1], 0xD8);
+  assert.equal(jpegBuf[2], 0xFF);
+
+  // 3. Cache hit for ?format=jpeg also serves JPEG bytes and image/jpeg
+  const cachedJpegRes = await fetch(`${base}/render?device_id=${p.id}&format=jpeg`, {
+    headers: { Authorization: `Bearer ${p.token}` },
+  });
+  assert.equal(cachedJpegRes.status, 200);
+  assert.equal(cachedJpegRes.headers.get('content-type'), 'image/jpeg');
+  const cachedBuf = Buffer.from(await cachedJpegRes.arrayBuffer());
+  assert.equal(cachedBuf[0], 0xFF);
+  assert.equal(cachedBuf[1], 0xD8);
+  assert.equal(cachedBuf[2], 0xFF);
 });
 
 test('parameterizedDimensions: fixed-geometry e-paper presets are never affected by devices.screen_width/height', async () => {

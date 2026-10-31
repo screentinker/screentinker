@@ -177,7 +177,7 @@ test('⚠️ an arbitrary shape is refused', () => {
 });
 
 test('every offered shape survives', () => {
-  for (const a of ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9', '5:3']) {
+  for (const a of ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9', '5:3', '4:1', '1:4']) {
     assert.equal(normalizeDeck({ aspect: a, slides: [] }).aspect, a);
   }
 });

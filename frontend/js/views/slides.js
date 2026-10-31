@@ -2970,8 +2970,10 @@ const ASPECT_CHOICES = [
   // 16:10 / 10:16. Without these a 16:9 deck can never fill such a panel — it always letterboxes.
   ['3:2', 'Landscape 3:2 (tablet)'], ['2:3', 'Portrait 2:3 (tablet)'],
   ['16:10', 'Landscape 16:10'], ['10:16', 'Portrait 10:16'],
-  ['1:1', 'Square'], ['21:9', 'Ultrawide 21:9'],
+  ['1:1', 'Square 1:1'], ['21:9', 'Ultrawide 21:9'],
   ['5:3', 'E-Paper 5:3'],
+  ['4:1', 'Banner 4:1 (LED / Ticker)'],
+  ['1:4', 'Tower 1:4 (LED / Column)'],
 ];
 
 function deckAspect() {

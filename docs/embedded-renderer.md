@@ -1,6 +1,6 @@
 # Embedded Renderer for Digital Signage (E-Paper, Smart LED Matrices & MCU Displays)
 
-ScreenTinker includes a dedicated server-side embedded renderer designed for lightweight microcontrollers (MCUs) such as the **ESP32-S3 / ESP32-C6 / ESP32-C3**, **Raspberry Pi Pico W**, the **Seeed Studio reTerminal Sticky** (3.97" B/W E-Paper 800×480 with SSD1677), the **Seeed Studio reTerminal E-Series** (`E1001` 7.5" Mono, `E1002` 7.3" 6-Color Spectra 6, `E1003` 10.3" 16-Level Grayscale, `E1004` 13.3" 6-Color Spectra 6), and the **Seeed Studio XIAO Smart LED Controller** (`seeed-xiao-led` driving WS2812B / SK6812 addressable RGB LED strips and 2D matrices).
+ScreenTinker includes a dedicated server-side embedded renderer designed for lightweight microcontrollers (MCUs) such as the **ESP32-S3 / ESP32-C6 / ESP32-C3**, **Raspberry Pi Pico W**, the **Seeed Studio reTerminal Sticky** (3.97" B/W E-Paper 800×480 with SSD1677), the **Seeed Studio reTerminal E-Series** (`E1001` 7.5" Mono, `E1002` 7.3" 6-Color Spectra 6, `E1003` 10.3" 16-Level Grayscale, `E1004` 13.3" 6-Color Spectra 6), the **Seeed Studio XIAO Smart LED Controller** (`seeed-xiao-led` driving WS2812B / SK6812 addressable RGB LED strips and 2D matrices), and the **Elecrow CrowPanel 4.3" HMI Display** (`elecrow-crowpanel-43` 480×272 16-bit RGB565 RGB LCD).
 
 Instead of requiring the display hardware to run a full web browser or render HTML/CSS, the embedded system periodically makes an HTTP `GET` request to the ScreenTinker server and receives a **pre-rendered, pre-dithered binary image** formatted specifically for its display panel.
 
@@ -399,7 +399,7 @@ A device's screen configuration is stored in the `devices.screen_profile` JSON c
 - **`1bit` packing** (`x-epd-packed`, `raw`) accepts any width, odd ones included; rows are packed back to back with no padding.
 - **`bmp`**: Standard 1-bit Windows BMP (Bitmap DIB v3) with 2-color palette (Black / White).
 - **`png` & `jpeg`**: Rendered raster images with dithering applied (ideal for browser previewing and debugging).
-- **`16bit-rgb565`**: 2 bytes per pixel (Little-Endian R5G6B5) for SPI TFT displays (ILI9341, ST7789).
+- **`16bit-rgb565`**: 2 bytes per pixel (Little-Endian R5G6B5) for parallel RGB and SPI TFT displays (NV3047, ILI9341, ST7789). Dithering is bypassed (`dither: 'none'`) to preserve clean high-color rendering. Requesting `?format=jpeg` or `?format=png` encodes the rendered frame as a standard image for dashboard live previews.
 - **`24bit-rgb888` (`raw`)**: 3 bytes per pixel (`R, G, B` in logical row-major top-left order, no header, `width * height * 3` bytes) for addressable smart RGB LED strips and 2D matrices (`seeed-xiao-led`). Dithering is bypassed (`dither: 'none'`) to preserve crisp pixel art and color gradients. Requesting `?format=jpeg` or `?format=jpg` on a `24bit-rgb888` device encodes the rendered frame as `image/jpeg` for dashboard live previews.
 
 ---
@@ -462,6 +462,7 @@ How the final binary buffer is oriented depends on whether the device uses **MCU
 | `seeed-reterminal-e1003` | 1872 | 1404 | `gray16` | `x-epd-gray16` | Yes (180ms) | Seeed Studio reTerminal E1003 (10.3" Gray16, touch) |
 | `seeed-reterminal-e1004` | 1200 | 1600 | `spectra6` | `x-epd-spectra6` | No (min 60s) | Seeed Studio reTerminal E1004 (13.3" 6-Color Spectra 6) |
 | `seeed-xiao-led` | 5 (param.) | 1 (param.) | `24bit-rgb888` | `raw` | Yes (50ms) | Seeed Studio XIAO LED Controller (WS2812B/SK6812 strip/matrix) |
+| `elecrow-crowpanel-43` | 480 | 272 | `16bit-rgb565` | `raw` | No (20ms) | Elecrow CrowPanel 4.3" HMI Display (NV3047 RGB LCD, ESP32-S3) |
 | `waveshare-7.5in-v2` | 800 | 480 | `1bit` | `x-epd-packed` | - | Waveshare 7.5" e-Paper |
 | `waveshare-4.2in-v2` | 400 | 300 | `1bit` | `x-epd-packed` | - | Waveshare 4.2" e-Paper |
 | `waveshare-2.9in-v2` | 296 | 128 | `1bit` | `x-epd-packed` | - | Waveshare 2.9" e-Paper |
@@ -485,11 +486,23 @@ The `seeed-xiao-led` preset turns ScreenTinker into a pixel-art, ticker, and amb
   - Displays a **`24-Bit RGB`** color mode badge and automatically hides the E-Paper dithering selector (`#epdDither`), since LEDs render full 24-bit color without monochrome quantization.
   - Supports live browser previews via `?format=jpeg` (`image/jpeg`).
 
+### 5.2 Elecrow CrowPanel 4.3" RGB LCD Mode (`elecrow-crowpanel-43`)
+
+The `elecrow-crowpanel-43` preset supports the **Elecrow CrowPanel 4.3" HMI Display** (ESP32-S3 with 4MB Flash and 2MB PSRAM) equipped with a 480×272 high-color LCD driven by the NV3047 controller over a 16-bit parallel RGB interface:
+
+- **Resolution & Color Format**: Native `480×272` resolution with `16bit-rgb565` color depth. `GET /api/embedded/render` serves raw Little-Endian RGB565 bytes (`width * height * 2` = 261,120 bytes) with `Content-Type: application/octet-stream`.
+- **Live Preview Support**: Dashboard live previews and developer queries using `?format=jpeg` or `?format=png` encode the rendered frame into standard image formats before serving.
+- **Dithering Bypass**: Because RGB565 provides high color fidelity (65,536 colors), dithering is bypassed (`dither: 'none'`) and the dashboard dithering dropdown is automatically hidden.
+- **Hardware Profile Details**:
+  - Default refresh interval: 1s.
+  - Full refresh duration: 20ms (instantaneous frame buffer write).
+  - Dedicated single-button navigation on the device via the physical `BOOT` button.
+
 ---
 
 ## 6. Reference ESP32 Firmware Implementation (C++ / Arduino)
 
-For the complete production firmware supporting the **Seeed Studio reTerminal Sticky & E-Series (`E1001`–`E1004`)** and **Seeed Studio XIAO Smart LED Controllers (`ESP32-C6` / `ESP32-S3` / `ESP32-C3`)**—including the [1-Click Universal Browser Web Flasher](https://www.rene-bohne.de/screentinker_mcu/tools/), Captive Portal Wi-Fi onboarding, 6-digit PIN pairing, dynamic LED matrix serpentine/progressive coordinate mapping, PSRAM frame caching, IMU auto-rotation, SHT40 telemetry, dual-partition OTA rollback, and a native SDL2 desktop simulator—see the **[`screentinker_mcu`](https://github.com/renebohne/screentinker_mcu)** repository.
+For the complete production firmware supporting the **Seeed Studio reTerminal Sticky & E-Series (`E1001`–`E1004`)**, **Seeed Studio XIAO Smart LED Controllers (`ESP32-C6` / `ESP32-S3` / `ESP32-C3`)**, and the **Elecrow CrowPanel 4.3" RGB LCD**—including the [1-Click Universal Browser Web Flasher](https://www.rene-bohne.de/screentinker_mcu/tools/), Captive Portal Wi-Fi onboarding, 6-digit PIN pairing, dynamic LED matrix serpentine/progressive coordinate mapping, PSRAM frame caching, IMU auto-rotation, SHT40 telemetry, dual-partition OTA rollback, and a native SDL2 desktop simulator—see the **[`screentinker_mcu`](https://github.com/renebohne/screentinker_mcu)** repository.
 
 Below is a minimal standalone reference sketch illustrating the core HTTP polling and ETag sleep loop:
 

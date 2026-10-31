@@ -293,7 +293,7 @@ function editForm(body, f, opts) {
       <label>${esc(t('creq.form.max_mb'))}<input class="input" type="number" id="cfMaxMb" min="1" max="${opts.max_mb}" value="${esc(String(r.max_mb || 50))}"></label>
       <label>${esc(t('creq.form.min_width'))}<input class="input" type="number" id="cfMinW" min="0" value="${esc(String(r.min_width || 0))}"></label>
       <label>${esc(t('creq.form.min_height'))}<input class="input" type="number" id="cfMinH" min="0" value="${esc(String(r.min_height || 0))}"></label>
-      <label>${esc(t('creq.form.aspect'))}<select class="input" id="cfAspect">${['', '16:9', '9:16', '4:3', '3:4', '1:1', '21:9'].map((a) => `<option value="${a}" ${(r.aspect || '') === a ? 'selected' : ''}>${esc(a || t('creq.form.aspect_any'))}</option>`).join('')}</select></label>
+      <label>${esc(t('creq.form.aspect'))}<select class="input" id="cfAspect">${['', '16:9', '9:16', '4:3', '3:4', '1:1', '21:9', '4:1'].map((a) => `<option value="${a}" ${(r.aspect || '') === a ? 'selected' : ''}>${esc(a || t('creq.form.aspect_any'))}</option>`).join('')}</select></label>
       <label>${esc(t('creq.form.max_video'))}<input class="input" type="number" id="cfMaxVid" min="0" value="${esc(String(r.max_video_sec || 0))}"></label>
     </div>
     <h4>${esc(t('creq.form.timing'))}</h4>

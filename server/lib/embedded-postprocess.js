@@ -474,6 +474,14 @@ async function postprocess(pngBuffer, profile) {
 
   // ── 16-bit RGB565 ────────────────────────────────────────────────────────────
   if (colorDepth === '16bit-rgb565') {
+    if (outputFormat === 'jpeg' || outputFormat === 'jpg') {
+      const buf = await img.getBuffer('image/jpeg');
+      return { buffer: buf, contentType: 'image/jpeg', width: w, height: h2 };
+    }
+    if (outputFormat === 'png') {
+      const buf = await img.getBuffer('image/png');
+      return { buffer: buf, contentType: 'image/png', width: w, height: h2 };
+    }
     return { buffer: toRGB565(rgba), contentType: 'application/octet-stream', width: w, height: h2 };
   }
 
@@ -588,4 +596,4 @@ async function encodeColour(pngBuffer, { width, height, format = 'jpeg', quality
   return { buffer: await img.getBuffer('image/jpeg', { quality: q }), contentType: 'image/jpeg' };
 }
 
-module.exports = { postprocess, encodeColour, UnpackableWidthError, packGray4, toRGB888 };
+module.exports = { postprocess, encodeColour, UnpackableWidthError, packGray4, toRGB888, toRGB565 };

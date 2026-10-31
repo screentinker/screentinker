@@ -15,6 +15,19 @@
 
 ### Added
 
+- **Elecrow CrowPanel 4.3" RGB LCD display support (`elecrow-crowpanel-43`).** The embedded renderer
+  now supports the 480×272 Elecrow CrowPanel 4.3" HMI display running on the ESP32-S3. Frames are
+  streamed as raw 16-bit RGB565 (`16bit-rgb565`, 2 bytes per pixel in little-endian R5G6B5 order,
+  matching the ESP32-S3 LCD peripheral), with dithering disabled and an automatic `16-Bit RGB565`
+  badge in the dashboard. Dashboard Live Previews via `?format=jpeg` or `?format=png` encode the
+  16-bit raster into standard web images, and the `rgb565` alias is normalized across the API and
+  dashboard views.
+
+- **4:1 and 1:4 slide aspect ratio presets for ticker banners and ultrawide displays.** Slides can
+  now be authored in 4:1 (1920×480) horizontal banner and 1:4 (480×1920) vertical pillar presets,
+  allowing seamless typography and content scaling on LED matrix strips, shelf-edge tickers, and
+  specialized signage displays.
+
 - **Single-item image fit modes (`cover`, `contain`, `fill`), background color compositing, and
   dashboard orientation support for embedded displays.** Single-item image renders on `/api/embedded/render`
   now honor playlist item `fit_mode` (`cover`, `contain`, `fill`) and composite transparent PNGs or

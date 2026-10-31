@@ -99,6 +99,20 @@ test('a portrait deck keeps its own shape, not a rotated guess at 16:9', () => {
   assert.equal(env.stage.style.height, '1920px');
 });
 
+test('a 1:1 square deck fits cleanly without letterboxing on a 1:1 panel', () => {
+  const env = runFitter(deck('1:1'), 64, 64);
+  assert.equal(env.stage.style.width, '64px');
+  assert.equal(env.stage.style.height, '64px');
+  assert.equal(env.stage.style.marginTop, '0px');
+});
+
+test('a 4:1 ticker banner deck fits cleanly without letterboxing on a 32x8 panel', () => {
+  const env = runFitter(deck('4:1'), 32, 8);
+  assert.equal(env.stage.style.width, '32px');
+  assert.equal(env.stage.style.height, '8px');
+  assert.equal(env.stage.style.marginTop, '0px');
+});
+
 /*
  * ⚠️ THE HALF THAT MATTERS ON OLD HARDWARE. On Android WebView 91 every `font-size:Ncqw` is an
  * invalid declaration the engine throws away, so those panels have never rendered a slide at the
