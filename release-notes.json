@@ -14,6 +14,17 @@
   ],
   "releases": [
     {
+      "version": "3.1.0",
+      "date": "2026-10-31",
+      "notes": [
+        "Set the Wi-Fi networks an Android screen should use from its Controls tab. Passwords are stored encrypted and never shown back, and you can see whether each screen applied them.",
+        "New embedded displays: Seeed XIAO LED strips and matrices, the Elecrow CrowPanel 4.3\" colour LCD, and 4-level grayscale on reTerminal e-paper. Slides can now be 4:1 banners or 1:4 towers.",
+        "Weather, clock and radar widgets can follow the screen they are on, and there is a new rain radar widget.",
+        "Web players on screens with little storage, such as LG webOS panels, now keep playing when the network drops, and each screen's page shows whether it is ready to play offline.",
+        "Self-hosters get Fail2ban-ready sign-in failure logs, and many fixes: 12-hour clocks no longer show 00 at noon, multi-zone layouts update live, and the Raspberry Pi player hides the mouse pointer."
+      ]
+    },
+    {
       "version": "3.0.3",
       "date": "2026-10-22",
       "notes": [
