@@ -1,6 +1,23 @@
 # Changelog
 
-## Unreleased
+## 3.1.0
+
+Per-device Wi-Fi for Android screens, three new families of embedded displays (Seeed XIAO LED
+controllers, an RGB565 LCD and 4-level grayscale e-paper), weather and clocks that follow the screen
+they are on, Fail2ban-ready logging, and web players that keep playing offline on screens with
+little storage. Upgrading from 3.0.x needs no extra steps; read the upgrade notes if you put
+ScreenTinker behind a reverse proxy and want to use Wi-Fi networks.
+
+### Upgrade notes
+
+- **Wi-Fi networks need HTTPS all the way to the server.** The server refuses to store or send a
+  Wi-Fi password over a connection it can't see is encrypted. Behind a reverse proxy that ends TLS
+  (nginx, Caddy, a load balancer), the proxy must send `X-Forwarded-Proto: https`, and it must reach
+  the server from an address `trustedProxies` accepts (loopback, link-local or a private range by
+  default). The refusal message names the fix. See `docs/wifi-networks.md`; `WIFI_ALLOW_INSECURE=1`
+  turns the check off and says so at every boot.
+- **Screens need this release's Android APK to use Wi-Fi networks.** The section only appears on a
+  screen whose player says it supports them, so stage the 3.1.0 APK for over-the-air updates.
 
 ### Now in the app stores
 
@@ -15,7 +32,31 @@
 
 ### Added
 
-- **Elecrow CrowPanel 4.3" RGB LCD display support (`elecrow-crowpanel-43`).** The embedded renderer
+- **Per-device Wi-Fi networks for Android screens** (#755, by @arminfauland; closes #720). A screen
+  whose player supports it gets a **Wi-Fi networks** section on its Controls tab: add, edit or remove
+  networks (SSID, open / WPA2 / WPA3, hidden, priority), and the screen receives the list at once and
+  on every reconnect. Each network then shows what the player did with it: applied, suggested,
+  deferred, unsupported or failed, with the reason. Passwords are stored encrypted and never shown
+  back, the endpoint takes dashboard sign-ins only (API tokens and MCP get a 401), and a change that
+  would leave a screen with no working network is guarded. On players that can only suggest networks
+  to Android, the section says "Suggested, not enforced". See `docs/wifi-networks.md`.
+
+- **Seeed Studio XIAO Smart RGB LED strip and matrix controllers (`seeed-xiao-led`)** (#758, by
+  @renebohne). The embedded renderer drives WS2812B / SK6812 strips and 2D matrices from a XIAO
+  ESP32-C6, ESP32-S3 or ESP32-C3 with raw 24-bit RGB frames and no dithering. The controller reports
+  its own size when it pairs (5×1, 32×8, 64×64 and so on, up to 512 a side and 16,384 pixels) and
+  keeps it when the dashboard changes other settings. The device page shows a `24-Bit RGB` badge,
+  hides the e-paper dithering choice, and previews the frame as a JPEG.
+
+- **Fail2ban-ready security logging** (#663, by @gainskills). Failed sign-ins (unknown account,
+  wrong password, locked account, bad TOTP or recovery code) are logged as one
+  `[security] auth_failure` line with the client's IP and no account names or credentials, ready for
+  the included Fail2ban filter and jail. `ACCESS_LOG=true` adds a structured access log (IP, method,
+  route template, status, duration). Untrusted text can no longer forge a log line, and the scripts
+  folder now has nginx, Caddy, Cloudflare Tunnel, logrotate and Fail2ban templates. See
+  `docs/operations.md`.
+
+- **Elecrow CrowPanel 4.3" RGB LCD display support (`elecrow-crowpanel-43`)** (#762, by @renebohne). The embedded renderer
   now supports the 480×272 Elecrow CrowPanel 4.3" HMI display running on the ESP32-S3. Frames are
   streamed as raw 16-bit RGB565 (`16bit-rgb565`, 2 bytes per pixel in little-endian R5G6B5 order,
   matching the ESP32-S3 LCD peripheral), with dithering disabled and an automatic `16-Bit RGB565`
@@ -23,13 +64,13 @@
   16-bit raster into standard web images, and the `rgb565` alias is normalized across the API and
   dashboard views.
 
-- **4:1 and 1:4 slide aspect ratio presets for ticker banners and ultrawide displays.** Slides can
+- **4:1 and 1:4 slide aspect ratio presets for ticker banners and ultrawide displays** (#762, by @renebohne). Slides can
   now be authored in 4:1 (1920×480) horizontal banner and 1:4 (480×1920) vertical pillar presets,
   allowing seamless typography and content scaling on LED matrix strips, shelf-edge tickers, and
   specialized signage displays.
 
 - **Single-item image fit modes (`cover`, `contain`, `fill`), background color compositing, and
-  dashboard orientation support for embedded displays.** Single-item image renders on `/api/embedded/render`
+  dashboard orientation support for embedded displays** (#748, by @renebohne). Single-item image renders on `/api/embedded/render`
   now honor playlist item `fit_mode` (`cover`, `contain`, `fill`) and composite transparent PNGs or
   letterboxed `contain` frames onto the effective `background_color` (zone background when a 1-zone
   layout is assigned, else `device.background_color`, defaulting to `#000000`). Changing `fit_mode`,
@@ -40,7 +81,7 @@
   on every poll.
 
 - **Dynamic color modes for Seeed reTerminal E-Series embedded devices: 1-bit mono and 4-level
-  grayscale (Gray4).** The reTerminal Sticky and E1001 profiles now declare
+  grayscale (Gray4)** (#748, by @renebohne). The reTerminal Sticky and E1001 profiles now declare
   `supportedColorModes: ['1bit', 'gray4']`, and the dashboard's device settings offer a Color Mode
   selector for them (with a color-mode badge in the device header). A new `packGray4`
   postprocessing pipeline quantizes frames to 4 gray levels (BT.601, Floyd-Steinberg dithering) and
@@ -51,7 +92,8 @@
   stored `colorDepth` that the device's preset does not support falls back to the preset default
   (e.g. after switching a screen from Sticky to E1002).
 
-- **Server refresh-mode hinting (`X-ST-Refresh-Mode`) for partial-refresh e-paper.** The render
+- **Server refresh-mode hinting (`X-ST-Refresh-Mode`) for partial-refresh e-paper** (#748, by
+  @renebohne). The render
   endpoint advises `full` on first render, cold boots (missing `If-None-Match`), playlist item/scene
   transitions, and layout changes, and `partial` for incremental widget updates on
   partial-refresh-capable devices (Sticky, E1001, E1003); a new per-device "Refresh Behavior"
@@ -215,6 +257,32 @@
   so the check always stopped before downloading anything. It only applies to builds with LG's
   SCAP library in `webos/vendor/`; the CI-built packages have no SCAP and update the way they were
   installed. Each build now updates from its own file, which `/webos/version.json` lists under `files`.
+
+### Security
+
+- **Two denial-of-service fixes in server dependencies** (#738): multer 2.5.0 (a pending upload
+  filter after the request was torn down) and body-parser 2.4.0 (trailing bytes after a compressed
+  request body). Lockfile-only; `npm ci` picks them up.
+- **The webOS app accepts only `http:` and `https:` server URLs** (#739). Anything else typed into the
+  server field, or left in its storage, is refused before it reaches the player frame, instead of
+  being coerced into an `http://` string.
+
+### Contributors
+
+- @renebohne: three families of embedded displays, the Seeed XIAO LED controllers, the CrowPanel RGB
+  LCD and Gray4 e-paper, plus 4:1 / 1:4 slides and partial-refresh hinting (#748, #758, #762), and
+  the flaky-test report (#763). 3 of the 39 commits in this release.
+- @arminfauland: per-device Wi-Fi networks for Android (#755) and its proxy documentation (#759).
+  2 of the 39 commits in this release.
+- @gainskills: Fail2ban-ready security logging and the deployment templates (#663). 1 of the 39
+  commits in this release.
+- Thanks to the customer whose offline-playback report from LG webOS panels found the
+  storage-quota bug behind #757.
+
+### Sponsors
+
+Thank you to @Semetra22 and @hapishyguy for sponsoring ScreenTinker on GitHub Sponsors, and to everyone
+who sponsors privately.
 
 ## 3.0.3
 
