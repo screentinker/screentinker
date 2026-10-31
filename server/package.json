@@ -56,6 +56,9 @@
   "overrides": {
     "get-uri": {
       "basic-ftp": "^6.2.3"
+    },
+    "readdir-glob": {
+      "minimatch": "^11.0.3"
     }
   }
 }

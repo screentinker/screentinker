@@ -9,6 +9,11 @@
   on the screen rather than on its playlist. A playlist's own default zone still comes first, and
   uploads from the dashboard and the API are unchanged.
 
+### Security
+
+- `minimatch` (used by `archiver` through `readdir-glob`) is pinned to 11.0.3 for a denial-of-service
+  advisory (GHSA-g3hv-75wg-m249). ScreenTinker never globs with it, so it was not reachable.
+
 ## 3.1.0
 
 Per-device Wi-Fi for Android screens, three new families of embedded displays (Seeed XIAO LED
