@@ -286,13 +286,14 @@ test('default zone: a new item added without a zone gets it while it is in the p
   const L = layout('Two', [['Big', 0, 0, 70, 100], ['Side', 70, 0, 30, 100]]);
   const other = layout('Other', [['A', 0, 0, 50, 100], ['B', 50, 0, 50, 100]]);
   const P = realPlaylist('default zone unit', [], { layout_id: L.id });
-  assert.equal(pl.zoneForNewItem(db, P), null, 'no default: no zone, as before');
+  assert.equal(pl.zoneForNewItem(db, P), L.zones.Big, 'no default: the layout\'s main (largest) zone');
   db.prepare('UPDATE playlists SET default_zone_id = ? WHERE id = ?').run(L.zones.Side, P);
   assert.equal(pl.zoneForNewItem(db, P), L.zones.Side);
   assert.equal(pl.zoneForNewItem(db, P, L.zones.Big), L.zones.Big, 'a zone the adder chose wins');
-  // A default that is not in the playlist's layout (it changed) gives no zone, never a zone the screen won't draw.
+  // A default that is not in the playlist's layout (it changed) is ignored, never a zone the screen
+  // won't draw: the main zone of the layout it does draw.
   db.prepare('UPDATE playlists SET default_zone_id = ? WHERE id = ?').run(other.zones.A, P);
-  assert.equal(pl.zoneForNewItem(db, P), null);
+  assert.equal(pl.zoneForNewItem(db, P), L.zones.Big);
   assert.equal(pl.zoneForNewItem(db, 'no-such-playlist'), null);
 });
 

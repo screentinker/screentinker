@@ -4,10 +4,16 @@
 
 ### Fixed
 
-- An upload from the Manager app now goes into the layout's main zone by name ("Main"), instead of
-  being saved with no zone and shown as "Main zone (Main)". This also works when the layout is set
-  on the screen rather than on its playlist. A playlist's own default zone still comes first, and
-  uploads from the dashboard and the API are unchanged.
+- Content added without picking a zone now goes into the playlist's default zone, or, when it has
+  none, the layout's main zone by name ("Main"), instead of being saved with no zone and shown as
+  "Main zone (Main)". This applies to uploads from the Manager app, the dashboard and the API alike,
+  and works when the layout is set on the screen rather than on its playlist. A playlist shared by
+  screens with different layouts, and a video wall's playlist, still add items with no zone, which
+  play in each screen's main zone as before. Items already in a playlist don't move.
+- A screen's Playlist tab now shows disabled items. A disabled item is kept in the playlist but not
+  published, so it never reaches the screen, and the tab used to draw it like any other item, so a
+  screen showing one photo out of nine looked broken with nothing to explain it. Disabled items are
+  now faded with a "Disabled" badge and an Enable button.
 
 ### Security
 
