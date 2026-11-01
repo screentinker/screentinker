@@ -15,7 +15,7 @@
  */
 (function () {
   'use strict';
-  var APP_VERSION_FALLBACK = '3.1.0';   // stamped from appinfo.json by build-ipk.sh
+  var APP_VERSION_FALLBACK = '3.1.1';   // stamped from appinfo.json by build-ipk.sh
   // The file this build is published as, and so the one it updates itself from. build-ipk.sh
   // stamps it: ScreenTinker.ipk, or com.lg.app.signage.ipk for the Local application mode build.
   var IPK_FILE = 'ScreenTinker.ipk';
