@@ -384,8 +384,13 @@ async function tick() {
     schedule(0);
     return;
   }
-  if (!withinAllowance(content.workspace_id, content.duration_sec, s, clock())) {
-    db.prepare("UPDATE content_video_variants SET status = 'denied', error = 'monthly allowance reached', updated_at = strftime('%s','now') WHERE content_id = ? AND kind = ?").run(job.content_id, job.kind);
+  const at = clock();
+  if (!withinAllowance(content.workspace_id, content.duration_sec, s, at)) {
+    // Stamped with the clock that judged the allowance, not SQLite's: ensure() compares this stamp's
+    // MONTH with its own clock to decide whether the copy gets another chance, so the two must agree.
+    // With strftime('now') a test clock in one month against a wall clock in the next re-queued the
+    // copy at once (it failed every day from 2026-11-01).
+    db.prepare("UPDATE content_video_variants SET status = 'denied', error = 'monthly allowance reached', updated_at = ? WHERE content_id = ? AND kind = ?").run(Math.floor(at.getTime() / 1000), job.content_id, job.kind);
     pushFor(content);
     schedule(0);
     return;
