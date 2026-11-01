@@ -1963,6 +1963,7 @@ let playbackOrder = "sequential";
 let playOrderState = {};
 const zoneOrderState = {};
 let zoneTimers = {};
+let zoneState = null;
 let campaign = null;
 let campaignRun = null;
 let campaignPreloads = [];
@@ -5829,6 +5830,7 @@ function teardownCurrentMedia(keep) {
     pendingWidgetSwap = null;
   }
   clearZoneTimers();
+  zoneState = null;
   stopWallZones();
   const container = document.getElementById("playerContainer");
   if (container) {
@@ -6659,11 +6661,21 @@ function renderContent(item) {
     renderWallBuffered(item);
     return;
   }
+  if (isZones && zoneState && zoneState.key === zoneLayoutKey(layout)) {
+    const stage = document.getElementById("playerContainer");
+    const intact = stage && zoneState.container === stage && Object.keys(zoneState.zones).every((id) => zoneState.zones[id].div.parentNode === stage);
+    if (intact) {
+      discardPendingSwap();
+      stage.style.display = "block";
+      zoneState = renderZones(stage, item, zoneState);
+      return;
+    }
+  }
   teardownCurrentMedia();
   const container = document.getElementById("playerContainer");
   container.style.display = "block";
   if (layout && layout.zones && layout.zones.length > 1 && !wallConfig) {
-    renderZones(container, item);
+    zoneState = renderZones(container, item);
     return;
   }
   if (wallZonesActive()) {
@@ -6705,7 +6717,7 @@ function renderContent(item) {
   const serverUrl = config.serverUrl;
   const src = mediaUrl(item);
   if (layout && layout.zones && layout.zones.length > 1 && !wallConfig) {
-    renderZones(container, item);
+    zoneState = renderZones(container, item);
   } else {
     if (isYoutube) {
       createYoutubeEmbed(src, item, mount);
@@ -6933,8 +6945,8 @@ function showZoneEmpty(zone, div, items, timers = zoneTimers) {
   div.innerHTML = "";
   timers[zone.id] = setTimeout(() => showZoneItem(zone, div, items, 0, timers), 3e4);
 }
-function renderZones(container, defaultItem) {
-  clearZoneTimers();
+function renderZones(container, defaultItem, prev) {
+  if (!prev) clearZoneTimers();
   const validZoneIds = new Set(layout.zones.map((z) => z.id));
   const fallbackZone = layout.zones.reduce(
     (a, b) => (b.width_percent || 0) * (b.height_percent || 0) > (a.width_percent || 0) * (a.height_percent || 0) ? b : a,
@@ -6966,15 +6978,88 @@ function renderZones(container, defaultItem) {
     return items && items.length ? items : null;
   });
   if (!zoneItems.some(Boolean) && defaultItem && zoneItems.length) zoneItems[0] = [defaultItem];
+  const next = { key: zoneLayoutKey(layout), container, zones: {} };
   layout.zones.forEach((zone, i) => {
     const items = zoneItems[i];
     if (!items) return;
-    const div = document.createElement("div");
-    div.className = "zone";
-    div.style.cssText = "left:".concat(zone.x_percent, "%;top:").concat(zone.y_percent, "%;width:").concat(zone.width_percent, "%;height:").concat(zone.height_percent, "%;z-index:").concat(zone.z_index || 0);
-    container.appendChild(div);
+    const sig = zoneItemsSig(items);
+    const had = prev && prev.zones[zone.id];
+    if (had && had.sig === sig) {
+      next.zones[zone.id] = had;
+      return;
+    }
+    let div = had && had.div;
+    if (!div) {
+      div = document.createElement("div");
+      div.className = "zone";
+      div.style.cssText = "left:".concat(zone.x_percent, "%;top:").concat(zone.y_percent, "%;width:").concat(zone.width_percent, "%;height:").concat(zone.height_percent, "%;z-index:").concat(zone.z_index || 0);
+      container.appendChild(div);
+    }
+    next.zones[zone.id] = { sig, div };
     showZoneItem(zone, div, items, 0);
   });
+  if (prev) {
+    for (const id in prev.zones) {
+      if (next.zones[id]) continue;
+      if (zoneTimers[id]) {
+        clearTimeout(zoneTimers[id]);
+        delete zoneTimers[id];
+      }
+      const div = prev.zones[id].div;
+      div.querySelectorAll("video").forEach((v) => {
+        try {
+          if (typeof destroyHls === "function") destroyHls(v);
+          v.onended = null;
+          v.onerror = null;
+          v.pause();
+          v.removeAttribute("src");
+          v.load();
+        } catch (e) {
+        }
+      });
+      try {
+        div.remove();
+      } catch (e) {
+      }
+    }
+  }
+  return next;
+}
+function zoneItemsSig(items) {
+  return items.map((a) => [
+    a.content_id || "",
+    a.widget_id || "",
+    a.widget_rev || "",
+    a.zone_id || "",
+    a.remote_url || "",
+    a.filepath || "",
+    a.filename || "",
+    JSON.stringify(a.schedules || []),
+    a.play_from || "",
+    a.play_until || "",
+    a.enabled === 0 ? 0 : 1,
+    a.log_play === 0 ? 0 : 1,
+    a.fit_mode || "",
+    JSON.stringify(a.play_when || null),
+    JSON.stringify(a.tags || []),
+    JSON.stringify(a.meta || {}),
+    JSON.stringify(a.transition || null),
+    a.transparent_bg ? "t" : "",
+    a.muted ? "m" : "",
+    a.duration_sec || 0
+  ].join("|")).join(",");
+}
+function zoneLayoutKey(l) {
+  return !l ? "" : [l.id, ...(l.zones || []).map((z) => [
+    z.id,
+    z.x_percent,
+    z.y_percent,
+    z.width_percent,
+    z.height_percent,
+    z.z_index,
+    z.zone_type,
+    z.fit_mode
+  ].join(":")).sort()].join("|");
 }
 function showZoneItem(zone, div, items, index, timers = zoneTimers) {
   var _a;
