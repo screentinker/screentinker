@@ -681,3 +681,75 @@ def test_a_zone_of_widgets_rotates_on_their_durations(eng):
         assert r.index == 1 and r.timer.isActive() and r.timer.interval() == 20_000
     finally:
         r.timer.stop()
+
+
+def _zones_payload(weather_rev, image_dur=30):
+    return {
+        "assignments": [
+            {"id": 1, "content_id": "A", "mime_type": "image/png", "duration_sec": image_dur,
+             "zone_id": "main", "sort_order": 1},
+            {"id": 2, "widget_id": "weather", "widget_type": "template", "widget_rev": weather_rev,
+             "duration_sec": 10, "zone_id": "side", "sort_order": 1},
+        ],
+        "layout": {"zones": [
+            {"id": "main", "name": "Main", "x_percent": 0, "y_percent": 0, "width_percent": 75,
+             "height_percent": 100},
+            {"id": "side", "name": "Side", "x_percent": 75, "y_percent": 0, "width_percent": 25,
+             "height_percent": 100},
+        ]},
+    }
+
+
+def _zone_ops(app, kinds=("show", "clear")):
+    return [a[1] for a in app.stage.take() if a[0] in kinds and str(a[1]).startswith("zone:")]
+
+
+def _settle():
+    from PySide6.QtCore import QCoreApplication
+    QCoreApplication.processEvents()
+
+
+def test_a_refresh_re_renders_only_the_zone_that_changed(eng):
+    # ⚠️ A weather widget's data refresh bumps its rev every few minutes. Every zone used to restart on
+    # any change, so a camera in the main zone reconnected and the screen went black each time (seen
+    # on a Pi 5, every 16 min). Only the weather zone may re-render now.
+    e, app = eng
+    app.cache.files.update(A="/c/A.png")
+    try:
+        e.on_payload(_zones_payload(1))
+        _settle()
+        first = _zone_ops(app)
+        assert sorted(first) == ["zone:main", "zone:side"]
+        main_runner = e.zone_runners["main"]
+
+        e.on_payload(_zones_payload(2))
+        _settle()
+        again = _zone_ops(app)
+        assert again == ["zone:side"], "the unchanged main zone must not be touched"
+        assert e.zone_runners["main"] is main_runner
+
+        # A duration-only edit is not structural: nothing re-renders, the new dwell is taken up.
+        e.on_payload(_zones_payload(2, image_dur=45))
+        _settle()
+        assert _zone_ops(app) == []
+        assert e.zone_runners["main"].items[0].duration_sec == 45
+    finally:
+        for r in e.zone_runners.values():
+            r.stop()
+
+
+def test_a_layout_change_still_rebuilds_every_zone(eng):
+    e, app = eng
+    app.cache.files.update(A="/c/A.png")
+    try:
+        e.on_payload(_zones_payload(1))
+        _settle()
+        app.stage.take()
+        p = _zones_payload(1)
+        p["layout"]["zones"][1]["width_percent"] = 20
+        e.on_payload(p)
+        _settle()
+        assert sorted(_zone_ops(app, ("show",))) == ["zone:main", "zone:side"]
+    finally:
+        for r in e.zone_runners.values():
+            r.stop()
