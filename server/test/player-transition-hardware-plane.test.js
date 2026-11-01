@@ -202,7 +202,9 @@ function harnessBuffered({ transition = null, planeOk = true, rvfc = true, inter
     BOX,
   };
   const names = Object.keys(env);
-  const body = `${extract('newVideoElement')};${extract('wireSoloVideoPlayback')};${extract('attachSubtitleTrack')};` +
+  // #769: the warm video takes the item's fit through soloFit(), which reads wallConfig from env.
+  const body = `${extract('itemFit')};${extract('soloFit')};` +
+    `${extract('newVideoElement')};${extract('wireSoloVideoPlayback')};${extract('attachSubtitleTrack')};` +
     extract('renderVideoBuffered')
       .replace(/\brenderSeq\b/g, 'SEQ.v')
       .replace(/\bcurrentVideoEl\b/g, 'BOX.cur')

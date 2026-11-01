@@ -3566,6 +3566,7 @@ export default {
   'playlist.bulk.log_on': "Registrar exibições",
   'playlist.bulk.log_off': "Não registrar",
   'playlist.bulk.fit': "Ajustar",
+  'playlist.bulk.fit_placeholder': "Definir ajuste…",
   'playlist.bulk.fit_inherit': "Layout",
   'playlist.bulk.fit_contain': "Ajustar",
   'playlist.bulk.fit_cover': "Preencher",

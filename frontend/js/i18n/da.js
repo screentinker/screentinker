@@ -3433,6 +3433,7 @@ export default {
   'playlist.bulk.log_on': "Log afspilninger",
   'playlist.bulk.log_off': "Log ikke",
   'playlist.bulk.fit': "Tilpasning",
+  'playlist.bulk.fit_placeholder': "Vælg tilpasning…",
   'playlist.bulk.fit_inherit': "Layout",
   'playlist.bulk.fit_contain': "Tilpas",
   'playlist.bulk.fit_cover': "Udfyld",

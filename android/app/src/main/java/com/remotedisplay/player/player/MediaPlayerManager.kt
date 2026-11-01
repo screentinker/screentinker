@@ -453,8 +453,11 @@ class MediaPlayerManager(
         }
         val fromFit: Bitmap; val toFit: Bitmap
         try {
-            fromFit = fitTransitionBitmapRotated(from, sw, sh, cw, ch, rot)
-            toFit = fitTransitionBitmapRotated(toBitmap, sw, sh, cw, ch, rot)
+            // The outgoing image is the raw bitmap, framed by the fit it was mounted with; a captured
+            // video frame is already view-sized. The incoming frame takes the next item's fit (#769).
+            val fromFrame = if (currentType == MediaType.IMAGE) shownImageFit else FullScreenFit.CONTAIN
+            fromFit = fitTransitionBitmapRotated(from, sw, sh, cw, ch, rot, fromFrame)
+            toFit = fitTransitionBitmapRotated(toBitmap, sw, sh, cw, ch, rot, FullScreenFit.effective(itemFit, wallMode))
         } catch (e: Throwable) { Log.w("MediaPlayerManager", "wipe fit failed: ${e.message}"); return false }
         view.play(fromFit, toFit, picked.first, picked.second, spec.durationMs) { swap() }
         return true
@@ -480,6 +483,10 @@ class MediaPlayerManager(
         currentType = MediaType.IMAGE
         currentWidgetUrl = null   // surface reused - a later widget show must reload
         playerView.visibility = android.view.View.GONE
+        // #769: the scale type changes with the bitmap, not before, so a wipe's outgoing image keeps
+        // its own framing until the swap.
+        shownImageFit = FullScreenFit.effective(itemFit, wallMode)
+        imageView.scaleType = scaleTypeFor(shownImageFit)
         imageView.visibility = android.view.View.VISIBLE
         youtubeWebView?.visibility = android.view.View.GONE
         exoPlayer?.stop()
@@ -1102,9 +1109,38 @@ class MediaPlayerManager(
      * players); restore the default fit on exit.
      */
     fun setWallMode(enabled: Boolean) {
-        playerView.resizeMode =
-            if (enabled) AspectRatioFrameLayout.RESIZE_MODE_FILL else AspectRatioFrameLayout.RESIZE_MODE_FIT
-        imageView.scaleType =
-            if (enabled) ImageView.ScaleType.FIT_XY else ImageView.ScaleType.FIT_CENTER
+        wallMode = enabled
+        itemFit = null              // a wall / group change starts from the default fit
+        applyVideoFit()
+        shownImageFit = FullScreenFit.effective(null, enabled)
+        imageView.scaleType = scaleTypeFor(shownImageFit)
+    }
+
+    /*
+     * #769 — the playlist item's fit_mode for full-screen playback (Fit / Fill / Stretch). Call it
+     * before showing each full-screen image or video. Video takes it now (the player view is
+     * re-mounted for every clip); an image takes it at mountImageBitmap. A wall still fills.
+     */
+    private var wallMode = false
+    private var itemFit: String? = null
+    private var shownImageFit = FullScreenFit.CONTAIN
+
+    fun setItemFit(fitMode: String?) {
+        itemFit = fitMode
+        applyVideoFit()
+    }
+
+    private fun applyVideoFit() {
+        playerView.resizeMode = when (FullScreenFit.effective(itemFit, wallMode)) {
+            FullScreenFit.FILL -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+            FullScreenFit.COVER -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+        }
+    }
+
+    private fun scaleTypeFor(fit: String): ImageView.ScaleType = when (fit) {
+        FullScreenFit.FILL -> ImageView.ScaleType.FIT_XY
+        FullScreenFit.COVER -> ImageView.ScaleType.CENTER_CROP
+        else -> ImageView.ScaleType.FIT_CENTER
     }
 }

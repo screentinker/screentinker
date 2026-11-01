@@ -5403,6 +5403,9 @@ function itemFit(item, zone) {
   const m = item && item.fit_mode || zone && zone.fit_mode || "contain";
   return m === "cover" || m === "fill" || m === "contain" ? m : "contain";
 }
+function soloFit(item) {
+  return wallConfig ? "fill" : itemFit(item, null);
+}
 function shouldLogPlay(item) {
   return !item || item.log_play !== 0;
 }
@@ -6014,7 +6017,7 @@ function preloadNextImage() {
   });
 }
 function mountImage(img, item) {
-  img.style.cssText = "width:100%;height:100%;object-fit:contain";
+  img.style.cssText = "width:100%;height:100%;object-fit:".concat(soloFit(item));
   teardownCurrentMedia();
   const c = document.getElementById("playerContainer");
   c.style.display = "block";
@@ -6096,7 +6099,12 @@ function fitToCanvas(src, w, h) {
   const cx = c.getContext("2d");
   const iw = src.naturalWidth || src.videoWidth || src.width;
   const ih = src.naturalHeight || src.videoHeight || src.height;
-  const s = Math.min(cap.w / iw, cap.h / ih);
+  const fit = src.style && src.style.objectFit || "contain";
+  if (fit === "fill") {
+    cx.drawImage(src, 0, 0, cap.w, cap.h);
+    return c;
+  }
+  const s = fit === "cover" ? Math.max(cap.w / iw, cap.h / ih) : Math.min(cap.w / iw, cap.h / ih);
   cx.drawImage(src, (cap.w - iw * s) / 2, (cap.h - ih * s) / 2, iw * s, ih * s);
   return c;
 }
@@ -6214,6 +6222,7 @@ function runGlWipe(fromFrame, toTex, t, dwellMs, onStart, mount, hardCut) {
 function runImageTransition(fromImg, toImg, t, item) {
   const dwellMs = (item.duration_sec || 10) * 1e3;
   const container = document.getElementById("playerContainer");
+  toImg.style.cssText = "width:100%;height:100%;object-fit:".concat(soloFit(item));
   runGlWipe(
     fromImg,
     toImg,
@@ -6224,7 +6233,7 @@ function runImageTransition(fromImg, toImg, t, item) {
     },
     // onStart: arm the dwell for overlap
     () => {
-      toImg.style.cssText = "width:100%;height:100%;object-fit:contain";
+      toImg.style.cssText = "width:100%;height:100%;object-fit:".concat(soloFit(item));
       container.appendChild(toImg);
       teardownCurrentMedia(toImg);
       preloadNextImage();
@@ -6325,7 +6334,7 @@ function renderLiveStream(item, src, mount, opts) {
   if (!o.forceMuted) video.volume = 1;
   video.playsInline = true;
   video.loop = false;
-  video.style.cssText = wallConfig ? "width:100%;height:100%;object-fit:fill;background:#000" : "width:100%;height:100%;object-fit:contain;background:transparent";
+  video.style.cssText = "width:100%;height:100%;object-fit:".concat(soloFit(item), ";background:").concat(wallConfig ? "#000" : "transparent");
   mount.appendChild(video);
   currentVideoEl = video;
   const seq = renderSeq;
@@ -6500,7 +6509,7 @@ function renderVideoBuffered(item) {
   attachSubtitleTrack(video, item);
   video.muted = true;
   video.loop = playlist.length === 1;
-  video.style.cssText = "width:100%;height:100%;object-fit:contain;background:transparent";
+  video.style.cssText = "width:100%;height:100%;object-fit:".concat(soloFit(item), ";background:transparent");
   let done = false, watchdog = null;
   const mountVideo = () => {
     if (stale()) {
@@ -6713,7 +6722,7 @@ function renderContent(item) {
       attachSubtitleTrack(video, item);
       video.playsInline = true;
       video.crossOrigin = "anonymous";
-      video.style.cssText = wallConfig ? "width:100%;height:100%;object-fit:fill;background:#000" : "width:100%;height:100%;object-fit:contain;background:transparent";
+      video.style.cssText = "width:100%;height:100%;object-fit:".concat(soloFit(item), ";background:").concat(wallConfig ? "#000" : "transparent");
       if (!wallConfig && Number(item.video_prerotated) === 1 && cssQuarterTurn) {
         video.style.cssText = "position:absolute;left:50%;top:50%;width:100vw;height:100vh;object-fit:contain;background:transparent;transform:translate(-50%,-50%) rotate(-" + cssQuarterTurn + "deg)";
       }
@@ -6728,7 +6737,7 @@ function renderContent(item) {
     } else if (isImage) {
       const img = document.createElement("img");
       img.src = src;
-      img.style.cssText = wallConfig ? "width:100%;height:100%;object-fit:fill" : "width:100%;height:100%;object-fit:contain";
+      img.style.cssText = "width:100%;height:100%;object-fit:".concat(soloFit(item));
       img.onerror = () => mediaFailureSkip(img, "image", src, !isFollower);
       mount.appendChild(img);
       if (!isFollower) scheduleAdvance(nextItem, (item.duration_sec || 10) * 1e3);
