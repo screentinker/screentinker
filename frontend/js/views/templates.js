@@ -866,7 +866,7 @@ function paramFieldHtml(p, value, dataSources) {
  */
 // onCreated(widget): hand the new widget to the caller (Make a sign puts it on screens) instead of
 // this dialog's own "created — add to a playlist" step.
-export async function openUseModal({ tpl, widget = null, values: initialValues = null, name: initialName = null, onSaved = null, onCreated = null } = {}) {
+export async function openUseModal({ tpl, widget = null, values: initialValues = null, name: initialName = null, fillZone = false, onSaved = null, onCreated = null } = {}) {
   if (!tpl && widget) {
     let cfg = {};
     try { cfg = JSON.parse(widget.config || '{}'); } catch { cfg = {}; }
@@ -903,6 +903,9 @@ export async function openUseModal({ tpl, widget = null, values: initialValues =
           <div class="form-group"><label for="tplUseName">${esc(t('templates.widget_name'))}</label>
             <input type="text" class="input" id="tplUseName" maxlength="120" value="${esc(initialName != null ? initialName : (widget ? widget.name : nameOf(tpl)))}"></div>
           ${params.map((p) => paramFieldHtml(p, values[p.name], dataSources)).join('')}
+          ${tpl.kind === 'slide' ? `<div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="tplFillZone" ${fillZone ? 'checked' : ''}> ${esc(t('templates.fill_zone'))}</label>
+            <div class="tpl-small tpl-meta">${esc(t('templates.fill_zone_help'))}</div></div>` : ''}
           <div id="tplUseError" class="tpl-warn-text" style="min-height:1em"></div>
         </div>
         <div class="tpl-use-preview">
@@ -940,6 +943,8 @@ export async function openUseModal({ tpl, widget = null, values: initialValues =
     wrap.querySelector('[data-image-clear]').addEventListener('click', () => { values[p.name] = ''; paintImage(p.name); schedulePreview(); });
   }
 
+  // "Fill the zone" (slide templates only): stretch to the zone instead of letterboxing.
+  const fillZoneChecked = () => { const el = m.$('#tplFillZone'); return !!(el && el.checked); };
   function readValues() {
     const out = { ...values };
     m.overlay.querySelectorAll('[data-param]').forEach((el) => {
@@ -993,13 +998,13 @@ export async function openUseModal({ tpl, widget = null, values: initialValues =
     try {
       if (editing) {
         assertLocalCallAllowed(`/widgets/${widget.id}`, 'PUT');
-        await TAPI(`/widgets/${encodeURIComponent(widget.id)}`, { method: 'PUT', body: JSON.stringify({ name: name || widget.name, config: { values: readValues() } }) });
+        await TAPI(`/widgets/${encodeURIComponent(widget.id)}`, { method: 'PUT', body: JSON.stringify({ name: name || widget.name, config: { values: readValues(), fill_zone: fillZoneChecked() } }) });
         showToast(t('templates.toast_widget_saved'), 'success');
         m.close();
         if (onSaved) onSaved();
         return;
       }
-      const w = await TAPI(`${base}/use`, { method: 'POST', body: JSON.stringify({ name, values: readValues() }) });
+      const w = await TAPI(`${base}/use`, { method: 'POST', body: JSON.stringify({ name, values: readValues(), fill_zone: fillZoneChecked() }) });
       showToast(t('templates.toast_widget_created', { name: w.name }), 'success');
       if (onCreated) { m.close(); onCreated(w); return; }
       showCreated(m, w);

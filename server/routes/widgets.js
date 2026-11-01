@@ -363,7 +363,8 @@ router.put('/:id', (req, res) => {
   if (widget.widget_type === 'template' && config) {
     try {
       const stored = storedWidgetConfig(widget);
-      config = require('../lib/templates/widget').buildConfig(stored.template, config.values, widget.workspace_id);
+      config = require('../lib/templates/widget').buildConfig(stored.template, config.values, widget.workspace_id,
+        { fill_zone: config.fill_zone === undefined ? stored.fill_zone === true : config.fill_zone === true });
     } catch (e) {
       return res.status(e.status || 400).json({ error: e.message, param: e.param });
     }
@@ -1163,7 +1164,8 @@ function renderClock(c) {
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:${safeCss(c.background, 'transparent')}; display:flex; flex-direction:${row ? 'row' : 'column'}; align-items:center; justify-content:center; height:100vh; font-family:-apple-system,sans-serif; overflow:hidden; }
-  #time { font-size:${safeNumber(c.font_size, 64)}px; font-weight:700; color:${safeCss(c.color, '#FFFFFF')}; }
+  #time { font-size:${safeNumber(c.font_size, 64)}px; font-weight:700; color:${safeCss(c.color, '#FFFFFF')}; white-space:nowrap; line-height:1.1; }
+  #date { white-space:nowrap; }
   #date { font-size:${Math.max(8, safeNumber(c.date_font_size, Math.max(16, safeNumber(c.font_size, 64) / 3)))}px; color:${safeCss(c.date_color, safeCss(c.color, '#FFFFFF'))}; opacity:${c.date_color ? 1 : 0.7}; ${dateMargin} }
 </style></head><body>
 ${dateFirst ? dateHtml : ''}
@@ -1177,7 +1179,42 @@ function update() {
   document.getElementById('time').textContent = new Date().toLocaleTimeString(${safeLocale(c.locale)}, opts);
   ${c.show_date !== false ? `document.getElementById('date').textContent = new Date().toLocaleDateString(${safeLocale(c.locale)}, { timeZone: '${safeTimezone(c.timezone)}', ${clockDateFormat(c.date_format)} });` : ''}
 }
-setInterval(update, 1000); update();
+/*
+ * Fit the zone. The font size is a fixed px value, and a clock in a small zone (12-hour time with
+ * seconds in a corner strip) wrapped "AM" onto a second line that the zone then cut off. The time
+ * and date stay on one line and shrink together until they fit, never growing past the size set.
+ * Re-measured when the text gets wider (10:00 -> 11:00) and on resize. ES5: old player WebViews.
+ */
+var BASE_T = ${safeNumber(c.font_size, 64)}, BASE_D = ${Math.max(8, safeNumber(c.date_font_size, Math.max(16, safeNumber(c.font_size, 64) / 3)))};
+var lastLen = -1;
+function fit(force) {
+  var t = document.getElementById('time'), d = document.getElementById('date');
+  var len = t.textContent.length + (d ? d.textContent.length : 0);
+  if (!force && len === lastLen) return;
+  lastLen = len;
+  t.style.fontSize = BASE_T + 'px'; if (d) d.style.fontSize = BASE_D + 'px';
+  var W = document.documentElement.clientWidth || window.innerWidth;
+  var H = document.documentElement.clientHeight || window.innerHeight;
+  if (!W || !H) return;
+  // The union of the time and date boxes, measured directly: a centred flex body clips overflow on
+  // BOTH sides, and body.scrollWidth only counts the right-hand side, so it under-reads.
+  function box() {
+    var r = t.getBoundingClientRect(), x0 = r.left, x1 = r.right, y0 = r.top, y1 = r.bottom;
+    if (d) { var q = d.getBoundingClientRect(); x0 = Math.min(x0, q.left); x1 = Math.max(x1, q.right); y0 = Math.min(y0, q.top); y1 = Math.max(y1, q.bottom); }
+    return { w: x1 - x0, h: y1 - y0 };
+  }
+  var k = 1;
+  for (var i = 0; i < 4; i++) {
+    var b = box();
+    var f = Math.min((W * 0.96) / Math.max(1, b.w), (H * 0.96) / Math.max(1, b.h));
+    if (f >= 1) break;
+    k = k * f;
+    t.style.fontSize = (BASE_T * k) + 'px'; if (d) d.style.fontSize = (BASE_D * k) + 'px';
+  }
+}
+function tick() { update(); fit(false); }
+setInterval(tick, 1000); update(); fit(true);
+window.addEventListener('resize', function () { fit(true); });
 </script></body></html>`;
 }
 

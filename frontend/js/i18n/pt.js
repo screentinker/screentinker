@@ -4895,6 +4895,8 @@ export default {
   'templates.use_title': 'Usar {name}',
   'templates.edit_title': 'Editar {name}',
   'templates.widget_name': 'Nome do widget',
+  'templates.fill_zone': 'Preencher a zona',
+  'templates.fill_zone_help': 'Estica para preencher a zona, sem barras pretas. O texto mantém o tamanho; só o espaçamento estica. Deixe desligado em designs com fotografia de fundo.',
   'templates.code_values_visible': 'Tudo o que você digitar aqui fica visível para o código deste modelo. Não coloque senhas ou chaves.',
   'templates.preview': 'Pré-visualização',
   'templates.preview_updating': 'Atualizando…',

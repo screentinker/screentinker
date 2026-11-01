@@ -14,6 +14,17 @@
   published, so it never reaches the screen, and the tab used to draw it like any other item, so a
   screen showing one photo out of nine looked broken with nothing to explain it. Disabled items are
   now faded with a "Disabled" badge and an Enable button.
+- The clock widget now fits its zone. Its font size was a fixed number, so a 12-hour clock with
+  seconds in a small corner zone wrapped "AM" onto a second line that the zone cut off. The time and
+  date now stay on one line and shrink together until they fit, and never grow past the size set.
+
+### Added
+
+- **Fill the zone**, for slide templates (like the weather forecast cards). A slide keeps its
+  designed shape, so in a zone of a different shape it was letterboxed with black bars. With Fill
+  the zone turned on in the widget's settings, it stretches to cover the whole zone: text keeps its
+  size and only the spacing and backgrounds stretch, so nothing runs off. It's off by default,
+  because a design with a photo background would have the photo cropped.
 
 ### Security
 

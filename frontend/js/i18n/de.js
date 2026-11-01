@@ -1666,6 +1666,8 @@ export default {
   'templates.use_title': '{name} verwenden',
   'templates.edit_title': '{name} bearbeiten',
   'templates.widget_name': 'Widget-Name',
+  'templates.fill_zone': 'Zone ausfüllen',
+  'templates.fill_zone_help': 'Füllt die Zone ohne schwarze Ränder. Die Schrift behält ihre Größe, nur die Abstände werden gestreckt. Bei Designs mit Fotohintergrund ausgeschaltet lassen.',
   'templates.code_values_visible': 'Alles, was Sie hier eingeben, ist für den Code dieser Vorlage sichtbar. Geben Sie hier keine Passwörter oder Schlüssel ein.',
   'templates.preview': 'Vorschau',
   'templates.preview_updating': 'Wird aktualisiert…',

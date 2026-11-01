@@ -1727,7 +1727,7 @@ export async function render(container) {
           // its config from `values` and refuses anything else.
           if (w.widget_type === 'template') {
             const { openUseModal } = await import('./templates.js');
-            openUseModal({ widget: w, values: config.values || {}, name: draft && draft.name ? draft.name : w.name, onSaved: () => loadWidgets() });
+            openUseModal({ widget: w, values: config.values || {}, fillZone: config.fill_zone === true, name: draft && draft.name ? draft.name : w.name, onSaved: () => loadWidgets() });
             return;
           }
           editingWidget = w;

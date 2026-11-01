@@ -2272,6 +2272,8 @@ export default {
   'templates.use_title': '{name} を使用',
   'templates.edit_title': '{name} を編集',
   'templates.widget_name': 'ウィジェット名',
+  'templates.fill_zone': 'ゾーンいっぱいに表示',
+  'templates.fill_zone_help': '黒い帯なしでゾーンいっぱいに広げます。文字の大きさは変わらず、間隔だけが広がります。写真背景のデザインではオフのままにしてください。',
   'templates.code_values_visible': 'ここに入力した内容はすべて、このテンプレートのコードから参照できます。パスワードやキーは入力しないでください。',
   'templates.preview': 'プレビュー',
   'templates.preview_updating': '更新中…',

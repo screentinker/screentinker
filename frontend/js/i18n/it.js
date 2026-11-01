@@ -1512,6 +1512,8 @@ export default {
   'templates.use_title': 'Usa {name}',
   'templates.edit_title': 'Modifica {name}',
   'templates.widget_name': 'Nome del widget',
+  'templates.fill_zone': 'Riempi la zona',
+  'templates.fill_zone_help': 'Si allarga per riempire la zona, senza bande nere. Il testo mantiene la sua dimensione; si allungano solo gli spazi. Lascia disattivato per i design con una foto di sfondo.',
   'templates.code_values_visible': 'Tutto ciò che inserisci qui è visibile al codice di questo modello. Non inserire password o chiavi.',
   'templates.preview': 'Anteprima',
   'templates.preview_updating': 'Aggiornamento…',

@@ -4940,6 +4940,8 @@ export default {
   'templates.use_title': 'Use {name}',
   'templates.edit_title': 'Edit {name}',
   'templates.widget_name': 'Widget name',
+  'templates.fill_zone': 'Fill the zone',
+  'templates.fill_zone_help': 'Stretch to fill the zone it plays in, with no black bars. Text keeps its size; only the spacing stretches. Leave off for designs with a photo background.',
   'templates.code_values_visible': 'Everything you enter here is visible to this template\'s code. Do not put passwords or keys in it.',
   'templates.preview': 'Preview',
   'templates.preview_updating': 'Updating…',

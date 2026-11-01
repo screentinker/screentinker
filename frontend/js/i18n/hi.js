@@ -287,6 +287,8 @@ export default {
   'templates.use_title': '{name} का उपयोग करें',
   'templates.edit_title': '{name} संपादित करें',
   'templates.widget_name': 'विजेट का नाम',
+  'templates.fill_zone': 'ज़ोन भरें',
+  'templates.fill_zone_help': 'बिना काली पट्टियों के पूरे ज़ोन में फैलता है। टेक्स्ट का आकार वही रहता है; केवल दूरी फैलती है। फ़ोटो पृष्ठभूमि वाले डिज़ाइन के लिए बंद रखें।',
   'templates.code_values_visible': 'यहाँ आप जो कुछ भी दर्ज करते हैं, वह इस टेम्पलेट के कोड को दिखाई देता है। इसमें पासवर्ड या कुंजियाँ न डालें।',
   'templates.preview': 'पूर्वावलोकन',
   'templates.preview_updating': 'अपडेट हो रहा है…',

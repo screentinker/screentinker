@@ -1592,6 +1592,8 @@ export default {
   'templates.use_title': 'Usar {name}',
   'templates.edit_title': 'Editar {name}',
   'templates.widget_name': 'Nombre del widget',
+  'templates.fill_zone': 'Llenar la zona',
+  'templates.fill_zone_help': 'Se estira para llenar la zona, sin barras negras. El texto conserva su tamaño; solo se estira el espaciado. Déjalo desactivado en diseños con foto de fondo.',
   'templates.code_values_visible': 'Todo lo que escribas aquí es visible para el código de esta plantilla. No pongas contraseñas ni claves.',
   'templates.preview': 'Previsualización',
   'templates.preview_updating': 'Actualizando…',

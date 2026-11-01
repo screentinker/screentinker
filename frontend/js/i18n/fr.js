@@ -2272,6 +2272,8 @@ export default {
   'templates.use_title': "Utiliser {name}",
   'templates.edit_title': "Modifier {name}",
   'templates.widget_name': "Nom du widget",
+  'templates.fill_zone': 'Remplir la zone',
+  'templates.fill_zone_help': 'S\'étire pour remplir la zone, sans bandes noires. Le texte garde sa taille ; seuls les espacements s\'étirent. À laisser désactivé pour les designs avec une photo en fond.',
   'templates.code_values_visible': "Tout ce que vous saisissez ici est visible par le code de ce modèle. N'y mettez ni mots de passe ni clés.",
   'templates.preview': "Aperçu",
   'templates.preview_updating': "Mise à jour…",
