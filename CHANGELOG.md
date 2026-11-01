@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 3.1.1
+
+A fix release: Stretch and Fill on full-screen screens, disabled items you can see, uploads that
+land in the right zone, a clock that fits its zone, and slides that can fill theirs. Thanks to
+@BaltasarParreira for the full-screen fit report. Upgrading from 3.1.0 needs no extra steps.
+
+### Upgrade notes
+
+- **The full-screen fit fix needs this release's Android APK** on Android screens; stage it for
+  over-the-air updates. The web player gets it with the server.
+- Widget pages are re-rendered once after the upgrade (render epoch 2), so every screen reloads its
+  widgets a single time.
 
 ### Fixed
 

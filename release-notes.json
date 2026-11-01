@@ -14,6 +14,16 @@
   ],
   "releases": [
     {
+      "version": "3.1.1",
+      "date": "2026-11-01",
+      "notes": [
+        "Stretch and Fill on a playlist item now work on full-screen screens with no layout, on Android and web players. The playlist's bulk fit menu is clearer, and items with their own fit show a badge.",
+        "A screen's Playlist tab now shows disabled items, faded with an Enable button, so a screen that skips them is no longer a mystery.",
+        "Content added without picking a zone now goes into the playlist's default zone, or the layout's main zone, from the dashboard, the Manager app and the API.",
+        "The clock widget shrinks to fit its zone instead of wrapping, and slide templates such as the weather cards have a new Fill the zone setting that removes the black bars."
+      ]
+    },
+    {
       "version": "3.1.0",
       "date": "2026-10-31",
       "notes": [
