@@ -13,6 +13,9 @@ import { confirmAccessibility } from '../components/accessibility.js';
 import { layoutPickerHtml, mountLayoutPicker, zoneSelectHtml, bindZoneSelects } from '../components/playlist-layout.js';
 import { layoutThumbHtml, layoutItemSummary, campaignZoneOptions, campaignZoneSelectHtml, campaignBannerHtml, openLayoutItemDialog } from '../components/campaign-editor.js';
 
+// #769: the per-item fit badge reuses the bulk Fit menu's labels.
+const FIT_BADGE_KEYS = { contain: 'playlist.bulk.fit_contain', cover: 'playlist.bulk.fit_cover', fill: 'playlist.bulk.fit_fill' };
+
 function formatDate(ts) {
   if (!ts) return '--';
   return new Date(ts * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -1137,7 +1140,7 @@ function paintSelectBar() {
     <button class="btn btn-secondary btn-sm" data-sel="log_on" ${n ? '' : 'disabled'}>${t('playlist.bulk.log_on')}</button>
     <button class="btn btn-secondary btn-sm" data-sel="log_off" ${n ? '' : 'disabled'}>${t('playlist.bulk.log_off')}</button>
     <select class="input" id="playlistBulkFit" ${n ? '' : 'disabled'} style="width:auto;background:var(--bg-input);font-size:13px">
-      <option value="">${t('playlist.bulk.fit')}</option>
+      <option value="">${t('playlist.bulk.fit_placeholder')}</option>
       <option value="inherit">${t('playlist.bulk.fit_inherit')}</option>
       <option value="contain">${t('playlist.bulk.fit_contain')}</option>
       <option value="cover">${t('playlist.bulk.fit_cover')}</option>
@@ -1511,6 +1514,8 @@ function renderItems(items) {
           ${/* In a slot a video counts at its full length (it always plays to the end), so say so. */ ''}
           ${fillMode && item.content_duration && /^(video|audio)\//.test(item.mime_type || '') ? `<span style="font-size:11px;white-space:nowrap;color:var(--warning)">${esc(t('corp.slot.video_len', { len: cui.formatSec(item.content_duration) }))}</span>` : ''}
           ${item.experiment_id ? `<a href="#/experiments" style="font-size:11px;padding:1px 6px;border-radius:4px;background:#3b2a0c;color:#fcd34d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex-shrink:1;text-decoration:none" title="${esc(t('exp.row_badge_tip'))}" aria-label="${esc(t('exp.row_badge'))}">⚗</a>` : ''}
+          ${/* #769: a per-item fit override is otherwise invisible, so the bulk Fit menu looked like it reverted. */ ''}
+          ${FIT_BADGE_KEYS[item.fit_mode] ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:var(--bg-input);color:var(--text-secondary);white-space:nowrap" title="${esc(t('playlist.fit_badge_tip'))}">${esc(t(FIT_BADGE_KEYS[item.fit_mode]))}</span>` : ''}
           ${item.play_from || item.play_until ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#1a2e1a;color:#86efac;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(windowSummary(item))}">${esc(windowSummary(item))}</span>` : ''}
           ${item.schedules && item.schedules.length ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:#0c2a3f;color:#7dd3fc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(scheduleSummary(item.schedules))}">🕐 ${esc(scheduleSummary(item.schedules))}</span>` : ''}
           ${Array.isArray(item.tags) && item.tags.length ? `<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:var(--bg-input);color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.tags.map((tg) => '#' + esc(tg)).join(' ')}</span>` : ''}

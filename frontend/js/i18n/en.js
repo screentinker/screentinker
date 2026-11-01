@@ -3604,6 +3604,8 @@ export default {
   'playlist.bulk.log_on': 'Log plays',
   'playlist.bulk.log_off': 'Don\'t log',
   'playlist.bulk.fit': 'Fit',
+  'playlist.bulk.fit_placeholder': 'Set fit…',
+  'playlist.fit_badge_tip': 'Fit override for this item',
   'playlist.bulk.fit_inherit': 'Layout',
   'playlist.bulk.fit_contain': 'Fit',
   'playlist.bulk.fit_cover': 'Fill',

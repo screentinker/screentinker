@@ -6612,6 +6612,10 @@
       const m = (item && item.fit_mode) || (zone && zone.fit_mode) || 'contain';
       return (m === 'cover' || m === 'fill' || m === 'contain') ? m : 'contain';
     }
+    // #769: full-screen (no layout) playback honours the item's own fit_mode too. It used to be
+    // hardcoded to contain, so "Stretch" letterboxed anyway. A wall keeps fill: every member must
+    // map the source onto the stage the same way, and a per-item cover would re-crop per device.
+    function soloFit(item) { return wallConfig ? 'fill' : itemFit(item, null); }
     function shouldLogPlay(item) { return !item || item.log_play !== 0; }
     /*
      * ⚠️ playbackOrder / playOrderState / zoneOrderState ARE DECLARED WITH THE REST OF THE PLAYER
@@ -7382,7 +7386,7 @@
     }
     // Plain hard-cut mount: tear down the outgoing frame, show the incoming image, arm the dwell.
     function mountImage(img, item) {
-      img.style.cssText = 'width:100%;height:100%;object-fit:contain';
+      img.style.cssText = `width:100%;height:100%;object-fit:${soloFit(item)}`;
       teardownCurrentMedia();
       const c = document.getElementById('playerContainer');
       c.style.display = 'block';
@@ -7476,7 +7480,7 @@
         left: cs.left, top: cs.top, transform: cs.transform, transformOrigin: cs.transformOrigin,
       };
     }
-    // draw a source (img | video | canvas) onto a container-sized canvas with object-fit:contain framing,
+    // draw a source (img | video | canvas) onto a container-sized canvas framed by its own object-fit (contain by default),
     // so the transition matches the static letterboxing exactly (stays CORS-clean iff the source is). A
     // <video> exposes its intrinsic size as videoWidth/Height, not naturalWidth/width — check both.
     //
@@ -7508,7 +7512,11 @@
       const cx = c.getContext('2d');
       const iw = src.naturalWidth || src.videoWidth || src.width;
       const ih = src.naturalHeight || src.videoHeight || src.height;
-      const s = Math.min(cap.w / iw, cap.h / ih);
+      // Frame the wipe the way the element itself is framed (#769: fill / cover, not only contain),
+      // so the transition's last frame is the frame that stays up. A bare canvas has no style: contain.
+      const fit = (src.style && src.style.objectFit) || 'contain';
+      if (fit === 'fill') { cx.drawImage(src, 0, 0, cap.w, cap.h); return c; }
+      const s = fit === 'cover' ? Math.max(cap.w / iw, cap.h / ih) : Math.min(cap.w / iw, cap.h / ih);
       cx.drawImage(src, (cap.w - iw * s) / 2, (cap.h - ih * s) / 2, iw * s, ih * s);
       return c;
     }
@@ -7618,10 +7626,11 @@
     function runImageTransition(fromImg, toImg, t, item) {
       const dwellMs = (item.duration_sec || 10) * 1000;
       const container = document.getElementById('playerContainer');
+      toImg.style.cssText = `width:100%;height:100%;object-fit:${soloFit(item)}`;   // fitToCanvas frames the wipe from this
       runGlWipe(fromImg, toImg, t, dwellMs,
         () => { scheduleAdvance(nextItem, dwellMs); },   // onStart: arm the dwell for overlap
         () => {                                                    // mount: swap in the image, keep the armed timer
-          toImg.style.cssText = 'width:100%;height:100%;object-fit:contain';
+          toImg.style.cssText = `width:100%;height:100%;object-fit:${soloFit(item)}`;
           container.appendChild(toImg);
           teardownCurrentMedia(toImg); // drop outgoing, KEEP toImg + the armed dwell timer
           preloadNextImage();
@@ -7739,9 +7748,7 @@
       if (!o.forceMuted) video.volume = 1.0;
       video.playsInline = true;
       video.loop = false;   // a live stream has no end — looping is meaningless
-      video.style.cssText = wallConfig
-        ? 'width:100%;height:100%;object-fit:fill;background:#000'
-        : 'width:100%;height:100%;object-fit:contain;background:transparent';   // #336: letterbox shows the device colour
+      video.style.cssText = `width:100%;height:100%;object-fit:${soloFit(item)};background:${wallConfig ? '#000' : 'transparent'}`;   // #336: letterbox shows the device colour
       mount.appendChild(video);
       currentVideoEl = video;
       const seq = renderSeq;
@@ -7910,7 +7917,7 @@
       video.loop = (playlist.length === 1);             // single-item playlist holds by looping
       // #336: transparent, not #000 — with object-fit:contain the element paints its own letterbox,
       // and an opaque black here sat on top of the device background colour (#325) for every video.
-      video.style.cssText = 'width:100%;height:100%;object-fit:contain;background:transparent';
+      video.style.cssText = `width:100%;height:100%;object-fit:${soloFit(item)};background:transparent`;
       let done = false, watchdog = null;
       // Full teardown + append + resume. The incoming <video> is detached until now, so teardown's
       // container-wide video cleanup can't touch it; we claim currentVideoEl only AFTER teardown (which
@@ -8204,10 +8211,8 @@
           // aspect (different innerWidths produce different cover scales),
           // which is the original vertical-misalignment bug. Fill keeps the
           // vertical mapping uniform across devices that share a viewport
-          // height. Solo (non-wall) keeps contain to preserve aspect.
-          video.style.cssText = wallConfig
-            ? 'width:100%;height:100%;object-fit:fill;background:#000'
-            : 'width:100%;height:100%;object-fit:contain;background:transparent';   // #336: letterbox shows the device colour
+          // height. Solo (non-wall) uses the item's fit_mode, contain by default (#769).
+          video.style.cssText = `width:100%;height:100%;object-fit:${soloFit(item)};background:${wallConfig ? '#000' : 'transparent'}`;   // #336: letterbox shows the device colour
           // Group members loop so a clip shorter than its schedule slot holds until the schedule
           // advances the index (and the tick seeks position % duration to stay aligned).
           // 3.0 TV-safe video: a file the operator turned sideways themselves plays as-is on a
@@ -8229,9 +8234,7 @@
         } else if (isImage) {
           const img = document.createElement('img');
           img.src = src;
-          img.style.cssText = wallConfig
-            ? 'width:100%;height:100%;object-fit:fill'
-            : 'width:100%;height:100%;object-fit:contain';
+          img.style.cssText = `width:100%;height:100%;object-fit:${soloFit(item)}`;
           img.onerror = () => mediaFailureSkip(img, 'image', src, !isFollower);
           mount.appendChild(img);
           // Leader / single screen drives image advance; follower waits for sync

@@ -1672,6 +1672,7 @@ class MainActivity : AppCompatActivity() {
         // Remote URL content - stream directly, no download
         if (item.isRemote) {
             Log.i("MainActivity", "Playing remote content: ${com.remotedisplay.player.player.RtspUrl.redact(item.remoteUrl)}")
+            mediaPlayer.setItemFit(item.fitMode)   // #769: Fit / Fill / Stretch on a full-screen item
             if (item.mimeType.startsWith("video/")) {
                 applyVideoTurn(item)
                 mediaPlayer.playVideoFromUrl(item.remoteUrl!!, item.muted, item.tlsSelfSigned,
@@ -1761,6 +1762,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun playFile(item: PlaylistItem, file: java.io.File) {
+        mediaPlayer.setItemFit(item.fitMode)   // #769: Fit / Fill / Stretch on a full-screen item
         if (item.mimeType.startsWith("video/")) {
             // A counter-turned view cannot be composited into a wipe (the snapshot is the stage's).
             val turn = applyVideoTurn(item)

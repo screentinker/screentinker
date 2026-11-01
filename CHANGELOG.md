@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- A playlist item set to Stretch or Fill now plays that way on a full-screen screen (one with no
+  layout) on Android and the web player. Both used to letterbox every image and video there, so
+  short images kept black bars whatever the setting said; layout zones, Tizen and the Pi/Windows
+  player already honoured it. Transitions are framed to match. The playlist's bulk Fit menu now
+  reads "Set fit…" instead of snapping back to a placeholder that also said "Fit", and an item
+  with its own fit shows it as a badge. Reported by @BaltasarParreira (#769).
 - Content added without picking a zone now goes into the playlist's default zone, or, when it has
   none, the layout's main zone by name ("Main"), instead of being saved with no zone and shown as
   "Main zone (Main)". This applies to uploads from the Manager app, the dashboard and the API alike,

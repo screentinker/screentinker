@@ -1932,6 +1932,7 @@ export default {
     'playlist.bulk.log_on': 'Weergaven loggen',
     'playlist.bulk.log_off': 'Niet loggen',
     'playlist.bulk.fit': 'Passend',
+    'playlist.bulk.fit_placeholder': 'Passing kiezen…',
     'playlist.bulk.fit_inherit': 'Lay-out',
     'playlist.bulk.fit_contain': 'Passen',
     'playlist.bulk.fit_cover': 'Vullen',

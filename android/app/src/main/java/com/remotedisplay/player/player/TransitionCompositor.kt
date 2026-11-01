@@ -171,16 +171,19 @@ fun fitTransitionBitmap(src: Bitmap, w: Int, h: Int): Bitmap =
  * the screen box -> vertical GL flip on the final texture. For rot=0 with stage==screen this reduces
  * to exactly the old contain+flip, so landscape is byte-identical.
  */
-fun fitTransitionBitmapRotated(src: Bitmap, stageW: Int, stageH: Int, screenW: Int, screenH: Int, rotDeg: Float): Bitmap {
+fun fitTransitionBitmapRotated(src: Bitmap, stageW: Int, stageH: Int, screenW: Int, screenH: Int, rotDeg: Float,
+                               fit: String = FullScreenFit.CONTAIN): Bitmap {
     val out = Bitmap.createBitmap(screenW, screenH, Bitmap.Config.ARGB_8888)
     val c = Canvas(out)
     c.drawColor(android.graphics.Color.BLACK)
     val iw = src.width.toFloat(); val ih = src.height.toFloat()
     if (iw > 0f && ih > 0f && stageW > 0 && stageH > 0) {
-        val s = minOf(stageW / iw, stageH / ih)   // contain, in stage space
-        val dw = iw * s; val dh = ih * s
+        // #769: framed like the mounted view (contain by default; fill / cover for the item's fit_mode).
+        // Cover overflows the stage box; the screen-sized bitmap clips it, exactly as the view does.
+        val (sx, sy) = FullScreenFit.scales(iw, ih, stageW.toFloat(), stageH.toFloat(), fit)
+        val dw = iw * sx; val dh = ih * sy
         val m = Matrix()
-        m.postScale(s, s)
+        m.postScale(sx, sy)
         m.postTranslate((stageW - dw) / 2f, (stageH - dh) / 2f)   // placed in the stage box
         // rotate the stage box about its centre and drop it, centred, into the screen box
         m.postTranslate(-stageW / 2f, -stageH / 2f)
