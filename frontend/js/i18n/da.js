@@ -4674,6 +4674,8 @@ export default {
   'templates.use_title': "Brug {name}",
   'templates.edit_title': "Rediger {name}",
   'templates.widget_name': "Widgetnavn",
+  'templates.fill_zone': 'Udfyld zonen',
+  'templates.fill_zone_help': 'Strækkes til at fylde zonen uden sorte kanter. Teksten beholder sin størrelse; kun afstandene strækkes. Lad den være slået fra ved design med fotobaggrund.',
   'templates.code_values_visible': "Alt, hvad du indtaster her, er synligt for skabelonens kode. Skriv ikke adgangskoder eller nøgler i det.",
   'templates.preview': "Forhåndsvisning",
   'templates.preview_updating': "Opdaterer…",

@@ -1179,6 +1179,8 @@ export default {
   'templates.use_title': '使用 {name}',
   'templates.edit_title': '编辑 {name}',
   'templates.widget_name': '小组件名称',
+  'templates.fill_zone': '填满区域',
+  'templates.fill_zone_help': '拉伸以填满区域，没有黑边。文字大小不变，只拉伸间距。带照片背景的设计请保持关闭。',
   'templates.code_values_visible': '你在此输入的所有内容对此模板的代码都是可见的。请勿填写密码或密钥。',
   'templates.preview': '预览',
   'templates.preview_updating': '正在更新……',

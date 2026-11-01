@@ -3240,6 +3240,8 @@ export default {
   'templates.use_title': '{name} gebruiken',
   'templates.edit_title': '{name} bewerken',
   'templates.widget_name': 'Widgetnaam',
+  'templates.fill_zone': 'Zone vullen',
+  'templates.fill_zone_help': 'Rekt uit tot de hele zone, zonder zwarte balken. Tekst houdt zijn grootte; alleen de tussenruimte rekt mee. Laat uit voor ontwerpen met een fotoachtergrond.',
   'templates.code_values_visible': 'Alles wat je hier invult, is zichtbaar voor de code van dit sjabloon. Zet er geen wachtwoorden of sleutels in.',
   'templates.preview': 'Voorbeeld',
   'templates.preview_updating': 'Bijwerken…',

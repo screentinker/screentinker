@@ -631,7 +631,7 @@ function qrSvg(text, ec, darkIn, lightIn) {
  */
 const FIT_SCRIPT = `<script>
 (function () {
-  var AW = __AW__, AH = __AH__;
+  var AW = __AW__, AH = __AH__, FILL = __FILL__;
   var stage = document.querySelector('.stage');
   if (!stage) return;
   // Read once: the attribute text is fixed, only the pixel result changes with the panel.
@@ -652,11 +652,16 @@ const FIT_SCRIPT = `<script>
     // a computed margin vertically. No position change, no wrapper — see the note above.
     var w = Math.min(bw, bh * AW / AH);
     var h = w * AH / AW;
-    stage.style.width = w + 'px';
-    stage.style.height = h + 'px';
+    // FILL ("Fill the zone", a widget setting): the stage takes the whole box, so there are no bars,
+    // but type and corners stay sized for the authored shape (w above), so text never outgrows the
+    // box or runs off it. Only positions and backgrounds stretch. Off by default: a photo deck given
+    // the whole box has its cover background cropped, which is why the default letterboxes.
+    var sw = FILL ? bw : w, sh = FILL ? bh : h;
+    stage.style.width = sw + 'px';
+    stage.style.height = sh + 'px';
     stage.style.marginLeft = 'auto';
     stage.style.marginRight = 'auto';
-    stage.style.marginTop = Math.round((bh - h) / 2) + 'px';
+    stage.style.marginTop = Math.round((bh - sh) / 2) + 'px';
     for (var j = 0; j < sized.length; j++) {
       var e = sized[j];
       if (e[1] > 0) e[0].style.fontSize = (e[1] / 100 * w) + 'px';
@@ -1028,7 +1033,8 @@ function renderSlideHtml(rawConfig, opts = {}) {
   const [aw, ah] = String(slide.aspect || '16:9').split(':').map((n) => parseInt(n, 10));
   const fitScript = FIT_SCRIPT
     .replace('__AW__', String(aw > 0 ? aw : 16))
-    .replace('__AH__', String(ah > 0 ? ah : 9));
+    .replace('__AH__', String(ah > 0 ? ah : 9))
+    .replace('__FILL__', opts.fill === true ? '1' : '0');
 
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

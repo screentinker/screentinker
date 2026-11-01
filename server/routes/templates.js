@@ -283,7 +283,7 @@ router.post('/installed/:catalog/:id/use', (req, res) => {
   if (!key) return res.status(404).json({ error: 'Template not installed' });
   const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 120) : '';
   try {
-    const config = tplWidget.buildConfig(key, req.body && req.body.values, req.workspaceId);
+    const config = tplWidget.buildConfig(key, req.body && req.body.values, req.workspaceId, { fill_zone: req.body && req.body.fill_zone === true });
     const id = uuidv4();
     db.prepare('INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config) VALUES (?, ?, ?, ?, ?, ?)')
       .run(id, req.user.id, req.workspaceId, 'template', name || store.getInstalled(key).name, JSON.stringify(config));

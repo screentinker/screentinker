@@ -373,6 +373,28 @@ test('PUT /api/widgets/:id cannot repoint the template, inject keys, or store ba
   assert.equal(back.status, 200, back.text);
 });
 
+// "Fill the zone": a display setting of a SLIDE template widget, kept beside its values. Only a real
+// true is stored, a values-only save keeps it, and a code (html) template never gets it.
+test('fill_zone: stored only as true on a slide widget, kept across a values-only save, and reaches the render', async () => {
+  const vals = { logo: U.imgA.id, feed: 'secrets' };
+  const cfgOf = (r) => JSON.parse(r.json.config);
+  let r = await api(U.editor, 'PUT', `/api/widgets/${W.slideA}`, { config: { values: vals, fill_zone: true } });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(cfgOf(r).fill_zone, true);
+  assert.match((await api(null, 'GET', `/api/widgets/${W.slideA}/render`)).text, /FILL = 1/);
+
+  r = await api(U.editor, 'PUT', `/api/widgets/${W.slideA}`, { config: { values: vals } });
+  assert.equal(cfgOf(r).fill_zone, true, 'a save that does not mention it keeps it');
+
+  r = await api(U.editor, 'PUT', `/api/widgets/${W.slideA}`, { config: { values: vals, fill_zone: 'yes' } });
+  assert.equal(cfgOf(r).fill_zone, undefined, 'only a real true');
+  assert.match((await api(null, 'GET', `/api/widgets/${W.slideA}/render`)).text, /FILL = 0/);
+
+  r = await api(U.editor, 'PUT', `/api/widgets/${W.htmlA}`, { config: { values: { photo: U.imgA.id, feed: 'secrets' }, fill_zone: true } });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(cfgOf(r).fill_zone, undefined, 'an html template has no slide to fill');
+});
+
 test('POST /api/widgets refuses widget_type "template" (JWT and st_ token)', async () => {
   const body = { widget_type: 'template', name: 'x', config: { template: 'local/html-probe', values: { photo: U.imgA.id } } };
   assert.equal((await api(U.editor, 'POST', '/api/widgets', body)).status, 400);

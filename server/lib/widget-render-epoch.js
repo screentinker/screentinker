@@ -14,5 +14,6 @@
  * whose cache keys deliberately stay stable so panels do not redraw on an upgrade.
  *
  *   1  12-hour clocks showed 12 o'clock as "00" in 24-hour locales (lib/hour-cycle.js)
+ *   2  clocks shrink to fit their zone instead of wrapping; slide widgets can fill their zone
  */
-module.exports = 1;
+module.exports = 2;
