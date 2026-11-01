@@ -18,7 +18,7 @@ const PLAYER = fs.readFileSync(path.join(__dirname, '..', 'player', 'index.html'
 
 /** The real renderZones, lifted verbatim and run against fakes. Returns zone id -> item labels. */
 function render(zones, playlist, defaultItem) {
-  const start = PLAYER.indexOf('    function renderZones(container, defaultItem) {');
+  const start = PLAYER.indexOf('    function renderZones(container, defaultItem, prev) {');
   const end = PLAYER.indexOf('    // Render items[index] in a zone and schedule', start);
   assert.ok(start > 0 && end > start, 'renderZones is still in index.html');
   const shown = {};

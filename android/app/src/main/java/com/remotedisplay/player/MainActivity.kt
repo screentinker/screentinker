@@ -1132,6 +1132,8 @@ class MainActivity : AppCompatActivity() {
                     handler.post {
                         zoneManager?.renderAssignments(assignments, config.serverUrl, contentCache, config.deviceId)
                         zoneManager?.lastAssignmentSig = assignmentSig
+                        // Zones left playing (unchanged items) still take a saved fisheye view in place.
+                        zoneManager?.updateFisheye(assignments)
                     }
                 } else {
                     // A saved fisheye view is applied in place: the camera keeps streaming.
@@ -1807,15 +1809,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun zoneAssignmentSig(assignments: org.json.JSONArray): String =
+        // Per item: ZoneRenderPlan.itemSig (live URL + certificate rule, widget rev, #660 see-through).
         (0 until assignments.length()).map { i ->
-            val a = assignments.getJSONObject(i)
-            // A live item's URL and certificate rule decide how it connects: an edit must reconnect it
-            // (the full-screen path does this through liveConnectionOf). Appended only when set.
-            // #660: a see-through tick changes the render URL, so it re-renders the zone.
-            "${a.optString("content_id")}:${a.optString("zone_id")}:${a.optString("widget_id")}:${a.optLong("widget_rev", 0L)}" +
-                (if (a.optString("mime_type") == "video/rtsp" || a.optString("mime_type") == "video/hls")
-                    ":${a.optString("remote_url")}" + (if (a.optInt("tls_self_signed", 0) == 1) ":tls-self-signed" else "") else "") +
-                (if (a.optInt("transparent_bg", 0) == 1) ":t" else "")
+            com.remotedisplay.player.player.ZoneRenderPlan.itemSig(assignments.getJSONObject(i))
         }.sorted().joinToString("|")
 
     private fun zoneGeometrySig(layoutZones: org.json.JSONArray): String =

@@ -125,6 +125,10 @@ class ZoneManager(
     // alone cannot tell "same layout, same zones" from "same layout, zones changed".
     var lastZoneSig: String? = null
 
+    /** Each rendered zone's item signature (see [ZoneRenderPlan.itemSig]): a re-render skips a zone whose items
+     *  did not change, so it keeps playing. Cleared with the zones in [cleanup]. */
+    private val zoneItemSigs = mutableMapOf<String, String>()
+
     // #74/#75: device-effective IANA timezone for per-item schedule evaluation.
     @Volatile private var effectiveTimezone: String? = null
     fun setTimezone(tz: String?) { effectiveTimezone = tz }
@@ -155,16 +159,22 @@ class ZoneManager(
     }
 
     fun renderAssignments(assignments: JSONArray, serverUrl: String, contentCache: com.remotedisplay.player.data.ContentCache, deviceId: String = "") {
-        // Clear ONLY our own zone views/timers. `container` is the activity root and
-        // also holds the static playerView/imageView/youtubeWebView/statusOverlay -
-        // removeAllViews() here would detach those and black the screen on switch-back.
-        cancelAllRotations()
-        cancelAllTransitions()
-        zoneViews.values.forEach { container.removeView(it) }
-        zoneViews.clear()
-        zoneFaces.clear()
-        zoneLastIdx.clear()
-        releaseExoPlayers()
+        // ⚠️ Same zones, new items: only the zones whose OWN items changed are re-rendered (below).
+        // Every zone used to be torn down on any change, and a weather widget's data refresh bumps
+        // its rev every few minutes, so a camera or video in the next zone went black each time.
+        // A first render after setupZones() (no zone signatures yet) starts clean as before.
+        if (zoneItemSigs.isEmpty()) {
+            // Clear ONLY our own zone views/timers. `container` is the activity root and
+            // also holds the static playerView/imageView/youtubeWebView/statusOverlay -
+            // removeAllViews() here would detach those and black the screen on switch-back.
+            cancelAllRotations()
+            cancelAllTransitions()
+            zoneViews.values.forEach { container.removeView(it) }
+            zoneViews.clear()
+            zoneFaces.clear()
+            zoneLastIdx.clear()
+            releaseExoPlayers()
+        }
         renderServerUrl = serverUrl
         renderDeviceId = deviceId
         renderCache = contentCache
@@ -202,10 +212,18 @@ class ZoneManager(
 
         // Unassigned content (zone_id=null) goes to the FIRST zone only.
         var unassignedUsed = false
+        val wanted = mutableMapOf<String, String>()
         for (zone in zones.sortedBy { it.zIndex }) {
             val zoneAssignments: List<JSONObject> = assignmentsByZone[zone.id]
                 ?: if (!unassignedUsed) { unassignedUsed = true; assignmentsByZone[null] ?: emptyList() } else emptyList()
             if (zoneAssignments.isEmpty()) continue
+            val sig = ZoneRenderPlan.zoneSig(zoneAssignments)
+            wanted[zone.id] = sig
+            if (!ZoneRenderPlan.needsRender(zoneItemSigs, zone.id, sig)) continue   // unchanged: leave it playing
+            if (zoneItemSigs.containsKey(zone.id)) {
+                zoneLastIdx.remove(zone.id)                 // a new list: no transition from the old one
+            }
+            zoneItemSigs[zone.id] = sig
 
             val x = (zone.xPercent / 100f * containerWidth).toInt()
             val y = (zone.yPercent / 100f * containerHeight).toInt()
@@ -216,6 +234,8 @@ class ZoneManager(
             com.remotedisplay.player.util.DebugLog.i("Zone", "Zone '${zone.name}' (${zone.widthPercent.toInt()}x${zone.heightPercent.toInt()}%) -> ${zoneAssignments.size} item(s)")
             showZoneItem(zone, zoneAssignments, 0, params)
         }
+        // A zone left with nothing of its own is cleared (it would otherwise keep its last item).
+        for (id in ZoneRenderPlan.zonesToClear(zoneItemSigs, wanted)) teardownZone(id)
         Log.i(TAG, "Rendered ${zoneViews.size} zone views")
     }
 
@@ -932,6 +952,21 @@ class ZoneManager(
         zoneReconnect.remove(zoneId)?.let { handler.removeCallbacks(it) }
     }
 
+    /** Tear down one zone: its view, player, timers and transition. Other zones are untouched. */
+    private fun teardownZone(zoneId: String) {
+        zoneGeneration[zoneId] = (zoneGeneration[zoneId] ?: 0) + 1   // stale callbacks are ignored
+        cancelZoneRotation(zoneId)
+        cancelZoneTransition(zoneId)
+        zoneViews.remove(zoneId)?.let { container.removeView(it) }
+        forgetZoneHealth(zoneId)
+        zoneExoPlayers.remove(zoneId)?.release()
+        zoneLiveInputs.remove(zoneId)?.release()
+        zoneFisheye.remove(zoneId)
+        zoneFaces.remove(zoneId)
+        zoneLastIdx.remove(zoneId)
+        zoneItemSigs.remove(zoneId)
+    }
+
     private fun releaseExoPlayers() {
         zoneHealth.values.forEach { it.reset() }
         zoneHealth.clear()
@@ -994,6 +1029,7 @@ class ZoneManager(
         // playback, which reuses them, renders black).
         zoneViews.values.forEach { container.removeView(it) }
         zoneViews.clear()
+        zoneItemSigs.clear()
         zones = listOf()
     }
 }

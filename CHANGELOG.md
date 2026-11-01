@@ -4,11 +4,12 @@
 
 ### Fixed
 
-- On the Pi and Windows player, a playlist refresh no longer blanks every zone of a layout. Any
-  change re-rendered all of them, and a weather widget's data refresh changes it every few minutes,
-  so a camera in another zone reconnected and the screen went black each time. Only the zones whose
-  own items changed re-render now, and a duration-only edit in a layout zone now takes effect
-  (it was ignored before). A camera that does reconnect keeps showing the previous picture until
+- A playlist update no longer blanks every zone of a layout on Android, the web player and the
+  Pi/Windows player. Any change re-rendered all of them, and a weather widget's data refresh
+  changes it every few minutes, so a camera or video in another zone reconnected and the screen went
+  black each time. Only the zones whose own items changed re-render now; a layout change still
+  rebuilds them all. On the Pi/Windows player a duration-only edit in a layout zone now takes effect
+  (it was ignored before), and a camera that does reconnect keeps showing the previous picture until
   its first real frame instead of switching to black after 1.5 seconds.
 
 ## 3.1.1

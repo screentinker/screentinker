@@ -2090,6 +2090,9 @@
     // Per-zone rotation timers (multi-zone). Each zone advances independently on
     // its own interval, decoupled from the fullscreen advanceTimer/nextItem.
     let zoneTimers = {};
+    // The zones on screen (renderZones' return): layout key + each zone's item signature and div,
+    // so a playlist update re-renders only the zones that changed. Any full teardown drops it.
+    let zoneState = null;
     // 3.0 campaigns (see Campaigns below).
     let campaign = null;          // { steps, sig } — the structure being played
     let campaignRun = null;       // { idx, stage, timers, timer, gen }
@@ -7092,6 +7095,7 @@
         clearTimeout(pendingWidgetSwap.timer); pendingWidgetSwap = null;
       }
       clearZoneTimers();
+      zoneState = null;
       stopWallZones();
       const container = document.getElementById('playerContainer');
       if (container) {
@@ -8094,6 +8098,22 @@
         return;
       }
 
+      // ⚠️ The same layout already on screen: update ONLY the zones whose items changed, without
+      // the teardown below. Every zone used to be rebuilt on any change, and a weather widget's data
+      // refresh bumps its rev every few minutes, so a video or camera in the next zone went black
+      // each time. A layout change (or anything that tore the stage down) still rebuilds them all.
+      if (isZones && zoneState && zoneState.key === zoneLayoutKey(layout)) {
+        const stage = document.getElementById('playerContainer');
+        const intact = stage && zoneState.container === stage
+          && Object.keys(zoneState.zones).every(id => zoneState.zones[id].div.parentNode === stage);
+        if (intact) {
+          discardPendingSwap();
+          stage.style.display = 'block';
+          zoneState = renderZones(stage, item, zoneState);
+          return;
+        }
+      }
+
       teardownCurrentMedia();
 
       const container = document.getElementById('playerContainer');
@@ -8103,7 +8123,7 @@
       // independent of the "current item". Render zones here (before the single-item
       // bail) so an empty/placeholder current item can't blank the whole screen.
       if (layout && layout.zones && layout.zones.length > 1 && !wallConfig) {
-        renderZones(container, item);
+        zoneState = renderZones(container, item);
         return;
       }
       // A wall with a layout: every zone runs on the shared clock (see Wall zones).
@@ -8183,7 +8203,7 @@
       const src = mediaUrl(item);
 
       if (layout && layout.zones && layout.zones.length > 1 && !wallConfig) {
-        renderZones(container, item);
+        zoneState = renderZones(container, item);
       } else {
         // Fullscreen / wall-tile
         if (isYoutube) {
@@ -8423,8 +8443,13 @@
       timers[zone.id] = setTimeout(() => showZoneItem(zone, div, items, 0, timers), 30000);
     }
 
-    function renderZones(container, defaultItem) {
-      clearZoneTimers();
+    /*
+     * `prev` (the zoneState this returned last time, same layout): zones whose items are unchanged
+     * keep playing untouched, a changed zone re-renders in its own div, a zone left empty is
+     * cleared. Without it every zone is built from scratch. Returns the new zone state.
+     */
+    function renderZones(container, defaultItem, prev) {
+      if (!prev) clearZoneTimers();
       // Group assignments by zone, ordered by sort_order so each zone rotates its
       // OWN list independently (images/widgets on a duration timer, videos on end)
       // rather than every zone re-rendering on a single global tick.
@@ -8479,16 +8504,54 @@
         return items && items.length ? items : null;
       });
       if (!zoneItems.some(Boolean) && defaultItem && zoneItems.length) zoneItems[0] = [defaultItem];
+      const next = { key: zoneLayoutKey(layout), container, zones: {} };
       layout.zones.forEach((zone, i) => {
         const items = zoneItems[i];
         if (!items) return;
+        const sig = zoneItemsSig(items);
+        const had = prev && prev.zones[zone.id];
+        if (had && had.sig === sig) { next.zones[zone.id] = had; return; }   // unchanged: leave it playing
 
-        const div = document.createElement('div');
-        div.className = 'zone';
-        div.style.cssText = `left:${zone.x_percent}%;top:${zone.y_percent}%;width:${zone.width_percent}%;height:${zone.height_percent}%;z-index:${zone.z_index || 0}`;
-        container.appendChild(div);
-        showZoneItem(zone, div, items, 0);
+        let div = had && had.div;
+        if (!div) {
+          div = document.createElement('div');
+          div.className = 'zone';
+          div.style.cssText = `left:${zone.x_percent}%;top:${zone.y_percent}%;width:${zone.width_percent}%;height:${zone.height_percent}%;z-index:${zone.z_index || 0}`;
+          container.appendChild(div);
+        }
+        next.zones[zone.id] = { sig, div };
+        showZoneItem(zone, div, items, 0);   // clears the zone's own timer and content first
       });
+      // A zone rendered before that now has nothing of its own is cleared.
+      if (prev) {
+        for (const id in prev.zones) {
+          if (next.zones[id]) continue;
+          if (zoneTimers[id]) { clearTimeout(zoneTimers[id]); delete zoneTimers[id]; }
+          const div = prev.zones[id].div;
+          div.querySelectorAll('video').forEach(v => {
+            try { if (typeof destroyHls === 'function') destroyHls(v); v.onended = null; v.onerror = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+          });
+          try { div.remove(); } catch (e) {}
+        }
+      }
+      return next;
+    }
+
+    // What a zone's items render as, in play order (a reorder is a change). The playlist
+    // fingerprint's fields plus duration_sec: a zone left playing keeps its item objects, so a
+    // dwell edit re-renders that zone (and only it) to take the new timing.
+    function zoneItemsSig(items) {
+      return items.map(a => [a.content_id || '', a.widget_id || '', a.widget_rev || '', a.zone_id || '', a.remote_url || '',
+        a.filepath || '', a.filename || '', JSON.stringify(a.schedules || []), a.play_from || '', a.play_until || '',
+        a.enabled === 0 ? 0 : 1, a.log_play === 0 ? 0 : 1, a.fit_mode || '', JSON.stringify(a.play_when || null),
+        JSON.stringify(a.tags || []), JSON.stringify(a.meta || {}), JSON.stringify(a.transition || null),
+        a.transparent_bg ? 't' : '', a.muted ? 'm' : '', a.duration_sec || 0].join('|')).join(',');
+    }
+
+    // The layout's identity + zone geometry (the playlist handler's layoutSig): a change rebuilds all zones.
+    function zoneLayoutKey(l) {
+      return !l ? '' : [l.id, ...(l.zones || []).map(z => [z.id, z.x_percent, z.y_percent, z.width_percent, z.height_percent,
+        z.z_index, z.zone_type, z.fit_mode].join(':')).sort()].join('|');
     }
 
     // Render items[index] in a zone and schedule the next item on the zone's OWN
