@@ -111,7 +111,7 @@ function ensureDevicePlaylist(deviceId, userId) {
 // Standard item query with joined content/widget info
 const ITEM_SELECT = `
   SELECT pi.id, pi.playlist_id, pi.content_id, pi.widget_id, pi.child_playlist_id, pi.zone_id, pi.sort_order, pi.duration_sec, pi.muted,
-         pi.created_at, pi.updated_at,
+         COALESCE(pi.enabled, 1) AS enabled, pi.created_at, pi.updated_at,
          COALESCE(c.filename, w.name, cp.name) as filename,
          cp.name as child_playlist_name,
          c.mime_type, c.filepath, c.thumbnail_path,
@@ -200,14 +200,9 @@ router.post('/device/:deviceId', (req, res) => {
   const activeLayout = require('../lib/resolve-device-playlist').resolvedLayoutId(req.params.deviceId) ?? devLayout?.layout_id;
   const effZone = validZoneForLayout(zone_id, activeLayout, `on add to device ${req.params.deviceId}`);
 
-  // Given no zone, the playlist's default zone. From the Manager app (its WebView user agent names it),
-  // failing that, the main zone of the layout the screen draws, so the upload is stored as "Main"
-  // rather than with no zone ("Main zone (Main)"). Other clients keep adding zone-less items.
-  const playlistLayout = require('../lib/playlist-layout');
-  let newZone = playlistLayout.zoneForNewItem(db, playlistId, effZone);
-  if (!newZone && /\bScreenTinkerManager\//.test(req.get('user-agent') || '')) {
-    newZone = playlistLayout.mainZoneIdForNewItem(db, playlistId, activeLayout);
-  }
+  // Given no zone: the playlist's default zone, else the main zone of the layout this screen draws
+  // (lib/playlist-layout.js zoneForNewItem). Was the Manager app only (#767); every client now.
+  const newZone = require('../lib/playlist-layout').zoneForNewItem(db, playlistId, effZone, activeLayout);
 
   let order = sort_order;
   if (order === undefined || order === null) {
@@ -429,6 +424,11 @@ router.put('/:id', (req, res) => {
   // dashboard toggle did nothing.
   const mutedChanged = muted !== undefined && (item.muted ? 1 : 0) !== (muted ? 1 : 0);
   if (muted !== undefined) { updates.push('muted = ?'); values.push(muted ? 1 : 0); }
+  // A disabled item stays in the playlist but is left out of what is published (routes/playlists.js
+  // publish drops enabled = 0). The screen's Playlist tab shows it faded with an Enable button.
+  if (Object.prototype.hasOwnProperty.call(req.body, 'enabled')) {
+    updates.push('enabled = ?'); values.push(req.body.enabled ? 1 : 0);
+  }
 
   if (updates.length > 0) {
     updates.push("updated_at = strftime('%s','now')");

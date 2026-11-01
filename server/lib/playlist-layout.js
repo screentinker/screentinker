@@ -64,30 +64,57 @@ function fillMainZone(items, layout) {
 
 /**
  * The zone a NEW item gets when whoever adds it gave none: the playlist's default zone
- * (playlists.default_zone_id) while that zone is still in the playlist's layout, else null, and the
- * item plays in the main zone as before. Stored on the item when it is added, never applied at
- * publish: items already in the playlist keep playing where they do, and changing the default later
- * moves nothing that was added before. Only the writers that add NEW content call this; copying,
- * duplicating, restoring and importing keep each item's own zone.
+ * (playlists.default_zone_id) while that zone is still in the playlist's layout, else the MAIN zone of
+ * the layout the playlist plays in (mainZoneIdForNewItem), else null. Stored on the item when it is
+ * added, never applied at publish: items already in the playlist keep playing where they do, and
+ * changing the default later moves nothing that was added before. Only the writers that add NEW
+ * content call this; copying, duplicating, restoring and importing keep each item's own zone.
+ *
+ * A zone-less item already plays in the main zone (fillMainZone), so naming it changes nothing on
+ * screen. It changes what the editor shows: "Main" rather than "Main zone (Main)", which read as a
+ * different, unplaced item. Until 3.1.1 only the Manager app got this fallback (#767).
+ *
+ * `screenLayoutId`: the layout the screen draws, when the caller knows it (adding from a screen's
+ * page). Otherwise a playlist without a layout of its own takes the one layout its screens draw.
  */
-function zoneForNewItem(db, playlistId, zoneId = null) {
+function zoneForNewItem(db, playlistId, zoneId = null, screenLayoutId = null) {
   if (zoneId) return zoneId;
   try {
     const row = db.prepare(`SELECT p.default_zone_id AS zone_id FROM playlists p
                               JOIN layout_zones lz ON lz.id = p.default_zone_id AND lz.layout_id = p.layout_id
                              WHERE p.id = ?`).get(playlistId);
-    return row ? row.zone_id : null;
+    if (row && row.zone_id) return row.zone_id;
   } catch (_) {
-    return null;   // a schema from before the column (a hand-built test database)
+    // a schema from before the column (a hand-built test database): fall through to the main zone
+  }
+  return mainZoneIdForNewItem(db, playlistId, screenLayoutId || screenLayoutForPlaylist(db, playlistId));
+}
+
+/**
+ * The one layout the screens playing `playlistId` draw, for a playlist without a layout of its own
+ * (a screen's own playlist: its layout is set on the screen). Null when no screen plays it, or when
+ * screens with DIFFERENT layouts share it: no single main zone is right then, so the item stays
+ * zone-less and plays in each screen's main zone. Video walls are left out: a wall places items by the
+ * wall's layout (lib/wall-layout.js), not a member's.
+ */
+function screenLayoutForPlaylist(db, playlistId) {
+  try {
+    const rows = db.prepare(`SELECT DISTINCT COALESCE(r.layout_id, d.layout_id) AS layout_id
+                               FROM device_resolved_playlist r JOIN devices d ON d.id = r.device_id
+                              WHERE r.playlist_id = ? AND d.wall_id IS NULL
+                                AND COALESCE(r.layout_id, d.layout_id) IS NOT NULL`).all(playlistId);
+    return rows.length === 1 ? rows[0].layout_id : null;
+  } catch (_) {
+    return null;   // a test database without the resolver table
   }
 }
 
 /**
  * The main zone of the layout a new item will play in: the playlist's own layout, else `screenLayoutId`
  * (a device playlist often has none of its own; the layout is on the device). Null for no layout or a
- * single zone, where the payload strips zone ids anyway (fillMainZone). Used for uploads from the
- * Manager app, which picks no zone: naming the main zone makes the editor show "Main" rather than
- * "Main zone (Main)". The item plays in the same place either way.
+ * single zone, where the payload strips zone ids anyway (fillMainZone). zoneForNewItem's last resort:
+ * naming the main zone makes the editor show "Main" rather than "Main zone (Main)". The item plays in
+ * the same place either way.
  */
 function mainZoneIdForNewItem(db, playlistId, screenLayoutId = null) {
   try {
@@ -180,4 +207,4 @@ function layoutForPayload(db, layoutId, variant = null) {
   return layout;
 }
 
-module.exports = { loadLayout, layoutForPayload, mainZone, fillMainZone, zoneForNewItem, mainZoneIdForNewItem, layoutRefusal, suggestZoneMap, overlap };
+module.exports = { loadLayout, layoutForPayload, mainZone, fillMainZone, zoneForNewItem, mainZoneIdForNewItem, screenLayoutForPlaylist, layoutRefusal, suggestZoneMap, overlap };
