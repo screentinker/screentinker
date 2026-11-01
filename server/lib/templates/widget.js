@@ -58,7 +58,7 @@ function usable(installed) {
 }
 
 /** Strictly validate a config for a workspace. Returns the clean config. Throws TemplateWidgetError/ParamError. */
-function buildConfig(templateKey, valuesIn, workspaceId) {
+function buildConfig(templateKey, valuesIn, workspaceId, extra = {}) {
   const installed = store.getInstalled(templateKey);
   const why = usable(installed);
   if (why) throw new TemplateWidgetError(`template ${String(templateKey).slice(0, 100)}: ${why}`, installed ? 409 : 404);
@@ -69,11 +69,15 @@ function buildConfig(templateKey, valuesIn, workspaceId) {
     dataSourceExists: dataSourceExistsIn(workspaceId),
     contentExists: imageContentExistsIn(workspaceId),
   });
-  return {
+  const out = {
     template: installed.id,
     values,
     ds_refs: params.boundSlugs(env.manifest.params, values).map((slug) => ({ slug })),
   };
+  // "Fill the zone": a slide template stretches to its zone instead of letterboxing (slide-render
+  // FIT_SCRIPT). A display setting of the widget, not a template value, so it is kept beside them.
+  if (extra && extra.fill_zone === true && env.manifest.kind === 'slide') out.fill_zone = true;
+  return out;
 }
 
 function readContentImage(contentId, workspaceId) {
@@ -184,6 +188,7 @@ function renderUnsafe(widget, opts) {
       resolveImage: render.slideImageResolver(env, opts.resolveImage),
       resolveFont: opts.resolveFont,
       resolveData: opts.resolveData,
+      fill: cfg.fill_zone === true,
     });
     // No author code runs in a slide, but it is still an opaque origin: nothing about a slide needs
     // this server's origin, so nothing gets it.

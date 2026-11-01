@@ -62,7 +62,7 @@ function runFitter(html, panelW, panelH) {
   return env;
 }
 
-const deck = (aspect) => S.renderSlideHtml({
+const deck = (aspect, opts) => S.renderSlideHtml({
   template: {
     aspect,
     elements: [
@@ -71,7 +71,7 @@ const deck = (aspect) => S.renderSlideHtml({
     ],
   },
   fields: { h: 'A real authoring surface' },
-});
+}, opts);
 
 test('a 16:9 deck on a 2560x1800 panel is letterboxed, not stretched to the panel', () => {
   /*
@@ -150,4 +150,35 @@ test('a panel that reports no size is left alone rather than collapsed to nothin
 test('the fitter re-runs on resize, so a rotated panel re-letterboxes', () => {
   const html = deck('16:9');
   assert.match(html, /addEventListener\('resize'/, 'a rotation arrives as a resize and must re-fit');
+});
+
+/*
+ * "Fill the zone" (a widget setting, off by default). The frame that prompted it: a 9:16 weather
+ * card in a 307x667 zone, letterboxed with a black band under it. Filled, the stage takes the whole
+ * zone, while type stays sized for the 9:16 box that would have fitted, so nothing outgrows it.
+ */
+test('fill: the stage takes the whole zone, and type stays sized for the authored shape', () => {
+  const lb = runFitter(deck('9:16'), 307, 667);
+  assert.equal(lb.stage.style.height, `${307 * 16 / 9}px`, 'by default: letterboxed to 9:16');
+
+  const env = runFitter(deck('9:16', { fill: true }), 307, 667);
+  assert.equal(env.stage.style.width, '307px');
+  assert.equal(env.stage.style.height, '667px', 'no bars');
+  assert.equal(env.stage.style.marginTop, '0px');
+  const font = env.nodes.find((n) => /font-size:6\.2cqw/.test(n._style));
+  assert.equal(font.style.fontSize, `${6.2 / 100 * 307}px`, 'the same type size as letterboxed');
+});
+
+test('fill in a zone wider than the shape: type follows the height-limited box, so it fits', () => {
+  const env = runFitter(deck('16:9', { fill: true }), 2560, 1000);
+  assert.equal(env.stage.style.width, '2560px');
+  assert.equal(env.stage.style.height, '1000px');
+  const font = env.nodes.find((n) => /font-size:6\.2cqw/.test(n._style));
+  assert.equal(font.style.fontSize, `${6.2 / 100 * (1000 * 16 / 9)}px`, 'sized for the 16:9 box that fits, not the full width');
+});
+
+test('fill is only ever switched on explicitly', () => {
+  assert.match(deck('16:9'), /FILL = 0/);
+  assert.match(deck('16:9', { fill: 'yes' }), /FILL = 0/, 'only a real true');
+  assert.match(deck('16:9', { fill: true }), /FILL = 1/);
 });

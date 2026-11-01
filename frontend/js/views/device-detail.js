@@ -2421,7 +2421,7 @@ function renderPlaylist(assignments) {
     return `<div class="empty-state"><h3>${t('device.playlist.empty_title')}</h3><p>${t('device.playlist.empty_desc')}</p></div>`;
   }
   return assignments.map((a, i) => `
-    <div class="playlist-item" data-assignment-id="${a.id}" draggable="true" data-sort="${i}">
+    <div class="playlist-item${a.enabled === 0 ? ' pl-item-disabled' : ''}" data-assignment-id="${a.id}" draggable="true" data-sort="${i}"${a.enabled === 0 ? ' style="opacity:0.55"' : ''}>
       <div style="cursor:grab;padding:4px;color:var(--text-muted);display:flex;align-items:center" class="drag-handle">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="18" x2="16" y2="18"/>
@@ -2442,7 +2442,7 @@ function renderPlaylist(assignments) {
             </div>`
       }
       <div class="playlist-item-info">
-        <div class="playlist-item-name">${esc(a.filename || a.widget_name || t('common.unknown'))}</div>
+        <div class="playlist-item-name">${esc(a.filename || a.widget_name || t('common.unknown'))}${a.enabled === 0 ? ` <span class="pl-disabled-badge" title="${esc(t('device.pl_item.disabled_tip'))}" style="font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;background:var(--danger);color:#fff;vertical-align:middle">${esc(t('device.pl_item.disabled'))}</span>` : ''}</div>
         <div class="playlist-item-meta">
           ${a.child_playlist_id ? esc(tn('device.pl_item.playlist_with_count', a.child_item_count || 0)) : a.widget_id && !a.content_id ? t('device.pl_item.widget_with_type', { type: a.widget_type || 'custom' }) : a.mime_type === 'video/youtube' ? t('device.pl_item.youtube') : a.mime_type?.startsWith('video/') ? t('device.pl_item.video') : t('device.pl_item.image')}
           ${a.zone_id ? ` &middot; <span class="pl-zone-label" data-zone-id="${esc(a.zone_id)}" style="color:var(--accent)">${t('device.pl_item.zone_label', { id: a.zone_id.slice(0,8) })}</span>` : ''}
@@ -2459,6 +2459,7 @@ function renderPlaylist(assignments) {
         <select class="input zone-select" data-assignment-id="${a.id}" data-current-zone-id="${a.zone_id || ''}" style="width:100px;font-size:11px;padding:2px 4px;background:var(--bg-input);display:none">
           <option value="">${t('device.pl_item.no_zone')}</option>
         </select>
+        ${a.enabled === 0 ? `<button class="btn btn-sm btn-secondary" data-enable-assignment="${a.id}" style="font-size:11px;padding:2px 8px">${esc(t('device.pl_item.enable'))}</button>` : ''}
         <button class="btn-icon mute-toggle" data-mute-assignment="${a.id}" data-muted="${a.muted ? '1' : '0'}" title="${a.muted ? t('device.pl_item.unmute') : t('device.pl_item.mute')}" style="color:${a.muted ? 'var(--danger)' : 'var(--text-muted)'}">
           ${a.muted
             ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>'
@@ -4020,6 +4021,19 @@ function attachRemoveHandlers(device) {
       try {
         await api.updateAssignment(id, { muted: !currentlyMuted }, device.id);
         showToast(currentlyMuted ? t('device.toast.unmuted') : t('device.toast.muted'), 'success');
+        loadDevice(device.id, 'playlist');
+      } catch (err) { showToast(err.message, 'error'); }
+    });
+  });
+
+  // Enable buttons: a disabled item is kept in the playlist but left out of what is published, so
+  // it never reaches the screen. Before this the tab drew it like any other item.
+  document.querySelectorAll('[data-enable-assignment]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await api.updateAssignment(btn.dataset.enableAssignment, { enabled: true }, device.id);
+        showToast(t('device.toast.item_enabled'), 'success');
         loadDevice(device.id, 'playlist');
       } catch (err) { showToast(err.message, 'error'); }
     });
