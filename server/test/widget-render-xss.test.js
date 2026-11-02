@@ -24,7 +24,7 @@ let base;
 test.before(async () => { await new Promise(r => server.listening ? r() : server.once('listening', r)); base = `http://127.0.0.1:${server.address().port}`; });
 test.after(() => { server.close(); db.close(); });
 
-const seed = (id, type, config) => db.prepare('INSERT INTO widgets (id, widget_type, config, workspace_id) VALUES (?,?,?,?)').run(id, type, JSON.stringify(config), 'ws1');
+const seed = (id, type, config, workspaceId = 'ws1') => db.prepare('INSERT INTO widgets (id, widget_type, config, workspace_id) VALUES (?,?,?,?)').run(id, type, JSON.stringify(config), workspaceId);
 const render = async (id, query = '') => (await fetch(`${base}/api/widgets/${id}/render${query}`)).text();
 
 const CSS_BREAKOUT = 'red}</style><script>document.title="pwned"</script><style>{';
@@ -54,7 +54,7 @@ test('text widget: raw HTML is isolated in a null-origin sandboxed iframe', asyn
 });
 
 test('SSSP3 text widget is a safe static fallback because cached nested frames do not paint', async () => {
-  seed('text-sssp3', 'text', { html: '<h1 onclick="steal()">Legacy &amp; panel</h1><script>parent.localStorage.token</script>', css: 'body{background:url(https://evil.test)}' });
+  seed('text-sssp3', 'text', { html: '<h1 onclick="steal()">Legacy &amp; panel</h1><script>parent.localStorage.token</script ><img src=x onerror="steal()">', css: 'body{background:url(https://evil.test)}' });
   const html = await render('text-sssp3', '?compat=sssp1228');
   assert.ok(html.includes('<div id="st-legacy-text">Legacy &amp; panel</div>'), 'readable copy remains');
   assert.ok(!html.includes('srcdoc='), 'the unsupported SSSP3 path is absent');
@@ -136,6 +136,26 @@ test('SSSP3 directory and menu widgets use static legacy pages instead of unsupp
   assert.match(menu, /Cafe menu/);
   assert.match(menu, /Coffee/);
   assert.doesNotMatch(menu, /<template id="src">/);
+});
+
+
+test("SSSP3 directory search cannot read another workspace's source widget", async () => {
+  seed('directory-ws2', 'directory-board', {
+    title: 'Workspace two directory', categories: [{ name: 'Private', entries: [{ identifier: '2', name: 'Not visible', available: true }] }],
+  }, 'ws2');
+  seed('search-ws1', 'directory-search', { source_widget_id: 'directory-ws2', title: 'Reception search' }, 'ws1');
+  const html = await render('search-ws1', '?compat=sssp1228');
+  assert.match(html, /Directory source not found/);
+  assert.doesNotMatch(html, /Workspace two directory|Not visible/);
+});
+
+test('SSSP3 directory search can use a source widget from its own workspace', async () => {
+  seed('directory-ws1', 'directory-board', {
+    title: 'Workspace one directory', categories: [{ name: 'Reception', entries: [{ identifier: '1', name: 'Visible', available: true }] }],
+  }, 'ws1');
+  seed('search-own-ws1', 'directory-search', { source_widget_id: 'directory-ws1', title: 'Reception search' }, 'ws1');
+  const html = await render('search-own-ws1', '?compat=sssp1228');
+  assert.match(html, /Visible/);
 });
 
 test('SSSP3 RSS has a deterministic static fallback instead of relying on legacy animation APIs', async () => {
