@@ -745,6 +745,38 @@ function pushToDevices(playlistId, reqOrIo, { skipCorporate = false } = {}) {
          WHERE pi.child_playlist_id = ? AND IFNULL(rp.source, '') != 'corporate'
       `).all(playlistId)) ids.add(r.id);
     } catch (e) { console.warn(`[playlist] ancestor fan-out failed: ${e && e.message}`); }
+    /*
+     * An offline-capable player also "uses" playlists in its FUTURE schedule
+     * plan. Those playlists are deliberately absent from device_resolved_playlist
+     * until their interval starts. Without this fan-out, publishing one leaves
+     * the old state and old asset dependencies cached on a disconnected panel.
+     *
+     * Limit this extra push to players that declared offline.schedule_plan:
+     * thin online players neither pre-cache the future state nor benefit from
+     * restarting their current loop for a schedule that is not active yet.
+     */
+    try {
+      const caps = require('../lib/player-capabilities');
+      const scheduled = db.prepare(`
+        SELECT s.device_id AS id
+          FROM schedules s
+         WHERE s.enabled = 1 AND s.playlist_id = ? AND s.device_id IS NOT NULL
+        UNION
+        SELECT gm.device_id AS id
+          FROM schedules s
+          JOIN device_group_members gm ON gm.group_id = s.group_id
+         WHERE s.enabled = 1 AND s.playlist_id = ? AND s.group_id IS NOT NULL
+        UNION
+        SELECT vw.device_id AS id
+          FROM schedules s
+          JOIN video_wall_devices vw ON vw.wall_id = s.wall_id
+         WHERE s.enabled = 1 AND s.playlist_id = ? AND s.wall_id IS NOT NULL
+      `).all(playlistId, playlistId, playlistId);
+      const deviceById = db.prepare('SELECT * FROM devices WHERE id = ?');
+      for (const target of scheduled) {
+        if (caps.supports(deviceById.get(target.id), 'offline.schedule_plan')) ids.add(target.id);
+      }
+    } catch (e) { console.warn(`[playlist] offline-plan fan-out failed: ${e && e.message}`); }
     for (const id of ids) {
       commandQueue.queueOrEmitPlaylistUpdate(deviceNs, id, buildPlaylistPayload);
     }

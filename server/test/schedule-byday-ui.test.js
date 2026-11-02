@@ -49,8 +49,8 @@ test('#327: an end date is on the form and is sent', () => {
 
 test('the scheduler still filters on BYDAY in the device local zone', () => {
   const sched = fs.readFileSync(path.join(__dirname, '..', 'services', 'scheduler.js'), 'utf8');
-  assert.match(sched, /rule\.byDay && !rule\.byDay\.includes\(L\.dow\)/,
-    'day filtering uses the device-local day-of-week');
+  assert.match(sched, /wantedDays\.includes\(anchor\.dow\)/,
+    'day filtering uses the device-local day-of-week (the occurrence anchor day)');
   assert.match(sched, /if \(key === 'BYDAY'\)/, 'BYDAY is still parsed');
   assert.match(sched, /recurrence_end/, 'recurrence_end is still honoured');
 });
