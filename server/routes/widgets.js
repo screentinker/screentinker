@@ -691,27 +691,144 @@ function cloudDocConfig(config) {
     return { error: e.message };
   }
 }
+
+function legacyStaticPage(title, content, config = {}) {
+  const fg = safeCss(config.color, '#f4f4f5');
+  const bg = safeCss(config.background, '#111827');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>
+*{box-sizing:border-box}html,body{width:100%;height:100%;margin:0;overflow:hidden}body{background:${bg};color:${fg};font-family:Arial,Helvetica,sans-serif;padding:4.5vmin}.st-title{margin:0 0 2vmin;text-align:center;font-size:6vmin;line-height:1.1}.st-sub{margin:-1vmin 0 3vmin;text-align:center;opacity:.72;font-size:2.5vmin}.st-section{margin:2.4vmin 0}.st-section h2{margin:0 0 1.1vmin;border-bottom:2px solid rgba(255,255,255,.25);padding-bottom:.7vmin;font-size:3.4vmin}.st-row{padding:.8vmin 0;border-bottom:1px solid rgba(255,255,255,.12);font-size:2.6vmin;line-height:1.25}.st-id{display:inline-block;min-width:4em;font-weight:bold}.st-muted{opacity:.7}.st-price{float:right;font-weight:bold;margin-left:2vmin}.st-news{padding:1.3vmin 0;border-bottom:1px solid rgba(255,255,255,.14);font-size:3vmin;line-height:1.3}.st-note{font-size:2vmin;opacity:.7;margin-top:.35vmin}.st-empty{padding:10vmin 2vmin;text-align:center;font-size:3vmin;opacity:.7}
+</style></head><body>${content}</body></html>`;
+}
+
+function renderLegacyDirectoryBoard(c) {
+  c = c || {};
+  const categories = Array.isArray(c.categories) ? c.categories : [];
+  const body = categories.map((category) => {
+    const entries = Array.isArray(category && category.entries) ? category.entries : [];
+    const rows = entries.map((entry) => `<div class="st-row${entry && entry.available ? '' : ' st-muted'}"><span class="st-id">${escapeHtml(String(entry && entry.identifier || ''))}</span>${escapeHtml(String(entry && entry.name || ''))}${entry && entry.subtitle ? `<div class="st-note">${escapeHtml(String(entry.subtitle))}</div>` : ''}</div>`).join('');
+    return `<section class="st-section"><h2>${escapeHtml(String(category && category.name || 'Directory'))}</h2>${rows || '<div class="st-empty">No entries</div>'}</section>`;
+  }).join('');
+  return legacyStaticPage(c.title || 'Directory', `<h1 class="st-title">${escapeHtml(c.title || 'Directory')}</h1>${c.footer_text ? `<div class="st-sub">${escapeHtml(String(c.footer_text))}</div>` : ''}${body || '<div class="st-empty">No directory entries</div>'}`, c);
+}
+
+function renderLegacyDirectorySearch(c) {
+  c = c || {};
+  const source = c.source_widget_id && db.prepare('SELECT config FROM widgets WHERE id = ?').get(c.source_widget_id);
+  if (!source) return legacyStaticPage('Directory search', '<div class="st-empty">Directory source not found</div>', c);
+  let sourceConfig = {};
+  try { sourceConfig = JSON.parse(source.config || '{}'); } catch (_) {}
+  return renderLegacyDirectoryBoard({ ...sourceConfig, title: c.title || sourceConfig.title || 'Directory search' });
+}
+
+function renderLegacyRSS(c, snapshot = null) {
+  const r = rssConfig(c || {});
+  const news = require('../lib/news-feed');
+  const source = snapshot || (r.feedUrl ? news.peek(r.feedUrl, r.mode) : null);
+  const payload = source ? news.screenPayload(source, { max: r.maxItems, images: false }) : null;
+  const items = payload && Array.isArray(payload.items) ? payload.items : [];
+  const body = items.map((item) => `<div class="st-news">${escapeHtml(String(item.title || ''))}${item.summary ? `<div class="st-note">${escapeHtml(String(item.summary))}</div>` : ''}</div>`).join('');
+  return legacyStaticPage('News', body || '<div class="st-empty">Waiting for feed data…</div>', c);
+}
+
+function renderLegacyMenuBoard(config, opts = {}) {
+  const menu = require('../lib/menu-board').normalise(config, opts);
+  const sections = menu.sections.map((section) => {
+    const rows = section.items.filter((item) => !item.hidden && !(item.sold_out && menu.sold_out === 'hide')).map((item) => {
+      const prices = item.prices.map((price) => require('../lib/menu-board').formatPrice(price, menu)).join(' / ');
+      return `<div class="st-row${item.sold_out ? ' st-muted' : ''}">${escapeHtml(item.name)}${prices ? `<span class="st-price">${escapeHtml(prices)}</span>` : ''}${item.description && menu.show_descriptions ? `<div class="st-note">${escapeHtml(item.description)}</div>` : ''}</div>`;
+    }).join('');
+    return `<section class="st-section"><h2>${escapeHtml(section.name || 'Menu')}</h2>${rows || '<div class="st-empty">No available items</div>'}</section>`;
+  }).join('');
+  return legacyStaticPage(menu.title || 'Menu', `${menu.title ? `<h1 class="st-title">${escapeHtml(menu.title)}</h1>` : ''}${menu.subtitle ? `<div class="st-sub">${escapeHtml(menu.subtitle)}</div>` : ''}${sections || '<div class="st-empty">The menu is empty.</div>'}`, { ...config, background: require('../lib/menu-board').THEMES[menu.theme].bg, color: require('../lib/menu-board').THEMES[menu.theme].fg });
+}
+
+/* A social wall's normal renderer polls and animates cards. Snapshotting the
+ * already-approved server-side posts gives the legacy package readable offline
+ * content without granting its file:// page a live network dependency. */
+function renderLegacySocial(widget, config, snapshot) {
+  let data = snapshot;
+  if (!data) {
+    try { data = require('../lib/social/widget').payload(db, widget, config); }
+    catch (_) { data = { configured: false, posts: [] }; }
+  }
+  const posts = Array.isArray(data && data.posts) ? data.posts : [];
+  const rows = posts.slice(0, 8).map((post) => {
+    const who = [post.a, post.h].filter(Boolean).join(' ');
+    const network = post.n ? ` · ${String(post.n).toUpperCase()}` : '';
+    return `<div class="st-news">${who ? `<strong>${escapeHtml(who)}${escapeHtml(network)}</strong><br>` : ''}${escapeHtml(String(post.t || ''))}</div>`;
+  }).join('');
+  const title = config && config.title ? String(config.title) : 'Social wall';
+  const empty = data && data.configured ? 'No approved posts are available.' : 'Choose a social feed for this wall.';
+  return legacyStaticPage(title, `<h1 class="st-title">${escapeHtml(title)}</h1>${rows || `<div class="st-empty">${empty}</div>`}`, config || {});
+}
+
+/*
+ * The full room panel is interactive and continuously polls the server. That
+ * does not survive the DB48E's cached file:// widget path, so the SSSP3 route
+ * emits a readable, display-only snapshot. The normal panel remains unchanged
+ * for connected and interactive players.
+ */
+function renderLegacyRoomDisplay(config, initial) {
+  const state = initial && initial.room ? initial : null;
+  const room = state && state.room;
+  const now = state && Number(state.server_now) ? Number(state.server_now) : Date.now();
+  const events = state && Array.isArray(state.events) ? state.events : [];
+  let current = null;
+  let next = null;
+  for (const event of events) {
+    if (!event || event.free) continue;
+    if (Number(event.start) <= now && Number(event.end) > now) { current = event; break; }
+    if (Number(event.start) > now && (!next || Number(event.start) < Number(next.start))) next = event;
+  }
+  const timezone = room && room.timezone ? String(room.timezone) : 'UTC';
+  const time = (value) => {
+    try { return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: timezone }).format(new Date(value)); }
+    catch (_) { return new Date(value).toISOString().slice(11, 16); }
+  };
+  const title = room && room.name ? String(room.name) : 'Room display';
+  const detail = current
+    ? `Until ${time(current.end)}${current.title ? ` · ${escapeHtml(String(current.title))}` : ''}`
+    : (next ? `Next: ${time(next.start)}${next.title ? ` · ${escapeHtml(String(next.title))}` : ''}` : 'No more meetings today');
+  const schedule = events.filter((event) => event && !event.free && Number(event.end) > now).slice(0, 6).map((event) =>
+    `<div class="st-row"><span class="st-id">${escapeHtml(time(event.start))}</span>${escapeHtml(String(event.title || (event.private ? 'Reserved' : 'Meeting')))}</div>`
+  ).join('');
+  return legacyStaticPage(title, `<h1 class="st-title">${escapeHtml(title)}</h1><div class="st-sub">${escapeHtml(timezone)}</div><div class="st-empty"><strong>${current ? 'BUSY' : 'AVAILABLE'}</strong><br>${detail}</div>${schedule ? `<section class="st-section"><h2>Today</h2>${schedule}</section>` : ''}`, config || {});
+}
+
+function legacyLinkedWidget(url, origin, workspaceId) {
+  if (!url || !origin || !workspaceId) return null;
+  try {
+    const target = new URL(String(url), origin);
+    if (target.origin !== new URL(origin).origin) return null;
+    const match = /^\/api\/widgets\/([a-f0-9-]+)\/render$/i.exec(target.pathname);
+    if (!match) return null;
+    const widget = db.prepare('SELECT * FROM widgets WHERE id = ? AND workspace_id = ?').get(match[1], workspaceId);
+    if (!widget) return null;
+    return { widget, config: JSON.parse(widget.config || '{}') };
+  } catch (_) { return null; }
+}
+
 function renderWidgetHtml(type, config, opts = {}) {
   const iframeSandbox = opts.iframeSandbox || 'allow-scripts';
   config = config || {};
   switch (type) {
     case 'clock': return renderClock(config);
-    case 'weather': return renderWeather(config);
+    case 'weather': return renderWeather(config, opts.weatherSnapshot);
     case 'radar': return require('../lib/radar/widget').previewHtml(config, { origin: opts.origin });
-    case 'rss': return renderRSS(config, { seed: opts.seed });
-    case 'text': return renderText(config, iframeSandbox);
-    case 'webpage': return renderWebpage(config, iframeSandbox, opts.origin);
+    case 'rss': return opts.legacyDataFrame ? renderLegacyRSS(config) : renderRSS(config, { seed: opts.seed });
+    case 'text': return renderText(config, iframeSandbox, opts.legacyDataFrame === true);
+    case 'webpage': return renderWebpage(config, iframeSandbox, opts.origin, opts.legacyDataFrame === true);
     // The embedded renderer passes the workspace and gets a self-contained snapshot; otherwise this is
     // the editor's Preview (a saved wall's /render is handled above).
     case 'social': return opts.workspaceId && config && config.feed_id
       ? require('../lib/social/widget').renderSnapshot(require('../db/database').db, opts.workspaceId, config)
       : require('../lib/social/widget').previewHtml(config);
-    case 'directory-board': return renderDirectoryBoard(config);
-    case 'menu-board': return require('../lib/menu-board').renderMenuBoard(config, {
-      dataMap: config && config.source && config.source.slug && opts.workspaceId
-        ? require('../lib/data-sources/service').getWorkspaceDataMapSync(opts.workspaceId) : null,
-    });
-    case 'directory-search': return renderDirectorySearch(config);
+    case 'directory-board': return opts.legacyDataFrame ? renderLegacyDirectoryBoard(config) : renderDirectoryBoard(config);
+    case 'menu-board': {
+      const menuOpts = { dataMap: config && config.source && config.source.slug && opts.workspaceId ? require('../lib/data-sources/service').getWorkspaceDataMapSync(opts.workspaceId) : null };
+      return opts.legacyDataFrame ? renderLegacyMenuBoard(config, menuOpts) : require('../lib/menu-board').renderMenuBoard(config, menuOpts);
+    }
+    case 'directory-search': return opts.legacyDataFrame ? renderLegacyDirectorySearch(config) : renderDirectorySearch(config);
     case 'cloud-doc': return require('../lib/cloud-docs').renderCloudDoc(config);
     case 'diag-smoothness': return renderDiagSmoothness(config);
     // Only reached by the editor's Preview: a saved widget's /render is handled above.
@@ -813,7 +930,7 @@ router.get('/:id/render', (req, res) => {
   //
   // A URL with no rev is the old shape and stays uncacheable: nothing distinguishes one render
   // from the next, so a cached copy could serve content the operator has already changed.
-  if (req.query.rev) {
+  if (req.query.rev && req.query.compat !== 'sssp1228') {
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   } else {
     res.setHeader('Cache-Control', 'no-store');
@@ -850,6 +967,9 @@ router.get('/:id/render', (req, res) => {
     res.setHeader('Content-Security-Policy', cd.RENDER_CSP);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     return res.send(cd.renderCloudDoc(config));
+  }
+  if (widget.widget_type === 'social' && req.query.compat === 'sssp1228') {
+    return res.send(renderLegacySocial(widget, config));
   }
   /*
    * A Grafana / Power BI / Tableau dashboard (lib/bi/widget.js). Its page carries no token — those
@@ -907,7 +1027,10 @@ router.get('/:id/render', (req, res) => {
     const { renderRoomDisplay } = require('../lib/rooms/render');
     return (room ? rooms.panelState(room) : Promise.resolve(null))
       .catch(() => null)
-      .then((initial) => res.send(renderRoomDisplay({ widgetId: widget.id, origin, config, initial })));
+      .then((initial) => {
+        if (req.query.compat === 'sssp1228') return res.send(renderLegacyRoomDisplay(config, initial));
+        return res.send(renderRoomDisplay({ widgetId: widget.id, origin, config, initial }));
+      });
   }
   /*
    * The news widget (renderRSS): items and pictures come from this server only, and its policy says
@@ -917,6 +1040,7 @@ router.get('/:id/render', (req, res) => {
     res.setHeader('Content-Security-Policy', rssCsp(`${req.protocol}://${req.get('host')}`));
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
+    if (req.query.compat === 'sssp1228') return legacyRssSnapshot(config).then((snapshot) => res.send(renderLegacyRSS(config, snapshot)));
     return res.send(renderRSS(config));
   }
   if (widget.widget_type === 'template') {
@@ -934,8 +1058,32 @@ router.get('/:id/render', (req, res) => {
     res.setHeader('Referrer-Policy', 'no-referrer');
     return res.send(out.html);
   }
+  if (widget.widget_type === 'webpage' && req.query.compat === 'sssp1228') {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const linked = legacyLinkedWidget(config.url, origin, widget.workspace_id);
+    if (linked) {
+      const renderOpts = { iframeSandbox, legacyDataFrame: true, origin, workspaceId: linked.widget.workspace_id };
+      if (linked.widget.widget_type === 'rss') {
+        return legacyRssSnapshot(linked.config).then((snapshot) => res.send(renderLegacyRSS(linked.config, snapshot)));
+      }
+      return res.send(renderWidgetHtml(linked.widget.widget_type, linked.config, renderOpts));
+    }
+  }
+  if (widget.widget_type === 'weather' && req.query.compat === 'sssp1228') {
+    const query = config.__place_query || config.location || 'New York';
+    const lang = /^[A-Za-z]{2}$/.test(String(config.locale || '').slice(0, 2))
+      ? '&lang=' + encodeURIComponent(String(config.locale).slice(0, 2).toLowerCase()) : '';
+    const url = 'https://wttr.in/' + encodeURIComponent(query) + '?format=j1' + lang;
+    return legacyWeatherSnapshot(url).then((snapshot) => res.send(renderWidgetHtml(widget.widget_type, config, {
+      iframeSandbox, legacyDataFrame: true, weatherSnapshot: snapshot,
+    })));
+  }
   res.send(renderWidgetHtml(widget.widget_type, config, {
     iframeSandbox,
+    // SSSP3's old WebKit does not paint nested documents reliably from the
+    // panel's offline file:// cache. Its compatibility renderer is therefore
+    // a static-text fallback, not author HTML flattened into the local origin.
+    legacyDataFrame: req.query.compat === 'sssp1228',
     origin: `${req.protocol}://${req.get('host')}`,
     resolveImage: imageResolverFor(widget),
     resolveFont: require('./fonts').fontResolverFor(widget),
@@ -1155,6 +1303,7 @@ router.get('/preview-session/:id', (req, res) => {
 });
 
 function renderClock(c) {
+  const legacyTable = require('../lib/tz-table').tzTable(safeTimezone(c.timezone));
   const datePosition = clockDatePosition(c.date_position);
   const dateFirst = datePosition === 'above' || datePosition === 'left';
   const row = datePosition === 'left' || datePosition === 'right';
@@ -1176,15 +1325,33 @@ ${dateFirst ? '' : dateHtml}
 ${FIX_HOUR_CYCLE_JS}
 function update() {
   // show_seconds defaults TRUE so existing widgets keep the clock they already had (#323).
-  const opts = fixHourCycle(${safeLocale(c.locale)}, { hour12: ${c.format !== '24h'}, timeZone: '${safeTimezone(c.timezone)}', hour:'2-digit', minute:'2-digit'${c.show_seconds === false ? '' : ", second:'2-digit'"} });
-  document.getElementById('time').textContent = new Date().toLocaleTimeString(${safeLocale(c.locale)}, opts);
-  ${c.show_date !== false ? `document.getElementById('date').textContent = new Date().toLocaleDateString(${safeLocale(c.locale)}, { timeZone: '${safeTimezone(c.timezone)}', ${clockDateFormat(c.date_format)} });` : ''}
+  // Modern engines use Intl options with the hour-cycle fix (#761). Orsay-era SSSP3 WebKit
+  // cannot resolve DateTimeFormat options at all, so the probe falls back to the server
+  // tz-table spans and computes local time in plain ES5 below.
+  var now = new Date();
+  if (supportsClockOptions) {
+    var opts = fixHourCycle(${safeLocale(c.locale)}, { hour12: ${c.format !== '24h'}, timeZone: '${safeTimezone(c.timezone)}', hour:'2-digit', minute:'2-digit'${c.show_seconds === false ? '' : ", second:'2-digit'"} });
+    document.getElementById('time').textContent = now.toLocaleTimeString(${safeLocale(c.locale)}, opts);
+    ${c.show_date !== false ? `document.getElementById('date').textContent = now.toLocaleDateString(${safeLocale(c.locale)}, { timeZone: '${safeTimezone(c.timezone)}', ${clockDateFormat(c.date_format)} });` : ''}
+  } else {
+    var spans = ${JSON.stringify(legacyTable.spans)}, offset = spans[0].offset_min, i;
+    for (i = 1; i < spans.length && now.getTime() >= spans[i].from_ms; i++) offset = spans[i].offset_min;
+    var local = new Date(now.getTime() + offset * 60000), h = local.getUTCHours();
+    var pad = function (n) { return ('0' + n).slice(-2); };
+    var suffix = ${c.format !== '24h'} ? (h < 12 ? ' AM' : ' PM') : '';
+    if (${c.format !== '24h'}) h = h % 12 || 12;
+    document.getElementById('time').textContent = pad(h) + ':' + pad(local.getUTCMinutes()) + ${c.show_seconds === false ? "''" : "':' + pad(local.getUTCSeconds())"} + suffix;
+    ${c.show_date !== false ? "document.getElementById('date').textContent = local.toUTCString().replace(/ \\d{2}:\\d{2}:\\d{2} GMT$/, '');" : ''}
+  }
 }
+var supportsClockOptions = false;
+try { var probe = new Date(Date.UTC(2000, 0, 1, 12, 34, 56)).toLocaleTimeString('en', { timeZone:'UTC', hour:'2-digit', minute:'2-digit', hour12:false }); supportsClockOptions = /12\\D+34/.test(probe) && !/56|GMT|UTC/i.test(probe); } catch (ignore) {}
 /*
  * Fit the zone. The font size is a fixed px value, and a clock in a small zone (12-hour time with
  * seconds in a corner strip) wrapped "AM" onto a second line that the zone then cut off. The time
  * and date stay on one line and shrink together until they fit, never growing past the size set.
- * Re-measured when the text gets wider (10:00 -> 11:00) and on resize. ES5: old player WebViews.
+ * Re-measured when the text gets wider (10:00 -> 11:00) and on resize. ES5: old player WebViews
+ * (and the SSSP3 clock fall-back) write textContent too, so both paths keep the fit behaviour.
  */
 var BASE_T = ${safeNumber(c.font_size, 64)}, BASE_D = ${Math.max(8, safeNumber(c.date_font_size, Math.max(16, safeNumber(c.font_size, 64) / 3)))};
 var lastLen = -1;
@@ -1219,7 +1386,21 @@ window.addEventListener('resize', function () { fit(true); });
 </script></body></html>`;
 }
 
-function renderWeather(c) {
+async function legacyWeatherSnapshot(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data && data.current_condition && data.current_condition[0]
+      ? { current_condition: [data.current_condition[0]] } : null;
+  } catch (_) { return null; }
+  finally { clearTimeout(timeout); }
+}
+
+function renderWeather(c, snapshot) {
+  const weatherUrl = `https://wttr.in/${encodeURIComponent(c.__place_query || c.location || 'New York')}?format=j1${/^[A-Za-z]{2}$/.test(String(c.locale || '').slice(0, 2)) ? '&lang=' + encodeURIComponent(String(c.locale).slice(0, 2).toLowerCase()) : ''}`;
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:${safeCss(c.background, 'transparent')}; display:flex; align-items:center; justify-content:center; height:100vh; font-family:-apple-system,sans-serif; color:${safeCss(c.color, '#FFF')}; }
@@ -1251,28 +1432,33 @@ function renderWeather(c) {
   </div>
 </div>
 <script>
-async function load() {
-  try {
-    // #324: wttr.in accepts lang=, so "Sunny" can arrive in the operator's language rather than
-    // always English. Same locale field the clock gained in #323; blank leaves wttr.in's default.
-    // A widget following its screen fetches by the screen's coordinates (lib/widget-location.js);
-    // the label still shows the place name.
-    const r = await fetch('https://wttr.in/${encodeURIComponent(c.__place_query || c.location || 'New York')}?format=j1${/^[A-Za-z]{2}$/.test(String(c.locale || '').slice(0, 2)) ? '&lang=' + encodeURIComponent(String(c.locale).slice(0, 2).toLowerCase()) : ''}');
-    const d = await r.json();
-    const cur = d.current_condition[0];
-    const unit = '${c.units === 'metric' ? 'temp_C' : 'temp_F'}';
-    const deg = '${c.units === 'metric' ? '°C' : '°F'}';
-    document.getElementById('temp').textContent = cur[unit] + deg;
-    // With lang=, wttr.in returns localised text under lang_<code>; fall back to English.
-    const langKey = Object.keys(cur).find((k) => k.startsWith('lang_'));
-    document.getElementById('desc').textContent =
-      (langKey && cur[langKey] && cur[langKey][0] && cur[langKey][0].value) || cur.weatherDesc[0].value;
-    const code = parseInt(cur.weatherCode);
-    const icons = {113:'☀️',116:'⛅',119:'☁️',122:'☁️',143:'🌫️',176:'🌧️',200:'⛈️',227:'🌨️',260:'🌫️',263:'🌧️',266:'🌧️',293:'🌧️',296:'🌧️',299:'🌧️',302:'🌧️',305:'🌧️',308:'🌧️',311:'🌧️',314:'🌧️',317:'🌧️',320:'🌨️',323:'🌨️',326:'🌨️',329:'🌨️',332:'🌨️',335:'🌨️',338:'🌨️',350:'🌧️',353:'🌧️',356:'🌧️',359:'🌧️',362:'🌨️',365:'🌨️',368:'🌨️',371:'🌨️',374:'🌨️',377:'🌨️',386:'⛈️',389:'⛈️',392:'⛈️',395:'🌨️'};
-    document.getElementById('icon').textContent = icons[code] || '🌡️';
-  } catch(e) { document.getElementById('desc').textContent = 'Weather unavailable'; }
+var weatherUrl = ${JSON.stringify(weatherUrl)};
+function unavailable() { document.getElementById('desc').textContent = 'Weather unavailable'; }
+function applyWeather(d) {
+  var cur = d && d.current_condition && d.current_condition[0], langKey = null, k, code, icons;
+  if (!cur) { unavailable(); return; }
+  document.getElementById('temp').textContent = cur[${JSON.stringify(c.units === 'metric' ? 'temp_C' : 'temp_F')}] + ${JSON.stringify(c.units === 'metric' ? '°C' : '°F')};
+  for (k in cur) if (Object.prototype.hasOwnProperty.call(cur, k) && k.indexOf('lang_') === 0) { langKey = k; break; }
+  document.getElementById('desc').textContent = (langKey && cur[langKey] && cur[langKey][0] && cur[langKey][0].value) || (cur.weatherDesc && cur.weatherDesc[0] && cur.weatherDesc[0].value) || '';
+  code = parseInt(cur.weatherCode, 10);
+  icons = {113:'☀️',116:'⛅',119:'☁️',122:'☁️',143:'🌫️',176:'🌧️',200:'⛈️',227:'🌨️',260:'🌫️',263:'🌧️',266:'🌧️',293:'🌧️',296:'🌧️',299:'🌧️',302:'🌧️',305:'🌧️',308:'🌧️',311:'🌧️',314:'🌧️',317:'🌧️',320:'🌨️',323:'🌨️',326:'🌨️',329:'🌨️',332:'🌨️',335:'🌨️',338:'🌨️',350:'🌧️',353:'🌧️',356:'🌧️',359:'🌧️',362:'🌨️',365:'🌨️',368:'🌨️',371:'🌨️',374:'🌨️',377:'🌨️',386:'⛈️',389:'⛈️',392:'⛈️',395:'🌨️'};
+  document.getElementById('icon').textContent = icons[code] || '🌡️';
 }
-load(); setInterval(load, 600000);
+function load() {
+  var xhr;
+  try {
+    xhr = new XMLHttpRequest();
+    xhr.open('GET', weatherUrl, true);
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) return;
+      if (xhr.status < 200 || xhr.status >= 300) { unavailable(); return; }
+      try { applyWeather(JSON.parse(xhr.responseText)); } catch (ignore) { unavailable(); }
+    };
+    xhr.onerror = unavailable;
+    xhr.send(null);
+  } catch (ignore) { unavailable(); }
+}
+${snapshot ? `applyWeather(${JSON.stringify(snapshot)});` : 'load(); setInterval(load, 600000);'}
 </script></body></html>`;
 }
 
@@ -1314,6 +1500,16 @@ const jsonForScript = (o) => JSON.stringify(o).replace(/</g, '\\u003c').replace(
 function rssCsp(origin) {
   const o = origin || "'self'";
   return `default-src 'none'; img-src ${o} data:; connect-src ${o}; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox allow-scripts`;
+}
+
+function legacyRssSnapshot(c) {
+  const r = rssConfig(c || {});
+  if (!r.feedUrl) return Promise.resolve(null);
+  const news = require('../lib/news-feed');
+  return Promise.race([
+    news.getFeed(r.feedUrl, r.mode),
+    new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+  ]).catch(() => null);
 }
 
 function renderRSS(c, opts = {}) {
@@ -1483,7 +1679,7 @@ function rewriteFeedFetches(html) {
     .replace(/\/api\/news-feeds\/items\?m=(feed|page)&u=([^'"\s<>&)`]*)(?:&s=[A-Za-z0-9_-]*)?/g, (m, mode, enc) => signed(enc, mode));
 }
 
-function renderText(c, iframeSandbox = 'allow-scripts') {
+function renderText(c, iframeSandbox = 'allow-scripts', legacyDataFrame = false) {
   let html = rewriteFeedFetches(c.html ? String(c.html) : '<p style="color:white;padding:20px">Empty text widget</p>');
 
   // LEGACY DESIGNER RESCUE — deliberately narrow.
@@ -1581,6 +1777,36 @@ function renderText(c, iframeSandbox = 'allow-scripts') {
   #st-wrap { width:100%; min-height:100%; will-change:transform; }
   ${c.css || ''}
 </style></head><body><div id="st-wrap">${html}</div>${fitScript}</body></html>`;
+  if (legacyDataFrame) {
+    // The DB48E paints neither srcdoc, a data: frame, nor a document-written
+    // sandbox when the wrapper itself is a cached file:// page. Render a
+    // deliberately static subset in the TOP document instead. Strip active
+    // blocks with their contents, turn common block boundaries into line
+    // breaks, remove every remaining tag, decode the small entity set people
+    // use in signage copy, then escape it again. No author markup, CSS, URL,
+    // event handler or script reaches the local player origin.
+    const plain = String(c.html || '')
+      .replace(/<\s*(script|style|iframe|object|embed|form|svg|math)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+      .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+      .replace(/<\s*\/\s*(p|div|h[1-6]|li|tr)\s*>/gi, '\n')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;|&apos;/gi, "'")
+      .replace(/\r/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    const staticText = escapeHtml(plain).replace(/\n/g, '<br>');
+    return `<!DOCTYPE html><html><head><style>
+  * { margin:0; padding:0; }
+  html, body { width:100vw; height:100vh; overflow:hidden; background:${safeCss(c.background, 'transparent')}; }
+  body { display:flex; align-items:center; justify-content:center; color:#fff; font:32px Arial,sans-serif; text-align:center; }
+  #st-legacy-text { width:100%; max-height:100%; overflow:hidden; overflow-wrap:break-word; }
+</style></head><body><div id="st-legacy-text">${staticText}</div></body></html>`;
+  }
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; }
   html, body { width:100vw; height:100vh; overflow:hidden; background:${safeCss(c.background, 'transparent')}; }
@@ -1588,7 +1814,7 @@ function renderText(c, iframeSandbox = 'allow-scripts') {
 </style></head><body><iframe sandbox="${escapeHtml(iframeSandbox)}" srcdoc="${escapeHtml(inner)}"></iframe></body></html>`;
 }
 
-function renderWebpage(c, iframeSandbox = 'allow-scripts', origin) {
+function renderWebpage(c, iframeSandbox = 'allow-scripts', origin, legacy = false) {
   const zoom = (c.zoom || 100) / 100;
   const invZoom = 100 / (c.zoom || 100) * 100;
   const kioskPath = typeof c.url === 'string' && /^\/api\/kiosk\/[a-f0-9-]+\/render(?:\?|$)/i.test(c.url);
@@ -1604,6 +1830,19 @@ function renderWebpage(c, iframeSandbox = 'allow-scripts', origin) {
       url = origin ? new URL(path, origin).toString() : path;
     }
   } catch (_) { /* safeUrl already reduced invalid input to about:blank */ }
+  // A webpage widget can legitimately frame one of our own widget render URLs.
+  // On the DB48E that inner page must choose its legacy renderer too; third-party
+  // URLs are deliberately left untouched.
+  if (legacy && origin) {
+    try {
+      const target = new URL(url, origin);
+      const ours = new URL(origin);
+      if (target.origin === ours.origin && /^\/api\/widgets\/[a-f0-9-]+\/render$/i.test(target.pathname)) {
+        target.searchParams.set('compat', 'sssp1228');
+        url = target.toString();
+      }
+    } catch (_) { /* retain the validated URL */ }
+  }
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; } body { height:100vh; overflow:hidden; }
   iframe { width:${invZoom}%; height:${invZoom}%; border:0; transform:scale(${zoom}); transform-origin:0 0; }
@@ -2397,6 +2636,8 @@ function renderDiagSmoothness(config) {
 
 module.exports = router;
 module.exports.renderWidgetHtml = renderWidgetHtml;
+module.exports.renderLegacyRoomDisplay = renderLegacyRoomDisplay;
+module.exports.renderLegacySocial = renderLegacySocial;
 module.exports.dataResolverFor = dataResolverFor;
 module.exports.imageResolverFor = imageResolverFor;
 module.exports.widgetIframeSandboxForWorkspace = widgetIframeSandboxForWorkspace;
