@@ -173,3 +173,21 @@ test('sendEmail returns smtp_error and never throws when the transport fails', a
   assert.equal(r.reason, 'smtp_error');
   assert.match(r.error, /ECONNREFUSED/);
 });
+
+test('cc threads into both transport payloads', () => {
+  const { mod } = loadEmail(SMTP_OK);
+  const smtp = mod.buildSmtpMessage('to@x.com', 'S', 'body', '<p>body</p>', null, null, ['a@x.com', 'b@x.com']);
+  assert.strictEqual(smtp.cc, 'a@x.com, b@x.com');
+  const g = mod.buildGraphPayload('to@x.com', 'S', '<p>x</p>', null, ['a@x.com']);
+  assert.strictEqual(g.message.ccRecipients[0].emailAddress.address, 'a@x.com');
+  // bcc (private copy) threads into both and never appears as cc
+  const smtpB = mod.buildSmtpMessage('to@x.com', 'S', 'b', '<p>b</p>', null, null, [], ['admin@x.com']);
+  assert.strictEqual(smtpB.bcc, 'admin@x.com');
+  assert.ok(!('cc' in smtpB));
+  const gB = mod.buildGraphPayload('to@x.com', 'S', '<p>b</p>', null, [], ['admin@x.com']);
+  assert.strictEqual(gB.message.bccRecipients[0].emailAddress.address, 'admin@x.com');
+  assert.ok(!('ccRecipients' in gB));
+  // no cc/bcc -> no such field anywhere
+  assert.ok(!('cc' in mod.buildSmtpMessage('to@x.com', 'S', 'b', '<p>b</p>')));
+  assert.ok(!('ccRecipients' in mod.buildGraphPayload('to@x.com', 'S', '<p>b</p>')));
+});

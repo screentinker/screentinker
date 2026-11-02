@@ -713,6 +713,10 @@ const migrations = [
   "ALTER TABLE users ADD COLUMN trial_expired_at INTEGER",
   "ALTER TABLE users ADD COLUMN trial_ending_email_sent_at INTEGER",
   "ALTER TABLE users ADD COLUMN trial_expired_email_sent_at INTEGER",
+  // Renewal date for a manually-billed / comped account (PO or invoice, no Stripe sub). Epoch
+  // seconds, NULL for everyone else. services/renewalReminder.js emails the account and CCs the
+  // platform admins at 90/60/30/7 days before this date. Set via POST /api/subscription/assign.
+  "ALTER TABLE users ADD COLUMN renewal_at INTEGER",
   /*
    * Dunning: a PAID subscription whose payment failed. `past_due_since` is the grace clock —
    * stamped when Stripe reports the first failed invoice and cleared the moment a payment
@@ -2552,6 +2556,15 @@ const migrations = [
      trigger TEXT NOT NULL,
      sent_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
      PRIMARY KEY (user_id, trigger))`,
+  // Once-per-milestone idempotency for renewal reminders (services/renewalReminder.js). One row per
+  // (user, milestone-days) the day that reminder is sent; keyed to renewal_at so moving the date
+  // re-arms the milestones that are now in the future (the service deletes stale rows on change).
+  `CREATE TABLE IF NOT EXISTS renewal_reminders (
+     user_id TEXT NOT NULL,
+     milestone_days INTEGER NOT NULL,
+     renewal_at INTEGER NOT NULL,
+     sent_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     PRIMARY KEY (user_id, milestone_days))`,
   /*
    * 3.0: single-use codes handing a single sign-on session to the Manager app (routes/auth.js
    * /sso/app-exchange). Stored hashed, live for 2 minutes, deleted on use and swept on each insert.

@@ -118,7 +118,7 @@ router.get('/funnel', requireAuth, requireSuperAdmin, (req, res) => {
 
 // Admin: assign plan to user
 router.post('/assign', requireAuth, requireSuperAdmin, (req, res) => {
-  const { user_id, plan_id } = req.body;
+  const { user_id, plan_id, renewal_at } = req.body;
   if (!user_id || !plan_id) return res.status(400).json({ error: 'user_id and plan_id required' });
 
   const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get(plan_id);
@@ -126,6 +126,23 @@ router.post('/assign', requireAuth, requireSuperAdmin, (req, res) => {
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(user_id);
   if (!user) return res.status(404).json({ error: 'User not found' });
+
+  /*
+   * Optional renewal date for a manually-billed (comped/PO) account. Accepts an epoch-seconds number
+   * or an ISO date; null/'' clears it (and its sent-milestone rows). services/renewalReminder.js then
+   * emails 90/60/30/7 days before, admins CC'd. Only meaningful for a non-free plan.
+   */
+  let renewalAt; // undefined = leave as-is
+  if (renewal_at !== undefined) {
+    if (renewal_at === null || renewal_at === '') {
+      renewalAt = null;
+    } else {
+      if (plan_id === 'free') return res.status(400).json({ error: 'A renewal date does not apply to the Free plan' });
+      const n = typeof renewal_at === 'number' ? renewal_at : Math.floor(new Date(renewal_at).getTime() / 1000);
+      if (!Number.isFinite(n) || n <= 0) return res.status(400).json({ error: 'renewal_at must be an epoch time, an ISO date, or null' });
+      renewalAt = Math.floor(n);
+    }
+  }
 
   /*
    * ⚠️ A hand-granted plan has to stop BOTH clocks that would otherwise take it away again:
@@ -145,7 +162,13 @@ router.post('/assign', requireAuth, requireSuperAdmin, (req, res) => {
                WHERE id = ?`)
     .run(plan_id, plan_id === 'free' ? 0 : 1, user_id);
 
-  res.json({ success: true, plan: plan.display_name });
+  if (renewalAt !== undefined) {
+    db.prepare('UPDATE users SET renewal_at = ? WHERE id = ?').run(renewalAt, user_id);
+    // Moving or clearing the date drops any milestones already sent so they re-arm for the new date.
+    db.prepare('DELETE FROM renewal_reminders WHERE user_id = ?').run(user_id);
+  }
+
+  res.json({ success: true, plan: plan.display_name, renewal_at: renewalAt });
 });
 
 // Admin: update / create a plan. Kept for API callers; the same rules as the dashboard's

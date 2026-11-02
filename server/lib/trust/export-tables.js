@@ -224,6 +224,7 @@ const EXCLUDED = {
   template_seen: 'a person\'s "seen" markers: in their personal export',
   feedback_prompts: 'which feedback questions a person has already been asked (lib/feedback.js): the hosting service\'s bookkeeping',
   feedback_followups: 'which feedback follow-up emails a person was sent (lib/feedback.js): the hosting service\'s bookkeeping',
+  renewal_reminders: 'which renewal reminders have been sent for an account (services/renewalReminder.js): the hosting service\'s billing bookkeeping',
   recovery_grants: 'break-glass credentials (secret)',
   support_grants: 'support access credentials (secret)',
   support_requests: 'support access codes (secret)',
