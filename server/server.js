@@ -2768,6 +2768,9 @@ app.use('/uploads/content', (req, res, next) => {
   hardenUploadResponse(res, req.path);
   // Scale-out C3: a cached copy read counts as recently used (LRU); a no-op on a stock install.
   if (config.primaryUrl) { try { require('./lib/mesh/content-cache').touch(require('./db/database').db, path.basename(req.path)); } catch (e) { /* */ } }
+  // Handle generated SSSP3 rendition names before express.static: a stale or
+  // malicious symlink must not be followed by the generic public file server.
+  if (require('./lib/sssp3-fit-rendition').tryServe(req, res, config.contentDir, hardenUploadResponse)) return;
   next();
 }, express.static(config.contentDir, {
   setHeaders: (res, filePath) => {
@@ -2834,7 +2837,6 @@ app.use('/uploads/content', (req, res, next) => {
     }
     return replicaProxy.proxyToPrimary(req, res, config);
   }
-  if (require('./lib/sssp3-fit-rendition').tryServe(req, res, config.contentDir, hardenUploadResponse)) return;
   res.type('application/json').status(404).json({ error: 'Not found' });
 });
 

@@ -52,7 +52,7 @@ function assertFitDownload(e, item, fit, name) {
   assert.equal(item.fill_fit, fit);
   assert.equal(item.fill_width, 1920);
   assert.equal(item.fill_height, 1080);
-  assert.match(e.downloads[0].url, new RegExp(name.replace(/\./g, '\\.') + '\\.' + fit + '-1920x1080\\.'));
+  assert.ok(e.downloads[0].url.includes(name + '.' + fit + '-1920x1080.'), 'fitted media URL includes the requested deterministic rendition name');
   assert.match(e.downloads[0].url, new RegExp('fit=' + fit));
   assert.match(e.downloads[0].url, /[?&]w=1920/);
   assert.match(e.downloads[0].url, /[?&]h=1080/);

@@ -61,3 +61,26 @@ test('SVG fit rendition names preserve the SVG source and rasterize to PNG', () 
   const spec = parseFitName('zone.svg.fill-960x540.png');
   assert.deepEqual(spec, { original: 'zone.svg', sourceExt: '.svg', fit: 'fill', width: 960, height: 540, ext: '.png', name: 'zone.svg.fill-960x540.png' });
 });
+
+
+test('fit renditions are handled before the generic static content server follows files', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+  const mount = source.indexOf("app.use('/uploads/content'");
+  const fit = source.indexOf("sssp3-fit-rendition').tryServe", mount);
+  const staticServer = source.indexOf('express.static(config.contentDir', mount);
+  assert.ok(mount >= 0 && fit > mount && staticServer > fit, 'fit route precedes express.static for derived filenames');
+});
+
+test('fit requests cannot use symlinked source media or generate an active SVG output type', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sssp3-fit-safe-'));
+  const outside = path.join(os.tmpdir(), `sssp3-outside-${process.pid}.mp4`);
+  try {
+    fs.writeFileSync(outside, 'not media');
+    fs.symlinkSync(outside, path.join(dir, 'outside.mp4'));
+    assert.equal(await ensureRendition(dir, 'outside.contain-640x360.mp4'), null, 'a symlinked source is never passed to ffmpeg');
+    assert.equal(parseFitName('image.svg.fill-640x360.html'), null, 'an SVG rendition cannot select an active output extension');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(outside, { force: true });
+  }
+});

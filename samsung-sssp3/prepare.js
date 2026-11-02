@@ -33,12 +33,33 @@ const sssp3Capabilities = [
 fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
 let html = fs.readFileSync(path.join(app, 'index.html'), 'utf8');
-html = html.replace('<script src="schedule-eval.js"></script>', '<script src="schedule-eval.js"></script><script src="offline-schedule.js"></script><script src="offline-plan.js"></script>');
-html = html.replace('<title>ScreenTinker SSSP3 Native Player</title>', '<script src="native-diagnostics.js"></script><title>ScreenTinker SSSP3 Native Player</title>');
-html = html.replace('<div id="setupScreen">', '<div id="setupScreen"><p id="st-native-diagnostic" style="color:#ffcf63;font:24px Arial;position:absolute;top:30px;left:30px">BUILD ' + build + ' - LOADING</p>');
-const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].filter(x => x[1].trim());
+function replaceDocumentOnce(needle, replacement, label) {
+  const count = html.split(needle).length - 1;
+  if (count !== 1) throw Error('Renderer document hook missing or ambiguous: ' + label);
+  html = html.replace(needle, replacement);
+}
+replaceDocumentOnce('<script src="schedule-eval.js"></script>', '<script src="schedule-eval.js"></script><script src="offline-schedule.js"></script><script src="offline-plan.js"></script>', 'offline schedule scripts');
+replaceDocumentOnce('<title>ScreenTinker SSSP3 Native Player</title>', '<script src="native-diagnostics.js"></script><title>ScreenTinker SSSP3 Native Player</title>', 'native diagnostics script');
+replaceDocumentOnce('<div id="setupScreen">', '<div id="setupScreen"><p id="st-native-diagnostic" style="color:#ffcf63;font:24px Arial;position:absolute;top:30px;left:30px">BUILD ' + build + ' - LOADING</p>', 'native startup diagnostic');
+function inlineScripts(document) {
+  const scripts = [];
+  let cursor = 0;
+  while (cursor < document.length) {
+    const open = document.toLowerCase().indexOf('<script', cursor);
+    if (open < 0) break;
+    const openEnd = document.indexOf('>', open + 7);
+    if (openEnd < 0) throw Error('Unterminated script opening tag in renderer source');
+    const close = document.toLowerCase().indexOf('</script>', openEnd + 1);
+    if (close < 0) throw Error('Unterminated inline script in renderer source');
+    const body = document.slice(openEnd + 1, close);
+    if (body.trim()) scripts.push({ start: open, end: close + 9, body, raw: document.slice(open, close + 9) });
+    cursor = close + 9;
+  }
+  return scripts;
+}
+const scripts = inlineScripts(html);
 if (scripts.length !== 2) throw Error('Unexpected renderer script structure');
-let main = scripts[1][1];
+let main = scripts[1].body;
 const capabilityStart = main.indexOf('function declaredCapabilities() {');
 const capabilityEnd = main.indexOf('function hostPackageVersion()', capabilityStart);
 if (capabilityStart < 0 || capabilityEnd < 0) throw Error('Renderer capability function missing');
@@ -146,10 +167,10 @@ main = 'var offlinePlayOpen = null; function queueOfflinePlay(open, completed) {
 const generated = babel.transformSync(main, { presets: [[preset, { targets: { ie: '11' }, modules: false }]], comments: false, sourceType: 'script' }).code;
 acorn.parse(generated, { ecmaVersion: 5 });
 fs.writeFileSync(path.join(output, 'renderer-main.js'), generated);
-html = html.replace(scripts[1][0], '<script src="native-bridge.js"></script><script>window.__ST_NATIVE_BUILD = "' + build + '"; try { if (window.Common && Common.API && Common.API.Widget) new Common.API.Widget().sendReadyEvent(); } catch (e) { window.__STNative.launcherError = String(e); } try { window.__STNative.init(); window.__STNative.restoreStorage(); window.__STNative.ready = true; } catch (e) { window.__STNative.error = String(e); }</script><script src="renderer-main.js"></script>');
-html = html.replace('<script src="native-bridge.js"></script></body>', '</body>');
+replaceDocumentOnce(scripts[1].raw, '<script src="native-bridge.js"></script><script>window.__ST_NATIVE_BUILD = "' + build + '"; try { if (window.Common && Common.API && Common.API.Widget) new Common.API.Widget().sendReadyEvent(); } catch (e) { window.__STNative.launcherError = String(e); } try { window.__STNative.init(); window.__STNative.restoreStorage(); window.__STNative.ready = true; } catch (e) { window.__STNative.error = String(e); }</script><script src="renderer-main.js"></script>', 'main renderer replacement');
+replaceDocumentOnce('<script src="native-bridge.js"></script></body>', '</body>', 'unused native bridge tag removal');
 
-html = html.replace('<script src="native-prelude.js"></script>', '<script src="polyfills.js"></script><script src="legacy-dom.js"></script><script src="legacy-web.js"></script><script src="native-prelude.js"></script>');
+replaceDocumentOnce('<script src="native-prelude.js"></script>', '<script src="polyfills.js"></script><script src="legacy-dom.js"></script><script src="legacy-web.js"></script><script src="native-prelude.js"></script>', 'legacy compatibility prelude');
 fs.writeFileSync(path.join(output, 'index.html'), html);
 for (const name of fs.readdirSync(app)) {
   if (name === 'index.html' || name === 'renderer.html' || name === 'config.xml') continue;

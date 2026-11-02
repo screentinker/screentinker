@@ -13,6 +13,7 @@ const { PLATFORM_ROLES, ELEVATED_ROLES } = require('../middleware/auth');
 const { denyReadOnly, resourceAccess } = require('../lib/tenancy');
 const { isRealTimezone } = require('../lib/device-timezone');
 const { escapeHtml, safeUrl, safeCss, safeNumber } = require('../lib/widget-sanitize');
+const { Parser: HtmlParser } = require('htmlparser2');
 const backgrounds = require('../lib/backgrounds');
 const pluginRegistry = require('../lib/plugins/registry');
 const { BUILTIN_WIDGET_TYPES } = require('../lib/plugins/reserved');
@@ -710,9 +711,13 @@ function renderLegacyDirectoryBoard(c) {
   return legacyStaticPage(c.title || 'Directory', `<h1 class="st-title">${escapeHtml(c.title || 'Directory')}</h1>${c.footer_text ? `<div class="st-sub">${escapeHtml(String(c.footer_text))}</div>` : ''}${body || '<div class="st-empty">No directory entries</div>'}`, c);
 }
 
-function renderLegacyDirectorySearch(c) {
+function renderLegacyDirectorySearch(c, workspaceId) {
   c = c || {};
-  const source = c.source_widget_id && db.prepare('SELECT config FROM widgets WHERE id = ?').get(c.source_widget_id);
+  // A directory-search widget is allowed to reuse a directory only in its own
+  // workspace. The render endpoint is intentionally public to paired players,
+  // so the resource relationship itself must carry the tenant boundary.
+  const source = c.source_widget_id && workspaceId
+    && db.prepare('SELECT config FROM widgets WHERE id = ? AND workspace_id = ?').get(c.source_widget_id, workspaceId);
   if (!source) return legacyStaticPage('Directory search', '<div class="st-empty">Directory source not found</div>', c);
   let sourceConfig = {};
   try { sourceConfig = JSON.parse(source.config || '{}'); } catch (_) {}
@@ -827,7 +832,7 @@ function renderWidgetHtml(type, config, opts = {}) {
       const menuOpts = { dataMap: config && config.source && config.source.slug && opts.workspaceId ? require('../lib/data-sources/service').getWorkspaceDataMapSync(opts.workspaceId) : null };
       return opts.legacyDataFrame ? renderLegacyMenuBoard(config, menuOpts) : require('../lib/menu-board').renderMenuBoard(config, menuOpts);
     }
-    case 'directory-search': return opts.legacyDataFrame ? renderLegacyDirectorySearch(config) : renderDirectorySearch(config);
+    case 'directory-search': return opts.legacyDataFrame ? renderLegacyDirectorySearch(config, opts.workspaceId) : renderDirectorySearch(config);
     case 'cloud-doc': return require('../lib/cloud-docs').renderCloudDoc(config);
     case 'diag-smoothness': return renderDiagSmoothness(config);
     // Only reached by the editor's Preview: a saved widget's /render is handled above.
@@ -1678,6 +1683,40 @@ function rewriteFeedFetches(html) {
     .replace(/\/api\/news-feeds\/items\?m=(feed|page)&u=([^'"\s<>&)`]*)(?:&s=[A-Za-z0-9_-]*)?/g, (m, mode, enc) => signed(enc, mode));
 }
 
+const LEGACY_TEXT_BLOCKS = new Set(['address', 'article', 'blockquote', 'br', 'div', 'dl', 'dt', 'dd', 'fieldset', 'figcaption', 'figure', 'footer', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hr', 'li', 'main', 'nav', 'ol', 'p', 'pre', 'section', 'table', 'tr', 'ul']);
+const LEGACY_TEXT_IGNORED = new Set(['script', 'style', 'iframe', 'object', 'embed', 'form', 'svg', 'math', 'template', 'noscript']);
+
+function legacyPlainText(value) {
+  const chunks = [];
+  let ignoredDepth = 0;
+  const breakLine = () => {
+    if (chunks.length && chunks[chunks.length - 1] !== '\n') chunks.push('\n');
+  };
+  const parser = new HtmlParser({
+    onopentag(name) {
+      const tag = String(name || '').toLowerCase();
+      if (ignoredDepth) { ignoredDepth++; return; }
+      if (LEGACY_TEXT_IGNORED.has(tag)) { ignoredDepth = 1; return; }
+      if (tag === 'br' || LEGACY_TEXT_BLOCKS.has(tag)) breakLine();
+    },
+    onclosetag(name) {
+      const tag = String(name || '').toLowerCase();
+      if (ignoredDepth) { ignoredDepth--; return; }
+      if (LEGACY_TEXT_BLOCKS.has(tag)) breakLine();
+    },
+    ontext(text) {
+      if (!ignoredDepth) chunks.push(text);
+    },
+  }, { decodeEntities: true, lowerCaseTags: true, lowerCaseAttributeNames: true, recognizeSelfClosing: true });
+  try {
+    parser.write(String(value == null ? '' : value));
+    parser.end();
+  } catch (_) {
+    return '';
+  }
+  return chunks.join('').replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function renderText(c, iframeSandbox = 'allow-scripts', legacyDataFrame = false) {
   let html = rewriteFeedFetches(c.html ? String(c.html) : '<p style="color:white;padding:20px">Empty text widget</p>');
 
@@ -1778,26 +1817,12 @@ function renderText(c, iframeSandbox = 'allow-scripts', legacyDataFrame = false)
 </style></head><body><div id="st-wrap">${html}</div>${fitScript}</body></html>`;
   if (legacyDataFrame) {
     // The DB48E paints neither srcdoc, a data: frame, nor a document-written
-    // sandbox when the wrapper itself is a cached file:// page. Render a
-    // deliberately static subset in the TOP document instead. Strip active
-    // blocks with their contents, turn common block boundaries into line
-    // breaks, remove every remaining tag, decode the small entity set people
-    // use in signage copy, then escape it again. No author markup, CSS, URL,
-    // event handler or script reaches the local player origin.
-    const plain = String(c.html || '')
-      .replace(/<\s*(script|style|iframe|object|embed|form|svg|math)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
-      .replace(/<\s*br\s*\/?\s*>/gi, '\n')
-      .replace(/<\s*\/\s*(p|div|h[1-6]|li|tr)\s*>/gi, '\n')
-      .replace(/<[^>]*>/g, '')
-      .replace(/&nbsp;/gi, ' ')
-      .replace(/&amp;/gi, '&')
-      .replace(/&lt;/gi, '<')
-      .replace(/&gt;/gi, '>')
-      .replace(/&quot;/gi, '"')
-      .replace(/&#39;|&apos;/gi, "'")
-      .replace(/\r/g, '')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
+    // sandbox when the wrapper itself is a cached file:// page. Its fallback is
+    // therefore text only. Parse untrusted author HTML with a real HTML parser;
+    // never try to make it safe by filtering tags. The parser decodes entities,
+    // discards active/raw-text elements wholesale, and this wrapper escapes every
+    // remaining character before it enters the document.
+    const plain = legacyPlainText(c.html);
     const staticText = escapeHtml(plain).replace(/\n/g, '<br>');
     return `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; }
