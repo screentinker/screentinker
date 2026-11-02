@@ -714,23 +714,23 @@ function renderEditor(container) {
             Shape
             <select id="aspectSel" class="input" style="margin:0;padding:3px 6px;font-size:12px">
               ${ASPECT_CHOICES.map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join('')}
-              <option value="custom">Custom…</option>
+              <option value="custom">${esc(t('slides.edit.aspect_custom'))}</option>
             </select>
           </label>
           <span id="aspectCustomWrap" style="display:none;align-items:center;gap:3px;font-size:12px;color:var(--text-muted)">
-            <input type="number" id="aspectW" min="1" max="99" step="1" class="input" aria-label="Custom shape width" style="width:52px;margin:0;padding:3px 4px;font-size:12px">
+            <input type="number" id="aspectW" min="1" max="99" step="1" class="input" aria-label="${esc(t('slides.edit.aspect_w'))}" style="width:52px;margin:0;padding:3px 4px;font-size:12px">
             :
-            <input type="number" id="aspectH" min="1" max="99" step="1" class="input" aria-label="Custom shape height" style="width:52px;margin:0;padding:3px 4px;font-size:12px">
+            <input type="number" id="aspectH" min="1" max="99" step="1" class="input" aria-label="${esc(t('slides.edit.aspect_h'))}" style="width:52px;margin:0;padding:3px 4px;font-size:12px">
           </span>
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted)" title="Draw the LEDs of a strip or matrix over the canvas, to see where text lands">
-            <input type="checkbox" id="ledGridOn" style="margin:0"> LED grid
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted)" title="${esc(t('slides.edit.led_grid_hint'))}">
+            <input type="checkbox" id="ledGridOn" style="margin:0"> ${esc(t('slides.edit.led_grid'))}
           </label>
           <span id="ledGridWrap" style="display:none;align-items:center;gap:3px;font-size:12px;color:var(--text-muted)">
-            <input type="number" id="ledCols" min="1" max="512" step="1" class="input" aria-label="LEDs across" title="LEDs across" style="width:60px;margin:0;padding:3px 4px;font-size:12px">
+            <input type="number" id="ledCols" min="1" max="512" step="1" class="input" aria-label="${esc(t('slides.edit.led_cols'))}" title="${esc(t('slides.edit.led_cols'))}" style="width:60px;margin:0;padding:3px 4px;font-size:12px">
             ×
-            <input type="number" id="ledRows" min="1" max="512" step="1" class="input" aria-label="LEDs down" title="LEDs down" style="width:60px;margin:0;padding:3px 4px;font-size:12px">
-            <select id="ledMatch" class="input" style="margin:0;padding:3px 6px;font-size:12px;max-width:170px" aria-label="Match an LED screen">
-              <option value="">Match a screen…</option>
+            <input type="number" id="ledRows" min="1" max="512" step="1" class="input" aria-label="${esc(t('slides.edit.led_rows'))}" title="${esc(t('slides.edit.led_rows'))}" style="width:60px;margin:0;padding:3px 4px;font-size:12px">
+            <select id="ledMatch" class="input" style="margin:0;padding:3px 6px;font-size:12px;max-width:170px" aria-label="${esc(t('slides.edit.led_match'))}">
+              <option value="">${esc(t('slides.edit.led_match_pick'))}</option>
             </select>
           </span>
           <span style="margin-left:auto;font-size:12px;color:var(--text-muted)" id="settleLabel"></span>
@@ -853,7 +853,7 @@ function renderEditor(container) {
     const { aspect, exact } = aspectForGrid(scr.cols, scr.rows);
     state.deck.doc.aspect = aspect;
     state.customAspect = isCustomAspect();
-    if (!exact) showToast(`${scr.cols}×${scr.rows} is longer than a shape can be, so the canvas is ${aspect}, close to it`, 'info');
+    if (!exact) showToast(t('slides.edit.led_approx', { size: `${scr.cols}×${scr.rows}`, aspect }), 'info');
     touch(container);
     paintAll(container);
   });
@@ -3182,7 +3182,7 @@ function refreshLedMatch(container) {
   const match = container.querySelector('#ledMatch');
   if (!match) return;
   const screens = state.ledScreens || [];
-  const opts = ['<option value="">' + (screens.length ? 'Match a screen…' : 'No LED screens') + '</option>']
+  const opts = ['<option value="">' + esc(t(screens.length ? 'slides.edit.led_match_pick' : 'slides.edit.led_match_none')) + '</option>']
     .concat(screens.map((x) => `<option value="${esc(x.id)}">${esc(x.name)} (${x.cols}×${x.rows})</option>`)).join('');
   if (match.innerHTML !== opts) match.innerHTML = opts;
 }
