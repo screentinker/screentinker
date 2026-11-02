@@ -268,6 +268,91 @@ class WifiPlanTest {
         assertEquals("new", r.managed.single().id)
     }
 
+    @Test fun `of two unclaimed entries with one SSID, the one with the same security is taken over`() {
+        // A replaced WPA2 "Van" still waits for its removal; the WPA3 "Van" was deleted on the dashboard and added again.
+        val managed = listOf(m("retired:x", ssid = "Van", netId = 5), m("a", ssid = "Van", security = "wpa3", password = "pw-a", netId = 9))
+        val r = WifiPlan.plan(listOf(d("new", ssid = "Van", security = "wpa3", password = "pw-a")), managed, sit(mode = WifiModeLogic.OWNER, sdk = 34, wifiActive = false))
+        assertEquals("applied", r.outcomes.single().state)
+        assertEquals(9, r.managed.single { it.id == "new" }.netId)
+        assertTrue("the working configuration is not removed", r.steps.none { it is WifiStep.Remove && it.managed.netId == 9 })
+    }
+
+    @Test fun `a second released entry with the SSID does not block the one taken over`() {
+        val managed = listOf(m("old1", ssid = "Van", netId = 3).copy(released = true),
+            m("old2", ssid = "Van", netId = -1).copy(released = true))
+        val r = WifiPlan.plan(listOf(d("new", ssid = "Van", password = "other")), managed, sit(wifiActive = false))
+        assertEquals(listOf("new"), r.steps.filterIsInstance<WifiStep.Update>().map { it.desired.id })
+        assertTrue(r.outcomes.none { it.reason == "already_configured_by_hand" })
+    }
+
+    @Test fun `a leftover suggestion is not in use while the panel is on the saved network that replaced it`() {
+        val saved = m("a", ssid = "Van", netId = 4)
+        val leftover = m("retired:x", ssid = "Van", netId = -1)
+        val s = sit(mode = WifiModeLogic.OWNER, sdk = 34, netId = 4, ssid = "Van")
+        assertEquals(false, WifiPlan.inUse(leftover, s, listOf(saved, leftover)))
+        assertTrue("on the suggestion itself it is", WifiPlan.inUse(leftover, sit(mode = WifiModeLogic.OWNER, sdk = 34, netId = 12, ssid = "Van"), listOf(saved, leftover)))
+        assertTrue(WifiPlan.plan(listOf(d("a", ssid = "Van", password = "password-a")), listOf(saved, leftover), s).steps.single() is WifiStep.Remove)
+    }
+
+    @Test fun `a suggestion is never moved over while the panel is on a saved network with its SSID`() {
+        // Released saved "Van" (in use) and our suggestion "Van": the move would write over the saved one.
+        val managed = listOf(m("old", ssid = "Van", netId = 4).copy(released = true), m("a", ssid = "Van", netId = -1))
+        val r = WifiPlan.plan(listOf(d("a", ssid = "Van", password = "password-a")), managed,
+            sit(mode = WifiModeLogic.OWNER, sdk = 34, netId = 4, ssid = "Van"))
+        assertTrue(r.steps.isEmpty())
+        assertEquals("deferred", r.outcomes.single().state)
+    }
+
+    // ── network ids after a reboot ────────────────────────────────────────────────────────────────
+
+    private fun saved(netId: Int, ssid: String, security: String? = "wpa2") = WifiSaved(netId, ssid, security)
+
+    @Test fun `after a reboot each entry gets the id Android uses now, found by SSID and security`() {
+        // Before: Depot 5, Van 7, Hidden 8. Android numbers them afresh: Office (by hand) 0, Depot 1, Van 2, Hidden 3.
+        val managed = listOf(m("depot", ssid = "Depot", netId = 5), m("van", ssid = "Van", netId = 7), m("hidden", ssid = "Hidden", security = "open", netId = 8))
+        val now = listOf(saved(0, "Office"), saved(1, "Depot"), saved(2, "Van"), saved(3, "Hidden", "open"), saved(5, "Van", "open"))
+        val r = WifiPlan.resolve(managed, now)
+        assertEquals(listOf(1, 2, 3), r.map { it.netId })
+    }
+
+    @Test fun `after a reboot a removal hits our network, not the one that took over its old id`() {
+        val managed = listOf(m("van", ssid = "Van", netId = 5))
+        val now = listOf(saved(2, "Van"), saved(5, "AndroidWifi", "open"))
+        val r = WifiPlan.plan(emptyList(), WifiPlan.resolve(managed, now), sit(netId = 5, ssid = "AndroidWifi"))
+        assertEquals(2, (r.steps.single() as WifiStep.Remove).managed.netId)
+    }
+
+    @Test fun `an entry Android no longer has is dropped, a suggestion is left alone`() {
+        val managed = listOf(m("gone", netId = 4), m("sugg", netId = -1))
+        assertEquals(listOf("sugg"), WifiPlan.resolve(managed, listOf(saved(4, "other"))).map { it.id })
+    }
+
+    @Test fun `one saved network belongs to one entry, the live one first`() {
+        val managed = listOf(m("retired:x", ssid = "Van", netId = 1), m("old", ssid = "Van", netId = 2).copy(released = true), m("van", ssid = "Van", netId = 3))
+        val r = WifiPlan.resolve(managed, listOf(saved(6, "Van")))
+        assertEquals(listOf("van"), r.map { it.id })
+        assertEquals(6, r.single().netId)
+    }
+
+    @Test fun `saved networks Android will not show have unknown ids, and unknown is never the network in use`() {
+        val r = WifiPlan.resolve(listOf(m("van", ssid = "Van", netId = 3), m("sugg", netId = -1)), null)
+        assertEquals(listOf(WifiPlan.NET_ID_UNKNOWN, -1), r.map { it.netId })
+        assertTrue("unknown id, unknown SSID: possibly in use", WifiPlan.inUse(r[0], sit(netId = 3)))
+        assertEquals("connected_network_unknown", WifiPlan.waitReason(r[0], sit(netId = 3)))
+        assertTrue("the SSID still tells", WifiPlan.inUse(r[0], sit(netId = 3, ssid = "Van")))
+    }
+
+    @Test fun `the security of a saved network from its key management`() {
+        fun bits(vararg b: Int) = java.util.BitSet().apply { b.forEach { set(it) } }
+        assertEquals("wpa2", WifiPlan.securityOf(bits(1), false))
+        assertEquals("wpa2", WifiPlan.securityOf(bits(4), false))
+        assertEquals("transition mode is not one of our WPA3 networks", "wpa2", WifiPlan.securityOf(bits(1, 8), false))
+        assertEquals("wpa3", WifiPlan.securityOf(bits(8), false))
+        assertEquals("open", WifiPlan.securityOf(bits(0), false))
+        assertNull("WEP", WifiPlan.securityOf(bits(0), true))
+        assertNull("enterprise", WifiPlan.securityOf(bits(2, 3), false))
+    }
+
     // ── small helpers ─────────────────────────────────────────────────────────────────────────────
 
     @Test fun `a 64-hex key goes in raw, a passphrase in quotes`() {
