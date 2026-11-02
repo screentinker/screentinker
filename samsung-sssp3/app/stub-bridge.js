@@ -1,0 +1,1 @@
+/* The BrightSign bridge is not present on Samsung displays. */

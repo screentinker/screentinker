@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "name": "screentinker-sssp3-build",
+  "version": "0.1.0",
+  "devDependencies": {
+    "@babel/core": "7.28.5",
+    "@babel/preset-env": "7.28.5",
+    "acorn": "8.15.0",
+    "core-js": "3.46.0",
+    "esbuild": "0.28.2",
+    "regenerator-runtime": "0.14.1",
+    "puppeteer-core": "23.11.1"
+  }
+}

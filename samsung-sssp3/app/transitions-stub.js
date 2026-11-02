@@ -1,0 +1,1 @@
+window.__TRANSITION_SHADERS = window.__TRANSITION_SHADERS || {};
