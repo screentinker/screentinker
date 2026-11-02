@@ -19,6 +19,13 @@
 
 ### Fixed
 
+- **LG webOS: the install page sent SI servers to the wrong file.** A panel in Local application
+  launch mode upgrades its one Local app (`com.lg.app.signage`) from the SI server address and refuses
+  any other package with "failed to upgrade IPK", but `/webos` and the LG guide said to point the SI
+  server at `ScreenTinker.ipk`. They now give the exact SI Server Settings for Local mode: Fully
+  Qualified Domain Name on, the address `https://<your-server>/webos/com.lg.app.signage.ipk` (the
+  plain http address redirects, which a panel may not follow), Auto Set off, Local Application
+  Upgrade from Remote. Reported from a real panel by a customer evaluating ScreenTinker.
 - A playlist update no longer blanks every zone of a layout on Android, the web player and the
   Pi/Windows player. Any change re-rendered all of them, and a weather widget's data refresh
   changes it every few minutes, so a camera or video in another zone reconnected and the screen went

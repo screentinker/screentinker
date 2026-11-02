@@ -13,7 +13,8 @@ Two builds of the same app are published, because a panel identifies an app by i
 - **`com.lg.app.signage.ipk`** (id `com.lg.app.signage`), for panels in **Local** application
   launch mode, the usual way to run one signage app from USB. The panel installs only a package
   with that id and that file name, from the `application/` folder at the root of a FAT32 USB stick.
-- **`ScreenTinker.ipk`** (id `com.screentinker.player`), for the panel's app menu or an SI server.
+- **`ScreenTinker.ipk`** (id `com.screentinker.player`), for the panel's app menu. A panel in Local
+  mode refuses it, from USB and from an SI server alike.
 
 They are separate apps to the panel. Each updates itself from its own file, so a panel never
 switches from one to the other by updating.
@@ -30,12 +31,27 @@ switches from one to the other by updating.
 Reported working on real panels by a customer evaluating ScreenTinker (2026-10). An "unknown
 error" during the install is most often the panel's clock.
 
-### App menu or SI server
+### Local application mode from an SI server
+
+The panel can download the same `com.lg.app.signage.ipk` straight from your instance instead of a
+USB stick. In **Server Settings → SI Server Settings**:
+
+1. **Application Launch Mode**: Local. **Application Type**: IPK.
+2. **Fully Qualified Domain Name**: On, and the address of the file itself:
+   `https://<your-instance>/webos/com.lg.app.signage.ipk`. Use the `https://` address. The plain
+   `http://` one answers with a redirect, which a panel's downloader may not follow.
+3. **Auto Set**: Off, where the panel has it. **Local Application Upgrade**: Remote, then Confirm.
+4. Restart the panel when it finishes.
+
+⚠️ **Not `ScreenTinker.ipk`.** In Local mode the panel upgrades its one Local app, id
+`com.lg.app.signage`, from that address, and refuses a package with any other id with "failed to
+upgrade IPK". Earlier versions of the `/webos` page pointed SI servers at `ScreenTinker.ipk`.
+
+### App menu
 
 1. Get `ScreenTinker.ipk` from the release page or from `https://<your-instance>/webos`.
 2. Copy it to a USB stick, plug it into the panel, and install it from the panel's settings
-   (the menu path varies by webOS version; on most it is under General, Install App). An SI
-   server can push the same file to a fleet.
+   (the menu path varies by webOS version; on most it is under General, Install App).
 3. Launch ScreenTinker. Enter the server address with the remote and press Save. The pairing
    code appears; claim it in the dashboard.
 4. Press Back on the remote at any time to return to the server screen.

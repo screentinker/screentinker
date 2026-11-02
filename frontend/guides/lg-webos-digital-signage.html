@@ -67,8 +67,8 @@
     <h2 id="download">Get the .ipk from your own server</h2>
     <p>Open the <a href="/download/">downloads page</a> on your instance. Take the file from there rather than from a release page: the copy your server hosts is the one its self-update route publishes, so panel and server stay in step by construction. There are two builds of the same app:</p>
     <ul>
-      <li><code>com.lg.app.signage.ipk</code> for panels set to <strong>Local</strong> application launch mode, the usual way to run one signage app from a USB stick.</li>
-      <li><code>ScreenTinker.ipk</code> for installing through the panel&rsquo;s app menu or an SI server.</li>
+      <li><code>com.lg.app.signage.ipk</code> for panels set to <strong>Local</strong> application launch mode, the usual way to run one signage app, from a USB stick or an SI server.</li>
+      <li><code>ScreenTinker.ipk</code> for installing through the panel&rsquo;s app menu. A panel in Local mode refuses it.</li>
     </ul>
 
     <h2 id="install-local">Install it in Local application mode</h2>
@@ -81,6 +81,16 @@
     </ol>
     <p>If the install reports an unknown error, check the panel&rsquo;s date and time first.</p>
 
+    <h2 id="install-si-server">Install it in Local mode from an SI server</h2>
+    <p>Instead of a USB stick, the panel can download the file from your instance. In <strong>Server Settings &rarr; SI Server Settings</strong>:</p>
+    <ol>
+      <li>Set <strong>Application Launch Mode</strong> to <strong>Local</strong> and <strong>Application Type</strong> to <strong>IPK</strong>.</li>
+      <li>Turn <strong>Fully Qualified Domain Name</strong> on and enter the full address of the file: <code>https://&lt;your-server&gt;/webos/com.lg.app.signage.ipk</code>. Use the <code>https://</code> address; the plain <code>http://</code> one redirects, and a panel may not follow that.</li>
+      <li>Set <strong>Auto Set</strong> to <strong>Off</strong> where the panel has it, set <strong>Local Application Upgrade</strong> to <strong>Remote</strong>, and confirm.</li>
+      <li>Restart the panel when the upgrade finishes.</li>
+    </ol>
+    <p>&ldquo;Failed to upgrade IPK&rdquo; means the panel refused the package. The usual cause is pointing it at <code>ScreenTinker.ipk</code>: in Local mode only <code>com.lg.app.signage.ipk</code> installs. Check the address, then the panel&rsquo;s date and time.</p>
+
     <h2 id="install">Install it from the app menu</h2>
     <ol>
       <li>Copy the file to a USB stick and plug it into the panel.</li>
@@ -89,7 +99,6 @@
       <li>The pairing code appears. Claim it in the dashboard under <strong>Add Display</strong>.</li>
     </ol>
     <p>Press <strong>Back</strong> on the remote at any time to return to the server-address screen.</p>
-    <p>An SI server can push the same file to a whole fleet instead of walking round with a stick.</p>
 
     <h2>Provisioning a fleet without typing an address twenty times</h2>
     <p>Ship the address inside the package. A <code>config.json</code> beside <code>appinfo.json</code> holding <code>{ "serverUrl": "https://signage.example.com" }</code> is used whenever nothing has been typed in on the panel, so a freshly installed app goes straight to a pairing code.</p>
@@ -183,14 +192,14 @@
         "@type": "HowToStep",
         "position": 1,
         "name": "Download the .ipk from your instance",
-        "text": "Open the downloads page on your ScreenTinker server and download com.lg.app.signage.ipk for a panel in Local application launch mode, or ScreenTinker.ipk to install from the app menu or an SI server. It is the build your instance serves and updates against.",
+        "text": "Open the downloads page on your ScreenTinker server and download com.lg.app.signage.ipk for a panel in Local application launch mode (from USB or an SI server), or ScreenTinker.ipk to install from the app menu. It is the build your instance serves and updates against.",
         "url": "https://screentinker.com/guides/lg-webos-digital-signage.html#download"
       },
       {
         "@type": "HowToStep",
         "position": 2,
         "name": "Install it on the panel",
-        "text": "For Local mode, put com.lg.app.signage.ipk in an application folder at the root of a FAT32 USB stick, set Application Launch Mode to Local and the type to IPK in Server Settings, and run Local Application Upgrade from USB. Otherwise install ScreenTinker.ipk from the panel’s settings or push it from an SI server.",
+        "text": "For Local mode, put com.lg.app.signage.ipk in an application folder at the root of a FAT32 USB stick, set Application Launch Mode to Local and the type to IPK in Server Settings, and run Local Application Upgrade from USB. An SI server can serve the same com.lg.app.signage.ipk by its full https address with Local Application Upgrade set to Remote. Otherwise install ScreenTinker.ipk from the panel’s settings.",
         "url": "https://screentinker.com/guides/lg-webos-digital-signage.html#install"
       },
       {

@@ -226,3 +226,19 @@ test('webos: the downloads page offers the Local mode build, and only when a fil
   assert.equal(full.url, '/webos/com.lg.app.signage.ipk');
   assert.equal(full.file, 'com.lg.app.signage.ipk');
 });
+
+test('webos: an SI server in Local mode is sent to com.lg.app.signage.ipk by its full https address, never ScreenTinker.ipk', () => {
+  // A panel in Local launch mode upgrades its one Local app (id com.lg.app.signage) from the SI
+  // server address and refuses any other id with "failed to upgrade IPK". The /webos page used to
+  // point SI servers at ScreenTinker.ipk (reported from a real panel, 2026-11).
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const page = src.slice(src.indexOf("app.get(['/webos', '/webos/']"), src.indexOf("app.get(['/tizen', '/tizen/']"));
+  assert.match(page, /SI server, Local application mode/);
+  assert.match(page, /Fully Qualified Domain Name[\s\S]{0,120}\$\{base\}\/webos\/com\.lg\.app\.signage\.ipk/);
+  assert.match(page, /Local Application Upgrade<\/b>: <b>Remote/);
+  assert.match(page, /needs <code>com\.lg\.app\.signage\.ipk<\/code> instead/);
+  const di = require('../lib/download-index');
+  const rows = di.entries({ ipk: { exists: true }, ipkLocal: { exists: true } });
+  assert.doesNotMatch(rows.find((e) => e.id === 'webos').what, /or an SI server\./);
+  assert.match(rows.find((e) => e.id === 'webos-local').what, /SI server/);
+});
