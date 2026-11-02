@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Slide shapes for LED strips and matrices, and an LED grid in the editor.** New shapes 8:1, 1:8,
+  16:1 and 1:16, plus **Custom** (any whole numbers from 1 to 99, such as 24:5). Turn on **LED grid**
+  next to the shape to draw the panel's LEDs over the canvas, so you can see which LEDs each line of
+  text lands on: type the size (for example 128 × 8), or pick one of your LED screens under **Match a
+  screen** to set both the grid and the shape from that panel. The grid is only a drawing aid; the
+  screen still renders at its own size. Tall shapes (1:4, 1:8, 1:16) now fit the editor's height
+  instead of running off the page.
+
 - **A feedback loop for hosted ScreenTinker.** Accounts are asked for a 1-5 rating and a comment at
   the moments that explain the funnel: their first screen paired, a week into a trial, a trial that
   ended unpaid ("what stopped you?", with reasons to tick), a cancellation ("what made you leave?")
