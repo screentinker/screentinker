@@ -7,11 +7,17 @@ const watchedDevices = new Set();
 
 async function recheckLoginAfterRefusal() {
   let status = 0;
+  let token = null;
   try {
-    const token = localStorage.getItem('token');
+    token = localStorage.getItem('token');
     const res = await fetch('/api/auth/me', { headers: token ? { Authorization: 'Bearer ' + token } : {} });
     status = res.status;
   } catch (e) { /* offline: retry below */ }
+  // A 401 for a token this tab has since replaced (the tab that changed the password got a fresh
+  // one while this check was in flight) says nothing about the login: check again with the new one.
+  let current = null;
+  try { current = localStorage.getItem('token'); } catch (_) { /* storage blocked */ }
+  if (status === 401 && current && current !== token) status = 0;
   if (status === 401) {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -28,6 +34,17 @@ async function recheckLoginAfterRefusal() {
   }, refusalRetryMs);
   refusalRetryMs = Math.min(refusalRetryMs * 2, 60000);
 }
+
+/*
+ * A fresh session token for this tab (api.js keepSession: a password, 2FA or passkey change, or
+ * "sign out everywhere else"). The server ends every socket on the old token, this one included, so
+ * reconnect with the new one; a socket that is still up picks it up on its next reconnect.
+ */
+window.addEventListener('st:session-token', () => {
+  if (!dashboardSocket) return;
+  dashboardSocket.auth = { token: localStorage.getItem('token') };
+  if (!dashboardSocket.connected && !dashboardSocket.active) dashboardSocket.connect();
+});
 
 export function connectSocket() {
   const token = localStorage.getItem('token');
@@ -61,6 +78,16 @@ export function connectSocket() {
     console.log('Dashboard disconnected:', reason);
     updateConnectionStatus(false);
     emit('disconnected');
+    /*
+     * The server closed it on purpose, and Socket.IO does not reconnect after that. The usual cause
+     * is a revoked login (a password change or "sign out everywhere else", server/middleware/auth.js
+     * bumpTokenVersion): then the check below signs this tab out. If this tab made the change, it is
+     * handed a fresh token, and the 'st:session-token' listener reconnects with it straight away. The
+     * pause lets that token arrive before anyone asks the server about the old one.
+     */
+    if (reason === 'io server disconnect') setTimeout(() => {
+      if (dashboardSocket && !dashboardSocket.connected && !dashboardSocket.active) recheckLoginAfterRefusal();
+    }, 1500);
   });
 
   // Device status updates

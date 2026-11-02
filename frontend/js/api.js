@@ -334,6 +334,8 @@ export function meshCapability(which) {
 function keepSession(r) {
   if (r && typeof r.token === 'string' && r.token) {
     try { localStorage.setItem('token', r.token); } catch { /* storage blocked: next request re-auths */ }
+    // The live dashboard socket was closed with the old sessions; socket.js reconnects on this.
+    try { window.dispatchEvent(new Event('st:session-token')); } catch { /* no window (tests) */ }
   }
   return r;
 }
