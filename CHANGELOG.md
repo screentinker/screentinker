@@ -26,6 +26,18 @@
   Qualified Domain Name on, the address `https://<your-server>/webos/com.lg.app.signage.ipk` (the
   plain http address redirects, which a panel may not follow), Auto Set off, Local Application
   Upgrade from Remote. Reported from a real panel by a customer evaluating ScreenTinker.
+- **Changing your password now also closes the other browsers' open dashboards at once.** Since 3.0
+  a new password (and a reset, "Sign out everywhere else", or a 2FA or passkey change) ended every
+  other session on its next request, but an open dashboard tab makes no request: it kept receiving
+  live screen status and screenshots until it happened to reconnect. Those connections are now closed
+  the moment the sessions end, and the closed tab goes to the sign-in page. The tab you changed the
+  password in stays signed in and reconnects by itself.
+- **Android: Wi-Fi networks added from the dashboard survive a reboot** (#720, thanks @arminfauland).
+  Android numbers its saved networks afresh at every boot, and the player used that number as the
+  network's identity, so after a restart its networks could read as "set up on the screen by hand",
+  and a removal could hit a different network. Networks are now recognized by name and security. With
+  location switched off on Android 10 and newer, where Android hides the saved list even from a device
+  owner, the player changes and removes nothing until it can see the list again.
 - A playlist update no longer blanks every zone of a layout on Android, the web player and the
   Pi/Windows player. Any change re-rendered all of them, and a weather widget's data refresh
   changes it every few minutes, so a camera or video in another zone reconnected and the screen went

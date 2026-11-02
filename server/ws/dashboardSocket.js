@@ -542,6 +542,37 @@ module.exports.disconnectUserSockets = function disconnectUserSockets(userId) {
 };
 
 /*
+ * ⚠️ A REVOKED LOGIN MUST NOT KEEP A LIVE DASHBOARD. bumpTokenVersion() (password change or reset,
+ * "sign out everywhere else", a 2FA or passkey change, deactivation) ends every older session on
+ * the next HTTP request, but an open dashboard socket made no further request: writes were refused
+ * (revalidateSocket), yet live device events, screenshots and status kept arriving for as long as
+ * the tab stayed open. So close each of this user's sockets whose handshake token no longer
+ * resolves. The tab that made the change has an old token on its socket too; its client reconnects
+ * with the fresh token it was just given (frontend/js/socket.js). Local sockets only, best-effort,
+ * never throws. Returns how many were closed.
+ */
+module.exports.endRevokedUserSockets = function endRevokedUserSockets(userId) {
+  if (!_dashboardNs || !userId) return 0;
+  let ended = 0;
+  try {
+    const ids = _dashboardNs.adapter.rooms.get(userRoom(userId));
+    for (const id of ids ? [...ids] : []) {
+      const socket = _dashboardNs.sockets.get(id);
+      if (!socket) continue;
+      const token = socket.handshake && socket.handshake.auth && socket.handshake.auth.token;
+      let ok = false;
+      try {
+        // The handshake's own check, so a socket stays open exactly when it could connect now.
+        const s = token ? resolveSessionUser(token) : null;
+        ok = !!(s && s.user && s.user.id === socket.userId);
+      } catch (_) { ok = false; }
+      if (!ok) { try { socket.disconnect(true); ended++; } catch (_) { /* already gone */ } }
+    }
+  } catch (_) { /* best-effort */ }
+  return ended;
+};
+
+/*
  * A user REMOVED from one workspace keeps their other memberships, so closing their dashboard
  * would be heavier than needed (the client does not auto-reconnect after a server-side close).
  * Instead take their open sockets out of that workspace's room — unless they still reach it some

@@ -82,6 +82,15 @@ function bumpTokenVersion(userId) {
   } catch (e) {
     if (!/no such column: token_version/i.test(e.message)) throw e;
   }
+  /*
+   * ...and every open dashboard socket that rode on one of those sessions: a live socket makes no
+   * further HTTP request, so the check above would never reach it. Only when the socket layer is
+   * already loaded (a test or a script that never started it must not pull it in).
+   */
+  try {
+    const mod = require.cache[require.resolve('../ws/dashboardSocket')];
+    if (mod && typeof mod.exports.endRevokedUserSockets === 'function') mod.exports.endRevokedUserSockets(userId);
+  } catch (_) { /* best-effort: the HTTP check still ends the session */ }
 }
 
 // #100: issued after password verification but BEFORE the TOTP step, so the client
