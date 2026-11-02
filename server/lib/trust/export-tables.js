@@ -171,6 +171,7 @@ const EXPORTED = {
   device_status_log: { category: 'proof_of_play', scope: via('device_id', 'devices') },
   device_events: { category: 'proof_of_play', scope: via('device_id', 'devices') },
   conversion_events: { category: 'proof_of_play', scope: ws() },
+  feedback: { category: 'proof_of_play', scope: ws() },
   // energy and carbon report (3.0)
   energy_settings: { category: 'settings', scope: ws() },
   energy_device_settings: { category: 'devices', scope: ws() },
@@ -221,6 +222,8 @@ const EXCLUDED = {
   template_catalogs: 'instance template catalog configuration',
   templates_installed: 'instance template library',
   template_seen: 'a person\'s "seen" markers: in their personal export',
+  feedback_prompts: 'which feedback questions a person has already been asked (lib/feedback.js): the hosting service\'s bookkeeping',
+  feedback_followups: 'which feedback follow-up emails a person was sent (lib/feedback.js): the hosting service\'s bookkeeping',
   recovery_grants: 'break-glass credentials (secret)',
   support_grants: 'support access credentials (secret)',
   support_requests: 'support access codes (secret)',

@@ -59,6 +59,7 @@ import { initNavGroups } from './components/nav-groups.js';
 import { applyUiMode, isSimpleMode, setUiMode } from './components/ui-mode.js';
 import * as simpleHome from './views/simple-home.js';
 import { installPlanNudges, updateTrialBanner } from './components/plan-nudges.js';
+import { maybeShowFeedbackPrompt, openFeedback } from './components/feedback-prompt.js';
 import { renderWorkspaceSwitcher, selectedRemoteOrg, clearRemoteOrg } from './components/workspace-switcher.js';
 import { corporateSettings, renderHqContextBar } from './components/corporate-ui.js';
 
@@ -970,6 +971,7 @@ function updateSidebarUser() {
   updateVerifyBanner(user);
   updateBillingBanner(user);
   updateTrialBanner(user);
+  maybeShowFeedbackPrompt(user);   // once per page load; the server decides whether there is a moment to ask about
   updateWidgetSandboxWarningBanner(user);
   applyUiMode(user);
 
@@ -1219,6 +1221,7 @@ renderNavLabels();
 translateStaticDom();
 initNavGroups();
 installPlanNudges();
+document.getElementById('sendFeedbackLink')?.addEventListener('click', (e) => { e.preventDefault(); openFeedback(); });
 window.addEventListener('user-refreshed', (e) => {
   const fresh = e.detail;
   applyUiMode(fresh);

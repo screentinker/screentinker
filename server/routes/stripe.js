@@ -261,7 +261,11 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           const r = db.prepare(`UPDATE users SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE 'free' END, subscription_status = 'cancelled', stripe_subscription_id = NULL, updated_at = strftime('%s','now')
                                  WHERE id = ? AND (stripe_subscription_id IS NULL OR stripe_subscription_id = ?)`)
             .run(userId, sub.id);
-          if (r.changes) console.log(`Subscription cancelled for ${userId}`);
+          if (r.changes) {
+            console.log(`Subscription cancelled for ${userId}`);
+            // When it happened, so the feedback loop can ask why (lib/feedback.js, the 'cancelled' moment).
+            require('../lib/conversion-events').record(db, { userId, event: 'subscription_cancelled', meta: { status: sub.status || '' } });
+          }
           else console.log(`Subscription ${sub.id} deleted for ${userId}, but it is not the tracked one — account left as is`);
         }
         break;

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- **A feedback loop for hosted ScreenTinker.** Accounts are asked for a 1-5 rating and a comment at
+  the moments that explain the funnel: their first screen paired, a week into a trial, a trial that
+  ended unpaid ("what stopped you?", with reasons to tick), a cancellation ("what made you leave?")
+  and a few days after paying. Each moment is asked about once, at most one question every three
+  days, never to a platform admin or a support session, and "Send feedback" is in the sidebar. A trial
+  that lapsed or a subscription that was cancelled also gets one follow-up email a day later; its 1-5
+  links open a short page and nothing is saved until Send (mail scanners open every link).
+  Platform admins get a daily digest at 15:00 UTC (every new answer with what that account did,
+  the funnel, the top reasons) by email, and optionally on Discord (`FEEDBACK_DISCORD_WEBHOOK`).
+  Platform > Overview shows the last 30 days next to the trial-to-paid funnel, with a CSV export.
+  Self-hosted servers ask and record nothing. Follow-up emails need `HOSTED_INSTANCE=true`, a mail
+  transport and `APP_URL`, like the trial emails.
+
 ### Fixed
 
 - A playlist update no longer blanks every zone of a layout on Android, the web player and the

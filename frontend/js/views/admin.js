@@ -465,6 +465,7 @@ async function loadOverview() {
         ${mini('#/platform/cleanup', o.stale_accounts_180d, t('platform.overview.stale'), t('platform.overview.stale_sub'))}
       </div>
       <div id="platformFunnel"></div>
+      <div id="platformFeedback"></div>
       <div class="settings-section">
         <h3>${esc(t('platform.overview.attention'))}</h3>
         ${attention.length ? `<div class="platform-attention">${attention.map(([item, href, text, kind]) => `
@@ -476,6 +477,7 @@ async function loadOverview() {
       </div>
       <p class="platform-version">${esc(t('platform.overview.version', { v: o.version }))}</p>`;
     loadFunnel();
+    loadFeedback();
     loadHost();
     // Details load the first time an item is opened (GET /admin/overview/attention/:item).
     el.querySelectorAll('details.att').forEach((d) => {
@@ -513,6 +515,49 @@ async function loadFunnel() {
       <div class="funnel">${rows}</div>
       ${hits ? `<p class="platform-empty" style="margin-top:8px">${esc(t('platform.funnel.limit_hits'))} ${hits}</p>` : ''}
     </div>`;
+}
+
+/*
+ * The feedback loop (GET /api/feedback/admin, server/lib/feedback.js): every rating and comment of
+ * the last 30 days, each with what that account went on to do, so "why are people not converting"
+ * is answered in their words next to the funnel above. Hidden on a self-hosted instance.
+ */
+async function loadFeedback() {
+  const host = document.getElementById('platformFeedback');
+  if (!host) return;
+  let f;
+  try { f = await api.adminFeedback(30); } catch { return; }
+  if (!f || !f.enabled) return;
+  const trig = (k) => t('platform.feedback.trigger.' + k);
+  const journey = (j) => [j.screens ? `${j.screens} ${j.screens === 1 ? 'screen' : 'screens'}` : 'no screens', j.first_publish ? 'published' : '',
+    j.limit_hit ? 'hit a limit' : '', j.checkout_start ? 'checkout' : '', j.checkout_complete ? 'paid' : ''].filter(Boolean).join(' · ');
+  const by = (f.by_trigger || []).map((b) => `<span class="platform-empty">${esc(trig(b.trigger))}: <b>${esc(String(b.answers))}</b>${b.average != null ? ` · ${esc(String(b.average))}/5` : ''}</span>`).join(' &nbsp; ');
+  const reasons = (f.reasons || []).slice(0, 8).map((r) => `${esc(trig(r.trigger))} · ${esc(t('feedback.reason.' + r.reason))}: ${esc(String(r.n))}`).join(' &nbsp;·&nbsp; ');
+  const items = (f.entries || []).slice(0, 100).map((e) => `<div class="feedback-item${e.rating != null && e.rating <= 2 ? ' low' : ''}">
+      <div><b>${e.rating != null ? esc(String(e.rating)) + '/5' : '–'}</b> · ${esc(trig(e.trigger))} · ${esc(e.email || '?')}
+        <span class="meta">· ${esc(new Date(e.created_at * 1000).toLocaleDateString())} · ${esc(journey(e.journey || {}))}${e.source === 'email' ? ' · email' : ''}</span></div>
+      ${e.reasons && e.reasons.length ? `<div class="meta">${e.reasons.map((r) => esc(t('feedback.reason.' + r))).join(', ')}</div>` : ''}
+      ${e.comment ? `<div>${esc(e.comment)}</div>` : ''}
+    </div>`).join('');
+  host.innerHTML = `<div class="settings-section">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <h3 style="margin:0">${esc(t('platform.feedback.title'))}</h3>
+        <button type="button" class="btn btn-secondary btn-sm" id="feedbackCsvBtn">${esc(t('platform.feedback.csv'))}</button>
+      </div>
+      <p class="platform-empty" style="margin:6px 0 10px">${esc(t('platform.feedback.sub', { days: f.days }))}</p>
+      ${f.total ? `<p style="margin:0 0 6px">${esc(tn('platform.feedback.total', f.total, { avg: f.average ?? '–' }))}</p><div>${by}</div>
+        ${reasons ? `<p class="platform-empty" style="margin-top:8px">${esc(t('platform.feedback.reasons'))}: ${reasons}</p>` : ''}
+        <div class="feedback-list">${items}</div>` : `<p class="platform-empty">${esc(t('platform.feedback.none'))}</p>`}
+    </div>`;
+  document.getElementById('feedbackCsvBtn')?.addEventListener('click', async () => {
+    try {
+      const r = await fetch('/api/feedback/admin.csv?days=90', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement('a'); a.href = url; a.download = 'screentinker-feedback-90d.csv'; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) { showToast(e.message, 'error'); }
+  });
 }
 
 // #36: list organizations with owner + resource counts; platform admin can
