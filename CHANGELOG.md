@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.1.2
 
 ### Added
 
@@ -63,6 +63,11 @@
   its first real frame (up to 8 seconds) instead of switching to black after 1.5 seconds. On the web
   player a dwell edit takes effect at the zone's next item without restarting it; on Android, a new
   schedule, dwell, fit or mute on a zone item re-renders just that zone.
+
+### Contributors
+
+- @arminfauland: Wi-Fi networks on Android now survive a reboot and an unreadable saved list (#775).
+  1 of the 7 commits in this release.
 
 ## 3.1.1
 
