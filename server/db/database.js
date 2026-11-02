@@ -2519,6 +2519,40 @@ const migrations = [
   "CREATE INDEX IF NOT EXISTS idx_conversion_events_event ON conversion_events(event, created_at)",
   "CREATE INDEX IF NOT EXISTS idx_conversion_events_user ON conversion_events(user_id, event)",
   /*
+   * Feedback loop (lib/feedback.js): ratings and comments asked for at moments that explain the
+   * funnel (first screen paired, day 7 of a trial, a trial that ended unpaid, a cancellation, a few
+   * days after paying), plus a "Send feedback" link. Hosted only, like conversion_events. No foreign
+   * keys; user deletion removes a user's rows (lib/user-deletion.js).
+   *   feedback            one answer: trigger, 1-5 rating, ticked reasons (JSON array), comment
+   *   feedback_prompts    one row per (user, trigger) once asked: a moment is asked about ONCE
+   *   feedback_followups  the follow-up email for a moment, sent at most once per (user, trigger)
+   */
+  `CREATE TABLE IF NOT EXISTS feedback (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     user_id TEXT,
+     workspace_id TEXT,
+     trigger TEXT NOT NULL,
+     rating INTEGER,
+     reasons TEXT,
+     comment TEXT,
+     plan_id TEXT,
+     source TEXT NOT NULL DEFAULT 'app',
+     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')))`,
+  "CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at)",
+  "CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, trigger)",
+  `CREATE TABLE IF NOT EXISTS feedback_prompts (
+     user_id TEXT NOT NULL,
+     trigger TEXT NOT NULL,
+     shown_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     dismissed_at INTEGER,
+     answered_at INTEGER,
+     PRIMARY KEY (user_id, trigger))`,
+  `CREATE TABLE IF NOT EXISTS feedback_followups (
+     user_id TEXT NOT NULL,
+     trigger TEXT NOT NULL,
+     sent_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     PRIMARY KEY (user_id, trigger))`,
+  /*
    * 3.0: single-use codes handing a single sign-on session to the Manager app (routes/auth.js
    * /sso/app-exchange). Stored hashed, live for 2 minutes, deleted on use and swept on each insert.
    */

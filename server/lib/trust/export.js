@@ -358,6 +358,7 @@ async function writeUserExport(archive, db, job) {
     billing_receipts: selectOwn(db, 'billing_receipts', 'user_id = ?', [uid]),
     templates_seen: selectOwn(db, 'template_seen', 'user_id = ?', [uid]),
     product_events: selectOwn(db, 'conversion_events', 'user_id = ?', [uid]),
+    feedback: selectOwn(db, 'feedback', 'user_id = ?', [uid]),
     mfa: { totp_enabled: !!user.totp_enabled, passkeys: 0 },
   };
   account.mfa.passkeys = account.passkeys.length;

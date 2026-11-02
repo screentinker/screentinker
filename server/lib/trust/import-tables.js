@@ -180,6 +180,7 @@ const NOT_RESTORED = {
   agency_notifications: 'The old server\'s notification queue for API tokens.',
   plugin_submissions: 'Plugins are approved per server by its platform administrator.',
   conversion_events: 'The hosting service\'s own product analytics, not your organization\'s data.',
+  feedback: 'Feedback sent to the hosting service about its product, not your organization\'s data.',
   outbound_ledger: 'The old server\'s record of the hosts it contacted; this server keeps its own.',
 };
 
