@@ -3525,10 +3525,25 @@ app.get(['/webos', '/webos/'], (req, res) => {
         + '<ol><li>On a FAT32 USB stick, make a folder named <code>application</code> at the root and put the file in it.</li>'
         + '<li>On the panel, open <b>Server Settings</b>: set <b>Application Launch Mode</b> to <b>Local</b> and the application type to <b>IPK</b>, then run <b>Local Application Upgrade</b> from <b>USB</b>.</li>'
         + '<li>Restart the panel when the upgrade finishes.</li></ol>'
+        /*
+         * ⚠️ AN SI SERVER IN LOCAL MODE INSTALLS THIS FILE, NOT ScreenTinker.ipk. A panel in Local
+         * launch mode upgrades its one Local app (id com.lg.app.signage) from the address given, and
+         * refuses a package with another id ("failed to upgrade IPK"). This page used to send SI
+         * server installs to ScreenTinker.ipk. With Fully Qualified Domain Name on, the address is
+         * the file itself; give the https:// one, since the plain http address answers with a
+         * redirect that a panel's downloader may not follow.
+         */
+        + `<h2>SI server, Local application mode</h2><p>The panel downloads the file itself from this server. In <b>Server Settings → SI Server Settings</b>:</p>`
+        + '<ol><li><b>Application Launch Mode</b>: <b>Local</b>. <b>Application Type</b>: <b>IPK</b>.</li>'
+        + `<li><b>Fully Qualified Domain Name</b>: <b>On</b>, and the address exactly <code>${base}/webos/com.lg.app.signage.ipk</code> (https, the full path to the file).</li>`
+        + '<li><b>Auto Set</b>: <b>Off</b> where the panel has it. <b>Local Application Upgrade</b>: <b>Remote</b>, then Confirm.</li>'
+        + '<li>Restart the panel when the upgrade finishes. Check the panel’s date and time first: a wrong clock fails the secure download.</li></ol>'
       : '')
     + `<h2>${local.exists ? 'Other install routes' : 'Install'}</h2><p>Download <a href="${base}/webos/ScreenTinker.ipk">ScreenTinker.ipk</a> and install it on the panel:</p>`
     + '<ol><li><b>USB:</b> copy the file to a USB stick, plug it into the panel, open <b>Settings \u2192 General \u2192 Install App</b> (the exact path varies by webOS version), and pick it.</li>'
-    + '<li><b>SI server:</b> host the file and point the panel\u2019s SI Server setting at it.</li></ol>'
+    + (local.exists
+      ? '<li><b>SI server:</b> a panel in Local application launch mode needs <code>com.lg.app.signage.ipk</code> instead (above); it refuses this file.</li></ol>'
+      : '<li><b>SI server:</b> host the file and point the panel\u2019s SI Server setting at it.</li></ol>')
     + `<p>Then launch ScreenTinker, enter <code>${base}</code>, and claim the pairing code in your dashboard.</p>`
     + `<p class="mut">The app checks <code>${base}/webos/version.json</code> and installs a newer build itself when the panel\u2019s SCAP library is present. Without it (or from a browser) the web player runs at <a href="${base}/player">${base}/player</a>.</p>`
     + '</div></body></html>');
