@@ -150,7 +150,7 @@ async function run({ db: database = db, email = emailSvc, now = Math.floor(Date.
   const milestones = {};
   for (const c of cands) {
     const u = c.user;
-    const plan = db.prepare('SELECT display_name FROM plans WHERE id = ?').get(u.plan_id);
+    const plan = database.prepare('SELECT display_name FROM plans WHERE id = ?').get(u.plan_id);
     const planName = (plan && plan.display_name) || (u.plan_id || 'current');
     const renewalDate = new Date(u.renewal_at * 1000).toISOString().slice(0, 10);
     const fields = { name: displayName(u), plan: planName, days: c.daysLeft, renewalDate, comped: !!u.plan_comped };
