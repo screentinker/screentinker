@@ -144,8 +144,10 @@ object WifiPlan {
 
     /**
      * Is the panel (possibly) connected on [m] right now? Unknown counts as yes while Wi-Fi is up.
-     * [managed]: our whole list. A suggestion left over from before the player became owner is not
-     * in use while the panel is on the saved network of ours that replaced it (same SSID).
+     * [managed]: our whole list, for a REMOVAL only. A suggestion left over from before the player
+     * became owner is not in use while the panel is on the saved network of ours that replaced it
+     * (same SSID): removing the suggestion does not touch that one. Never for a change, which would
+     * write a saved network with that SSID — possibly over the one in use.
      */
     fun inUse(m: WifiManaged, s: WifiSituation, managed: List<WifiManaged> = emptyList()): Boolean {
         if (!s.wifiActive) return false
@@ -214,14 +216,18 @@ object WifiPlan {
         for (d in wanted) {
             val m = byId[d.id]
             val unsupported = unsupportedReason(d, s.mode, s.sdkInt)
-            // Another managed entry holding the SSID this step would write. A released one does not
-            // count once this network has its own entry under the SSID: it was taken over from it.
-            val holder = rebound.firstOrNull { it.id != d.id && it.ssid == d.ssid && !(it.released && m?.ssid == d.ssid) }
+            // Another managed entry holding the SSID this step would write. A released one of the
+            // other kind (a suggestion, when this writes a saved network, or the other way round)
+            // does not count once this network has its own entry under the SSID: the step cannot
+            // write over it. (Android 12+ merges WPA2 and WPA3 networks of one SSID, so security
+            // does not make two saved ones safe.)
+            val writesSaved = s.mode != WifiModeLogic.SUGGESTIONS
+            val holder = rebound.firstOrNull { it.id != d.id && it.ssid == d.ssid && !(it.released && m?.ssid == d.ssid && (it.netId >= 0) != writesSaved) }
             when {
                 // The previous version (if any) stays: a working network is not dropped for one the panel cannot use.
                 unsupported != null -> outcomes += WifiOutcome(d.id, "unsupported", unsupported)
                 m != null && m.sameAs(d) && rightKind(m, s.mode) -> outcomes += WifiOutcome(d.id, if (m.netId >= 0) "applied" else appliedState)
-                m != null && inUse(m, s, rebound) -> outcomes += WifiOutcome(d.id, "deferred", waitReason(m, s))
+                m != null && inUse(m, s) -> outcomes += WifiOutcome(d.id, "deferred", waitReason(m, s))
                 // A released network is never removed, so waiting for it would be for ever.
                 holder != null && holder.released -> outcomes += WifiOutcome(d.id, "failed", "already_configured_by_hand")
                 holder != null -> outcomes += WifiOutcome(d.id, "deferred", "waiting_for_other_network")
@@ -243,6 +249,8 @@ object WifiPlan {
      * network belongs to one entry at most: one in use wins over a released one, a released one over
      * one waiting for removal, so removing a leftover entry can never remove the network itself.
      * [saved] null (Android will not show them): every saved entry's id becomes [NET_ID_UNKNOWN].
+     * Limit: SSID and security are all Android tells an app, so a network of ours that someone
+     * removes and saves again by hand, same name and security, between two runs stays ours.
      * Suggestions (-1) are left as they are.
      */
     fun resolve(managed: List<WifiManaged>, saved: List<WifiSaved>?): List<WifiManaged> {

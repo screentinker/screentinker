@@ -294,6 +294,15 @@ class WifiPlanTest {
         assertTrue(WifiPlan.plan(listOf(d("a", ssid = "Van", password = "password-a")), listOf(saved, leftover), s).steps.single() is WifiStep.Remove)
     }
 
+    @Test fun `a suggestion is never moved over while the panel is on a saved network with its SSID`() {
+        // Released saved "Van" (in use) and our suggestion "Van": the move would write over the saved one.
+        val managed = listOf(m("old", ssid = "Van", netId = 4).copy(released = true), m("a", ssid = "Van", netId = -1))
+        val r = WifiPlan.plan(listOf(d("a", ssid = "Van", password = "password-a")), managed,
+            sit(mode = WifiModeLogic.OWNER, sdk = 34, netId = 4, ssid = "Van"))
+        assertTrue(r.steps.isEmpty())
+        assertEquals("deferred", r.outcomes.single().state)
+    }
+
     // ── network ids after a reboot ────────────────────────────────────────────────────────────────
 
     private fun saved(netId: Int, ssid: String, security: String? = "wpa2") = WifiSaved(netId, ssid, security)

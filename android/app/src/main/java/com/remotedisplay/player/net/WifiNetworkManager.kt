@@ -195,7 +195,7 @@ class WifiNetworkManager(
             val target = when (step) { is WifiStep.Update -> step.managed; is WifiStep.Remove -> step.managed; else -> null }
             if (target != null) {
                 val now = situation(mode)
-                if (WifiPlan.inUse(target, now, managed)) {
+                if (WifiPlan.inUse(target, now, if (step is WifiStep.Remove) managed else emptyList())) {
                     if (step is WifiStep.Update) outcomes += WifiOutcome(step.desired.id, "deferred", WifiPlan.waitReason(target, now))
                     continue
                 }
@@ -250,7 +250,10 @@ class WifiNetworkManager(
         // Ours BEFORE Android has it: a power cut in between must not leave a network of ours that
         // reads as set up by hand. If the add never happened, the next run finds nothing and drops it.
         managed = managed.filter { it.id != d.id } + managedFrom(d, WifiPlan.NET_ID_UNKNOWN)
-        saveManaged()
+        if (!saveManaged()) {
+            managed = managed.filter { it.id != d.id }
+            return WifiOutcome(d.id, "failed", "rejected_by_android")
+        }
         val netId = addConfig(configFor(d), mode)
         if (netId < 0) {
             managed = managed.filter { it.id != d.id }
@@ -514,11 +517,16 @@ class WifiNetworkManager(
         try { store?.edit()?.putString(key, arr.toString())?.commit() } catch (e: Throwable) { Log.w(TAG, "wifi: store write failed: ${e.message}") }
     }
 
-    /** Our list, and the ownership record of its saved networks (SSID and security, never a password). */
-    private fun saveManaged() {
+    /**
+     * Our list, and the ownership record of its saved networks (SSID and security, never a password).
+     * False when the ownership record did not reach the disk: then no network may be added.
+     */
+    private fun saveManaged(): Boolean {
         write(KEY_MANAGED, JSONArray(managed.map(::toJson)))
         val owned = JSONArray(managed.filter { it.netId >= 0 }.map { JSONObject().put("ssid", it.ssid).put("security", it.security) })
-        try { ownedStore.edit().putString(KEY_OWNED, owned.toString()).commit() } catch (e: Throwable) { Log.w(TAG, "wifi: ownership write failed: ${e.message}") }
+        return try { ownedStore.edit().putString(KEY_OWNED, owned.toString()).commit() } catch (e: Throwable) {
+            Log.w(TAG, "wifi: ownership write failed: ${e.message}"); false
+        }
     }
 
     private fun desiredFrom(o: JSONObject) = WifiDesired(
