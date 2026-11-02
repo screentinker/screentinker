@@ -17,6 +17,7 @@ const config = require('../config');
 const EVENTS = new Set([
   // server-side
   'signup', 'first_pair', 'limit_hit', 'checkout_start', 'checkout_complete', 'trial_expired',
+  'subscription_cancelled',   // routes/stripe.js on customer.subscription.deleted: the feedback loop's "why did you leave"
   // client-side (also listed in CLIENT_EVENTS)
   'onboarding_started', 'onboarding_completed', 'onboarding_skipped', 'sample_content_used',
   'first_publish', 'billing_view', 'upgrade_prompt_shown', 'upgrade_prompt_clicked',

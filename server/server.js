@@ -1681,6 +1681,12 @@ app.use('/api/content', (req, res, next) => {
 // Subscription routes (mixed auth)
 app.use('/api/subscription', require('./routes/subscription'));
 
+// The feedback loop (routes/feedback.js, lib/feedback.js). /respond is the PUBLIC page a follow-up
+// email's links open (signed token, plain <form>, so urlencoded) and is rate limited per IP.
+app.use('/api/feedback/respond', rateLimit(60000, 20), express.urlencoded({ extended: false, limit: '16kb' }));
+app.use('/api/feedback', rateLimit(60000, 60));
+app.use('/api/feedback', require('./routes/feedback'));
+
 // Public contact form (enterprise inquiries from landing page). Rate limited
 // to 5 submissions per minute per IP; honeypot enforced inside the route.
 app.use('/api/contact', rateLimit(60000, 5));
@@ -3027,6 +3033,9 @@ startAgencyDigest();
 // 3.0 content freshness: the weekly "what is going stale" digest. Daily check at 09:00 UTC, once a
 // week per person; does nothing without a mail transport and APP_URL (services/freshness-digest.js).
 try { require('./services/freshness-digest').startFreshnessDigest(); } catch (e) { console.warn(`[freshness] digest not scheduled: ${e && e.message}`); }
+// The feedback loop's daily run (services/feedback-digest.js): follow-up emails for lapsed trials and
+// cancellations (HOSTED_INSTANCE), and the platform admins' feedback + funnel digest. 15:00 UTC.
+try { require('./services/feedback-digest').startFeedbackDigest(); } catch (e) { console.warn(`[feedback] daily run not scheduled: ${e && e.message}`); }
 // 3.0 complete exports and scheduled organization deletions (lib/trust): resume queued exports,
 // expire old archives, carry out deletions whose grace period has passed. Hourly or slower.
 try { require('./lib/trust/export').start(); require('./lib/trust/org-deletion').start(); } catch (e) { console.warn(`[trust] background jobs not scheduled: ${e && e.message}`); }

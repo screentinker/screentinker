@@ -920,6 +920,12 @@ export const api = {
   // 3.0 trial-to-paid funnel (server: lib/conversion-events.js). Fire-and-forget by design: a
   // dropped event must never surface as an error, and the server ignores it when self-hosted.
   trackEvent: (event, meta = {}) => request('/subscription/events', { method: 'POST', body: JSON.stringify({ event, meta }) }).catch(() => null),
+  // The feedback loop (server/routes/feedback.js). Prompt calls never throw into the page.
+  feedbackPrompt: () => request('/feedback/prompt').catch(() => null),
+  feedbackShown: (trigger) => request('/feedback/shown', { method: 'POST', body: JSON.stringify({ trigger }) }).catch(() => null),
+  feedbackDismiss: (trigger) => request('/feedback/dismiss', { method: 'POST', body: JSON.stringify({ trigger }) }).catch(() => null),
+  sendFeedback: (body) => request('/feedback', { method: 'POST', body: JSON.stringify(body) }),
+  adminFeedback: (days = 30) => request(`/feedback/admin?days=${encodeURIComponent(days)}`),
   updateMe: (data) => request('/auth/me', { method: 'PUT', body: JSON.stringify(data) }).then(keepSession),
   switchWorkspace: (workspaceId) => request('/auth/switch-workspace', { method: 'POST', body: JSON.stringify({ workspace_id: workspaceId }) }),
   /*

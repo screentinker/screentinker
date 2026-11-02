@@ -126,7 +126,9 @@ test('ONLY the senders gated by email_alerts pass unsubscribeUserId', () => {
   const ROUTES = path.join(__dirname, '..', 'routes');
   // freshness-digest.js: the weekly freshness digest, gated by email_alerts AND its own opt-out, and its
   // link is bound to the 'freshness' list so it cannot switch alert email off (lib/unsubscribe-token.js).
-  const MAY = new Set(['alerts.js', 'trialExpiry.js', 'activationNudge.js', 'freshness-digest.js']);
+  // feedback-digest.js: the feedback follow-up email, sent only to email_alerts = 1 (its REACHABLE rule)
+  // and once per moment; its link is the ordinary alerts list. Its admin digest carries no link.
+  const MAY = new Set(['alerts.js', 'trialExpiry.js', 'activationNudge.js', 'freshness-digest.js', 'feedback-digest.js']);
 
   const files = [
     ...fs.readdirSync(SERVICES).filter((f) => f.endsWith('.js')).map((f) => ['services', f, path.join(SERVICES, f)]),

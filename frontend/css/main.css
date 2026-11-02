@@ -3446,3 +3446,19 @@ a.stock-credit:hover { text-decoration: underline; color: var(--text-secondary);
 .news-picker-items img, .news-picker-noimg { width: 48px; height: 32px; flex: none; border-radius: 4px; object-fit: cover; background: var(--bg-input); display: flex; align-items: center; justify-content: center; }
 .news-picker--simple .news-picker-row .input { font-size: 16px; padding: 10px 12px; }
 @media (max-width: 520px) { .news-picker-row { flex-direction: column; align-items: stretch; } }
+
+/* The feedback loop's card (js/components/feedback-prompt.js). */
+.feedback-card { position: fixed; right: 20px; bottom: 20px; z-index: 900; width: min(360px, calc(100vw - 32px)); background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: 0 20px 50px -15px rgba(0,0,0,.6); padding: 16px 16px 14px; }
+.feedback-x { position: absolute; top: 6px; right: 8px; background: none; border: 0; color: var(--text-muted); font-size: 20px; cursor: pointer; }
+.feedback-q { font-weight: 600; font-size: 14px; margin: 0 22px 12px 0; line-height: 1.35; }
+.feedback-scale { display: flex; gap: 6px; }
+.feedback-scale button { flex: 1; padding: 8px 0; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-input, var(--bg-primary)); color: var(--text-primary); font-weight: 700; cursor: pointer; }
+.feedback-scale button[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.feedback-ends { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin: 4px 0 10px; }
+.feedback-reasons { display: flex; flex-direction: column; gap: 4px; font-size: 13px; margin-bottom: 10px; }
+.feedback-comment { width: 100%; min-height: 70px; resize: vertical; font-size: 13px; }
+.feedback-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.feedback-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-height: 420px; overflow-y: auto; }
+.feedback-item { border-left: 3px solid var(--accent); padding: 6px 10px; font-size: 12px; background: var(--bg-primary); border-radius: 0 6px 6px 0; }
+.feedback-item.low { border-left-color: var(--danger); }
+.feedback-item .meta { color: var(--text-muted); }
