@@ -137,6 +137,7 @@ router.post('/assign', requireAuth, requireSuperAdmin, (req, res) => {
     if (renewal_at === null || renewal_at === '') {
       renewalAt = null;
     } else {
+      if (plan_id === 'free') return res.status(400).json({ error: 'A renewal date does not apply to the Free plan' });
       const n = typeof renewal_at === 'number' ? renewal_at : Math.floor(new Date(renewal_at).getTime() / 1000);
       if (!Number.isFinite(n) || n <= 0) return res.status(400).json({ error: 'renewal_at must be an epoch time, an ISO date, or null' });
       renewalAt = Math.floor(n);

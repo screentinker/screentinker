@@ -60,7 +60,8 @@ test('each milestone fires once; the account is the To and the admins are CC', a
   assert.equal(r.sent, 1);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].to, 'cust@acct.test');
-  assert.ok(sent[0].cc.includes('dan@admin.test'), 'admin CC');
+  assert.ok(sent[0].bcc.includes('dan@admin.test'), 'admins are BCC (private), not CC');
+  assert.ok(!(sent[0].cc || []).includes('dan@admin.test'), 'admin addresses are never in the visible CC');
   assert.match(sent[0].subject, /renewal in 88 days/);
 
   // Same day, run again: nothing re-sends.
@@ -103,15 +104,51 @@ test('moving the renewal date re-arms the milestones for the new date', async ()
   assert.equal(sent.length, 2);
 });
 
-test('an opted-out account still reaches the admins (To falls back to the admin)', async () => {
+test('an opted-out account is NOT mailed; an internal heads-up goes to the admins instead', async () => {
   cleanup();
   user({ role: 'platform_admin', email: 'dan@admin.test' });
-  user({ email: 'quiet@acct.test', renewal_at: NOW + 20 * DAY, email_alerts: 0 });
+  const q = user({ email: 'quiet@acct.test', renewal_at: NOW + 20 * DAY, email_alerts: 0 });
   const { sent, email } = mailer();
   const r = await renew.run({ db, email, now: NOW, hosted: true });
-  assert.equal(r.sent, 1);
-  assert.equal(sent[0].to, 'dan@admin.test', 'opted-out customer: admin becomes the recipient');
-  assert.ok(!sent[0].cc.includes('dan@admin.test'), 'never CC the same address it is To');
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, 'dan@admin.test', 'the opted-out account is never the recipient; the admin is');
+  assert.match(sent[0].subject, /\[internal\]/);
+  assert.equal(sent[0].unsubscribeUserId, undefined, 'the internal note never carries the customer unsubscribe token');
+  assert.ok(db.prepare('SELECT 1 FROM renewal_reminders WHERE user_id = ?').get(q.id), 'recorded');
+});
+
+test('an opted-out account with no admins is left entirely alone (nothing sent, nothing recorded)', async () => {
+  cleanup();
+  const q = user({ email: 'alone@acct.test', renewal_at: NOW + 20 * DAY, email_alerts: 0 });
+  const { sent, email } = mailer();
+  const r = await renew.run({ db, email, now: NOW, hosted: true, ccOverride: [] });
+  assert.equal(sent.length, 0, 'the opted-out account is not emailed directly');
+  assert.ok(!db.prepare('SELECT 1 FROM renewal_reminders WHERE user_id = ?').get(q.id), 'not recorded, so it can fire once an admin exists');
+});
+
+test('a transient send failure is not recorded, so the next run retries', async () => {
+  cleanup();
+  user({ role: 'platform_admin', email: 'dan@admin.test' });
+  const u = user({ email: 'flaky@acct.test', renewal_at: NOW + 20 * DAY });
+  let calls = 0;
+  const email = { isConfigured: () => true, sendEmail: async () => { calls++; return calls === 1 ? { sent: false, reason: 'smtp_error' } : { sent: true }; } };
+  let r = await renew.run({ db, email, now: NOW, hosted: true });
+  assert.equal(r.sent, 0, 'first send failed');
+  assert.ok(!db.prepare('SELECT 1 FROM renewal_reminders WHERE user_id = ?').get(u.id), 'failure not recorded');
+  r = await renew.run({ db, email, now: NOW + 3600, hosted: true });
+  assert.equal(r.sent, 1, 'retried and succeeded');
+});
+
+test('a Stripe-subscribed or free account is never in-scope, even with a renewal_at', async () => {
+  cleanup();
+  user({ role: 'platform_admin', email: 'dan@admin.test' });
+  const stripeU = user({ email: 'stripe@acct.test', renewal_at: NOW + 20 * DAY });
+  db.prepare("UPDATE users SET stripe_subscription_id = 'sub_x' WHERE id = ?").run(stripeU.id);
+  user({ email: 'free@acct.test', plan_id: 'free', plan_comped: 0, renewal_at: NOW + 20 * DAY });
+  const { sent, email } = mailer();
+  const r = await renew.run({ db, email, now: NOW, hosted: true });
+  assert.equal(r.sent, 0, 'neither the Stripe nor the free account is reminded');
+  assert.equal(sent.length, 0);
 });
 
 test('comped vs self-serve wording, and future-dated accounts beyond 90 days are left alone', async () => {

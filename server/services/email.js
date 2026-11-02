@@ -136,14 +136,16 @@ function postSendMail(token, payload) {
 // The From address is always graphSenderEmail (so replies land in that mailbox);
 // fromName overrides only the display name. subject/html are already finalized
 // by sendEmail (prefix applied, html derived from text) — this builder is pure.
-function buildGraphPayload(to, subject, html, fromName, cc) {
+function buildGraphPayload(to, subject, html, fromName, cc, bcc) {
   const ccList = (Array.isArray(cc) ? cc : (cc ? [cc] : [])).filter(Boolean);
+  const bccList = (Array.isArray(bcc) ? bcc : (bcc ? [bcc] : [])).filter(Boolean);
   return {
     message: {
       subject,
       body: { contentType: 'HTML', content: html },
       toRecipients: [{ emailAddress: { address: to } }],
       ...(ccList.length ? { ccRecipients: ccList.map((a) => ({ emailAddress: { address: a } })) } : {}),
+      ...(bccList.length ? { bccRecipients: bccList.map((a) => ({ emailAddress: { address: a } })) } : {}),
       from: {
         emailAddress: {
           address: config.graphSenderEmail,
@@ -182,23 +184,25 @@ function getSmtpTransporter() {
 
 // Pure message builder (exported for tests). fromName overrides the display name
 // while keeping the configured From address; otherwise SMTP_FROM is used verbatim.
-function buildSmtpMessage(to, subject, text, html, fromName, headers, cc) {
+function buildSmtpMessage(to, subject, text, html, fromName, headers, cc, bcc) {
   const from = fromName
     ? { name: fromName, address: smtpFromAddress() }
     : (config.smtpFrom || smtpFromAddress());
   const msg = { from, to, subject, html };
   const ccList = (Array.isArray(cc) ? cc : (cc ? [cc] : [])).filter(Boolean);
+  const bccList = (Array.isArray(bcc) ? bcc : (bcc ? [bcc] : [])).filter(Boolean);
   if (ccList.length) msg.cc = ccList.join(', ');
+  if (bccList.length) msg.bcc = bccList.join(', ');
   if (text) msg.text = text;   // keep a plain-text alternative when the caller gave one
   if (headers && Object.keys(headers).length) msg.headers = headers;
   return msg;
 }
 
-async function smtpSend(to, subject, text, html, fromName, headers, cc) {
+async function smtpSend(to, subject, text, html, fromName, headers, cc, bcc) {
   // SMTP is not HTTP, so the outbound ledger's diagnostics channels never see it: count it here
   // (host and port only — lib/outbound-ledger.js).
   require('../lib/outbound-ledger').note({ host: `${config.smtpHost}:${Number(config.smtpPort) || 25}`, protocol: 'smtp:', feature: 'email' });
-  await getSmtpTransporter().sendMail(buildSmtpMessage(to, subject, text, html, fromName, headers, cc));
+  await getSmtpTransporter().sendMail(buildSmtpMessage(to, subject, text, html, fromName, headers, cc, bcc));
 }
 
 // ─────────────────────────── public surface ───────────────────────────
@@ -253,7 +257,7 @@ function unsubscribeParts(userId, list = 'alerts') {
 // prefix). fromName overrides the display name. Returns a result object and never
 // throws — delivery failures are logged and returned as sent:false so app flow
 // (offline alerts, signup mail, etc.) keeps running even when email is broken.
-async function sendEmail({ to, subject, text, html, fromName, rawSubject, unsubscribeUserId, unsubscribeList, cc }) {
+async function sendEmail({ to, subject, text, html, fromName, rawSubject, unsubscribeUserId, unsubscribeList, cc, bcc }) {
   if (!isConfigured()) {
     console.log(`[EMAIL] not configured - would send to ${to}: ${subject}`);
     if (text) console.log(`  ${text.split('\n')[0]}`);
@@ -278,10 +282,10 @@ async function sendEmail({ to, subject, text, html, fromName, rawSubject, unsubs
   const finalText = text ? text + unsub.footerText : text;
   try {
     if (TRANSPORT === 'smtp') {
-      await smtpSend(to, finalSubject, finalText, finalHtml, fromName, unsub.headers, cc);
+      await smtpSend(to, finalSubject, finalText, finalHtml, fromName, unsub.headers, cc, bcc);
     } else {
       const token = await getAccessToken();
-      await postSendMail(token, buildGraphPayload(to, finalSubject, finalHtml, fromName, cc));
+      await postSendMail(token, buildGraphPayload(to, finalSubject, finalHtml, fromName, cc, bcc));
     }
     console.log(`[EMAIL] sent to ${to}: ${subject}`);
     return { sent: true };
