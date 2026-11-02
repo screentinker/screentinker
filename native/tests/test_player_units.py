@@ -229,8 +229,13 @@ def test_video_is_revealed_on_its_first_frame_not_a_timer():
     video = src[src.index("id: videoComp"):src.index("id: webComp")]
     assert re.search(r"target:\s*vo\.videoSink", video) and "onVideoFrameChanged" in video
     assert "slot.markReady()" in video.split("onVideoFrameChanged", 1)[1].split("}", 1)[0]
-    m = re.search(r"id:\s*readyTimer;\s*interval:\s*(\d+)", video)
-    assert m and int(m.group(1)) >= 1000, "the timer must be a fallback, not the reveal"
+    # interval: (live) ? LIVE : CLIP. A clip's fallback must lose to a slow decoder; a live stream's
+    # must still come before the 15 s fault timer, or a long-GOP camera faults and reconnects forever.
+    m = re.search(r"id:\s*readyTimer;\s*interval:\s*\(slot\.item && slot\.item\.live\)\s*\?\s*(\d+)\s*:\s*(\d+)", video)
+    assert m, "readyTimer interval should be (live) ? LIVE : CLIP"
+    live, clip = int(m.group(1)), int(m.group(2))
+    assert clip >= 1000, "the timer must be a fallback, not the reveal"
+    assert clip < live < 15000, "a live slot waits longer for a keyframe, but is revealed before the fault timer"
 
 
 def test_qt_video_output_exposes_a_sink_with_a_frame_signal():

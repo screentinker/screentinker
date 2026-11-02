@@ -738,6 +738,27 @@ def test_a_refresh_re_renders_only_the_zone_that_changed(eng):
             r.stop()
 
 
+def test_after_a_stop_the_same_payload_restarts_every_zone(eng):
+    # stop_all (a suspended display, unpairing) stops the runners but they used to stay registered
+    # under the same layout, so the next identical-layout payload took them for "unchanged" zones
+    # and never restarted them: those zones froze.
+    e, app = eng
+    app.cache.files.update(A="/c/A.png")
+    try:
+        e.on_payload(_zones_payload(1))
+        _settle()
+        old_main = e.zone_runners["main"]
+        e.stop_all()
+        app.stage.take()
+        e.on_payload(_zones_payload(2))
+        _settle()
+        assert sorted(_zone_ops(app, ("show",))) == ["zone:main", "zone:side"]
+        assert e.zone_runners["main"] is not old_main
+    finally:
+        for r in e.zone_runners.values():
+            r.stop()
+
+
 def test_a_layout_change_still_rebuilds_every_zone(eng):
     e, app = eng
     app.cache.files.update(A="/c/A.png")

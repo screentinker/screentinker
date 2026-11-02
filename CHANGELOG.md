@@ -10,7 +10,9 @@
   black each time. Only the zones whose own items changed re-render now; a layout change still
   rebuilds them all. On the Pi/Windows player a duration-only edit in a layout zone now takes effect
   (it was ignored before), and a camera that does reconnect keeps showing the previous picture until
-  its first real frame instead of switching to black after 1.5 seconds.
+  its first real frame (up to 8 seconds) instead of switching to black after 1.5 seconds. On the web
+  player a dwell edit takes effect at the zone's next item without restarting it; on Android, a new
+  schedule, dwell, fit or mute on a zone item re-renders just that zone.
 
 ## 3.1.1
 

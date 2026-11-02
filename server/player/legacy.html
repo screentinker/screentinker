@@ -6668,6 +6668,7 @@ function renderContent(item) {
       discardPendingSwap();
       stage.style.display = "block";
       zoneState = renderZones(stage, item, zoneState);
+      if (suspendedPlayback) suspendedPlayback.seq = renderSeq;
       return;
     }
   }
@@ -6985,6 +6986,7 @@ function renderZones(container, defaultItem, prev) {
     const sig = zoneItemsSig(items);
     const had = prev && prev.zones[zone.id];
     if (had && had.sig === sig) {
+      had.items.splice(0, had.items.length, ...items);
       next.zones[zone.id] = had;
       return;
     }
@@ -6995,7 +6997,7 @@ function renderZones(container, defaultItem, prev) {
       div.style.cssText = "left:".concat(zone.x_percent, "%;top:").concat(zone.y_percent, "%;width:").concat(zone.width_percent, "%;height:").concat(zone.height_percent, "%;z-index:").concat(zone.z_index || 0);
       container.appendChild(div);
     }
-    next.zones[zone.id] = { sig, div };
+    next.zones[zone.id] = { sig, div, items };
     showZoneItem(zone, div, items, 0);
   });
   if (prev) {
@@ -7006,6 +7008,15 @@ function renderZones(container, defaultItem, prev) {
         delete zoneTimers[id];
       }
       const div = prev.zones[id].div;
+      div.__stYtToken = (div.__stYtToken || 0) + 1;
+      if (div.__stYtSafety) {
+        clearTimeout(div.__stYtSafety);
+        div.__stYtSafety = null;
+      }
+      if (div.__stBundleReg) {
+        if (typeof revokeBundleFrame === "function") revokeBundleFrame(div.__stBundleReg);
+        div.__stBundleReg = null;
+      }
       div.querySelectorAll("video").forEach((v) => {
         try {
           if (typeof destroyHls === "function") destroyHls(v);
@@ -7045,8 +7056,7 @@ function zoneItemsSig(items) {
     JSON.stringify(a.meta || {}),
     JSON.stringify(a.transition || null),
     a.transparent_bg ? "t" : "",
-    a.muted ? "m" : "",
-    a.duration_sec || 0
+    a.muted ? "m" : ""
   ].join("|")).join(",");
 }
 function zoneLayoutKey(l) {

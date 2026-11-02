@@ -549,7 +549,6 @@ class PlaybackEngine:
                  "bg": ""} for z in zones]
         items = [Item.parse(a) for a in assignments]
         spec_sig = json.dumps(spec, sort_keys=True)
-        sig = json.dumps([spec, [i.sig() for i in items]], sort_keys=True)
         # ⚠️ Same layout, different items: re-render ONLY the zones whose own items changed. This used
         # to restart every zone on any change, and a weather widget's data refresh bumps its rev every
         # few minutes, so a camera in the next zone reconnected and went black each time (seen on a
@@ -567,7 +566,6 @@ class PlaybackEngine:
             for r in self.zone_runners.values():
                 r.stop()
         self.zone_runners.clear()
-        self._zone_sig = sig
         self._zone_spec_sig = spec_sig
         self.mode = "zones"
         self.stage.set("zones", spec)
@@ -1100,7 +1098,7 @@ class PlaybackEngine:
             for r in self.zone_runners.values():
                 r.stop()
             self.zone_runners.clear()
-            self._zone_sig = None
+            self._zone_spec_sig = None
         elif self.mode == "wallzones":
             self._stop_wall_zones()
         self.wz_key, self.wz_config = key, wall
@@ -1272,6 +1270,10 @@ class PlaybackEngine:
             self.stage.set("layoutMode", "single")
         for r in self.zone_runners.values():
             r.stop()
+        # The runners above are stopped, not gone: forget the layout so the next payload rebuilds
+        # every zone. Left set, a resume with the same layout took these stopped runners for
+        # "unchanged" zones and never restarted them (suspend/unpair, then the same playlist back).
+        self._zone_spec_sig = None
         self.sync_timer.stop()
         self.stage.clearSurface.emit("main")
 

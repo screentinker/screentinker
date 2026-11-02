@@ -128,6 +128,10 @@ class ZoneManager(
     /** Each rendered zone's item signature (see [ZoneRenderPlan.itemSig]): a re-render skips a zone whose items
      *  did not change, so it keeps playing. Cleared with the zones in [cleanup]. */
     private val zoneItemSigs = mutableMapOf<String, String>()
+    // The container size the rendered zones were laid out for. A zone left playing keeps its pixel
+    // LayoutParams, so after a resize (an orientation change) every zone is re-laid out.
+    private var renderedW = 0
+    private var renderedH = 0
 
     // #74/#75: device-effective IANA timezone for per-item schedule evaluation.
     @Volatile private var effectiveTimezone: String? = null
@@ -163,6 +167,8 @@ class ZoneManager(
         // Every zone used to be torn down on any change, and a weather widget's data refresh bumps
         // its rev every few minutes, so a camera or video in the next zone went black each time.
         // A first render after setupZones() (no zone signatures yet) starts clean as before.
+        if (zoneItemSigs.isNotEmpty() && container.width > 0 && container.height > 0
+            && (container.width != renderedW || container.height != renderedH)) zoneItemSigs.clear()
         if (zoneItemSigs.isEmpty()) {
             // Clear ONLY our own zone views/timers. `container` is the activity root and
             // also holds the static playerView/imageView/youtubeWebView/statusOverlay -
@@ -236,6 +242,8 @@ class ZoneManager(
         }
         // A zone left with nothing of its own is cleared (it would otherwise keep its last item).
         for (id in ZoneRenderPlan.zonesToClear(zoneItemSigs, wanted)) teardownZone(id)
+        renderedW = containerWidth
+        renderedH = containerHeight
         Log.i(TAG, "Rendered ${zoneViews.size} zone views")
     }
 

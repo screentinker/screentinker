@@ -31,6 +31,7 @@ function harness(zones) {
   const end = PLAYER.indexOf('    // Render items[index] in a zone and schedule', start);
   assert.ok(start > 0 && end > start, 'renderZones(container, defaultItem, prev) is still in index.html');
   const shows = [];
+  const revoked = [];
   const container = { children: [], appendChild(d) { d.parentNode = this; this.children.push(d); } };
   const env = {
     layout: { id: 'L', zones },
@@ -43,13 +44,14 @@ function harness(zones) {
     zoneTimers: {},
     zoneReport() {},
     document: { createElement: () => fakeDiv() },
-    showZoneItem(zone, div, items) { shows.push(zone.id + ':' + items.map((i) => i.label).join(',')); div.zoneId = zone.id; },
+    showZoneItem(zone, div, items) { shows.push(zone.id + ':' + items.map((i) => i.label).join(',')); div.zoneId = zone.id; div.items = items; },
+    revokeBundleFrame(reg) { revoked.push(reg); },
   };
   const names = Object.keys(env);
   // eslint-disable-next-line no-new-func
   const fn = new Function(...names, PLAYER.slice(start, end) + '\nreturn renderZones;')(...names.map((n) => env[n]));
   return {
-    shows, container,
+    shows, container, revoked,
     render(playlist, prev) { env.playlist.splice(0, env.playlist.length, ...playlist); shows.length = 0; return fn(container, playlist[0], prev); },
   };
 }
@@ -79,11 +81,15 @@ test('an unchanged payload re-renders nothing', () => {
   assert.deepEqual(h.shows, []);
 });
 
-test('a dwell edit re-renders that zone only, so the new timing applies', () => {
+test('a dwell edit restarts nothing; the playing zone is handed the new item objects', () => {
   const h = harness(ZONES);
   const first = h.render([cam, weather(1)]);
-  h.render([cam, Object.assign(weather(1), { duration_sec: 45 })], first);
-  assert.deepEqual(h.shows, ['side:weather@1']);
+  const sideItems = first.zones.side.div.items;
+  const edited = Object.assign(weather(1), { duration_sec: 45 });
+  h.render([cam, edited], first);
+  assert.deepEqual(h.shows, [], 'no zone is re-shown for a dwell edit');
+  assert.equal(sideItems[0], edited, "the zone's own rotation array now holds this payload's object");
+  assert.equal(sideItems[0].duration_sec, 45);
 });
 
 test('a zone left with nothing is cleared, and a zone that gains items is built', () => {
@@ -95,6 +101,22 @@ test('a zone left with nothing is cleared, and a zone that gains items is built'
   assert.deepEqual(h.shows, ['ticker:news']);
   assert.ok(sideDiv.removed, 'the emptied side zone is removed');
   assert.ok(!second.zones.side && second.zones.ticker && second.zones.main === first.zones.main);
+});
+
+test('a cleared zone drops its YouTube safety net and bundle registration, as a swap would', () => {
+  const h = harness([...ZONES, Z('ticker', 25, 20, 75, 80)]);
+  const first = h.render([cam, weather(1)]);
+  const div = first.zones.side.div;
+  let fired = false;
+  div.__stYtSafety = setTimeout(() => { fired = true; }, 5);
+  div.__stBundleReg = 'reg-1';
+  div.__stYtToken = 3;
+  h.render([cam], first);
+  assert.equal(div.__stYtSafety, null);
+  assert.equal(div.__stBundleReg, null);
+  assert.deepEqual(h.revoked, ['reg-1']);
+  assert.equal(div.__stYtToken, 4, 'a YouTube callback still holding the old token is ignored');
+  return new Promise((r) => setTimeout(() => { assert.equal(fired, false); r(); }, 20));
 });
 
 test('without a previous state every zone is built from scratch (first render, layout change)', () => {
@@ -111,4 +133,5 @@ test('renderContent takes the incremental path only for the same layout, before 
   assert.match(PLAYER.slice(i, t), /zoneState = renderZones\(stage, item, zoneState\)/);
   const td = PLAYER.indexOf('function teardownCurrentMedia(keep) {');
   assert.ok(/zoneState = null;/.test(PLAYER.slice(td, td + 3000)), 'a full teardown drops the zone state');
+  assert.match(PLAYER.slice(i, t), /if \(suspendedPlayback\) suspendedPlayback\.seq = renderSeq;/, 'a pending foreground resume still finds the zones left playing');
 });

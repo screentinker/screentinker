@@ -8110,6 +8110,10 @@
           discardPendingSwap();
           stage.style.display = 'block';
           zoneState = renderZones(stage, item, zoneState);
+          // renderContent bumped renderSeq, but the zones left playing kept their <video>s, so a
+          // pending foreground resume must still find them (resumePlayback matches on the seq and
+          // skips any video that is no longer in the document).
+          if (suspendedPlayback) suspendedPlayback.seq = renderSeq;
           return;
         }
       }
@@ -8510,7 +8514,15 @@
         if (!items) return;
         const sig = zoneItemsSig(items);
         const had = prev && prev.zones[zone.id];
-        if (had && had.sig === sig) { next.zones[zone.id] = had; return; }   // unchanged: leave it playing
+        if (had && had.sig === sig) {
+          // Unchanged: leave it playing, but on THIS payload's item objects. The zone's rotation reads
+          // the array it was started with, so swap the new objects into that same array (same
+          // length and order: the signature matched). Left on the old objects, a later in-place patch
+          // of `playlist` (a dwell or mute edit) would edit objects this zone no longer reads.
+          had.items.splice(0, had.items.length, ...items);
+          next.zones[zone.id] = had;
+          return;
+        }
 
         let div = had && had.div;
         if (!div) {
@@ -8519,7 +8531,7 @@
           div.style.cssText = `left:${zone.x_percent}%;top:${zone.y_percent}%;width:${zone.width_percent}%;height:${zone.height_percent}%;z-index:${zone.z_index || 0}`;
           container.appendChild(div);
         }
-        next.zones[zone.id] = { sig, div };
+        next.zones[zone.id] = { sig, div, items };
         showZoneItem(zone, div, items, 0);   // clears the zone's own timer and content first
       });
       // A zone rendered before that now has nothing of its own is cleared.
@@ -8528,6 +8540,11 @@
           if (next.zones[id]) continue;
           if (zoneTimers[id]) { clearTimeout(zoneTimers[id]); delete zoneTimers[id]; }
           const div = prev.zones[id].div;
+          // The same per-zone state showZoneItem clears on every swap: a play-to-end YouTube safety
+          // net would otherwise advance into this detached div, and a bundle frame stays registered.
+          div.__stYtToken = (div.__stYtToken || 0) + 1;
+          if (div.__stYtSafety) { clearTimeout(div.__stYtSafety); div.__stYtSafety = null; }
+          if (div.__stBundleReg) { if (typeof revokeBundleFrame === 'function') revokeBundleFrame(div.__stBundleReg); div.__stBundleReg = null; }
           div.querySelectorAll('video').forEach(v => {
             try { if (typeof destroyHls === 'function') destroyHls(v); v.onended = null; v.onerror = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
           });
@@ -8537,15 +8554,15 @@
       return next;
     }
 
-    // What a zone's items render as, in play order (a reorder is a change). The playlist
-    // fingerprint's fields plus duration_sec: a zone left playing keeps its item objects, so a
-    // dwell edit re-renders that zone (and only it) to take the new timing.
+    // What a zone's items render as, in play order (a reorder is a change): the playlist
+    // fingerprint's fields. duration_sec is deliberately NOT in it: a zone left playing is handed the
+    // new item objects (renderZones), so a dwell edit takes effect at its next item without a restart.
     function zoneItemsSig(items) {
       return items.map(a => [a.content_id || '', a.widget_id || '', a.widget_rev || '', a.zone_id || '', a.remote_url || '',
         a.filepath || '', a.filename || '', JSON.stringify(a.schedules || []), a.play_from || '', a.play_until || '',
         a.enabled === 0 ? 0 : 1, a.log_play === 0 ? 0 : 1, a.fit_mode || '', JSON.stringify(a.play_when || null),
         JSON.stringify(a.tags || []), JSON.stringify(a.meta || {}), JSON.stringify(a.transition || null),
-        a.transparent_bg ? 't' : '', a.muted ? 'm' : '', a.duration_sec || 0].join('|')).join(',');
+        a.transparent_bg ? 't' : '', a.muted ? 'm' : ''].join('|')).join(',');
     }
 
     // The layout's identity + zone geometry (the playlist handler's layoutSig): a change rebuilds all zones.
