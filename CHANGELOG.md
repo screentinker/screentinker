@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Renewal reminders for comped / PO-billed accounts.** An account billed by invoice or PO has no
+  Stripe subscription, so nothing warned anyone its renewal was coming up. A platform admin can now
+  set a renewal date on such an account (`renewal_at`, via the "assign plan" API), and ScreenTinker
+  emails a reminder at 90, 60, 30 and 7 days before, to the account with every platform admin CC'd
+  (plus `RENEWAL_CC` if set). One reminder per band; moving the date re-arms the later ones; an
+  account that opted out of mail still reaches the admins. Hosted-only, and a no-op for any account
+  without a renewal date, so self-serve and trial accounts are unaffected. Email now supports CC.
+
 - **Slide shapes for LED strips and matrices, and an LED grid in the editor.** New shapes 8:1, 1:8,
   16:1 and 1:16, plus **Custom** (any whole numbers from 1 to 99, such as 24:5). Turn on **LED grid**
   next to the shape to draw the panel's LEDs over the canvas, so you can see which LEDs each line of

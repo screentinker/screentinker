@@ -3036,6 +3036,9 @@ try { require('./services/freshness-digest').startFreshnessDigest(); } catch (e)
 // The feedback loop's daily run (services/feedback-digest.js): follow-up emails for lapsed trials and
 // cancellations (HOSTED_INSTANCE), and the platform admins' feedback + funnel digest. 15:00 UTC.
 try { require('./services/feedback-digest').startFeedbackDigest(); } catch (e) { console.warn(`[feedback] daily run not scheduled: ${e && e.message}`); }
+// Renewal reminders for comped / PO-billed accounts: 90/60/30/7 days before users.renewal_at, to the
+// account with platform admins CC'd (services/renewalReminder.js; hosted-only, no-op without renewal_at set).
+try { require('./services/renewalReminder').startRenewalReminder(); } catch (e) { console.warn(`[renewal] reminders not scheduled: ${e && e.message}`); }
 // 3.0 complete exports and scheduled organization deletions (lib/trust): resume queued exports,
 // expire old archives, carry out deletions whose grace period has passed. Hourly or slower.
 try { require('./lib/trust/export').start(); require('./lib/trust/org-deletion').start(); } catch (e) { console.warn(`[trust] background jobs not scheduled: ${e && e.message}`); }
