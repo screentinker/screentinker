@@ -157,6 +157,13 @@ class ZoneRunner:
     def stop(self):
         self.timer.stop()
 
+    @staticmethod
+    def sig_of(items):
+        return json.dumps([i.sig() for i in items])
+
+    def items_sig(self):
+        return self.sig_of(self.items)
+
     def _next_active(self, frm):
         n = len(self.items)
         for k in range(n):
@@ -541,9 +548,12 @@ class PlaybackEngine:
                  # (_enter_wall_zones), as the web player's wall renderer does.
                  "bg": ""} for z in zones]
         items = [Item.parse(a) for a in assignments]
-        sig = json.dumps([spec, [i.sig() for i in items]], sort_keys=True)
-        if self.mode == "zones" and getattr(self, "_zone_sig", None) == sig:
-            return
+        spec_sig = json.dumps(spec, sort_keys=True)
+        # ⚠️ Same layout, different items: re-render ONLY the zones whose own items changed. This used
+        # to restart every zone on any change, and a weather widget's data refresh bumps its rev every
+        # few minutes, so a camera in the next zone reconnected and went black each time (seen on a
+        # Pi 5: the whole screen blanked every 16 min while only the weather card had changed).
+        same_layout = self.mode == "zones" and getattr(self, "_zone_spec_sig", None) == spec_sig
         if self.mode == "wallzones":
             self._stop_wall_zones()
         if self.mode == "single":
@@ -551,10 +561,12 @@ class PlaybackEngine:
             self.controller.stop()
             self.playing = False
             self.stage.clearSurface.emit("main")
-        for r in self.zone_runners.values():
-            r.stop()
+        old_runners = dict(self.zone_runners) if same_layout else {}
+        if not same_layout:
+            for r in self.zone_runners.values():
+                r.stop()
         self.zone_runners.clear()
-        self._zone_sig = sig
+        self._zone_spec_sig = spec_sig
         self.mode = "zones"
         self.stage.set("zones", spec)
         self.stage.set("layoutMode", "zones")
@@ -579,11 +591,26 @@ class PlaybackEngine:
             if zi is None and not unassigned_used:
                 unassigned_used = True
                 zi = by_zone.get(None) or []
+            old = old_runners.pop(z["id"], None)
             if not zi:
+                if old is not None:
+                    old.stop()
+                    self.stage.clearSurface.emit(old.sid)
                 continue
+            if old is not None and old.items_sig() == ZoneRunner.sig_of(zi):
+                # Unchanged zone: keep what is on screen and its timer; take the fresh item objects
+                # so a duration-only edit applies at the next dwell.
+                old.items = zi
+                self.zone_runners[z["id"]] = old
+                continue
+            if old is not None:
+                old.stop()
             r = ZoneRunner(self, z, zi)
             self.zone_runners[z["id"]] = r
             runners.append(r)
+        for old in old_runners.values():     # a zone left with nothing (defensive; spec is unchanged)
+            old.stop()
+            self.stage.clearSurface.emit(old.sid)
         QTimer.singleShot(0, lambda: [r.show(0) for r in runners])
 
     # ------------------------------------------------------------------ rendering
@@ -1071,7 +1098,7 @@ class PlaybackEngine:
             for r in self.zone_runners.values():
                 r.stop()
             self.zone_runners.clear()
-            self._zone_sig = None
+            self._zone_spec_sig = None
         elif self.mode == "wallzones":
             self._stop_wall_zones()
         self.wz_key, self.wz_config = key, wall
@@ -1243,6 +1270,10 @@ class PlaybackEngine:
             self.stage.set("layoutMode", "single")
         for r in self.zone_runners.values():
             r.stop()
+        # The runners above are stopped, not gone: forget the layout so the next payload rebuilds
+        # every zone. Left set, a resume with the same layout took these stopped runners for
+        # "unchanged" zones and never restarted them (suspend/unpair, then the same playlist back).
+        self._zone_spec_sig = None
         self.sync_timer.stop()
         self.stage.clearSurface.emit("main")
 

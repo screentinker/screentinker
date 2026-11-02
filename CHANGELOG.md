@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A playlist update no longer blanks every zone of a layout on Android, the web player and the
+  Pi/Windows player. Any change re-rendered all of them, and a weather widget's data refresh
+  changes it every few minutes, so a camera or video in another zone reconnected and the screen went
+  black each time. Only the zones whose own items changed re-render now; a layout change still
+  rebuilds them all. On the Pi/Windows player a duration-only edit in a layout zone now takes effect
+  (it was ignored before), and a camera that does reconnect keeps showing the previous picture until
+  its first real frame (up to 8 seconds) instead of switching to black after 1.5 seconds. On the web
+  player a dwell edit takes effect at the zone's next item without restarting it; on Android, a new
+  schedule, dwell, fit or mute on a zone item re-renders just that zone.
+
 ## 3.1.1
 
 A fix release: Stretch and Fill on full-screen screens, disabled items you can see, uploads that

@@ -262,7 +262,13 @@ Item {
             }
             // Fallback only, for a backend that never reports frames to the sink: a clip must not sit
             // hidden behind the previous item for ever. Long enough that a slow decoder wins first.
-            Timer { id: readyTimer; interval: 1500; onTriggered: slot.markReady() }
+            // ⚠️ Later for a LIVE stream: an HEVC camera joined mid-GOP decodes nothing until its next
+            // keyframe (seconds; "Could not find ref with POC" in the log), and revealing it at 1.5 s
+            // swapped a black slot in over the previous picture. A live slot waits up to 8 s for a real
+            // frame, which covers ordinary GOPs. It is still revealed after that, before the 15 s fault
+            // timer below: a long-GOP camera (Smart Codec, 20 s) would otherwise fault, reconnect,
+            // join mid-GOP again and never show at all.
+            Timer { id: readyTimer; interval: (slot.item && slot.item.live) ? 8000 : 1500; onTriggered: slot.markReady() }
             // Position for the sync engines and device:playback-state.
             Timer {
                 interval: 250; repeat: true; running: player.playbackState === MediaPlayer.PlayingState
