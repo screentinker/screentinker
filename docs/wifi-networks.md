@@ -54,6 +54,11 @@ signal and history.
 The screen manages only the networks added here. It keeps its own list of them. A network
 configured on the panel by hand is never changed or removed. If one with the same name already
 exists, the new entry is refused ("set up on the screen by hand") instead of taking it over.
+This check needs the modes owner or direct: in suggestions mode Android does not show the player the
+saved networks, so the network is suggested next to the one set up by hand, which stays untouched.
+
+The screen recognizes its own networks by name and security type, not by Android's network number,
+which Android hands out afresh at every restart.
 
 ## A screen never strands itself
 
@@ -75,6 +80,10 @@ A wrong password must not take a panel offline that nobody can reach. So:
   permission. Without it, the screen cannot tell, so it changes or removes nothing while Wi-Fi is
   its connection. It does those steps when the screen is on Ethernet, or once the player has
   location access. A device owner grants itself that permission.
+- With location switched off in the system settings, Android 10 and newer does not show even a
+  device owner its saved networks. The screen then adds, changes and removes nothing as device
+  owner, and reports **Failed** with "permission denied" for a new network, until location is on
+  again.
 
 Removing a screen from the dashboard, or unpairing it, leaves its networks on the panel: a screen
 that has lost its pairing still needs a network to be paired again. If the panel is later paired as
@@ -91,7 +100,9 @@ above.
   the field empty when you edit a network keeps the stored password.
 - It is stored encrypted on the server. On the screen it is kept in an Android Keystore-backed
   store, or not kept at all if that store is unavailable. The server sends the list again on every
-  connect.
+  connect. The names and security types of the networks the screen saved (never the passwords) are
+  also kept in the player's private storage, so a screen that lost its list still knows those
+  networks as its own instead of as set up by hand.
 - It never appears in device lists, exports, logs, API tokens or the MCP tools. The Wi-Fi routes
   are for signed-in people only. Every change is written to the activity log with who, which
   screen and which network, never with the password.

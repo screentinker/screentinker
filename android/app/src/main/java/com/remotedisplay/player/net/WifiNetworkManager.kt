@@ -1,9 +1,13 @@
 package com.remotedisplay.player.net
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -16,6 +20,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.annotation.RequiresApi
+import androidx.core.content.ContextCompat
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.remotedisplay.player.admin.STPolicy
@@ -44,7 +49,10 @@ import org.json.JSONObject
  * ⚠️ THE LIST IS KEYSTORE-BACKED OR NOT KEPT. Both lists hold passwords (a waiting step may need
  * one after a reboot). They live in EncryptedSharedPreferences under an Android Keystore master
  * key. Where that store will not open, they are kept in memory only — never in plain prefs — and
- * the server sends the list again on the next connect.
+ * the server sends the list again on the next connect. What it must not forget is which saved
+ * networks are its own, or they would read as set up by hand for ever: their SSID and security (no
+ * password) are also kept in plain app storage ([KEY_OWNED]), and every change of the list is written
+ * before Android is asked to add a network, not after.
  */
 class WifiNetworkManager(
     private val context: Context,
@@ -54,10 +62,12 @@ class WifiNetworkManager(
     private val wifi: WifiManager? = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
     private val cm: ConnectivityManager? = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
     private val store: SharedPreferences? = openStore(context)
+    private val ownedStore: SharedPreferences = context.getSharedPreferences("wifi_networks_owned", Context.MODE_PRIVATE)
 
     private var desired: List<WifiDesired> = emptyList()
     private var managed: List<WifiManaged> = emptyList()
     private var callback: ConnectivityManager.NetworkCallback? = null
+    private var wifiStateReceiver: BroadcastReceiver? = null
     private var lastReport: String? = null
     private var memoryDevice: String? = null
     /**
@@ -81,6 +91,7 @@ class WifiNetworkManager(
         desired = d?.map(::desiredFrom) ?: emptyList()
         managed = m?.map(::managedFrom) ?: emptyList()
         destructiveBlocked = d == null || m == null
+        recoverOwned()
         // Checked HERE, before anything runs: a list saved for another pairing is not ours to finish.
         releaseIfRepaired(deviceId)
         // Not paired yet (no id to check against): wait for the server's list, change nothing.
@@ -129,11 +140,27 @@ class WifiNetworkManager(
             Log.i(TAG, "wifi: paired as a new screen; ${managed.size} network(s) stay on the panel, released")
             managed = managed.map { it.copy(released = true) }
             desired = emptyList()
-            write(KEY_MANAGED, JSONArray(managed.map(::toJson)))
+            saveManaged()
             write(KEY_DESIRED, JSONArray())
         }
         memoryDevice = deviceId
-        try { store?.edit()?.putString(KEY_DEVICE, deviceId)?.apply() } catch (_: Throwable) { }
+        try { store?.edit()?.putString(KEY_DEVICE, deviceId)?.commit() } catch (_: Throwable) { }
+    }
+
+    /**
+     * Saved networks of ours that the list lost (no Keystore store across a restart, a damaged list)
+     * come back from the ownership record as RELEASED: never removed by this player, taken over when
+     * the server lists the SSID again — instead of reading as set up by hand for ever.
+     */
+    private fun recoverOwned() {
+        val owned = try { JSONArray(ownedStore.getString(KEY_OWNED, null) ?: "[]") } catch (_: Throwable) { JSONArray() }
+        for (i in 0 until owned.length()) {
+            val o = owned.optJSONObject(i) ?: continue
+            val ssid = o.optString("ssid")
+            val security = o.optString("security")
+            if (ssid.isEmpty() || managed.any { it.netId >= 0 && it.ssid == ssid && it.security == security }) continue
+            managed = managed + WifiManaged("owned:" + java.util.UUID.randomUUID(), ssid, security, false, null, null, WifiPlan.NET_ID_UNKNOWN, released = true)
+        }
     }
 
     @Synchronized
@@ -141,6 +168,8 @@ class WifiNetworkManager(
         handler.removeCallbacks(reconcileSoon)
         try { callback?.let { cm?.unregisterNetworkCallback(it) } } catch (_: Throwable) { }
         callback = null
+        try { wifiStateReceiver?.let { context.unregisterReceiver(it) } } catch (_: Throwable) { }
+        wifiStateReceiver = null
     }
 
     fun mode(): String = modeFor(context)
@@ -149,15 +178,16 @@ class WifiNetworkManager(
     @Synchronized
     fun reconcile(force: Boolean) {
         val mode = mode()
-        dropVanished(mode)
+        // Saved networks Android will not show us: their ids are unknown, so nothing is changed or removed.
+        val blocked = !refreshFromAndroid(mode) || destructiveBlocked
         val plan = WifiPlan.plan(desired, managed, situation(mode))
         // While the stored state is suspect only adds run; the plan's re-matching waits for a real list too.
-        if (!destructiveBlocked) managed = plan.managed
+        if (!blocked) managed = plan.managed
         val outcomes = plan.outcomes.toMutableList()
         retiredThisRun = false
         removedThisRun = false
         for (step in plan.steps) {
-            if (destructiveBlocked && step !is WifiStep.Add) continue
+            if (blocked && step !is WifiStep.Add) continue
             /*
              * The link is read again before every change or removal: an add earlier in this run (or
              * Android on its own) may have moved the panel onto the very network a later step targets.
@@ -165,7 +195,7 @@ class WifiNetworkManager(
             val target = when (step) { is WifiStep.Update -> step.managed; is WifiStep.Remove -> step.managed; else -> null }
             if (target != null) {
                 val now = situation(mode)
-                if (WifiPlan.inUse(target, now)) {
+                if (WifiPlan.inUse(target, now, managed)) {
                     if (step is WifiStep.Update) outcomes += WifiOutcome(step.desired.id, "deferred", WifiPlan.waitReason(target, now))
                     continue
                 }
@@ -179,7 +209,7 @@ class WifiNetworkManager(
         if (Build.VERSION.SDK_INT < 26 && mode != WifiModeLogic.SUGGESTIONS && plan.steps.isNotEmpty()) {
             @Suppress("DEPRECATION") try { wifi?.saveConfiguration() } catch (_: Throwable) { }
         }
-        write(KEY_MANAGED, JSONArray(managed.map(::toJson)))
+        saveManaged()
         // A replaced network is removed by the next run, through the same in-use guard as any removal;
         // a removal may have freed an SSID another step was waiting for.
         if (retiredThisRun || removedThisRun) { handler.removeCallbacks(reconcileSoon); handler.postDelayed(reconcileSoon, SETTLE_MS) }
@@ -217,8 +247,15 @@ class WifiNetworkManager(
             true -> return WifiOutcome(d.id, "failed", "already_configured_by_hand")
             false -> { }
         }
+        // Ours BEFORE Android has it: a power cut in between must not leave a network of ours that
+        // reads as set up by hand. If the add never happened, the next run finds nothing and drops it.
+        managed = managed.filter { it.id != d.id } + managedFrom(d, WifiPlan.NET_ID_UNKNOWN)
+        saveManaged()
         val netId = addConfig(configFor(d), mode)
-        if (netId < 0) return WifiOutcome(d.id, "failed", "rejected_by_android")
+        if (netId < 0) {
+            managed = managed.filter { it.id != d.id }
+            return WifiOutcome(d.id, "failed", "rejected_by_android")
+        }
         @Suppress("DEPRECATION") wifi!!.enableNetwork(netId, false)   // may join; never forces a switch
         managed = managed.filter { it.id != d.id } + managedFrom(d, netId)
         return WifiOutcome(d.id, "applied")
@@ -255,7 +292,7 @@ class WifiNetworkManager(
             }
             return out
         }
-        val retired = m.copy(id = RETIRED_PREFIX + java.util.UUID.randomUUID())
+        val retired = m.copy(id = WifiPlan.RETIRED_PREFIX + java.util.UUID.randomUUID())
         managed = managed.map { if (it.id == m.id) retired else it }
         val out = try { add(d, mode) } catch (e: Throwable) { WifiOutcome(d.id, "failed", "rejected_by_android") }
         if (out.state == "applied" || out.state == "suggested") retiredThisRun = true
@@ -288,7 +325,7 @@ class WifiNetworkManager(
                 @Suppress("DEPRECATION")
                 val ok = wifi!!.removeNetwork(m.netId)
                 // False also when it is already gone (forgotten on the panel by hand): then it is gone.
-                ok || savedNetIds()?.contains(m.netId) == false
+                ok || savedNetworks()?.none { it.netId == m.netId } == true
             }
         }
         if (gone) { managed = managed.filter { it.id != m.id }; removedThisRun = true }
@@ -296,26 +333,47 @@ class WifiNetworkManager(
     }
 
     /**
-     * Forget managed entries Android no longer has (someone removed the network on the panel), so the
-     * plan adds them again instead of reporting "applied" for something that is not there.
+     * Bring our list in line with what Android has now: the saved networks' current ids
+     * ([WifiPlan.resolve], ids change on every boot), and managed entries Android no longer has
+     * (someone removed the network on the panel) forgotten, so the plan adds them again instead of
+     * reporting "applied" for something that is not there. False when the saved networks cannot be
+     * read in a mode that saves them: then their ids are unknown, and nothing may be changed or removed.
+     * In suggestions mode the saved ones (from when the player was owner) are only ever released.
      */
-    private fun dropVanished(mode: String) {
-        val saved = if (mode != WifiModeLogic.SUGGESTIONS) savedNetIds() else null
+    private fun refreshFromAndroid(mode: String): Boolean {
+        val saved = if (mode != WifiModeLogic.SUGGESTIONS) savedNetworks() else null
+        managed = WifiPlan.resolve(managed, saved)
         val suggested = if (mode == WifiModeLogic.SUGGESTIONS && Build.VERSION.SDK_INT >= 30)
             try { wifi?.networkSuggestions?.map { it.ssid } } catch (_: Throwable) { null } else null
-        managed = managed.filter { m ->
-            when {
-                m.netId >= 0 && saved != null -> m.netId in saved
-                m.netId < 0 && suggested != null -> m.ssid in suggested
-                else -> true   // cannot check: keep it
-            }
+        if (suggested != null) managed = managed.filter { it.netId >= 0 || it.ssid in suggested }
+        return mode == WifiModeLogic.SUGGESTIONS || saved != null
+    }
+
+    /**
+     * The saved networks, or null when Android will not show them.
+     *
+     * ⚠️ AN EMPTY LIST MAY BE A REFUSAL. From Android 10, an app that fails the location check gets
+     * an empty list, not an error (WifiServiceImpl.getConfiguredNetworks) — a device owner too, when
+     * location is switched off. Read as "nothing saved", it would drop our entries, and an add would
+     * write over the network in use or take over one set up by hand. So there an empty list counts
+     * only when the location check would pass.
+     */
+    @Suppress("DEPRECATION")
+    private fun savedNetworks(): List<WifiSaved>? {
+        val configs = try { wifi?.configuredNetworks } catch (_: SecurityException) { null } ?: return null
+        if (configs.isEmpty() && Build.VERSION.SDK_INT >= 29 && !locationVisible()) return null
+        return configs.map { c ->
+            WifiSaved(c.networkId, WifiPlan.ssidFromWifiInfo(c.SSID) ?: "",
+                WifiPlan.securityOf(c.allowedKeyManagement, c.wepKeys?.any { !it.isNullOrEmpty() } == true))
         }
     }
 
-    /** The ids of the saved networks, or null when Android will not tell us. */
-    @Suppress("DEPRECATION")
-    private fun savedNetIds(): Set<Int>? =
-        try { wifi?.configuredNetworks?.map { it.networkId }?.toSet() } catch (_: SecurityException) { null }
+    @RequiresApi(28)
+    private fun locationVisible(): Boolean {
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        return context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED &&
+            lm?.isLocationEnabled == true
+    }
 
     private fun addConfig(c: WifiConfiguration, mode: String): Int {
         if (mode == WifiModeLogic.OWNER && Build.VERSION.SDK_INT >= 31) {
@@ -331,11 +389,11 @@ class WifiNetworkManager(
      * Android will not show us the saved networks — then we cannot tell, and an add could take one
      * over, so the caller refuses.
      */
-    @Suppress("DEPRECATION")
     private fun configuredByHand(d: WifiDesired): Boolean? {
-        val ours = managed.map { it.netId }.toSet()
-        val configs = try { wifi!!.configuredNetworks } catch (_: SecurityException) { null } ?: return null
-        return configs.any { it.SSID == WifiPlan.quoted(d.ssid) && it.networkId !in ours }
+        // Our ids are the ones Android uses now: refreshFromAndroid looked them up at the start of this run.
+        val ours = managed.filter { it.netId >= 0 }.map { it.netId }.toSet()
+        val saved = savedNetworks() ?: return null
+        return saved.any { it.ssid == d.ssid && it.netId !in ours }
     }
 
     @Suppress("DEPRECATION")
@@ -381,7 +439,8 @@ class WifiNetworkManager(
         val info = try { wifi?.connectionInfo } catch (_: Throwable) { null }
         val netId = info?.networkId?.takeIf { it >= 0 }
         val wifiLinks = try {
-            cm?.allNetworks?.count { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true } ?: 0
+            // A VPN's capabilities carry the transport underneath it: it is not a second Wi-Fi link.
+            cm?.allNetworks?.count { n -> cm.getNetworkCapabilities(n)?.let { it.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && !it.hasTransport(NetworkCapabilities.TRANSPORT_VPN) } == true } ?: 0
         } catch (_: Throwable) { -1 }   // cannot tell
         val wifiActive = wifiLinks != 0 || netId != null || info?.supplicantState == android.net.wifi.SupplicantState.COMPLETED
         // connectionInfo names ONE network. With two Wi-Fi links at once (Android 12+), or when we
@@ -390,8 +449,19 @@ class WifiNetworkManager(
         return WifiSituation(mode, Build.VERSION.SDK_INT, wifiActive, netId, WifiPlan.ssidFromWifiInfo(info?.ssid))
     }
 
-    /** Any change of link re-plans, a few seconds later so a handover settles first. */
+    /**
+     * Any change of link re-plans, a few seconds later so a handover settles first. So does Wi-Fi
+     * being switched on or off: with no network in reach that is no change of link, and the
+     * "wifi_off" note would stay.
+     */
     private fun watchConnectivity() {
+        if (wifiStateReceiver == null) {
+            val r = object : BroadcastReceiver() { override fun onReceive(c: Context, i: Intent) = soon() }
+            try {
+                ContextCompat.registerReceiver(context, r, IntentFilter(WifiManager.WIFI_STATE_CHANGED_ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)
+                wifiStateReceiver = r
+            } catch (e: Throwable) { Log.w(TAG, "wifi: cannot watch the Wi-Fi switch: ${e.message}") }
+        }
         if (callback != null || cm == null) return
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) = soon()
@@ -439,8 +509,16 @@ class WifiNetworkManager(
                 it.optString("security") in listOf(WifiPlan.SECURITY_OPEN, WifiPlan.SECURITY_WPA2, WifiPlan.SECURITY_WPA3) }) out else null
     } catch (_: Throwable) { null }
 
+    /** commit(), not apply(): the panel may lose power the moment after (a van's ignition). */
     private fun write(key: String, arr: JSONArray) {
-        try { store?.edit()?.putString(key, arr.toString())?.apply() } catch (e: Throwable) { Log.w(TAG, "wifi: store write failed: ${e.message}") }
+        try { store?.edit()?.putString(key, arr.toString())?.commit() } catch (e: Throwable) { Log.w(TAG, "wifi: store write failed: ${e.message}") }
+    }
+
+    /** Our list, and the ownership record of its saved networks (SSID and security, never a password). */
+    private fun saveManaged() {
+        write(KEY_MANAGED, JSONArray(managed.map(::toJson)))
+        val owned = JSONArray(managed.filter { it.netId >= 0 }.map { JSONObject().put("ssid", it.ssid).put("security", it.security) })
+        try { ownedStore.edit().putString(KEY_OWNED, owned.toString()).commit() } catch (e: Throwable) { Log.w(TAG, "wifi: ownership write failed: ${e.message}") }
     }
 
     private fun desiredFrom(o: JSONObject) = WifiDesired(
@@ -469,9 +547,8 @@ class WifiNetworkManager(
         private const val KEY_DESIRED = "desired"
         private const val KEY_MANAGED = "managed"
         private const val KEY_DEVICE = "device_id"
+        private const val KEY_OWNED = "owned"
         private const val SETTLE_MS = 4000L
-        // A replaced network waiting for its removal: an id the server never sends, so nobody wants it.
-        private const val RETIRED_PREFIX = "retired:"
 
         /** owner / direct / suggestions / unsupported — what device_info.wifi_mode reports. */
         fun modeFor(context: Context): String {

@@ -50,7 +50,14 @@ data class WifiDesired(
     val password: String?,
 )
 
-/** A network THIS player added. [netId] is the WifiConfiguration id, or -1 for a suggestion. */
+/**
+ * A network THIS player added. [netId] is the WifiConfiguration id, or -1 for a suggestion.
+ *
+ * ⚠️ A NETWORK ID IS NOT AN IDENTITY. Android numbers the saved networks afresh every time it loads
+ * them (WifiConfigManager: `networkId = mNextNetworkId++`, on every boot), so a stored id may name
+ * another network after a reboot. WifiNetworkManager looks the id up again on every run
+ * ([WifiPlan.resolve]); [WifiPlan.NET_ID_UNKNOWN] marks a saved network whose id is not known.
+ */
 data class WifiManaged(
     val id: String,
     val ssid: String,
@@ -68,6 +75,12 @@ data class WifiManaged(
     fun sameAs(d: WifiDesired): Boolean =
         ssid == d.ssid && security == d.security && hidden == d.hidden && priority == d.priority && password == d.password
 }
+
+/**
+ * A network saved on the panel, as Android lists it. [security] is null for a kind this player never
+ * writes (WEP, enterprise, OWE …), so none of our entries can match it.
+ */
+data class WifiSaved(val netId: Int, val ssid: String, val security: String?)
 
 /**
  * What the panel knows about its link when it plans. [wifiActive]: Wi-Fi is the active (default)
@@ -105,6 +118,12 @@ object WifiPlan {
     const val SECURITY_WPA2 = "wpa2"
     const val SECURITY_WPA3 = "wpa3"
 
+    /** A saved network whose id is not known (yet): never compared with the network in use. */
+    const val NET_ID_UNKNOWN = Int.MAX_VALUE
+
+    /** A replaced network waiting for its removal: an id the server never sends, so nobody wants it. */
+    const val RETIRED_PREFIX = "retired:"
+
     /** Why this network cannot be managed on this panel at all, or null when it can. */
     fun unsupportedReason(d: WifiDesired, mode: String, sdkInt: Int): String? = when {
         mode == WifiModeLogic.UNSUPPORTED -> "rejected_by_android"
@@ -123,15 +142,21 @@ object WifiPlan {
     fun isHexKey(p: String?): Boolean =
         p != null && p.length == 64 && p.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
 
-    /** Is the panel (possibly) connected on [m] right now? Unknown counts as yes while Wi-Fi is up. */
-    fun inUse(m: WifiManaged, s: WifiSituation): Boolean {
+    /**
+     * Is the panel (possibly) connected on [m] right now? Unknown counts as yes while Wi-Fi is up.
+     * [managed]: our whole list. A suggestion left over from before the player became owner is not
+     * in use while the panel is on the saved network of ours that replaced it (same SSID).
+     */
+    fun inUse(m: WifiManaged, s: WifiSituation, managed: List<WifiManaged> = emptyList()): Boolean {
         if (!s.wifiActive) return false
         if (knowsNetId(m, s)) return m.netId == s.currentNetId
+        if (m.netId < 0 && s.currentNetId != null && managed.any { it.ssid == m.ssid && knowsNetId(it, s) && it.netId == s.currentNetId }) return false
         if (!s.currentSsid.isNullOrEmpty()) return m.ssid == s.currentSsid
         return true
     }
 
-    private fun knowsNetId(m: WifiManaged, s: WifiSituation) = s.currentNetId != null && s.currentNetId >= 0 && m.netId >= 0
+    private fun knowsNetId(m: WifiManaged, s: WifiSituation) =
+        s.currentNetId != null && s.currentNetId >= 0 && m.netId >= 0 && m.netId != NET_ID_UNKNOWN
 
     /** Why [m] waits — the same test as [inUse], so the reason never claims more than it knows. */
     fun waitReason(m: WifiManaged, s: WifiSituation): String =
@@ -174,8 +199,11 @@ object WifiPlan {
         val rebound = managed.toMutableList()
         for (d in wanted) {
             if (rebound.any { it.id == d.id }) continue
-            val free = rebound.indexOfFirst { it.ssid == d.ssid && it.id !in wantedIds }
-            if (free >= 0) rebound[free] = rebound[free].copy(id = d.id, released = false)
+            // Several unclaimed entries can share the SSID (a replaced one waiting, a mode change):
+            // the one that IS this network wins — same settings, else same security, else right kind.
+            val free = rebound.indices.filter { rebound[it].ssid == d.ssid && rebound[it].id !in wantedIds }
+                .minByOrNull { i -> rebound[i].let { (if (it.sameAs(d)) 0 else 4) + (if (it.security == d.security) 0 else 2) + (if (rightKind(it, s.mode)) 0 else 1) } }
+            if (free != null) rebound[free] = rebound[free].copy(id = d.id, released = false)
         }
         val byId = rebound.associateBy { it.id }
         val adds = mutableListOf<WifiStep>()
@@ -186,13 +214,14 @@ object WifiPlan {
         for (d in wanted) {
             val m = byId[d.id]
             val unsupported = unsupportedReason(d, s.mode, s.sdkInt)
-            // Another managed entry holding the SSID this step would write.
-            val holder = rebound.firstOrNull { it.id != d.id && it.ssid == d.ssid }
+            // Another managed entry holding the SSID this step would write. A released one does not
+            // count once this network has its own entry under the SSID: it was taken over from it.
+            val holder = rebound.firstOrNull { it.id != d.id && it.ssid == d.ssid && !(it.released && m?.ssid == d.ssid) }
             when {
                 // The previous version (if any) stays: a working network is not dropped for one the panel cannot use.
                 unsupported != null -> outcomes += WifiOutcome(d.id, "unsupported", unsupported)
                 m != null && m.sameAs(d) && rightKind(m, s.mode) -> outcomes += WifiOutcome(d.id, if (m.netId >= 0) "applied" else appliedState)
-                m != null && inUse(m, s) -> outcomes += WifiOutcome(d.id, "deferred", waitReason(m, s))
+                m != null && inUse(m, s, rebound) -> outcomes += WifiOutcome(d.id, "deferred", waitReason(m, s))
                 // A released network is never removed, so waiting for it would be for ever.
                 holder != null && holder.released -> outcomes += WifiOutcome(d.id, "failed", "already_configured_by_hand")
                 holder != null -> outcomes += WifiOutcome(d.id, "deferred", "waiting_for_other_network")
@@ -202,9 +231,45 @@ object WifiPlan {
         }
         for (m in rebound) {
             if (m.id in wantedIds || m.released) continue
-            if (inUse(m, s)) waiting += m else removes += WifiStep.Remove(m)
+            if (inUse(m, s, rebound)) waiting += m else removes += WifiStep.Remove(m)
         }
         return WifiPlanResult(adds + updates + removes, outcomes, waiting, rebound)
+    }
+
+    /**
+     * Our list with the network ids Android uses NOW (see [WifiManaged]). Each saved entry is found
+     * again by SSID and security — the pair Android keys a saved network by — and an entry Android no
+     * longer has is dropped (removed on the panel by hand), so the plan adds it again. Each saved
+     * network belongs to one entry at most: one in use wins over a released one, a released one over
+     * one waiting for removal, so removing a leftover entry can never remove the network itself.
+     * [saved] null (Android will not show them): every saved entry's id becomes [NET_ID_UNKNOWN].
+     * Suggestions (-1) are left as they are.
+     */
+    fun resolve(managed: List<WifiManaged>, saved: List<WifiSaved>?): List<WifiManaged> {
+        if (saved == null) return managed.map { if (it.netId >= 0) it.copy(netId = NET_ID_UNKNOWN) else it }
+        val claimed = mutableSetOf<Int>()
+        val found = mutableMapOf<Int, Int>()   // index in managed -> net id
+        val order = managed.indices.filter { managed[it].netId >= 0 }
+            .sortedBy { i -> managed[i].let { if (it.id.startsWith(RETIRED_PREFIX)) 2 else if (it.released) 1 else 0 } }
+        for (i in order) {
+            val m = managed[i]
+            val c = saved.firstOrNull { it.netId !in claimed && it.ssid == m.ssid && it.security == m.security } ?: continue
+            claimed += c.netId
+            found[i] = c.netId
+        }
+        return managed.indices.mapNotNull { i -> if (managed[i].netId < 0) managed[i] else found[i]?.let { managed[i].copy(netId = it) } }
+    }
+
+    /**
+     * The security of a saved network from its key management bits, in our vocabulary; null for a
+     * kind we never write. Bits as WifiConfiguration.KeyMgmt: NONE 0, WPA_PSK 1, WPA2_PSK 4, SAE 8.
+     * A network with both PSK and SAE is a WPA2 one (transition mode), never one of our WPA3 ones.
+     */
+    fun securityOf(keyMgmt: java.util.BitSet, hasWepKey: Boolean): String? = when {
+        keyMgmt[1] || keyMgmt[4] -> SECURITY_WPA2
+        keyMgmt[8] -> SECURITY_WPA3
+        keyMgmt[0] && !hasWepKey -> SECURITY_OPEN
+        else -> null
     }
 
     /**
