@@ -14,6 +14,17 @@
   ],
   "releases": [
     {
+      "version": "3.1.2",
+      "date": "2026-11-02",
+      "notes": [
+        "ScreenTinker now asks for a quick rating and comment at a few key moments (after your first screen is paired, during and after a trial), so you can tell us what is and isn't working. You can also send feedback any time from the sidebar.",
+        "New slide shapes for LED strips and matrices (8:1, 1:8, 16:1, 1:16, and a custom size), with an optional LED grid drawn over the canvas so you can see which LEDs your text lands on.",
+        "Changing your password now signs you out everywhere else right away, including browsers left open on the dashboard.",
+        "Wi-Fi networks set from the dashboard on Android screens now survive a reboot, and a layout no longer flashes to black when one zone's content updates.",
+        "Operators: accounts billed by invoice or PO can carry a renewal date and get reminder emails at 90, 60, 30 and 7 days, with the admins copied."
+      ]
+    },
+    {
       "version": "3.1.1",
       "date": "2026-11-01",
       "notes": [
