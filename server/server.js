@@ -2834,6 +2834,7 @@ app.use('/uploads/content', (req, res, next) => {
     }
     return replicaProxy.proxyToPrimary(req, res, config);
   }
+  if (require('./lib/sssp3-fit-rendition').tryServe(req, res, config.contentDir, hardenUploadResponse)) return;
   res.type('application/json').status(404).json({ error: 'Not found' });
 });
 
