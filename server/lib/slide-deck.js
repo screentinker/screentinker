@@ -44,7 +44,36 @@ const nowSec = () => Math.floor(Date.now() / 1000);
  * exists so the EDITOR can show the operator the canvas they are actually designing for: a portrait
  * screen laid out on a 16:9 stage looks right in the editor and wrong on the wall.
  */
-const ASPECTS = ['16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '16:10', '10:16', '1:1', '21:9', '5:3', '4:1', '1:4'];
+const ASPECTS = ['16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '16:10', '10:16', '1:1', '21:9', '5:3', '4:1', '1:4',
+  '8:1', '1:8', '16:1', '1:16'];
+
+/*
+ * A custom shape: two whole numbers from 1 to 99, which is exactly what slide-render's ASPECT_RE and
+ * the a11y check parse (one or two digits each). Digits only, so it is as safe in a CSS aspect-ratio
+ * as the presets. Not reduced: an operator who typed 64:8 sees 64:8 back.
+ */
+const CUSTOM_ASPECT_RE = /^([1-9]\d?):([1-9]\d?)$/;
+function normalizeAspect(a) {
+  if (ASPECTS.includes(a)) return a;
+  const m = CUSTOM_ASPECT_RE.exec(String(a == null ? '' : a));
+  return m ? `${Number(m[1])}:${Number(m[2])}` : '16:9';
+}
+
+/*
+ * The LED grid the editor draws over the canvas, so an operator designing for an LED strip or matrix
+ * can see which LEDs a line of text lands on. EDITOR-ONLY, like the aspect: the embedded renderer
+ * takes the panel's real size from its screen profile, never from here. Bounded like an LED profile
+ * (embedded-profiles LED_MAX_SIDE / LED_MAX_PIXELS); anything else is no grid.
+ */
+const LED_GRID_MAX_SIDE = 512;
+const LED_GRID_MAX_LEDS = 16384;
+function normalizeLedGrid(g) {
+  if (!g || typeof g !== 'object') return null;
+  const cols = Number(g.cols); const rows = Number(g.rows);
+  if (!Number.isInteger(cols) || !Number.isInteger(rows)) return null;
+  if (cols < 1 || rows < 1 || cols > LED_GRID_MAX_SIDE || rows > LED_GRID_MAX_SIDE || cols * rows > LED_GRID_MAX_LEDS) return null;
+  return { cols, rows };
+}
 
 function normalizeDeck(raw) {
   const doc = (raw && typeof raw === 'object') ? raw : {};
@@ -80,9 +109,12 @@ function normalizeDeck(raw) {
    * different hat.
    *
    * Whitelisted rather than free-form: it goes straight into a CSS aspect-ratio in the editor, and
-   * an arbitrary string there is both a rendering accident and an injection point.
+   * an arbitrary string there is both a rendering accident and an injection point. A custom shape is
+   * held to two small whole numbers (normalizeAspect).
    */
-  const aspect = ASPECTS.includes(doc.aspect) ? doc.aspect : '16:9';
+  const aspect = normalizeAspect(doc.aspect);
+  // Returned explicitly for the same reason as aspect: anything not named here is lost on save.
+  const led_grid = normalizeLedGrid(doc.led_grid);
 
   /*
    * ⚠️ THE BED IS A PROPERTY OF THE DECK, NOT OF A SLIDE — and that is the whole reason it plays
@@ -98,7 +130,7 @@ function normalizeDeck(raw) {
   const mv = Number(doc.music_volume);
   const music_volume = Number.isFinite(mv) ? Math.min(1, Math.max(0, mv)) : 0.4;
 
-  return { slides, aspect, music, music_volume };
+  return { slides, aspect, led_grid, music, music_volume };
 }
 
 /*
@@ -470,4 +502,6 @@ module.exports = {
   MAX_SLIDES, MIN_DWELL, MAX_DWELL,
   normalizeDeck, deckWarnings, publishDeck, slideWidgetConfig,
   ASPECTS,
+  normalizeAspect,
+  normalizeLedGrid,
 };
