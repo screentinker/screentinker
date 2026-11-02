@@ -115,11 +115,11 @@ test('DST: a 07:00 New York breakfast schedule starts at 12:00Z before the chang
   const r = at('own', '2026-03-09T11:00:00Z');
   assert.equal(r.active_schedule.title, 'breakfast');
   assert.equal(r.local.schedule, '2026-03-09T07:00', 'reported in the screen\'s own wall clock');
-  // The schedule's end minute is inclusive (the scheduler's <=); the item daypart's is exclusive.
-  const last = at('own', '2026-03-09T14:30:00Z');
-  assert.equal(last.active_schedule.title, 'breakfast');
-  assert.equal(itemsOf(last)['a.jpg'], 'daypart', 'the 07:00-10:30 item daypart has ended at 10:30');
-  assert.equal(at('own', '2026-03-09T14:31:00Z').resolved.source, 'device');
+  // Schedule and item windows are both half-open: 10:30 belongs to the fallback state.
+  const boundary = at('own', '2026-03-09T14:30:00Z');
+  assert.equal(boundary.active_schedule, null);
+  assert.equal(boundary.resolved.source, 'device');
+  assert.deepEqual(Object.keys(itemsOf(boundary)).sort(), ['a.jpg', 'expiring.jpg']);
 });
 
 test('device timezone, not the server\'s, decides — and a screen with no zone is flagged', () => {
@@ -169,8 +169,8 @@ test('equal-priority groups: the older group wins, and the trail says the other 
 test('a one-off campaign: not started, running, ended (in the screen\'s Sydney clock)', () => {
   assert.equal(at('tie', '2026-03-06T21:59:00Z').schedules.find((s) => s.title === 'campaign').state, 'not_started');
   assert.equal(at('tie', '2026-03-06T22:00:00Z').active_schedule.title, 'campaign');   // 09:00 AEDT
-  assert.equal(at('tie', '2026-03-09T06:00:00Z').active_schedule.title, 'campaign');   // 17:00, inclusive
-  assert.equal(at('tie', '2026-03-09T06:01:00Z').active_schedule, null);
+  assert.equal(at('tie', '2026-03-09T05:59:00Z').active_schedule.title, 'campaign');   // 16:59 AEDT
+  assert.equal(at('tie', '2026-03-09T06:00:00Z').active_schedule, null);               // 17:00, exclusive
 });
 
 test('expiry boundary: content stops at its expiry second, not a minute later', () => {
@@ -242,8 +242,8 @@ test('items this player cannot play are named, and weather can be asked "what if
 });
 
 test('the preview payload holds only what plays then, with the time gates off and nothing that acts on a LAN', () => {
-  const p = sim.previewPayload(f.devices.own, T('2026-03-09T14:30:00Z'));   // 10:30: daypart item has ended
-  assert.deepEqual(p.assignments.map((a) => a.filename), ['b.mp4']);
+  const p = sim.previewPayload(f.devices.own, T('2026-03-09T14:30:00Z'));   // 10:30: schedule has ended
+  assert.deepEqual(p.assignments.map((a) => a.filename), ['a.jpg', 'expiring.jpg']);
   for (const a of p.assignments) for (const k of ['schedules', 'play_from', 'play_until', 'play_when', '_ds']) assert.ok(!(k in a), k);
   assert.deepEqual(p.triggers, []);
   assert.equal(p.trigger_config, null);
