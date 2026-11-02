@@ -1334,7 +1334,7 @@ function update() {
   // tz-table spans and computes local time in plain ES5 below.
   var now = new Date();
   if (supportsClockOptions) {
-    var opts = fixHourCycle(${safeLocale(c.locale)}, { hour12: ${c.format !== '24h'}, timeZone: '${safeTimezone(c.timezone)}', hour:'2-digit', minute:'2-digit'${c.show_seconds === false ? '' : ", second:'2-digit'"} });
+    const opts = fixHourCycle(${safeLocale(c.locale)}, { hour12: ${c.format !== '24h'}, timeZone: '${safeTimezone(c.timezone)}', hour:'2-digit', minute:'2-digit'${c.show_seconds === false ? '' : ", second:'2-digit'"} });
     document.getElementById('time').textContent = now.toLocaleTimeString(${safeLocale(c.locale)}, opts);
     ${c.show_date !== false ? `document.getElementById('date').textContent = now.toLocaleDateString(${safeLocale(c.locale)}, { timeZone: '${safeTimezone(c.timezone)}', ${clockDateFormat(c.date_format)} });` : ''}
   } else {
