@@ -2,6 +2,11 @@
 const puppeteer = require('puppeteer-core');
 const path = require('path');
 const assert = require('assert/strict');
+/* The fake template the template-self-cache case below serves from a stand-in CMS:
+ * one operator-uploaded content image (root-relative, NOT packaged — packaged tpl:
+ * assets already arrive as data URIs) to be inlined offline, plus Arabic text so
+ * the decode path (browser responseText, never readAll bytes) is proven intact. */
+const TPL_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>body{background:#fff;margin:0}</style></head><body><img src="/uploads/content/clinic%20logo.png"><h1>عيادة إكرام</h1></body></html>';
 (async () => {
   const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox', '--allow-file-access-from-files'] });
   try {
@@ -32,7 +37,15 @@ const assert = require('assert/strict');
       Object.defineProperty(HTMLObjectElement.prototype, 'Execute', { value(command) { if (command === 'startplaylist') window.__testGapless = this; return 1; } });
     });
     await page.setRequestInterception(true);
-    page.on('request', req => /^https?:/.test(req.url()) ? req.abort() : req.continue());
+    page.on('request', req => {
+      const u = req.url();
+      /* A fake CMS for the template self-cache case below: the render URL and its
+       * operator-uploaded asset are served with real bytes, everything else on
+       * http is refused (offline realism for the other cases). */
+      if (u.indexOf('smoke-cms.test/api/widgets/') !== -1) return req.respond({ status: 200, contentType: 'text/html; charset=utf-8', headers: { 'Access-Control-Allow-Origin': '*' }, body: TPL_HTML });
+      if (u.indexOf('smoke-cms.test/uploads/content/') !== -1) return req.respond({ status: 200, contentType: 'image/png', headers: { 'Access-Control-Allow-Origin': '*' }, body: Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01, 0x02, 0x03]) });
+      return /^https?:/.test(u) ? req.abort() : req.continue();
+    });
     await page.goto('file://' + path.resolve(__dirname, '../dist/index.html'), { waitUntil: 'load', timeout: 20000 });
     await page.evaluate(() => {
       window.handlePlaylistUpdate({ assignments: [{ content_id: 'test-video', filepath: 'test.mp4', mime_type: 'video/mp4', duration_sec: 10 }], layout: null });
@@ -308,6 +321,49 @@ const assert = require('assert/strict');
     assert.equal(await page.evaluate(() => window.__STNative.gaplessActive()), true, 'item completion must leave the gapless playlist running');
     await page.evaluate(() => window.handlePlaylistUpdate({ assignments: [{ content_id: 'replacement', filepath: 'replacement.mp4', mime_type: 'video/mp4', duration_sec: 10 }], layout: null }));
     await page.waitForFunction(() => !window.__STNative.gaplessActive() && window.__testVideoUrl.indexOf('file:') === 0, { timeout: 5000 });
+    /* ---- template-widget self-cache (offline story) ----
+     * Drives the real accept() pipeline against the stand-in CMS above and asserts
+     * the cache contract: only after the verified write does the cache index flip,
+     * the written file is a single self-contained HTML (data URIs, Arabic intact,
+     * no absolute /uploads refs left), and widgetUrl prefers the cached copy. */
+    await page.evaluate(() => { window.__STNative.base = 'http://smoke-cms.test'; });
+    const tplItem = { widget_id: 'tpl-smoke', widget_type: 'template', widget_rev: 1 };
+    await page.evaluate((item) => {
+      window.__testReports = [];
+      const original = window.__STNative.report;
+      window.__STNative.report = (kind, message) => window.__testReports.push(kind + ': ' + message);
+      window.__restoreReport = () => { window.__STNative.report = original; };
+      window.handlePlaylistUpdate({ assignments: [item], layout: null });
+    }, tplItem);
+    await page.waitForFunction((item) => window.__STNative.missing({ assignments: [item] }).length === 0, { timeout: 8000 }, tplItem);
+    const cachedHtml = await page.evaluate(() => {
+      const files = Object.keys(localStorage).filter(k => /\.html$/.test(k)); 
+      
+
+      /* earlier phases of this smoke also cache a text widget — filter to self-cache
+       * products by their content (self-contained html: inlined data URI + template text) */
+      const mine = files.filter(k => { const v = localStorage.getItem(k) || ''; return v.indexOf('data:image/png;base64,') !== -1 || v.indexOf('عيادة إكرام') !== -1; });
+      const samples = files.map(k => { const v = localStorage.getItem(k) || ''; return { file: k.slice(-30), len: v.length, arabic: v.indexOf('عيادة إكرام') !== -1, png: v.indexOf('data:image/png;base64,') !== -1 }; });
+      let raw = '';
+      for (const k of mine) raw += localStorage.getItem(k) || '';
+      return {
+        count: mine.length,
+        samples: samples,
+        arabic: raw.indexOf('عيادة إكرام') !== -1,
+        inlined: raw.indexOf('data:image/png;base64,iVBORw0KGgoA') !== -1,
+        absoluteRefs: raw.indexOf('/uploads/content/') !== -1,
+        widgetUrl: window.__STNative.widgetUrl({ widget_id: 'tpl-smoke', widget_type: 'template', widget_rev: 1 }, 'LIVE'),
+        reports: window.__testReports.join(' | ')
+      };
+    });
+    assert.equal(cachedHtml.count, 1, 'the template widget must persist exactly one self-contained cached html — saw ' + JSON.stringify(cachedHtml.samples));
+    assert.equal(cachedHtml.arabic, true, 'the cached template html must keep Arabic intact (no decode mangling)');
+    assert.equal(cachedHtml.inlined, true, 'the operator image must be inlined as a data URI');
+    assert.equal(cachedHtml.absoluteRefs, false, 'no absolute /uploads refs may remain in the cached file');
+    assert.equal(String(cachedHtml.widgetUrl).indexOf('file://'), 0, 'widgetUrl must prefer the cached file over the live render');
+    assert.ok(cachedHtml.reports.indexOf('Template widget queued for offline caching') !== -1, 'the cache start must be reported for fleet observability');
+    assert.ok(cachedHtml.reports.indexOf('Template widget cached (') !== -1, 'the cache completion must be reported for fleet observability');
+    await page.evaluate(() => window.__restoreReport());
     await page.evaluate(() => window.handlePlaylistUpdate({ assignments: [], layout: null }));
     assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('rd_playlist_cache'))), [], 'empty updates must clear the saved playlist');
     await page.reload({ waitUntil: 'load' });

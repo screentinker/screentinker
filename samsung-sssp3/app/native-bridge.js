@@ -99,7 +99,14 @@
   function supported(item) {
     var mime = String(item && item.mime_type || '').toLowerCase();
     return item && (item.widget_id
-      ? /^(clock|text|weather|rss|social|directory-board|directory-search|menu-board|room-display)$/.test(String(item.widget_type || ''))
+      /* 'template' joined 2026-11-04 (cache gate, NOT the paint gate): template widgets
+       * cache through the self-contained pipeline below, not the plain downloader. The
+       * server renders the slide with editable values BAKED INTO one HTML document,
+       * and its packaged assets (tpl: images) already arrive as data URIs — so the
+       * only things the panel itself must inline are operator-uploaded content
+       * images (<512 KB each), or the offline frame degrades to text+layout only.
+       * Validated offline on the DB48E before any fleet wave. */
+      ? /^(clock|text|weather|rss|social|directory-board|directory-search|menu-board|room-display|template)$/.test(String(item.widget_type || ''))
       : !item.remote_url && item.filepath && (/^image\/(jpeg|png|gif|bmp|webp|svg\+xml)$/.test(mime) || mime === 'video/mp4'));
   }
   /* A widget can be safe to paint while still being unsuitable for offline
@@ -158,7 +165,7 @@
   }
   function next() {
     if (current) return;
-    if (!queue.length) { finish(); return; }
+    if (!queue.length) { if (selfBusy()) return; finish(); return; }
     current = queue.shift();
     status('Downloading: ' + (current.item.filename || current.item.filepath || 'media'));
     try {
@@ -273,15 +280,21 @@
   };
   bridge.accept = function (payload, callback) {
     stampFit(payload);
-    var missing = bridge.missing(payload), i, known = {}, wanted = {};
-    desired = payload; apply = callback;
+    var missing = bridge.missing(payload), i, known = {}, wanted = {}, selfCount = 0;
     for (i = 0; i < missing.length; i++) wanted[key(missing[i])] = true;
+    desired = payload; apply = callback;
     queue = queue.filter(function (entry) { return wanted[key(entry.item)]; });
-    reportPlaylist('Received playlist with ' + (payload.assignments || []).length + ' items; ' + missing.length + ' downloads needed' + (current ? '; downloader busy' : ''));
+    /* Template widgets divert to the self-contained pipeline (fetch -> inline
+     * assets -> verified write); the plain queue keeps handling media and every
+     * other cached widget type exactly as before. */
+    for (i = 0; i < missing.length; i++) {
+      if (selfType(missing[i])) { selfCount++; if (!selfJobs[key(missing[i])]) selfBegin(missing[i]); }
+    }
+    reportPlaylist('Received playlist with ' + (payload.assignments || []).length + ' items; ' + (missing.length - selfCount) + ' downloads needed, ' + selfCount + ' widget caches pending' + (current ? '; downloader busy' : ''));
     if (!missing.length) { finish(); return; }
     if (current) known[key(current.item)] = true;
     for (i = 0; i < queue.length; i++) known[key(queue[i].item)] = true;
-    for (i = 0; i < missing.length; i++) if (!known[key(missing[i])]) { known[key(missing[i])] = true; queue.push({ item: missing[i], tries: 0 }); }
+    for (i = 0; i < missing.length; i++) { if (!selfType(missing[i]) && !known[key(missing[i])]) { known[key(missing[i])] = true; queue.push({ item: missing[i], tries: 0 }); } }
     if (current && !wanted[key(current.item)] && !current.cancelRequested && downloader.CancelDownload) {
       current.cancelRequested = true;
       try { downloader.CancelDownload(); } catch (ignore) {}
@@ -444,6 +457,163 @@
       }, 100);
     } catch (e) { finish(String(e)); }
   };
+  /* ---- self-contained template widget cache (2026-11-04) ----
+   *
+   * WHY: template widgets are server-rendered slides with editable values baked
+   * into one HTML document. A screen that loses the network keeps only whatever
+   * the panel cached — and without this pipeline the template is the ONE widget
+   * class the cache gate refused, so an offline clinic sign (or any template)
+   * degrades to nothing the moment Wi-Fi drops. Zero CMS changes: everything
+   * happens inside the panel.
+   *
+   * HOW: supported() admitting 'template' routes the item here instead of the
+   * plain Samsung downloader, because the downloaded bytes need a rewrite to be
+   * offline-usable. The pipeline:
+   *   1. XHR-fetch the rendered HTML from source(item). The browser engine
+   *      decodes the UTF-8 text (Arabic survives) — never readAll() bytes.
+   *   2. Find every operator-uploaded content image the slide references
+   *      (/uploads/content/<file>; packaged tpl: assets arrive pre-inlined as
+   *      data URIs) and fetch each as raw bytes via the charset=x-user-defined
+   *      trick, then inline as a data URI. Anything >512 KB or unfetchable
+   *      stays an absolute URL: that image degrades offline, layout survives.
+   *   3. writeCommonFile() the single self-contained HTML — with a read-back
+   *      verification, so a firmware that cannot round-trip UTF-8 fails loudly
+   *      here and the pipeline falls back to the plain downloader (raw bytes,
+   *      text offline, images degraded) instead of ever marking a corrupt file
+   *      as a cache hit.
+   *   4. Only after the verified write does the item join the cache index and
+   *      persistStorage() — the same "never apply a partial cache" invariant
+   *      the media queue keeps for video.
+   * The cache key already contains widget_rev, so re-editing the template in
+   * the CMS republishes with a new rev and this pipeline re-runs naturally.
+   *
+   * FAILURE DIRECTION is deliberately bounded: if the XHR layer is refused
+   * (3 tries) the item is pushed into the ordinary queue, which the pre-fix
+   * code would have used anyway — the panel is never left worse than before
+   * this pipeline existed. */
+  var SELF_ASSET_MAX_BYTES = 512 * 1024;
+  var selfJobs = {};
+  function selfType(item) { return !!(item && item.widget_id && item.widget_type === 'template'); }
+  function selfBusy() {
+    for (var k in selfJobs) {
+      var st = selfJobs[k].state;
+      if (st === 'fetch' || st === 'inflight' || st === 'assets' || st === 'inflight-asset') return true;
+    }
+    return false;
+  }
+  function stMime(ext) {
+    var map = { jpeg: 'image/jpeg', jpg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml' };
+    return map[ext] || 'application/octet-stream';
+  }
+  function stBase64(bytes) {
+    var T = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', out = [], i, a, b, c, d, n = bytes.length;
+    for (i = 0; i < n; i += 3) {
+      a = bytes.charCodeAt(i) & 255;
+      b = i + 1 < n ? bytes.charCodeAt(i + 1) & 255 : 0;
+      c = i + 2 < n ? bytes.charCodeAt(i + 2) & 255 : 0;
+      d = (a << 16) | (b << 8) | c;
+      out.push(T.charAt((d >> 18) & 63), T.charAt((d >> 12) & 63), i + 1 < n ? T.charAt((d >> 6) & 63) : '=', i + 2 < n ? T.charAt(d & 63) : '=');
+    }
+    return out.join('');
+  }
+  function stXhr(url, wantBytes, ok, err) {
+    var x, settled = false, guard;
+    try {
+      x = new XMLHttpRequest();
+    } catch (e) { err('XHR unavailable: ' + String(e)); return; }
+    guard = setTimeout(function () { if (!settled) { settled = true; try { x.abort(); } catch (ignore) {} err('XHR timeout'); } }, 30000);
+    function settle(good, value) {
+      if (settled) return; settled = true; clearTimeout(guard);
+      if (good) ok(value); else err(value);
+    }
+    try {
+      x.open('GET', url, true);
+      if (x.overrideMimeType) x.overrideMimeType(wantBytes ? 'text/plain; charset=x-user-defined' : 'text/plain; charset=utf-8');
+      x.onreadystatechange = function () {
+        if (settled || x.readyState !== 4) return;
+        var s = Number(x.status);
+        if (!x.responseText || (s !== 0 && s !== 200)) { settle(false, 'HTTP ' + s); return; }
+        settle(true, String(x.responseText));
+      };
+      x.send(null);
+    } catch (e) { settle(false, String(e && e.message || e)); }
+  }
+  function selfBegin(item) {
+    var k = key(item);
+    if (!selfJobs[k]) {
+      selfJobs[k] = { item: item, state: 'fetch', tries: 0 };
+      status('Caching template widget (rev ' + (item.widget_rev || 0) + ')...');
+      reportPlaylist('Template widget queued for offline caching (rev ' + (item.widget_rev || 0) + ')');
+    }
+    selfJobs[k].item = item; /* freshest fill-stamped copy; key() already fixed */
+    selfPump();
+  }
+  function selfPump() {
+    var k, job;
+    for (k in selfJobs) {
+      job = selfJobs[k];
+      if (job && job.state === 'fetch') {
+        job.state = 'inflight';
+        stXhr(source(job.item), false, function (html) { job.html = String(html); selfScanAssets(job); },
+          function (why) {
+            job.state = 'fetch'; job.tries++;
+            reportPlaylist('Template widget fetch ' + why + ' (try ' + job.tries + '/3)');
+            if (job.tries >= 3) {
+              /* The XHR layer is refusing (likely a firmware that forbids cross-origin
+               * reads from file://). Fall through to the ordinary downloader, which is
+               * exactly what the pre-pipeline behavior would have done with this item:
+               * raw bytes cached, text/layout alive offline, asset images degraded. */
+              job.state = 'passthrough';
+              queue.push({ item: job.item, tries: 0 });
+              delete selfJobs[key(job.item)];
+              next();
+            } else { setTimeout(selfPump, job.tries * 2000); }
+          });
+        return;
+      }
+    }
+  }
+  function selfScanAssets(job) {
+    var re = /\/uploads\/content\/[^"'`\s?)]+/g, m, seen = {}, urls = [];
+    while ((m = re.exec(job.html)) !== null) { if (!seen[m[0]]) { seen[m[0]] = true; urls.push(m[0]); } }
+    job.assets = urls;
+    // The html is rewritten FIRST with data-URI placeholders resolved below — but
+    // only commit once every inlineable asset has resolved.
+    selfFetchAsset(job, 0);
+  }
+  function selfFetchAsset(job, i) {
+    job.state = i < job.assets.length ? 'inflight-asset' : 'assets';
+    if (i >= job.assets.length) { selfCommit(job); return; }
+    var url = job.assets[i], ref = url.slice('/uploads/content/'.length), file = ref;
+    try { file = decodeURIComponent(ref); } catch (ignore) {}
+    stXhr(bridge.base + url, true, function (bytes) {
+      if (bytes.length > SELF_ASSET_MAX_BYTES) { /* stays an absolute URL: degraded offline, layout survives */ }
+      else {
+        var dataUri = 'data:' + stMime(file.replace(/.*\.([^.]*)$/, '$1')) + ';base64,' + stBase64(bytes);
+        job.html = job.html.split(url).join(dataUri);
+      }
+      selfFetchAsset(job, i + 1);
+    }, function () { /* unfetchable: keep the absolute URL */ selfFetchAsset(job, i + 1); });
+  }
+  function selfCommit(job) {
+    var size = job.html.length;
+    if (!writeCommonFile(path(job.item), job.html)) {
+      reportPlaylist('Template widget cache write failed verification; falling back to plain download');
+      job.state = 'passthrough';
+      queue.push({ item: job.item, tries: 0 });
+      delete selfJobs[key(job.item)];
+      next();
+      return;
+    }
+    index[key(job.item)] = path(job.item);
+    job.state = 'done';
+    delete selfJobs[key(job.item)];
+    try { bridge.persistStorage(); } catch (ignore) {}
+    reportPlaylist('Template widget cached (' + size + ' B html, ' + (job.assets || []).length + ' assets inlined)');
+    status('Template widget cached.');
+    next();
+  }
+
   function writeCommonFile(name, data) {
     var f, read, stripped = String(name).replace(/^\/mtd_down\/common\//, '');
     function put(path) {
