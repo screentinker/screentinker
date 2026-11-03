@@ -2913,6 +2913,16 @@
     // it is from its URL, so it takes the same path as one that read its id out of localStorage
     // rather than falling through to the pairing-code screen.
     if (config.serverUrl && (config.deviceId || config.enrolKey) && config.paired) {
+      /*
+       * ⚠️ A PAIRED SCREEN NEVER BOOTS INTO THE SETUP FORM. It used to be hidden only when a cached
+       * playlist was restored below, so a paired panel that came back with no restorable playlist
+       * (an LG "Play via URL" page reloaded by the browser mid-outage) sat on "Server URL / Connect"
+       * with "Connection failed: xhr poll error" under it: it looked unpaired, and it invited
+       * someone to re-pair a screen that only needed the network back. The socket retries forever on
+       * its own; the status card says so. The form comes back only when the server actually
+       * un-pairs this display (device:unpaired -> enterRepairMode, or a pairing code below).
+       */
+      document.getElementById('setupScreen').style.display = 'none';
       // Restore cached playlist immediately so content plays even if offline —
       // but ONLY if we also know the layout, else we'd guess fullscreen and flash
       // before the payload arrives. Key presence (not value) is the test: an absent
@@ -3664,6 +3674,7 @@
         }
 
         if (!config.paired) {
+          document.getElementById('setupScreen').style.display = 'flex';   // hidden at a paired boot
           // Show pairing code. Nothing of a display's screen share belongs on a pairing screen.
           clearShareForUnpaired();
           document.getElementById('urlForm').style.display = 'none';

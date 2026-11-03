@@ -2593,6 +2593,7 @@ if (VIEWER_MODE) {
     saveConfig(config);
   }
   if (config.serverUrl && (config.deviceId || config.enrolKey) && config.paired) {
+    document.getElementById("setupScreen").style.display = "none";
     const cachedPlaylist = loadPlaylistCache();
     const layoutKnown = localStorage.getItem(LAYOUT_CACHE_KEY) !== null;
     if (cachedPlaylist.length > 0 && layoutKnown) {
@@ -3196,6 +3197,7 @@ function connect(serverUrl) {
       linkLostDuringGap = false;
     }
     if (!config.paired) {
+      document.getElementById("setupScreen").style.display = "flex";
       clearShareForUnpaired();
       document.getElementById("urlForm").style.display = "none";
       document.getElementById("setupSpinner").style.display = "none";
