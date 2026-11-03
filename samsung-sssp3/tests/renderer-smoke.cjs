@@ -44,13 +44,20 @@ const assert = require('assert/strict');
       const event = JSON.parse(raw);
       return !!(event && event.nv && event.written_at_utc_ms);
     }, { timeout: 3000 });
-    const stoppedByExpiredSchedule = await page.evaluate(() => {
+    const itemGateWinsOnline = await page.evaluate(() => {
       localStorage.setItem('st_active_schedule', JSON.stringify({ schedule: { start_time: '2020-01-01T00:00', end_time: '2020-01-01T00:01' }, table: { spans: [{ from_ms: 0, offset_min: 0 }] } }));
       const allowed = window.scheduleAllows({ content_id: 'test-video' });
       localStorage.removeItem('st_active_schedule');
-      return !allowed;
+      return allowed;
     });
-    assert.equal(stoppedByExpiredSchedule, true, 'expired device schedule must not play cached content');
+    /* ⚠️ 2026-11-03: the previous assertion demanded the OPPOSITE (an expired legacy
+     * st_active_schedule must block online playback), which codified the build-time
+     * scheduleAllows plan gate — the gate that wedged the DB48E on "Nothing scheduled
+     * right now" after every schedule window (HARDWARE-RESULTS.md). The corrected
+     * contract: online playback is decided by the per-item gate from the server
+     * payload; legacy stale schedule state only governs the OFFLINE tick, whose
+     * no-plan branch stops disconnected playback (nativeOfflinePlanTick). */
+    assert.equal(itemGateWinsOnline, true, 'online item gate decides playback; stale legacy schedule state only governs the offline tick');
     const result = await page.evaluate(() => ({ ready: window.__STNative.ready, videoUrl: window.__testVideoUrl, visibility: document.getElementById('NativePlayer').style.visibility }));
     assert.equal(result.ready, true);
     assert.match(result.videoUrl, /^file:\/\//);

@@ -83,7 +83,7 @@ replacePatternOnce(/data\.platform = ON_BRIGHTSIGN \?[^;]+browserPlatform\(\)[^;
 replaceOnce('let playerTimezone = null;', 'let playerTimezone = localStorage.getItem("st_schedule_timezone") || null;\ntry { ScheduleEval.setTimezoneTable(JSON.parse(localStorage.getItem("st_schedule_timezone_table") || "null")); } catch (ignore) {}');
 replaceOnce('  playerTimezone = data.timezone || null;', '  playerTimezone = data.timezone || null;\n  try { localStorage.setItem("st_schedule_timezone", playerTimezone || ""); localStorage.setItem("st_schedule_timezone_table", JSON.stringify(data.tz_table || null)); localStorage.setItem("st_active_schedule", JSON.stringify(data.offline_schedule || null)); ScheduleEval.setTimezoneTable(data.tz_table || null); if (window.__STNative.ready) window.__STNative.persistStorage(); } catch (ignore) {}');
 replaceOnce('    startAutoContinue(5);', '    setTimeout(function () { connectBtnFunc(); }, 0);');
-replaceOnce('    const cachedPlaylist = loadPlaylistCache();', '    document.getElementById("setupScreen").style.display = "none";\n    var nativeOfflineBoot = null; try { nativeOfflineBoot = window.STOfflinePlan && STOfflinePlan.select(localStorage.getItem("st_offline_plan"), syncedNow()); } catch (ignore) {}\n    const cachedPlaylist = nativeOfflineBoot && nativeOfflineBoot.valid ? (nativeOfflineBoot.state ? nativeOfflineBoot.state.payload.assignments || [] : []) : loadPlaylistCache();');
+replaceOnce('    const cachedPlaylist = loadPlaylistCache();', '    document.getElementById("setupScreen").style.display = "none";\n    var nativeOfflineBoot = null; try { nativeOfflineBoot = window.STOfflinePlan && STOfflinePlan.select(localStorage.getItem("st_offline_plan"), syncedNow()); } catch (ignore) {}\n    var __stBootPlaylist = nativeOfflineBoot && nativeOfflineBoot.valid ? (nativeOfflineBoot.state ? nativeOfflineBoot.state.payload.assignments || [] : []) : loadPlaylistCache();\n    /* legacy v1 schedule state governs the CACHED REPLAY decision only (offline);\n     * the connected item gate never consults it — see the removed scheduleAllows gate below */\n    const cachedPlaylist = (function () { try { return (__stBootPlaylist.length && window.STOfflineSchedule && !STOfflineSchedule.active(JSON.parse(localStorage.getItem("st_active_schedule") || "null"), syncedNow())) ? [] : __stBootPlaylist; } catch (ignoreCacheGate) { return __stBootPlaylist; } })();');
 replaceOnce('    const layoutKnown = localStorage.getItem(LAYOUT_CACHE_KEY) !== null;', '    const layoutKnown = !!(nativeOfflineBoot && nativeOfflineBoot.valid) || localStorage.getItem(LAYOUT_CACHE_KEY) !== null;');
 replaceOnce('      layout = loadLayoutCache();', '      layout = nativeOfflineBoot && nativeOfflineBoot.state ? nativeOfflineBoot.state.payload.layout || null : loadLayoutCache();\n      window.__stCachedColdStart = true;');
 replaceOnce('    {\n      const tapOverlay = document.createElement("div");', '    if (window.__STNative && window.__STNative.ready) {\n      setTimeout(function () { if (!cachedPlaylist.length || !layoutKnown) { var message = document.getElementById("statusText"); if (message) message.removeAttribute("data-i18n"); showStatus("No cached content is available. Waiting for the server."); } connect(config.serverUrl); }, 0);\n    } else {\n      const tapOverlay = document.createElement("div");');
@@ -106,7 +106,15 @@ replaceOnce('  socket.on("connect_error", (err) => {\n    document.getElementByI
 replaceOnce('const fingerprint = (items) => items.map((a) => "".concat(a.content_id || "", "|").concat(a.widget_id || "", "|")', 'const fingerprint = (items) => items.map((a) => "".concat(a.content_id || "", "|").concat(a.content_rev || "", "|").concat(a.widget_id || "", "|")');
 replaceOnce('  if (playlist.length > 0) savePlaylistCache(playlist);', '  savePlaylistCache(playlist);');
 replaceOnce('ScheduleEval.itemShouldPlay(item, Date.now(), playerTimezone)', 'ScheduleEval.itemShouldPlay(item, syncedNow(), playerTimezone)');
-replaceOnce('function scheduleAllows(item) {', 'function scheduleAllows(item) {\n  try { var nativePlan = window.STOfflinePlan && STOfflinePlan.select(localStorage.getItem("st_offline_plan"), syncedNow()); if (nativePlan && nativePlan.plan) return !!(nativePlan.valid && nativePlan.state); } catch (ignore) {}\n  try { if (!STOfflineSchedule.active(JSON.parse(localStorage.getItem("st_active_schedule") || "null"), syncedNow())) return false; } catch (ignore) { return false; }');
+/* ⚠️ REMOVED 2026-11-03: the build-time scheduleAllows plan-state gate, which read
+ *   "if a cached st_offline_plan exists -> allow = !!(plan.valid && plan.state)".
+ * It blocked EVERY item once the cached plan had no covering schedule state — the
+ * normal, legitimate no-schedule-active shape — wedging live playback permanently
+ * on the DB48E ("Nothing scheduled right now"), and it survived cold boots because
+ * native-bridge persists st_offline_plan. Root cause row: HARDWARE-RESULTS.md
+ * 2026-11-03. Offline schedule transitions remain handled exclusively by
+ * nativeOfflinePlanTick(), which is disconnect-gated (socket.connected early-return)
+ * and therefore never interferes with live playback. */
 main += '\nfunction nativeOfflinePlanTick() { try { if (socket && socket.connected) { window.__stOfflinePlanInterval = null; return; } var result = window.STOfflinePlan && STOfflinePlan.select(localStorage.getItem("st_offline_plan"), syncedNow()); if (!result || !result.plan) { if (isPlaying && !STOfflineSchedule.active(JSON.parse(localStorage.getItem("st_active_schedule") || "null"), syncedNow())) showNothingScheduled(); return; } var sig = result.interval ? String(result.interval.start_utc_ms) + "|" + String(result.interval.schedule_id || "") : "none"; if (sig === window.__stOfflinePlanInterval) return; window.__stOfflinePlanInterval = sig; if (window.__STNative && window.__STNative.report) window.__STNative.report("offline-schedule", JSON.stringify({ event: "offline_schedule_selected", schedule_id: result.interval && result.interval.schedule_id || null, playlist_id: result.interval && result.interval.playlist_id || null, interval_start_utc_ms: result.interval && result.interval.start_utc_ms || null, interval_end_utc_ms: result.interval && result.interval.end_utc_ms || null, valid: !!result.valid, state_ready: !!result.state }), config.deviceId); if (!result.valid || !result.state) { playlist = []; isPlaying = false; teardownCurrentMedia(); showStatus(result.error || "No scheduled content is active."); return; } handlePlaylistUpdate(result.state.payload); } catch (ignore) {} }\nsetInterval(nativeOfflinePlanTick, 1000);\n';
 main += '\nsetTimeout(function () { try { var setup = document.getElementById("setupScreen"), overlay = document.getElementById("statusOverlay"), text = document.getElementById("statusText"); var boot = { setup: setup.style.display, status: overlay.style.display, message: text && text.textContent, playing: isPlaying, items: playlist.length, cached: !!window.__stCachedColdStart, cold_start: true }; if (window.__STNative.recordBootEvent) boot = window.__STNative.recordBootEvent(boot); if (config.deviceId) window.__STNative.report("boot", JSON.stringify(boot), config.deviceId); } catch (ignore) {} }, 1000);\n';
 replaceOnce('    localStorage.setItem("st_clock_offset", String(clockOffsetMs));', '    localStorage.setItem("st_clock_offset", String(clockOffsetMs));\n    if (window.__STNative && window.__STNative.ready && (window.__stSavedClockOffset == null || Math.abs(window.__stSavedClockOffset - clockOffsetMs) > 1000)) { window.__stSavedClockOffset = clockOffsetMs; window.__STNative.persistStorage(); }');
@@ -185,6 +193,43 @@ for (const name of fs.readdirSync(app)) {
 const configXml = fs.readFileSync(path.join(app, 'config.xml'), 'utf8')
   .replace(/<ver>\d+<\/ver>/, '<ver>' + build + '</ver>');
 fs.writeFileSync(path.join(output, 'config.xml'), configXml);
+/*
+ * ⚠️ 2026-11-03 (post-1289-incident): the Orsay widget page runs from a local
+ * file:// origin, and __STNative.base is the URL every relative bridge call
+ * resolves against (renderer POSTs, /api/player-debug, content/widget fetches,
+ * offline-queue flushes). The clean source prelude ships base:'' — fine for the
+ * generic web player, DEAD for the installed candidate: 1289 on the DB48E
+ * registered + heartbeated + played cached media while every bridge POST
+ * vanished silently (HARDWARE-RESULTS.md 1289-silent-session row). Build 1288's
+ * published package had carried the base inside its prelude, so the stamp lives
+ * in BUILD SCAFFOLDING here, sourced from the environment — never a literal in
+ * player source. When ST_ORSAY_BASE_URL is unset nothing is stamped.
+ */
+const orsayBase = (process.env.ST_ORSAY_BASE_URL || '').trim().replace(/\/+$/, '');
+const orsayChannel = (process.env.ST_ORSAY_CHANNEL || '/player/sssp3-native-candidate/').trim();
+if (orsayBase) {
+  /* Matches the shape the 1288 package used: seed serverUrl for a wiped panel,
+   * then define __STNative with the absolute base + launcher fallback. */
+  const preludeDest = path.join(output, 'native-prelude.js');
+  const prelude = `(function () {
+  try {
+    var config = JSON.parse(localStorage.getItem('rd_web_player') || '{}');
+    if (!config.serverUrl) {
+      config.serverUrl = '${orsayBase}';
+      localStorage.setItem('rd_web_player', JSON.stringify(config));
+    }
+  } catch (ignore) {}
+  window.__STNative = {
+    base: '${orsayBase}',
+    launcherUrl: '${orsayBase + orsayChannel}',
+    enabled: true
+  };
+})();
+`;
+  acorn.parse(prelude, { ecmaVersion: 5 });
+  const stampNote = '/* scaffold-stamped prelude: server base injected at build time (ST_ORSAY_BASE_URL); player source stays clean */\n';
+  fs.writeFileSync(preludeDest, stampNote + prelude);
+}
 // Keep esbuild's source comments independent of the shell's current directory.
 // They are part of the generated bytes, so without absWorkingDir an identical
 // source tree could produce a different immutable SSSP package when built from
