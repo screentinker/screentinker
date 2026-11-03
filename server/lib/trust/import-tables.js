@@ -162,6 +162,7 @@ const NOT_RESTORED = {
   org_sso_only_requests: 'Requests to the old server\'s administrator to enforce single sign-on.',
   scim_tokens: 'SCIM tokens are credentials; create a new one for your identity provider.',
   content_locations: 'Where the old server kept the media bytes; this server records its own.',
+  content_audio_tracks: 'Audio-guide narration files live on the old server\'s local disk and are not in the archive; re-upload the tracks after the move.',
   canva_jobs: 'Canva jobs in progress on the old server.',
   corporate_compositions: 'A cache of composed head office loops; it is rebuilt automatically.',
   social_posts: 'Social posts are fetched again from the networks once the feed\'s connection is reconnected.',

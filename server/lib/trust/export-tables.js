@@ -61,6 +61,7 @@ const EXPORTED = {
   content: { category: 'content', scope: ws() },
   content_folders: { category: 'content', scope: ws() },
   content_locations: { category: 'content', scope: via('content_id', 'content') },
+  content_audio_tracks: { category: 'content', scope: via('content_id', 'content') },
   custom_fonts: { category: 'content', scope: ws() },
   custom_shaders: { category: 'content', scope: ws() },
   brand_kits: { category: 'content', scope: ws() },
