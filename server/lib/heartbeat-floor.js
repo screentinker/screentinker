@@ -40,6 +40,15 @@ function effectiveFloorMs() {
 }
 
 const LOG_WINDOW_MS = 60 * 1000;
+/*
+ * ⚠️ A HEALTHY player is floored now and then, so a single skip must NOT be logged. Android sends a
+ * beat immediately whenever it (re)starts its heartbeat, which it does on every device:registered,
+ * i.e. after its periodic ~55s re-register; the native player does the same. That second beat lands
+ * ~100ms after an admitted one: harmless to skip, but logging it would print a false "old build"
+ * warning for every current Android/Pi screen about once a minute. Only a window with this many
+ * skips is a genuinely flooding client (a 1.9.0 screen racks up hundreds).
+ */
+const LOG_MIN_SKIPS = 5;
 // deviceId -> { lastPass, winStart, beats, notified }
 const state = new Map();
 
@@ -51,12 +60,13 @@ function admit(deviceId, now = monoNow()) {
   let s = state.get(deviceId);
   // lastPass starts at -Infinity, NOT 0: the monotonic clock starts near 0 at boot, so 0 would skip
   // every screen's first beat for the first few seconds after a restart, when the fleet reconnects.
-  if (!s) { s = { lastPass: -Infinity, winStart: now, beats: 0, notified: false }; state.set(deviceId, s); }
-  if (now - s.winStart >= LOG_WINDOW_MS) { s.winStart = now; s.beats = 0; s.notified = false; }
+  if (!s) { s = { lastPass: -Infinity, winStart: now, beats: 0, skips: 0, notified: false }; state.set(deviceId, s); }
+  if (now - s.winStart >= LOG_WINDOW_MS) { s.winStart = now; s.beats = 0; s.skips = 0; s.notified = false; }
   s.beats++;
   if (!(floorMs > 0) || now - s.lastPass >= floorMs) { s.lastPass = now; return { pass: true }; }
-  const logStart = !s.notified;
-  s.notified = true;
+  s.skips++;
+  const logStart = !s.notified && s.skips >= LOG_MIN_SKIPS;
+  if (logStart) s.notified = true;
   return { pass: false, logStart, beats: s.beats, windowMs: now - s.winStart, floorMs };
 }
 
@@ -79,4 +89,4 @@ function startSweep() {
 
 function reset() { state.clear(); } // tests
 
-module.exports = { admit, clear, sweep, startSweep, reset, effectiveFloorMs, LOG_WINDOW_MS };
+module.exports = { admit, clear, sweep, startSweep, reset, effectiveFloorMs, LOG_WINDOW_MS, LOG_MIN_SKIPS };

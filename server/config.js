@@ -186,8 +186,10 @@ module.exports = {
   // #777: minimum gap between a device's heartbeat SIDE EFFECTS (DB writes, telemetry row, dashboard
   // push). Liveness is still recorded on every beat. Players beat every 15s+, so 5s only bites a
   // misbehaving client. 0 disables the floor.
-  heartbeatMinIntervalMs: Number.isFinite(parseInt(process.env.HEARTBEAT_MIN_INTERVAL_MS, 10))
-    ? Math.max(0, parseInt(process.env.HEARTBEAT_MIN_INTERVAL_MS, 10)) : 5000,
+  // Whole milliseconds only: "5s" or "5e3" would parseInt to 5 (no floor at all), so anything that is
+  // not a plain non-negative integer falls back to the default.
+  heartbeatMinIntervalMs: /^\d+$/.test(String(process.env.HEARTBEAT_MIN_INTERVAL_MS || '').trim())
+    ? parseInt(process.env.HEARTBEAT_MIN_INTERVAL_MS, 10) : 5000,
   // How long the server holds commands/playlist-updates for a device that's
   // offline at emit time (ms). On reconnect within this window, queued events
   // are flushed in order. Past TTL they're dropped. See lib/command-queue.js.

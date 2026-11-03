@@ -62,6 +62,17 @@ test('⚠️ right after boot (monotonic clock near 0) a screen\'s first beat is
   assert.equal(floor.admit('fresh', 12).pass, true);
 });
 
+test('⚠️ a HEALTHY player\'s occasional double beat (Android/native restart their heartbeat on re-register) is skipped but never logged', () => {
+  let logs = 0;
+  // 15s beats for 10 minutes, plus an immediate extra beat after every 4th one (~once a minute)
+  for (let i = 0; i < 40; i++) {
+    const t = 1e6 + i * 15000;
+    if (floor.admit('android', t).logStart) logs++;
+    if (i % 4 === 3) { const v = floor.admit('android', t + 100); assert.equal(v.pass, false); if (v.logStart) logs++; }
+  }
+  assert.equal(logs, 0, 'no false "old build" warning for a current player');
+});
+
 test('idle buckets are swept', () => {
   floor.admit('gone', 1e6);
   assert.equal(floor.sweep(1e6 + floor.LOG_WINDOW_MS * 5), 1);

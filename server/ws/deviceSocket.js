@@ -1790,8 +1790,8 @@ const EVENT_APPLIERS = Object.freeze({
     const floor = heartbeatFloor.admit(device_id);
     if (!floor.pass) {
       if (floor.logStart) {
-        const rate = floor.windowMs > 0 ? (floor.beats / (floor.windowMs / 1000)).toFixed(1) : String(floor.beats);
-        console.warn(`[heartbeat] ${device_id} is over the heartbeat floor: ${floor.beats} beats in ${Math.round(floor.windowMs / 1000)}s (~${rate}/s); `
+        const secs = Math.max(1, Math.round(floor.windowMs / 1000));
+        console.warn(`[heartbeat] ${device_id} is over the heartbeat floor: ${floor.beats} beats in ${secs}s (~${(floor.beats / secs).toFixed(1)}/s); `
           + `writing at most one per ${floor.floorMs / 1000}s. A player this chatty is usually an old build (update it from /download).`);
       }
       return;
