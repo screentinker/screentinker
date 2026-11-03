@@ -43,6 +43,7 @@ const KINDS = {
   body: { icon: 'T', label: 'Text', size: 3, weight: 400 },
   stat: { icon: '#', label: 'Big number', size: 14, weight: 700 },
   image: { icon: '▣', label: 'Photo', size: 0, weight: 400 },
+  video: { icon: '▶', label: 'Video', size: 0, weight: 400 },
   rule: { icon: '▬', label: 'Rule', size: 0, weight: 400 },
   box: { icon: '◻', label: 'Panel', size: 0, weight: 400 },
   clock: { icon: '◷', label: 'Clock', size: 9, weight: 700 },
@@ -286,7 +287,7 @@ function newElement(kind) {
       // A QR must stay square or it does not scan; the renderer letterboxes the SVG inside the box,
       // so an equal-ish w/h is what makes the code as large as the space allows.
       ...(kind === 'qr' ? { h: 32 } : {}),
-      ...(kind === 'image' || kind === 'box' ? { h: 30 } : {}),
+      ...(kind === 'image' || kind === 'video' || kind === 'box' ? { h: 30 } : {}),
     },
     style: { color: '#FFFFFF', font: 'sans', size_cqw: k.size || 3, weight: k.weight, align: 'left', opacity: 1, radius_cqw: 0 },
     motion: { animation: 'slideU', delay: 0.2, duration: 0.55, easing: 'ease-out' },
@@ -1257,6 +1258,16 @@ function renderStage(container) {
             e.fit === 'contain' ? 'contain' : 'cover'};display:block">`
         : `<div style="width:100%;height:100%;display:grid;place-items:center;background:rgba(255,255,255,.07);
              border:1px dashed rgba(255,255,255,.22);color:rgba(255,255,255,.45);font-size:2.2cqw">photo</div>`;
+    } else if (e.kind === 'video') {
+      // Muted and looping, as the renderer emits it (lib/slide-render.js), so the editor shows what
+      // a panel shows. Past the per-slide video cap a panel shows the placeholder instead.
+      const url = contentUrl(e.content_id);
+      d.style.overflow = 'hidden';
+      d.innerHTML = url
+        ? `<video src="${esc(url)}" autoplay muted loop playsinline style="width:100%;height:100%;object-fit:${
+            e.fit === 'contain' ? 'contain' : 'cover'};display:block;pointer-events:none"></video>`
+        : `<div style="width:100%;height:100%;display:grid;place-items:center;background:rgba(255,255,255,.07);
+             border:1px dashed rgba(255,255,255,.22);color:rgba(255,255,255,.45);font-size:2.2cqw">video</div>`;
     } else if (e.kind === 'lettering') {
       const url = contentUrl(e.content_id);
       d.style.overflow = 'hidden';
@@ -1323,7 +1334,7 @@ const GRAB_PX = 3;            // pointer travel below this is a click, not a dra
 const SNAP_PX = 6;            // how close an edge has to come before it snaps
 const HANDLE_DIRS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 /* Pictures keep their shape by default, as in PowerPoint; Shift frees them (and locks the rest). */
-const KEEP_ASPECT_KINDS = ['image', 'lettering'];
+const KEEP_ASPECT_KINDS = ['image', 'video', 'lettering'];
 /* Kinds whose words are typed straight onto the canvas with a double-click. */
 const INLINE_TEXT_KINDS = ['head', 'body', 'stat'];
 
@@ -2310,6 +2321,17 @@ function renderProps(container) {
                  Pick from the content library — the slide stores a reference, not a copy.
                  Use <strong>Fit inside</strong> for a cut-out with transparency — filling the box
                  crops it, which slices through the object itself.</p>`
+          : e.kind === 'video'
+          ? row('Video', `<select class="input" id="pImg"><option value="">— none —</option>${
+              videoContent().map((c) => `<option value="${esc(c.id)}" ${
+                c.id === e.content_id ? 'selected' : ''}>${esc(c.filename)}</option>`).join('')}</select>`)
+            + row('Fit', `<select class="input" id="pFit">
+                 <option value="cover" ${(e.fit || 'cover') === 'cover' ? 'selected' : ''}>Fill the box (crop)</option>
+                 <option value="contain" ${e.fit === 'contain' ? 'selected' : ''}>Fit inside (whole video)</option>
+               </select>`)
+            + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
+                 Plays muted and on a loop. Up to two videos per slide, counting a video background;
+                 a third shows as an empty box. Roku shows a still frame.</p>`
           : `<p style="font-size:12px;color:var(--text-muted)">Decorative — no text.</p>`)
       + `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
            <button class="btn btn-secondary btn-sm" id="pFwd">↑ Forward</button>
@@ -2474,7 +2496,7 @@ function renderProps(container) {
       + grp('Appearance',
         `<div class="sl-row"><label for="pColor">Colour</label>
            <input type="color" class="sl-colour" id="pColor" value="${esc(st.color)}"></div>`
-        + ((e.kind === 'image' || e.kind === 'box') ? pair('Corner', 'pRad', 0, 12, 0.2, st.radius_cqw || 0, '') : '')
+        + ((e.kind === 'image' || e.kind === 'video' || e.kind === 'box') ? pair('Corner', 'pRad', 0, 12, 0.2, st.radius_cqw || 0, '') : '')
         + pair('Opacity', 'pOp', 0.1, 1, 0.05, st.opacity == null ? 1 : st.opacity, ''))
 
       + `<p class="sl-note" style="margin-top:9px">Sizes are relative to the screen, so a slide looks
