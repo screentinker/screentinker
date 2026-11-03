@@ -7,7 +7,8 @@ const path = require('path');
 const config = require('../config');
 const floor = require('../lib/heartbeat-floor');
 
-beforeEach(() => { floor.reset(); config.heartbeatMinIntervalMs = 5000; });
+const ORIG_TIMEOUT = config.heartbeatTimeout;
+beforeEach(() => { floor.reset(); config.heartbeatMinIntervalMs = 5000; config.heartbeatTimeout = ORIG_TIMEOUT; });
 
 test('a normal 15s player is admitted on every beat', () => {
   for (let i = 0; i < 20; i++) assert.equal(floor.admit('d1', 1e6 + i * 15000).pass, true);
@@ -39,6 +40,26 @@ test('going offline clears the floor, so the first beat back flips the card at o
 test('HEARTBEAT_MIN_INTERVAL_MS=0 disables the floor', () => {
   config.heartbeatMinIntervalMs = 0;
   for (let i = 0; i < 50; i++) assert.equal(floor.admit('d1', 1e6 + i).pass, true);
+});
+
+test('the floor is capped at a third of HEARTBEAT_TIMEOUT', () => {
+  config.heartbeatTimeout = 9000;
+  assert.equal(floor.effectiveFloorMs(), 3000);
+  config.heartbeatTimeout = 45000;
+  assert.equal(floor.effectiveFloorMs(), 5000);
+});
+
+test('⚠️ it runs on a monotonic clock, so a wall-clock step backwards cannot freeze the writes', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'heartbeat-floor.js'), 'utf8');
+  assert.match(src, /function admit\(deviceId, now = monoNow\(\)\)/);
+  assert.doesNotMatch(src.replace(/\/\*[\s\S]*?\*\//g, ''), /Date\.now\(\)/, 'no wall clock in the limiter');
+  // and the default clock actually admits a fresh device
+  assert.equal(floor.admit('mono').pass, true);
+  assert.equal(floor.admit('mono').pass, false, 'an immediate second beat is inside the floor');
+});
+
+test('⚠️ right after boot (monotonic clock near 0) a screen\'s first beat is still written', () => {
+  assert.equal(floor.admit('fresh', 12).pass, true);
 });
 
 test('idle buckets are swept', () => {

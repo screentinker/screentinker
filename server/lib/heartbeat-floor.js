@@ -19,6 +19,25 @@
  * window when a screen goes over, naming it and its rate, so an operator can find it without a query.
  */
 const config = require('../config');
+const { performance } = require('perf_hooks');
+
+/*
+ * ⚠️ MONOTONIC, never Date.now(). If the wall clock stepped BACKWARDS (an NTP correction, a VM
+ * resume), `now - lastPass` would go negative and every screen's writes would be skipped until the
+ * clock caught up: DB last_heartbeat would freeze fleet-wide. performance.now() cannot go back.
+ */
+const monoNow = () => performance.now();
+
+/*
+ * The floor is capped at a third of the heartbeat timeout, so an operator who set
+ * HEARTBEAT_TIMEOUT low can never end up with DB writes spaced close to the offline threshold.
+ */
+function effectiveFloorMs() {
+  const f = config.heartbeatMinIntervalMs;
+  if (!(f > 0)) return 0;
+  const t = config.heartbeatTimeout;
+  return t > 0 ? Math.min(f, Math.floor(t / 3)) : f;
+}
 
 const LOG_WINDOW_MS = 60 * 1000;
 // deviceId -> { lastPass, winStart, beats, notified }
@@ -27,10 +46,12 @@ const state = new Map();
 /**
  * @returns {{ pass: true } | { pass: false, logStart: boolean, beats: number, windowMs: number, floorMs: number }}
  */
-function admit(deviceId, now = Date.now()) {
-  const floorMs = config.heartbeatMinIntervalMs;
+function admit(deviceId, now = monoNow()) {
+  const floorMs = effectiveFloorMs();
   let s = state.get(deviceId);
-  if (!s) { s = { lastPass: 0, winStart: now, beats: 0, notified: false }; state.set(deviceId, s); }
+  // lastPass starts at -Infinity, NOT 0: the monotonic clock starts near 0 at boot, so 0 would skip
+  // every screen's first beat for the first few seconds after a restart, when the fleet reconnects.
+  if (!s) { s = { lastPass: -Infinity, winStart: now, beats: 0, notified: false }; state.set(deviceId, s); }
   if (now - s.winStart >= LOG_WINDOW_MS) { s.winStart = now; s.beats = 0; s.notified = false; }
   s.beats++;
   if (!(floorMs > 0) || now - s.lastPass >= floorMs) { s.lastPass = now; return { pass: true }; }
@@ -43,7 +64,7 @@ function admit(deviceId, now = Date.now()) {
 function clear(deviceId) { state.delete(deviceId); }
 
 // Evict idle buckets so churned device ids can't grow the Map (same rule as content-ack-limiter).
-function sweep(now = Date.now()) {
+function sweep(now = monoNow()) {
   let n = 0;
   for (const [k, s] of state) if (now - s.lastPass > LOG_WINDOW_MS * 4 && now - s.winStart > LOG_WINDOW_MS * 4) { state.delete(k); n++; }
   return n;
@@ -58,4 +79,4 @@ function startSweep() {
 
 function reset() { state.clear(); } // tests
 
-module.exports = { admit, clear, sweep, startSweep, reset, LOG_WINDOW_MS };
+module.exports = { admit, clear, sweep, startSweep, reset, effectiveFloorMs, LOG_WINDOW_MS };
