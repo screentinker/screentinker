@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Visitor audio guide: narration on visitors' phones, in sync with the screen.** In a video's
+  edit dialog, add an audio track per language (optional `.vtt` captions) and turn on **Show audio
+  guide QR on screen**. Visitors scan the QR, pick a language and hear the narration in sync with the
+  video, with captions; joining mid-video catches up automatically. It is a web page, not an app, and
+  needs view-only access enabled on the screen. Phones must keep the page open with the screen on
+  (iOS pauses web audio when locked). Narration files stay on the server's local disk: they are not
+  moved to cloud storage and are not restored by an organization import. The view payload poll now
+  has its own rate-limit bucket and a lite mode, for venues with many phones behind one IP.
+
 - **Renewal reminders for comped / PO-billed accounts.** An account billed by invoice or PO has no
   Stripe subscription, so nothing warned anyone its renewal was coming up. A platform admin can now
   set a renewal date on such an account (`renewal_at`, via the "assign plan" API), and ScreenTinker
@@ -64,10 +73,35 @@
   player a dwell edit takes effect at the zone's next item without restarting it; on Android, a new
   schedule, dwell, fit or mute on a zone item re-renders just that zone.
 
+- **Self-hosted: no more multi-second stalls on a large play history** (#776). When a screen
+  reconnected, repairing its plays left open by an outage read every later play that screen had ever
+  logged (16 seconds or more on a 35-million-row database, one screen after another during a
+  reconnect wave). It now looks up only the one play it needs, and counting open plays at boot no
+  longer scans the whole table. On a test database the repair went from 780 ms to under 1 ms, with
+  exactly the same rows closed.
+- **A screen sending heartbeats far too fast can no longer flood the server or the dashboard**
+  (#777). Old Android players (1.9.0) could send about 20 a second, and each one wrote to the
+  database and pushed an update to every open dashboard. A screen's heartbeat is still counted every
+  time, so it never shows as offline, but the database writes and dashboard updates now happen at
+  most once every 5 seconds per screen (`HEARTBEAT_MIN_INTERVAL_MS`, `0` turns it off). Normal
+  players send one every 15 seconds and are not affected. A screen that floods is named once a
+  minute in the server log; updating it from `/download` is the real fix.
+
+- **Pi/Windows player: no black flash between slides or web pages in a zone** (#780, reported by
+  @WirAGDD). The next page was shown as soon as it had loaded, before it had drawn anything, and the
+  previous one was removed in the same frame, so the zone showed black for a moment on every switch
+  between published slides. The player now waits for the page's first paint (its fonts and images,
+  then a drawn frame) and keeps the previous item underneath for a quarter second. Images were never
+  affected.
+
 ### Contributors
 
 - @arminfauland: Wi-Fi networks on Android now survive a reboot and an unreadable saved list (#775).
-  1 of the 7 commits in this release.
+  1 of the 11 commits in this release.
+- @bold-media-group: diagnosed both self-hosted performance problems on a 250-screen install, with
+  measurements, a reproduction, and the query fix that shipped for #776 (#776, #777).
+- @WirAGDD: reported the native player's black flash between slides, with the comparison against
+  plain images that pinned down the cause (#780).
 
 ## 3.1.1
 

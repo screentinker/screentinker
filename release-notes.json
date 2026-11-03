@@ -17,11 +17,14 @@
       "version": "3.1.2",
       "date": "2026-11-02",
       "notes": [
+        "New audio guide: add narration in several languages to a video, and visitors scan a QR code on the screen to hear it on their own phone, in sync with what's playing, with captions. No app needed.",
         "ScreenTinker now asks for a quick rating and comment at a few key moments (after your first screen is paired, during and after a trial), so you can tell us what is and isn't working. You can also send feedback any time from the sidebar.",
         "New slide shapes for LED strips and matrices (8:1, 1:8, 16:1, 1:16, and a custom size), with an optional LED grid drawn over the canvas so you can see which LEDs your text lands on.",
         "Changing your password now signs you out everywhere else right away, including browsers left open on the dashboard.",
         "Wi-Fi networks set from the dashboard on Android screens now survive a reboot, and a layout no longer flashes to black when one zone's content updates.",
-        "Operators: accounts billed by invoice or PO can carry a renewal date and get reminder emails at 90, 60, 30 and 7 days, with the admins copied."
+        "Operators: accounts billed by invoice or PO can carry a renewal date and get reminder emails at 90, 60, 30 and 7 days, with the admins copied.",
+        "On the Raspberry Pi and Windows player, switching between slides or web pages in a zone no longer flashes black.",
+        "Self-hosted servers with a large play history or older Android screens no longer stall: reconnecting screens and very chatty 1.9.0 players are handled without freezing the server or the dashboard."
       ]
     },
     {
