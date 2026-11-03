@@ -15,7 +15,7 @@ function environment() {
   const player = { style: {}, stops: 0, Stop() { this.stops++; }, InitPlayer(url) { this.url = url; }, SetDisplayArea() {}, SetInitialBuffer() {}, StartPlayback() { this.started = true; } };
   const container = { appendChild(el) { el.parentNode = container; }, removeChild(el) { el.parentNode = null; } };
   const storage = {};
-  const window = { __STNative: { base: 'http://example.test' }, STOfflinePlan: { dependencies(plan) { const out = []; for (const s of (plan && plan.states) || []) for (const item of (s.payload && s.payload.assignments) || []) out.push(item); return out; } }, localStorage: { getItem(key) { return Object.prototype.hasOwnProperty.call(storage, key) ? storage[key] : null; }, setItem(key, value) { storage[key] = String(value); } } };
+  const window = { __STNative: { base: 'http://example.test' }, STOfflinePlan: { dependencies(plan) { const out = []; for (const s of (plan && plan.states) || []) { const payload = s && s.payload || {}; for (const item of (payload.assignments || [])) out.push(item); if (payload.default_content) out.push(payload.default_content); } return out; } }, localStorage: { getItem(key) { return Object.prototype.hasOwnProperty.call(storage, key) ? storage[key] : null; }, setItem(key, value) { storage[key] = String(value); } } };
   const body = { appendChild(p) { p.parentNode = body; }, removeChild(p) { p.parentNode = null; } };
   const ctx = { window, FileSystem, document: { getElementById: (id) => id === 'NativePlayer' ? player : id === 'NativeDownloader' ? downloader : id === 'playerContainer' ? container : null, createElement: tag => { if (tag !== 'object') return { style: {} }; const p = { style: {}, calls: [], setAttribute() {}, Open() {}, Close() {}, Execute(...args) { this.calls.push(args); return 1; } }; plugins.push(p); return p; }, body }, setTimeout: (fn, ms) => { scheduled.push({ fn, ms }); return scheduled.length; }, clearTimeout: () => {} };
   vm.runInNewContext(code, ctx); window.__STNative.init();
@@ -142,6 +142,26 @@ test('a future scheduled playlist is fully prepared before its plan is committed
   assert.deepEqual(activated, [payload]);
   assert.match(e.b.mediaUrl(future, 'remote'), /^file:\/\//);
 });
+test('current and future standby images are prepared with their offline states', () => {
+  const e = environment(), applied = [];
+  const current = { content_id: 'now', filepath: 'now.jpg', mime_type: 'image/jpeg', content_rev: 1 };
+  const standby = { content_id: 'standby', filepath: 'standby.jpg', mime_type: 'image/jpeg', content_rev: 2 };
+  const future = { content_id: 'future', filepath: 'future.jpg', mime_type: 'image/jpeg', content_rev: 3 };
+  const futureStandby = { content_id: 'future-standby', filepath: 'future-standby.jpg', mime_type: 'image/jpeg', content_rev: 4 };
+  const payload = { assignments: [current], default_content: standby, offline_plan: {
+    states: [{ payload: { assignments: [future], default_content: futureStandby } }]
+  } };
+  e.b.accept(payload, p => applied.push(p));
+  assert.equal(e.downloads.length, 1);
+  for (let i = 0; i < 4; i++) {
+    e.files[e.downloads[i].destination] = true;
+    e.done('1000?1');
+  }
+  assert.deepEqual(applied, [payload]);
+  assert.match(e.b.mediaUrl(standby, 'remote'), /^file:\/\//);
+  assert.match(e.b.mediaUrl(futureStandby, 'remote'), /^file:\/\//);
+});
+
 test('an interval state does not erase the parent offline plan after activation', () => {
   const e = environment(), plan = { protocol_version: 1, states: [] }, future = { content_id: 'future', filepath: 'future.jpg', mime_type: 'image/jpeg', content_rev: 1 };
   e.storage.st_offline_plan = JSON.stringify(plan);

@@ -241,7 +241,11 @@
   // The strict item-level checks in playGapless remain mandatory even when this is enabled.
   bridge.gaplessEnabled = function () { return global.localStorage.getItem('st_native_gapless') === '1'; };
   function payloadItems(payload) {
+    /* default_content is deliberately top-level so changing it does not restart
+       active playback. It is still a dependency: without it a paired panel
+       loses its configured standby image after an offline restart. */
     var items = payload && payload.assignments ? payload.assignments.slice() : [], future, i;
+    if (payload && payload.default_content) items.push(payload.default_content);
     try { future = global.STOfflinePlan && global.STOfflinePlan.dependencies(payload && payload.offline_plan); } catch (ignore) { future = null; }
     if (future && future.length) for (i = 0; i < future.length; i++) items.push(future[i]);
     return items;

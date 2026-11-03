@@ -37,8 +37,8 @@ test('offline plan reports idle rather than replaying an expired or uncovered sc
 test('offline plan dependency discovery includes each future state only once', () => {
   const p = api();
   const items = p.dependencies({ protocol_version: 1, generated_at_utc_ms: 1, valid_until_utc_ms: 2, intervals: [], states: [
-    { payload: { assignments: [{ content_id: 'one', content_rev: 1, filepath: 'one.mp4' }] } },
-    { payload: { assignments: [{ content_id: 'one', content_rev: 1, filepath: 'one.mp4' }, { content_id: 'two', content_rev: 1, filepath: 'two.jpg' }] } },
+    { payload: { assignments: [{ content_id: 'one', content_rev: 1, filepath: 'one.mp4' }], default_content: { content_id: 'standby', content_rev: 1, filepath: 'standby.jpg' } } },
+    { payload: { assignments: [{ content_id: 'one', content_rev: 1, filepath: 'one.mp4' }, { content_id: 'two', content_rev: 1, filepath: 'two.jpg' }], default_content: { content_id: 'standby', content_rev: 1, filepath: 'standby.jpg' } } },
   ] });
-  assert.deepEqual(Array.from(items, (x) => x.content_id), ['one', 'two']);
+  assert.deepEqual(Array.from(items, (x) => x.content_id), ['one', 'standby', 'two']);
 });

@@ -29,7 +29,13 @@
     states = plan.states;
     for (i = 0; i < states.length; i++) {
       items = states[i] && states[i].payload && states[i].payload.assignments;
-      if (!Array.isArray(items)) continue;
+      if (!Array.isArray(items)) items = [];
+      /* The inactive/default image is top-level in every payload. Include it
+         alongside assignments so a future interval can render its standby
+         image without requiring the CMS to be reachable. */
+      if (states[i] && states[i].payload && states[i].payload.default_content) {
+        items = items.concat([states[i].payload.default_content]);
+      }
       for (j = 0; j < items.length; j++) {
         item = items[j];
         if (!item) continue;
