@@ -23,6 +23,7 @@ const screenVerify = require('../lib/screen-verify');
 const previewRefresh = require('../lib/preview-refresh');
 const reconnectThrottle = require('../lib/reconnect-throttle');
 const contentAckLimiter = require('../lib/content-ack-limiter');
+const heartbeatFloor = require('../lib/heartbeat-floor');   // #777: per-device floor on heartbeat side effects
 const statusLogWriter = require('../lib/status-log-writer');
 const { normalizeTransitions } = require('../lib/transition-config');
 const { normalizeWallRotation } = require('../lib/wall-geometry'); // #236 per-panel mounting rotation
@@ -1783,6 +1784,19 @@ const EVENT_APPLIERS = Object.freeze({
 
     heartbeat.updateHeartbeat(device_id);
 
+    // #777: liveness above is recorded on EVERY beat; the DB writes, telemetry row and dashboard push
+    // below run at most once per floor per device (lib/heartbeat-floor.js). A 1.9.0 screen beating
+    // ~20/s otherwise drove 100+ statements a second and 20 dashboard re-renders a second.
+    const floor = heartbeatFloor.admit(device_id);
+    if (!floor.pass) {
+      if (floor.logStart) {
+        const rate = floor.windowMs > 0 ? (floor.beats / (floor.windowMs / 1000)).toFixed(1) : String(floor.beats);
+        console.warn(`[heartbeat] ${device_id} is over the heartbeat floor: ${floor.beats} beats in ${Math.round(floor.windowMs / 1000)}s (~${rate}/s); `
+          + `writing at most one per ${floor.floorMs / 1000}s. A player this chatty is usually an old build (update it from /download).`);
+      }
+      return;
+    }
+
     // A heartbeat is the device asserting it is alive. Online is normally broadcast to the panel
     // only at device:register time (one shot); heartbeats just write the DB. So if the panel
     // missed that single register-time broadcast (its own socket was mid-reconnect, or the emit
@@ -2363,6 +2377,7 @@ const EVENT_APPLIERS = Object.freeze({
    */
   'offline'(deviceId, data, ctx) {
     pendingOfflines.delete(deviceId);
+    heartbeatFloor.clear(deviceId);   // #777: its first beat back is written (and flips the card) at once
     // Re-check at fire time: did a DIFFERENT socket reclaim during the
     // grace window? If activeConn exists but it's still our (now-closed)
     // socket's entry, the entry is just stale - heartbeat.removeConnection
