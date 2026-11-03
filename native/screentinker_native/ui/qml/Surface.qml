@@ -49,6 +49,7 @@ Item {
         current = item
     }
     function clear() {
+        deferredUnload.stop(); deferredUnload.slotRef = null
         slotA.unload(); slotB.unload()
         current = null
     }
@@ -80,8 +81,21 @@ Item {
         } else {
             slot.z = 1
             old.z = 0
-            old.unload()
-            old.visible = false
+            if (slot.kind === "web" || slot.kind === "html" || slot.kind === "youtube") {
+                /*
+                 * #780 belt and braces: a web view's background is transparent, so keep the outgoing
+                 * item UNDER it for a moment instead of unloading it in the same frame. If Chromium's
+                 * first frame lands a little after the paint probe said it would, the old picture shows
+                 * through instead of black. By token: if show() reloads this slot before the timer
+                 * fires, the new item is never unloaded.
+                 */
+                deferredUnload.slotRef = old
+                deferredUnload.token = old.item ? old.item.token : ""
+                deferredUnload.restart()
+            } else {
+                old.unload()
+                old.visible = false
+            }
         }
         stage.slotEvent(surfaceId, slot.item ? slot.item.token : "", "shown", "")
     }
@@ -116,6 +130,21 @@ Item {
         onFailed: function(msg) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "failed", msg) }
         onPosition: function(p, d) { if (front) stage.slotPosition(surface.surfaceId, item ? item.token : "", p, d) }
         onFisheyeTouch: function(detail) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "fisheye_touch", detail) }
+    }
+
+    Timer {
+        id: deferredUnload
+        interval: 250
+        property var slotRef: null
+        property string token: ""
+        onTriggered: {
+            var s = slotRef
+            slotRef = null
+            if (!s || s === surface.frontSlot()) return
+            if (s.item && s.item.token !== token) return     // reloaded with a new item meanwhile
+            s.unload()
+            s.visible = false
+        }
     }
 
     TransitionRunner { id: transition; anchors.fill: parent; z: 2 }

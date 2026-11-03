@@ -305,8 +305,34 @@ Item {
                     url = slot.item.source
             }
             Component.onCompleted: start()
+            /*
+             * ⚠️ #780: REVEALED ON ITS FIRST PAINT, not on "load succeeded". LoadSucceeded means the
+             * document finished loading, not that Chromium has composited a frame into the scene:
+             * revealing then (and unloading the previous item in the same frame) showed the zone's
+             * see-through background, black, for a few frames on every switch between web items. A
+             * published slide lays itself out after load (fonts, then a measured fit), which widened
+             * the gap on a Pi 4. Images never flashed: Image.Ready already means a decoded texture.
+             * So after load the page is asked to wait for its fonts and late images, then two
+             * animation frames (one laid out, one painted), and say so; a short Qt-side delay lets
+             * that frame reach the scene graph. Capped twice over (in the page and here) so a page
+             * whose script never answers is still shown.
+             */
+            readonly property string paintProbe:
+                "(function(){var d=false;function f(){if(d)return;d=true;" +
+                "requestAnimationFrame(function(){requestAnimationFrame(function(){console.log('ST_PAINTED')})})}" +
+                "var w=[];try{if(document.fonts&&document.fonts.ready)w.push(document.fonts.ready)}catch(e){}" +
+                "try{[].slice.call(document.images||[]).forEach(function(i){if(!i.complete)w.push(new Promise(function(r){" +
+                "i.addEventListener('load',r,{once:true});i.addEventListener('error',r,{once:true})}))})}catch(e){}" +
+                "Promise.all(w).then(f,f);setTimeout(f,1200)})()"
+            Timer { id: paintSettle; interval: 50; onTriggered: slot.markReady() }
+            Timer { id: paintCap; interval: 1500; onTriggered: slot.markReady() }
             onLoadingChanged: function(req) {
-                if (req.status === WebEngineView.LoadSucceededStatus) { attempts = 0; slot.markReady() }
+                if (req.status === WebEngineView.LoadSucceededStatus) {
+                    attempts = 0
+                    if (slot.isReady) return          // a reload of a page already on screen
+                    paintCap.restart()
+                    runJavaScript(paintProbe)
+                }
                 else if (req.status === WebEngineView.LoadFailedStatus) {
                     // ⚠️ A failed load must retry itself: a panel boots faster than DHCP, and the
                     // error page would otherwise stay up until someone power-cycles it (Android's
@@ -320,6 +346,8 @@ Item {
             // #624: a play-to-end YouTube page (engine.youtube_html) reports through the console:
             // "ST_YT duration <sec>" and "ST_YT ended". Nothing else logs with that prefix.
             onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
+                // #780: the paint probe above (any web kind).
+                if (message === "ST_PAINTED") { if (!slot.isReady) paintSettle.restart(); return }
                 // #649: a bundle page (engine.item_dict, logic/bundle_skip.inject) asking to be skipped.
                 if (slot.item && slot.item.kind === "html" && typeof message === "string"
                         && message.indexOf("ST_BUNDLE_SKIP ") === 0) { slot.bundleSkip(message.substring(15)); return }
