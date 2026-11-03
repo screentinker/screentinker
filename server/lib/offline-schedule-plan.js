@@ -56,10 +56,15 @@ function build({ schedules, timezone, now = Date.now(), horizonMs = DEFAULT_HORI
   }
   if (cursor < end && intervals.length < MAX_INTERVALS) intervals.push({ start_utc_ms: cursor, end_utc_ms: end, schedule: current });
 
+  // A capped plan is only authoritative through its last emitted interval.
+  // Claiming the requested horizon would make an offline player retain a state
+  // it has no timeline entry for.
+  const validUntil = intervals.length ? intervals[intervals.length - 1].end_utc_ms : start;
+
   return {
     protocol_version: 1,
     generated_at_utc_ms: start,
-    valid_until_utc_ms: end,
+    valid_until_utc_ms: validUntil,
     timezone: timezone || null,
     intervals: intervals.map(({ start_utc_ms, end_utc_ms, schedule }) => ({
       start_utc_ms,

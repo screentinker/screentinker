@@ -1390,7 +1390,16 @@ window.addEventListener('resize', function () { fit(true); });
 </script></body></html>`;
 }
 
-async function legacyWeatherSnapshot(url) {
+// The legacy SSSP3 renderer receives a server-side weather snapshot because its
+// cached file:// runtime cannot reliably fetch third-party data. Cache that snapshot
+// here: a fleet of panels requesting the same widget must not make one wttr.in request
+// per render, and concurrent misses should share one bounded request.
+const LEGACY_WEATHER_CACHE_MS = 5 * 60 * 1000;
+const LEGACY_WEATHER_FAILURE_CACHE_MS = 30 * 1000;
+const LEGACY_WEATHER_CACHE_LIMIT = 100;
+const legacyWeatherCache = new Map();
+
+async function fetchLegacyWeatherSnapshot(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000);
   try {
@@ -1401,6 +1410,28 @@ async function legacyWeatherSnapshot(url) {
       ? { current_condition: [data.current_condition[0]] } : null;
   } catch (_) { return null; }
   finally { clearTimeout(timeout); }
+}
+
+function legacyWeatherSnapshot(url) {
+  const now = Date.now();
+  const cached = legacyWeatherCache.get(url);
+  if (cached && cached.until > now) return cached.pending || Promise.resolve(cached.snapshot);
+  if (!cached && legacyWeatherCache.size >= LEGACY_WEATHER_CACHE_LIMIT) {
+    legacyWeatherCache.delete(legacyWeatherCache.keys().next().value);
+  }
+  const pending = fetchLegacyWeatherSnapshot(url).then((snapshot) => {
+    legacyWeatherCache.set(url, {
+      snapshot,
+      until: Date.now() + (snapshot ? LEGACY_WEATHER_CACHE_MS : LEGACY_WEATHER_FAILURE_CACHE_MS),
+      pending: null,
+    });
+    return snapshot;
+  }, () => {
+    legacyWeatherCache.set(url, { snapshot: null, until: Date.now() + LEGACY_WEATHER_FAILURE_CACHE_MS, pending: null });
+    return null;
+  });
+  legacyWeatherCache.set(url, { snapshot: null, until: now + 5000, pending });
+  return pending;
 }
 
 function renderWeather(c, snapshot) {
@@ -2665,3 +2696,5 @@ module.exports.renderLegacySocial = renderLegacySocial;
 module.exports.dataResolverFor = dataResolverFor;
 module.exports.imageResolverFor = imageResolverFor;
 module.exports.widgetIframeSandboxForWorkspace = widgetIframeSandboxForWorkspace;
+module.exports.legacyWeatherSnapshot = legacyWeatherSnapshot;
+module.exports.legacyWeatherCache = legacyWeatherCache;

@@ -63,7 +63,10 @@
       months = (anchor.y - start.y) * 12 + anchor.mo - start.mo;
       return months >= 0 && months % rule.interval === 0;
     }
-    return false;
+    // Match the server's permissive legacy-rule fallback. The server keeps
+    // an unknown FREQ live within its date range rather than unexpectedly
+    // blanking an existing schedule.
+    return true;
   }
   function active(meta, now) {
     var s, spans, local, stamp, start, end, rule, anchor, endDate;
@@ -74,7 +77,8 @@
     local = localParts(now, spans);
     stamp = dateStamp(local) + 'T' + pad(Math.floor(local.min / 60)) + ':' + pad(local.min % 60);
     start = String(s.start_time).slice(0, 16); end = String(s.end_time).slice(0, 16);
-    if (!s.recurrence || !(rule = ruleOf(s.recurrence))) return stamp >= start && stamp < end;
+    // One-off and invalid legacy rules retain the server's inclusive end.
+    if (!s.recurrence || !(rule = ruleOf(s.recurrence))) return stamp >= start && stamp <= end;
     start = parseDate(start);
     if (!start) return false;
     anchor = anchorFor(local, minutes(s.start_time), minutes(s.end_time));

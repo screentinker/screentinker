@@ -22,13 +22,14 @@ test('offline local schedule uses cached timezone transitions without Intl', () 
   assert.equal(api.isItemActiveNow(schedule, Date.parse('2025-04-25T00:30:00Z'), 'Africa/Cairo'), true);
   assert.equal(api.isItemActiveNow(schedule, Date.parse('2025-04-25T01:00:00Z'), 'Africa/Cairo'), false);
 });
-test('offline schedule uses the same half-open end boundary as the server', () => {
+test('offline fallback preserves the legacy inclusive end for one-off schedules', () => {
   const context = { Date };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../app/offline-schedule.js'), 'utf8'), context);
   const meta = { schedule: { start_time: '2025-01-06T10:00', end_time: '2025-01-06T11:00' }, table: { spans: [{ from_ms: 0, offset_min: 120 }] } };
   assert.equal(context.STOfflineSchedule.active(meta, Date.parse('2025-01-06T08:00:00Z')), true);
   assert.equal(context.STOfflineSchedule.active(meta, Date.parse('2025-01-06T08:59:59Z')), true);
-  assert.equal(context.STOfflineSchedule.active(meta, Date.parse('2025-01-06T09:00:00Z')), false);
+  assert.equal(context.STOfflineSchedule.active(meta, Date.parse('2025-01-06T09:00:00Z')), true);
+  assert.equal(context.STOfflineSchedule.active(meta, Date.parse('2025-01-06T09:01:00Z')), false);
 });
 
 test('offline fallback keeps an overnight recurring schedule on its prior start date', () => {
@@ -46,4 +47,15 @@ test('offline fallback keeps an overnight recurring schedule on its prior start 
   assert.equal(context.STOfflineSchedule.active(meta, Date.parse('2026-11-10T00:30:00Z')), false,
     'the following Tuesday belongs to a skipped Monday under INTERVAL=2');
   assert.equal(context.STOfflineSchedule.active(meta, Date.parse('2026-11-17T00:30:00Z')), true);
+});
+
+
+test('offline fallback retains the server behaviour for an unknown recurrence frequency', () => {
+  const context = { Date };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../app/offline-schedule.js'), 'utf8'), context);
+  const meta = {
+    schedule: { recurrence: 'FREQ=YEARLY', start_time: '2025-01-06T10:00', end_time: '2025-01-06T11:00' },
+    table: { spans: [{ from_ms: 0, offset_min: 0 }] },
+  };
+  assert.equal(context.STOfflineSchedule.active(meta, Date.parse('2025-01-06T10:30:00Z')), true);
 });

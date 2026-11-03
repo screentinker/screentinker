@@ -67,3 +67,10 @@ test('a one-off schedule is unaffected', () => {
 });
 
 test.after(() => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {} });
+
+
+test('one-off schedules keep their legacy final minute, including all-day 23:59', () => {
+  const allDay = { recurrence: null, start_time: '2026-08-05T00:00:00', end_time: '2026-08-05T23:59:00' };
+  assert.equal(isScheduleActiveNow(allDay, at('2026-08-05T23:59:00Z'), TZ), true);
+  assert.equal(isScheduleActiveNow(allDay, at('2026-08-06T00:00:00Z'), TZ), false);
+});

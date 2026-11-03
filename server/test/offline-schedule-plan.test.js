@@ -76,3 +76,17 @@ test('offline plan uses the same overnight recurrence anchor as the live schedul
     ['2026-11-02T01:00:00.000Z', '2026-11-02T02:30:00.000Z', null],
   ]);
 });
+
+test('a truncated plan expires at its last emitted interval instead of claiming the full horizon', () => {
+  const { MAX_INTERVALS, MINUTE_MS } = require('../lib/offline-schedule-plan');
+  const plan = build({
+    schedules: [], timezone: 'UTC', now: at(0), horizonMs: (MAX_INTERVALS + 10) * MINUTE_MS,
+    pick(_schedules, now) {
+      const minute = Math.floor((now.getTime() - at(0)) / MINUTE_MS);
+      return { id: minute % 2 ? 'odd' : 'even', playlist_id: 'p' };
+    },
+  });
+  assert.equal(plan.intervals.length, MAX_INTERVALS);
+  assert.equal(plan.valid_until_utc_ms, plan.intervals.at(-1).end_utc_ms);
+  assert.equal(plan.valid_until_utc_ms, at(0) + MAX_INTERVALS * MINUTE_MS);
+});

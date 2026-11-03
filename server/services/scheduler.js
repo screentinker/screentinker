@@ -289,12 +289,15 @@ function isScheduleActiveAt(schedule, L) {
   const startStamp = String(schedule.start_time).slice(0, 16);
   const endStamp = String(schedule.end_time).slice(0, 16);
 
+  // Keep the long-standing inclusive end for one-off schedules and stored
+  // invalid legacy rules. Existing all-day schedules commonly end at 23:59;
+  // changing this branch would silently remove their final minute fleet-wide.
   if (!schedule.recurrence) {
-    return nowStamp >= startStamp && nowStamp < endStamp;
+    return nowStamp >= startStamp && nowStamp <= endStamp;
   }
 
   const rule = parseSimpleRRule(schedule.recurrence);
-  if (!rule) return nowStamp >= startStamp && nowStamp < endStamp;
+  if (!rule) return nowStamp >= startStamp && nowStamp <= endStamp;
 
   const start = dateParts(startStamp);
   if (!start) return false;
