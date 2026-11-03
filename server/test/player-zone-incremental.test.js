@@ -32,6 +32,7 @@ function harness(zones) {
   assert.ok(start > 0 && end > start, 'renderZones(container, defaultItem, prev) is still in index.html');
   const shows = [];
   const revoked = [];
+  const showAt = {};
   const container = { children: [], appendChild(d) { d.parentNode = this; this.children.push(d); } };
   const env = {
     layout: { id: 'L', zones },
@@ -44,14 +45,21 @@ function harness(zones) {
     zoneTimers: {},
     zoneReport() {},
     document: { createElement: () => fakeDiv() },
-    showZoneItem(zone, div, items) { shows.push(zone.id + ':' + items.map((i) => i.label).join(',')); div.zoneId = zone.id; div.items = items; },
+    // Mirrors the real one's bookkeeping: index 0 (or the test's `showAt`) is what the zone shows.
+    showZoneItem(zone, div, items) {
+      shows.push(zone.id + ':' + items.map((i) => i.label).join(','));
+      div.zoneId = zone.id; div.items = items;
+      const at = (showAt[zone.id] || 0) % items.length;
+      div.__stIdx = at; div.__stItem = items[at];
+    },
+    refreshZoneWidget(div, a) { shows.push('refresh:' + div.zoneId + ':' + a.label); div.__stItem = a; },
     revokeBundleFrame(reg) { revoked.push(reg); },
   };
   const names = Object.keys(env);
   // eslint-disable-next-line no-new-func
   const fn = new Function(...names, PLAYER.slice(start, end) + '\nreturn renderZones;')(...names.map((n) => env[n]));
   return {
-    shows, container, revoked,
+    shows, container, revoked, showAt,
     render(playlist, prev) { env.playlist.splice(0, env.playlist.length, ...playlist); shows.length = 0; return fn(container, playlist[0], prev); },
   };
 }
@@ -68,7 +76,8 @@ test('a weather refresh re-renders only the weather zone; the camera zone is lef
   const mainDiv = first.zones.main.div;
 
   const second = h.render([cam, weather(2)], first);
-  assert.deepEqual(h.shows, ['side:weather@2'], 'no clear-all, and main is not re-shown');
+  // #790: a revision-only change is a buffered in-place refresh, not a re-show of the zone.
+  assert.deepEqual(h.shows, ['refresh:side:weather@2'], 'no clear-all, main untouched, side refreshed in place');
   assert.equal(second.zones.main.div, mainDiv, 'the camera keeps its div');
   assert.equal(second.zones.side.div, first.zones.side.div, 'a changed zone re-renders in its own div');
   assert.equal(h.container.children.length, 2, 'no extra zone divs were created');
@@ -134,4 +143,44 @@ test('renderContent takes the incremental path only for the same layout, before 
   const td = PLAYER.indexOf('function teardownCurrentMedia(keep) {');
   assert.ok(/zoneState = null;/.test(PLAYER.slice(td, td + 3000)), 'a full teardown drops the zone state');
   assert.match(PLAYER.slice(i, t), /if \(suspendedPlayback\) suspendedPlayback\.seq = renderSeq;/, 'a pending foreground resume still finds the zones left playing');
+});
+
+// ─── #790: a revision-only change keeps the zone's place and swaps the widget buffered ───────────
+
+const img = (label) => ({ label, content_id: label, mime_type: 'image/png', zone_id: 'side', sort_order: 0 });
+const slide = (rev, sort = 1) => ({ label: 'slide@' + rev, widget_id: 's', widget_rev: rev, zone_id: 'side', sort_order: sort });
+
+test('#790: the slide ON SCREEN in a multi-item zone is refreshed in place; the rotation is not restarted', () => {
+  const h = harness(ZONES);
+  h.showAt.side = 1;   // the zone is on its second item, the slide
+  const first = h.render([cam, img('promo'), slide(1)]);
+  const rotation = first.zones.side.items;
+  const second = h.render([cam, img('promo'), slide(2)], first);
+  assert.deepEqual(h.shows, ['refresh:side:slide@2'], 'no showZoneItem, so no jump back to item 0');
+  assert.equal(second.zones.side.items, rotation, 'the zone keeps the array its rotation reads');
+  assert.equal(rotation[1].widget_rev, 2, 'which now holds the new revision');
+  assert.equal(second.zones.side.div.__stIdx, 1, 'and its place');
+});
+
+test('#790: a slide that is NOT on screen is left for the next rotation (no reload of what is showing)', () => {
+  const h = harness(ZONES);
+  const first = h.render([cam, img('promo'), slide(1)]);   // showing item 0, the image
+  const second = h.render([cam, img('promo'), slide(2)], first);
+  assert.deepEqual(h.shows, [], 'nothing re-rendered');
+  assert.equal(second.zones.side.items[1].widget_rev, 2, 'the next time the slide comes round it is the new one');
+});
+
+test('#790: anything beyond a revision (an added item) still re-shows the zone', () => {
+  const h = harness(ZONES);
+  const first = h.render([cam, img('promo'), slide(1)]);
+  h.render([cam, img('promo'), slide(2), img('extra')], first);
+  assert.deepEqual(h.shows, ['side:promo,extra,slide@2']);
+});
+
+test('#790: a zone with nothing on screen (all scheduled out) re-shows rather than refreshing into it', () => {
+  const h = harness(ZONES);
+  const first = h.render([cam, weather(1)]);
+  first.zones.side.div.__stIdx = null;   // showZoneEmpty: nothing chosen
+  h.render([cam, weather(2)], first);
+  assert.deepEqual(h.shows, ['side:weather@2']);
 });
