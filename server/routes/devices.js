@@ -25,6 +25,7 @@ const deviceSettings = require('../lib/device-settings'); // #150 delete+re-pair
 const { normalizeTags, parseTags } = require('../lib/content-tags');
 const groupRules = require('../lib/device-group-rules');
 const playerCapabilities = require('../lib/player-capabilities');
+const { latestTelemetryIdSql, latestScreenshotIdSql } = require('../lib/latest-row'); // #788
 
 // List devices in the caller's current workspace.
 // Phase 2.2a: filter by workspace_id instead of user_id. The caller's current
@@ -47,16 +48,9 @@ router.get('/', (req, res) => {
       u.email as owner_email, u.name as owner_name
     FROM devices d
     LEFT JOIN users u ON d.user_id = u.id
-    LEFT JOIN (
-      SELECT dt.* FROM device_telemetry dt
-      INNER JOIN (SELECT device_id, MAX(reported_at) as max_at FROM device_telemetry GROUP BY device_id) latest
-      ON dt.device_id = latest.device_id AND dt.reported_at = latest.max_at
-    ) t ON d.id = t.device_id
-    LEFT JOIN (
-      SELECT sc.* FROM screenshots sc
-      INNER JOIN (SELECT device_id, MAX(captured_at) as max_at FROM screenshots GROUP BY device_id) latest
-      ON sc.device_id = latest.device_id AND sc.captured_at = latest.max_at
-    ) s ON d.id = s.device_id
+    -- #788: exactly one latest row per screen (ties on the whole-second timestamp duplicated it)
+    LEFT JOIN device_telemetry t ON t.rowid = ${latestTelemetryIdSql('d.id')}
+    LEFT JOIN screenshots s ON s.rowid = ${latestScreenshotIdSql('d.id')}
     WHERE d.workspace_id = ?
       AND (? IS NULL OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(d.tags) THEN d.tags ELSE '[]' END) WHERE value = ?))
     ORDER BY d.sort_order ASC, d.created_at ASC

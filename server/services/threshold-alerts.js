@@ -20,6 +20,7 @@ const crypto = require('crypto');
 // Scale-out: a sweep on a replica must never act on a COPIED workspace (docs/scale-out-design.md §5.5).
 const { LOCAL_ROWS_SQL } = require('../lib/replica-proxy');
 const thresholds = require('../lib/alerts/thresholds');
+const { latestTelemetryIdSql } = require('../lib/latest-row'); // #788
 
 const TICK_MS = 60_000;
 
@@ -133,11 +134,8 @@ function sweep(db, { now = Math.floor(Date.now() / 1000), logger = console } = {
              t.battery_level, t.storage_free_mb, t.storage_total_mb,
              t.ram_free_mb, t.ram_total_mb, t.cpu_usage, t.wifi_rssi
         FROM devices d
-        LEFT JOIN (
-          SELECT device_id, MAX(reported_at) AS reported_at FROM device_telemetry GROUP BY device_id
-        ) latest ON latest.device_id = d.id
-        LEFT JOIN device_telemetry t
-               ON t.device_id = d.id AND t.reported_at = latest.reported_at
+        -- #788: one latest row per screen; a tie on reported_at evaluated the screen twice
+        LEFT JOIN device_telemetry t ON t.rowid = ${latestTelemetryIdSql('d.id')}
        WHERE (d.blocked IS NULL OR d.blocked = 0) AND ${LOCAL_ROWS_SQL('d')}
     `).all();
   } catch (e) {
