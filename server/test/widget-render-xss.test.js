@@ -208,3 +208,25 @@ test('SSSP3 webpages inline same-workspace ScreenTinker widgets instead of using
   assert.match(html, /Ada/);
   assert.doesNotMatch(html, /<iframe/);
 });
+
+
+test('SSSP3 weather snapshots share a bounded server cache instead of fetching once per panel render', async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  widgetsRouter.legacyWeatherCache.clear();
+  global.fetch = async () => {
+    calls++;
+    return { ok: true, json: async () => ({ current_condition: [{ temp_C: '27' }] }) };
+  };
+  try {
+    const url = 'https://wttr.in/Cairo?format=j1';
+    const [first, second] = await Promise.all([widgetsRouter.legacyWeatherSnapshot(url), widgetsRouter.legacyWeatherSnapshot(url)]);
+    assert.equal(calls, 1, 'concurrent panel renders share the pending upstream request');
+    assert.deepEqual(first, second);
+    await widgetsRouter.legacyWeatherSnapshot(url);
+    assert.equal(calls, 1, 'a completed snapshot is reused during its TTL');
+  } finally {
+    global.fetch = originalFetch;
+    widgetsRouter.legacyWeatherCache.clear();
+  }
+});
