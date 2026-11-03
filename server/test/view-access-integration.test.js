@@ -139,6 +139,10 @@ test('an admin turns it on: the link serves the player in viewer mode and a read
   const again = await (await payloadOf(token, `?rev=${body.rev}`)).json();
   assert.equal(again.unchanged, true, 'an unchanged display answers without the body');
   assert.equal('payload' in again, false);
+  // lite=1 (the audio guide's poll): clock + now_playing only, never the player payload
+  const lite = await (await payloadOf(token, '?lite=1')).json();
+  assert.ok(lite.server_ms && Array.isArray(lite.now_playing), 'the clock and what is on screen');
+  assert.equal('payload' in lite, false, 'a lite poll never carries the player payload');
 
   assert.equal(deviceCount(), before, 'a viewer is never a display row');
   const list = await (await as('GET', '/api/devices')).json();
@@ -278,4 +282,25 @@ test('the old ways are untouched: /player is a screen, pairing and the enrolment
   const viaToken = await register({ device_id: dev.id, device_token: dev.token });
   assert.equal(viaToken.registered, true, 'and the paired screen still connects with its own token');
   assert.equal(deviceCount(), before);
+});
+
+test('the visitor audio guide page is served for an enabled view, gated, and CSP-exempt like the player', async () => {
+  const dev = await display('Guide');
+  assert.equal((await fetch(`${BASE}/listen/screen/${dev.id}`)).status, 404, 'no guide before the view is on');
+  const state = await (await as('PUT', `/api/devices/${dev.id}/view`, { enabled: true })).json();
+  const token = tokenOf(state);
+  assert.match(state.listen_url, new RegExp(`/listen/${token}$`), 'the admin gets the audio-guide URL');
+  assert.match(state.listen_qr_svg || '', /<svg/, 'and a scannable inline QR of it');
+
+  const page = await fetch(`${BASE}/listen/${token}`);
+  assert.equal(page.status, 200);
+  assert.equal(page.headers.get('cache-control'), 'no-store', 'the token in the URL is never cached');
+  assert.equal(page.headers.get('content-security-policy'), null, 'inline JS allowed, like /player and /view');
+  const html = await page.text();
+  assert.match(html, /audio guide/i);
+  assert.match(html, /\/api\/view\//, 'the page knows how to poll the viewer payload');
+
+  assert.equal((await fetch(`${BASE}/listen/${crypto.randomBytes(32).toString('base64url')}`)).status, 404, 'a guessed token is nothing');
+  await as('PUT', `/api/devices/${dev.id}/view`, { enabled: false });
+  assert.equal((await fetch(`${BASE}/listen/${token}`)).status, 404, 'off means the guide goes dark too');
 });

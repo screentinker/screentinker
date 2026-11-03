@@ -161,6 +161,7 @@ const INLINE_NOT_WORKSPACE_SCOPED = Object.freeze({
   '/api/migrate/jobs/upload': '3.0 switch to ScreenTinker: rate-limit mount only; the handler is the tenancy router (routes/migrate.js)',
   '/api/admin/plugins/submissions': 'platform-admin, node-local',
   '/api/device/exit': 'player exit beacon, device-authenticated',
+  '/api/device/audio-guide': 'player reads its own /listen URL + QR, device-authenticated, writes nothing',
   '/api/devices/:id/live/publish': 'device-authenticated live-video publish',
 });
 

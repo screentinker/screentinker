@@ -3513,6 +3513,30 @@ const migrations = [
   // reads as mains everywhere (dashboard and alerts) regardless of what the board claims. Off by
   // default; the honest boards are handled by the player's EXTRA_PRESENT gate and need no switch.
   "ALTER TABLE devices ADD COLUMN ignore_battery INTEGER NOT NULL DEFAULT 0",
+  // Visitor audio sync: per-content multilingual narration tracks (audio + optional WebVTT caption)
+  // that a visitor's phone plays in sync with the video on a display. Extends the single-subtitle
+  // pattern (#216) to a LIST keyed by (content_id, lang); the single subtitle_url column cannot hold
+  // multiple languages. Files live in contentDir, served at /uploads/content/<key> like subtitles.
+  // v1 is local-first (not cloud-replicated): SQLite cannot ALTER the content_locations.kind CHECK to
+  // add an 'audio' kind, so a dedicated table is the clean fit for multiple languages anyway.
+  `CREATE TABLE IF NOT EXISTS content_audio_tracks (
+     id          TEXT PRIMARY KEY,
+     content_id  TEXT NOT NULL,
+     lang        TEXT NOT NULL,
+     label       TEXT,
+     audio_key   TEXT NOT NULL,
+     caption_key TEXT,
+     is_default  INTEGER NOT NULL DEFAULT 0,
+     sort_order  INTEGER NOT NULL DEFAULT 0,
+     created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     updated_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+   )`,
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_content_audio_tracks_lang ON content_audio_tracks(content_id, lang)',
+  'CREATE INDEX IF NOT EXISTS idx_content_audio_tracks_content ON content_audio_tracks(content_id)',
+  // Per-video opt-in for the visitor audio guide. Off by default: a video can carry language tracks
+  // without the guide being live. When on AND the video has tracks, visitors get the guide (the
+  // /listen poll exposes the tracks) and the player shows a "Scan for audio guide" QR while it plays.
+  "ALTER TABLE content ADD COLUMN audio_guide_enabled INTEGER NOT NULL DEFAULT 0",
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.

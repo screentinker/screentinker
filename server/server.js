@@ -205,6 +205,7 @@ app.use((req, res, next) => {
   if (req.path === '/' || req.path === '/landing.html') return exempt();
   if (req.path.startsWith('/player')) return exempt();
   if (req.path.startsWith('/view/')) return exempt(); // view-only display page: the web player (routes/view.js)
+  if (req.path.startsWith('/listen/')) return exempt(); // visitor audio-guide page, inline JS like the player (routes/view.js)
   if (req.path === '/docs') return exempt(); // Redoc API reference needs a relaxed CSP
   if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/render')) return exempt();
   if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/data.json')) return exempt();
@@ -1550,7 +1551,13 @@ app.use('/api/public/requests', rateLimit(60000, 1500), require('./routes/reques
  * token is the credential, so each IP gets one bucket per route shape (lib/limit-paths.js), not one
  * per token. 4s polling is 15/min per open viewer; 240/min leaves room for a wall of them on one NAT.
  */
-app.get(['/view/:key', '/view/screen/:id', '/api/view/:kind/:key/payload'], rateLimit(60000, 240), require('./routes/view')({ sendPlayer }));
+// The payload poll gets its own, larger bucket. All view payloads share ONE per-IP bucket (the
+// token is folded out of the key), and a venue puts every visitor's phone behind one Wi-Fi NAT: at
+// the old shared 240/min, ~16 audio-guide phones at a 4s poll exhausted it for the whole venue.
+// 2400/min covers ~160 phones; the lite poll it serves is a token check plus a cached lookup.
+app.get('/api/view/:kind/:key/payload', rateLimit(60000, 2400));
+app.get(['/view/:key', '/view/screen/:id', '/listen/:key', '/listen/screen/:id'], rateLimit(60000, 240));
+app.get(['/view/:key', '/view/screen/:id', '/api/view/:kind/:key/payload', '/listen/:key', '/listen/screen/:id'], require('./routes/view')({ sendPlayer }));
 // Canva OAuth callback (routes/canva.js): the browser returns from canva.com with no Authorization
 // header, so it cannot sit behind the JWT-only /api/canva mount below. It trusts only the signed
 // httpOnly transaction cookie set when the person pressed Connect.
@@ -2655,6 +2662,34 @@ app.post('/api/device/exit', (req, res) => {
   const e = liveness.sanitizeExitReason(reason, detail);   // unknown/invalid -> null -> device falls to 'silent'
   if (e) db.prepare("UPDATE devices SET offline_reason = ?, offline_reason_at = strftime('%s','now'), offline_detail = ? WHERE id = ?").run(e.reason, e.detail, device_id);
   res.status(204).end();
+});
+
+// Visitor audio sync: a device asks for ITS OWN "scan for audio guide" QR — the /listen URL for this
+// screen — so the player can overlay it while a guide-enabled video plays. Device-token auth, exactly
+// like /api/device/exit above. Returns the QR only when view-only access is ALREADY enabled for this
+// screen (a token exists); we never silently enable view access here, that stays an admin choice.
+app.post('/api/device/audio-guide', (req, res) => {
+  const { db } = require('./db/database');
+  const { device_id, device_token } = req.body || {};
+  if (!device_id || typeof device_token !== 'string') return res.status(401).json({ enabled: false });
+  const row = db.prepare('SELECT device_token, view_enabled, view_token_enc FROM devices WHERE id = ?').get(device_id);
+  let ok = false;
+  try {
+    ok = !!(row && row.device_token && device_token.length === row.device_token.length &&
+      crypto.timingSafeEqual(Buffer.from(row.device_token), Buffer.from(device_token)));
+  } catch (_) { ok = false; }
+  if (!ok) return res.status(401).json({ enabled: false });
+  const cfg = require('./config');
+  if (!cfg.viewOnlyEnabled || !row.view_enabled || !row.view_token_enc) {
+    return res.json({ enabled: false });   // no on-screen QR until view-only access is turned on for this screen
+  }
+  try {
+    const token = require('./lib/secretbox').decrypt(row.view_token_enc);
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const listen_url = `${origin}/listen/${token}`;
+    const qr_svg = require('./lib/slide-render').qrSvg(listen_url, 'M', '#000000', '#ffffff');
+    return res.json(qr_svg ? { enabled: true, listen_url, qr_svg } : { enabled: false });
+  } catch (_) { return res.json({ enabled: false }); }
 });
 
 // (Content file endpoint moved above protected routes)

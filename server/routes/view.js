@@ -14,6 +14,8 @@
  */
 
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
 const { db } = require('../db/database');
 const viewAccess = require('../lib/view-access');
 const nowPlaying = require('../lib/now-playing');
@@ -64,8 +66,18 @@ module.exports = function viewRoutes({ sendPlayer }) {
     const r = viewAccess.resolve(db, req, by);
     if (!r.device) return res.status(r.status).json({ error: 'This view is no longer available', available: false });
     const { payload: body, rev } = payloadFor(r.device.id);
-    const out = { rev, server_ms: Date.now(), now_playing: nowPlaying.forDevice(r.device.id), poll_ms: viewAccess.POLL_MS };
-    if (req.query.rev === rev) out.unchanged = true;
+    // Visitor audio sync: enrich each now_playing entry with the language tracks offered for the item
+    // currently on screen, so a visitor's phone can pick a language and play it in sync. Viewer-only:
+    // this never touches the player payload, so it cannot change the structural player fingerprint.
+    const audioTracks = require('../lib/content-audio-tracks');
+    const now_playing = nowPlaying.forDevice(r.device.id).map((e) => {
+      const tracks = e && e.content_id ? audioTracks.tracksForViewer(e.content_id) : [];
+      return tracks.length ? { ...e, audio_tracks: tracks } : e;
+    });
+    const out = { rev, server_ms: Date.now(), now_playing, poll_ms: viewAccess.POLL_MS };
+    // lite=1: the audio guide only needs the clock + now_playing, never the full player payload.
+    if (req.query.lite === '1') out.unchanged = true;
+    else if (req.query.rev === rev) out.unchanged = true;
     else out.payload = body;
     res.json(out);
   }
@@ -78,6 +90,22 @@ module.exports = function viewRoutes({ sendPlayer }) {
     noStore(res);
     return res.status(404).json({ error: 'Not found' });
   });
+
+  // Visitor audio guide: an audio-only page that plays the per-language narration for whatever is on
+  // this screen, in sync, via the same poll the viewer player uses. Gated like /view; the page holds
+  // no secrets (its token stays in the URL and the payload endpoint re-checks it on every poll).
+  function listen(req, res, by) {
+    noStore(res);
+    const r = viewAccess.resolve(db, req, by);
+    if (!r.device) return res.status(r.status).type('html').send(UNAVAILABLE_HTML);
+    fs.readFile(path.join(__dirname, '..', 'listen', 'index.html'), (err, html) => {
+      if (err) return res.status(500).type('text/plain').send('audio guide unavailable');
+      res.type('html').send(html);
+    });
+  }
+  router.get('/listen/screen/:id', (req, res) => listen(req, res, { deviceId: req.params.id }));
+  router.get('/listen/:key', (req, res) => listen(req, res, { token: req.params.key }));
+
   return router;
 };
 

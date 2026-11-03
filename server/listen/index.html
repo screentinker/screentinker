@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Audio Guide</title>
+<style>
+  :root{
+    --bg:#0c111c; --surface:#161d2e; --surface-2:#1d2639; --line:#2a344c;
+    --fg:#eef2fb; --muted:#8c97b2; --faint:#5e6a86;
+    --accent:#6c8cff; --accent-soft:#2a3763;
+    --good:#35d6a4; --warn:#f3c250; --bad:#ff6f6f;
+    --radius:14px; --shadow:0 10px 30px rgba(0,0,0,.45);
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    margin:0;background:radial-gradient(120% 60% at 50% -10%, #142039 0%, transparent 60%), var(--bg);
+    color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.45;
+    padding:max(18px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));
+  }
+  .app{max-width:460px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .venue{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+  .venue b{display:block;font-size:15px;letter-spacing:0;text-transform:none;color:var(--fg);font-weight:600;margin-top:2px}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;padding:6px 11px;border-radius:999px;background:var(--surface);border:1px solid var(--line);white-space:nowrap}
+  .pill .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  .langs{display:grid;grid-template-columns:repeat(auto-fit,minmax(78px,1fr));gap:8px}
+  .langs button{padding:11px 6px;border-radius:11px;border:1px solid var(--line);background:var(--surface);color:var(--muted);font-size:13px;font-weight:600;cursor:pointer}
+  .langs button.sel{border-color:var(--accent);color:var(--fg);background:var(--accent-soft)}
+  .cap{background:#000;border:1px solid var(--line);border-radius:var(--radius);min-height:120px;padding:20px 18px;display:flex;align-items:center;justify-content:center;text-align:center}
+  .cap p{margin:0;font-size:19px;line-height:1.5}
+  .cap.rtl p{direction:rtl}
+  .play{display:flex;align-items:center;justify-content:center;gap:11px;width:100%;padding:16px;border:none;border-radius:var(--radius);background:var(--accent);color:#0a0f1c;font-size:16px;font-weight:700;cursor:pointer}
+  .play:disabled{opacity:.5}
+  .play svg{width:20px;height:20px;display:block}
+  .msg{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px;color:var(--muted);text-align:center;font-size:14px}
+  .toggle{background:none;border:none;color:var(--muted);font-size:12.5px;font-weight:600;cursor:pointer;padding:4px 2px;align-self:center}
+  .rows{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:2px 15px}
+  .row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;font-size:13px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+  .row:last-child{border-bottom:none}
+  .row .k{color:var(--muted)}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+  <div class="app">
+    <div class="head">
+      <div class="venue">Audio guide<b id="nowTitle">Connecting...</b></div>
+      <span class="pill"><span class="dot" id="pdot"></span><span id="pstat">...</span></span>
+    </div>
+
+    <div class="langs" id="langs" hidden></div>
+    <div class="cap" id="capWrap" hidden><p id="capText">&nbsp;</p></div>
+    <button class="play" id="play" hidden>
+      <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+      <span id="playLabel">Play</span>
+    </button>
+
+    <div class="msg" id="msg">Looking for the screen...</div>
+
+    <button class="toggle" id="toggle" hidden>Sync details</button>
+    <div class="rows" id="rows" hidden>
+      <div class="row"><span class="k">drift</span><span id="rDrift">--</span></div>
+      <div class="row"><span class="k">clock offset</span><span id="rOff">--</span></div>
+      <div class="row"><span class="k">audio position</span><span id="rPos">--</span></div>
+    </div>
+
+    <audio id="audio" preload="auto"></audio>
+  </div>
+
+<script>
+'use strict';
+// --- sync tuning (validated on the Pi 5 bench, 2026-10-27) -------------------
+// Model: lock-and-coast. Seek ONCE to get close, pull the residual in with playbackRate, declare
+// "locked" only after the gap HOLDS inside the deadband, then hold with an inaudible nudge. Hard
+// re-seek only on a new clip, a track change, a return from background, or a big desync.
+var CTRL_HZ = 15;
+var DEADBAND_SEC = 0.040;      // un-locked: inside this gap, ride at 1.0 and start the lock timer
+var LOCK_HOLD_MS = 400;        // gap must stay inside the deadband this long (a post-seek read lies)
+var RESYNC_SEC = 0.300;        // locked: a gap beyond this is a stall/glitch -> re-seek
+var RATE_GAIN = 0.5;
+var CATCHUP_CLAMP = 0.12;      // +/-12% while un-locked (brief, closes the post-seek residual fast)
+var HOLD_DEADBAND_SEC = 0.006; // locked: ignore measurement noise below this
+var HOLD_GAIN = 0.6;
+var HOLD_CLAMP = 0.02;         // locked: +/-2% nudge, inaudible
+// clock filter (NTP-style): trust the lowest-RTT sample, snap during warmup, then slew
+var CLOCK_WIN = 12, MAX_RTT_MS = 1500, CLOCK_SLEW_MS = 40, CLOCK_SNAP_MS = 500, WARMUP_MS = 3000;
+var WARMUP_POLL_MS = 1000, WARMUP_POLLS = 5;  // seed the clock window quickly at start
+var POLL_MS = 4000;            // steady state; the server's poll_ms overrides it
+var MAX_BACKOFF_MS = 30000;    // on 429/errors, back off (a venue shares one NAT IP)
+
+// --- which screen are we listening to --------------------------------------
+var payloadUrl;
+(function () {
+  var p = location.pathname;
+  var m = p.match(/^\/listen\/screen\/([^/]+)/);
+  if (m) payloadUrl = '/api/view/d/' + encodeURIComponent(m[1]) + '/payload?lite=1';
+  else { var k = p.match(/^\/listen\/([^/]+)/); payloadUrl = k ? '/api/view/t/' + encodeURIComponent(k[1]) + '/payload?lite=1' : null; }
+})();
+
+var $ = function (id) { return document.getElementById(id); };
+var audio = $('audio');
+var clockOffsetMs = 0, haveClock = false, clockSamples = [], clockWarm = false;
+var contentId = null, startedMs = null, tracks = [];
+var chosenLang = null, running = false, started = false;
+var cues = [], capUrlLoaded = null;
+var synced = false, needSeek = true, lockSince = 0, lastStartedMs = null;
+var latencyMs = 0, latLocked = false, _ac = null, _wakeLock = null;
+var pollDelay = WARMUP_POLL_MS, pollsDone = 0, failStreak = 0;
+
+try { chosenLang = localStorage.getItem('st_guide_lang') || null; } catch (_) {}
+(function () { var q = parseInt(new URLSearchParams(location.search).get('lat'), 10); if (!isNaN(q)) { latencyMs = q; latLocked = true; } })();
+
+// --- clock discipline -------------------------------------------------------
+function syncedNow() { return Date.now() + clockOffsetMs; }
+function ingestClock(serverMs, t0, t4) {
+  var rtt = t4 - t0;
+  if (typeof serverMs !== 'number' || rtt < 0 || rtt > MAX_RTT_MS) return;
+  clockSamples.push({ off: serverMs - (t0 + t4) / 2, rtt: rtt });
+  if (clockSamples.length > CLOCK_WIN) clockSamples.shift();
+  // The lowest round-trip sample has the least queuing skew; one laggy Wi-Fi poll can be off by
+  // hundreds of ms, so pick it instead of averaging the bad ones in.
+  var best = clockSamples[0];
+  for (var i = 1; i < clockSamples.length; i++) if (clockSamples[i].rtt < best.rtt) best = clockSamples[i];
+  if (!haveClock || !clockWarm || Math.abs(best.off - clockOffsetMs) > CLOCK_SNAP_MS) {
+    clockOffsetMs = best.off; haveClock = true;
+  } else {
+    var d = best.off - clockOffsetMs;
+    clockOffsetMs += Math.max(-CLOCK_SLEW_MS, Math.min(CLOCK_SLEW_MS, d));
+  }
+}
+
+// --- output latency: what you HEAR lags currentTime by the device's output path ----------------
+function detectLatency() {
+  if (latLocked) return;
+  try {
+    if (!_ac) _ac = new (window.AudioContext || window.webkitAudioContext)();
+    if (_ac.state === 'suspended') _ac.resume().catch(function () {});
+    var ol = (_ac.outputLatency || _ac.baseLatency || 0) * 1000;
+    if (ol > 0 && ol < 1000) latencyMs = Math.round(ol);
+  } catch (_) { /* no Web Audio: no compensation */ }
+}
+
+// --- keep the screen awake; re-align after coming back from background -------
+function requestWakeLock() {
+  try {
+    if (navigator.wakeLock && document.visibilityState === 'visible') {
+      navigator.wakeLock.request('screen').then(function (wl) { _wakeLock = wl; }, function () {});
+    }
+  } catch (_) { /* insecure context or unsupported */ }
+}
+function releaseWakeLock() { try { if (_wakeLock) _wakeLock.release(); } catch (_) {} _wakeLock = null; }
+function resync() { synced = false; needSeek = true; lockSince = 0; }
+document.addEventListener('visibilitychange', function () {
+  // A hidden tab throttles timers and may suspend audio, so the position is stale on return.
+  if (document.visibilityState === 'visible' && running) { resync(); requestWakeLock(); poll(true); }
+});
+
+// --- VTT parsing (captions ride the same synced position) ------------------
+function tc(s) {
+  var m = s.trim().match(/(?:(\d+):)?(\d{1,2}):(\d{2})(?:[.,](\d{1,3}))?/);
+  if (!m) return null;
+  return (+(m[1] || 0)) * 3600 + (+m[2]) * 60 + (+m[3]) + (m[4] ? +('0.' + m[4]) : 0);
+}
+function parseVtt(text) {
+  var out = [], blocks = text.replace(/\r/g, '').split(/\n\n+/);
+  for (var i = 0; i < blocks.length; i++) {
+    var lines = blocks[i].split('\n');
+    for (var j = 0; j < lines.length; j++) {
+      if (lines[j].indexOf('-->') >= 0) {
+        var ends = lines[j].split('-->');
+        var start = tc(ends[0]), end = tc(ends[1]);
+        if (start != null && end != null) out.push({ start: start, end: end, text: lines.slice(j + 1).join('\n').trim() });
+        break;
+      }
+    }
+  }
+  return out;
+}
+function loadCaptions(url) {
+  if (url === capUrlLoaded) return;
+  capUrlLoaded = url; cues = [];
+  if (!url) return;
+  fetch(url, { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; })
+    .then(function (t) { if (capUrlLoaded === url) cues = parseVtt(t); }).catch(function () {});
+}
+function activeCue(pos) {
+  for (var i = 0; i < cues.length; i++) if (pos >= cues[i].start && pos < cues[i].end) return cues[i].text;
+  return '';
+}
+
+// --- track selection -------------------------------------------------------
+function pickTrack() {
+  if (!tracks.length) return null;
+  var byLang = chosenLang && tracks.filter(function (t) { return t.lang === chosenLang; })[0];
+  if (byLang) return byLang;
+  var def = tracks.filter(function (t) { return t.is_default; })[0];
+  return def || tracks[0];
+}
+function isRtl(lang) { return /^(ar|he|fa|ur)\b/i.test(lang || ''); }
+
+function renderLangs() {
+  var box = $('langs');
+  box.innerHTML = '';
+  tracks.forEach(function (t) {
+    var b = document.createElement('button');
+    b.textContent = t.label || t.lang;
+    b.className = (t.lang === (pickTrack() || {}).lang) ? 'sel' : '';
+    b.addEventListener('click', function () {
+      chosenLang = t.lang; try { localStorage.setItem('st_guide_lang', t.lang); } catch (_) {}
+      applyTrack(true); renderLangs();
+    });
+    box.appendChild(b);
+  });
+  box.hidden = tracks.length < 2; // one language needs no picker
+}
+
+// point the <audio> at the chosen track; keep playing if already started
+function applyTrack(userGesture) {
+  var t = pickTrack();
+  if (!t) return;
+  $('capWrap').className = 'cap' + (isRtl(t.lang) ? ' rtl' : '');
+  loadCaptions(t.caption_url);
+  if (audio.src.indexOf(t.audio_url) < 0) { audio.src = t.audio_url; audio.load(); }
+  resync();
+  if (started && (userGesture || running)) audio.play().catch(function () {});
+}
+
+// --- the position the HEARD audio should be at right now --------------------
+function targetSec() {
+  if (startedMs == null || !haveClock) return null;
+  var off = (syncedNow() - startedMs + latencyMs) / 1000;   // lead by the output latency
+  if (off < 0) off = 0;
+  var d = audio.duration;
+  if (d && isFinite(d) && off > d) off = off % d; // looping exhibit: wrap to the current pass
+  return off;
+}
+
+// --- viewer poll (lite: clock + now_playing only) ----------------------------
+var pollTimer = null;
+function schedulePoll() { clearTimeout(pollTimer); pollTimer = setTimeout(function () { poll(false); }, pollDelay); }
+function poll(once) {
+  if (!payloadUrl) return;
+  var t0 = Date.now();
+  fetch(payloadUrl, { cache: 'no-store' }).then(function (r) {
+    var t4 = Date.now();
+    if (r.status === 429) throw new Error('busy');
+    if (!r.ok) throw new Error('unavailable');
+    return r.json().then(function (b) { return { b: b, t4: t4 }; });
+  }).then(function (o) {
+    var b = o.b; failStreak = 0;
+    ingestClock(b.server_ms, t0, o.t4);
+    if (typeof b.poll_ms === 'number' && b.poll_ms >= 1000) POLL_MS = b.poll_ms;
+    pollsDone++;
+    pollDelay = pollsDone < WARMUP_POLLS ? WARMUP_POLL_MS : POLL_MS;
+    var np = (b.now_playing || []).filter(function (e) { return e && e.audio_tracks && e.audio_tracks.length; })[0];
+    if (!np) { noGuide('No audio guide for what is on the screen right now.'); return; }
+    var changed = np.content_id !== contentId;
+    contentId = np.content_id; startedMs = np.started_ms; tracks = np.audio_tracks;
+    showGuide();
+    if (changed) { renderLangs(); applyTrack(false); }
+  }).catch(function () {
+    // keep the last state; the clock carries us between polls. Back off so a busy venue recovers.
+    failStreak++;
+    pollDelay = Math.min(MAX_BACKOFF_MS, POLL_MS * Math.pow(2, Math.min(failStreak, 3)));
+  }).then(function () { if (!once) schedulePoll(); });
+}
+
+function noGuide(text) {
+  $('msg').textContent = text; $('msg').hidden = false;
+  $('langs').hidden = true; $('capWrap').hidden = true; $('play').hidden = true; $('toggle').hidden = true; $('rows').hidden = true;
+  $('nowTitle').textContent = 'Nothing playing';
+  contentId = null;
+  try { audio.pause(); } catch (_) {}
+}
+function showGuide() {
+  $('msg').hidden = true; $('capWrap').hidden = false; $('play').hidden = false; $('toggle').hidden = false;
+  $('nowTitle').textContent = 'Playing on this screen';
+}
+
+// --- correction loop: lock-and-coast ----------------------------------------
+function control() {
+  if (running && started && contentId != null) {
+    var tgt = targetSec();
+    if (tgt != null && !isNaN(audio.duration)) {
+      // never let it sit paused/ended silently while the visitor has it on
+      if (audio.paused && audio.readyState > 2) audio.play().catch(function () {});
+      var cur = audio.currentTime, d = audio.duration, diff = tgt - cur;   // +ve => audio is behind
+      if (d && isFinite(d) && Math.abs(diff) > d / 2) diff -= (diff > 0 ? 1 : -1) * d;   // across a loop wrap
+      var now = Date.now();
+      // re-sync triggers: a new clip on screen, or a big desync (stall/glitch)
+      if (startedMs !== lastStartedMs || Math.abs(diff) > RESYNC_SEC) { synced = false; needSeek = true; }
+      lastStartedMs = startedMs;
+      if (!synced) {
+        if (needSeek) {
+          try { audio.currentTime = tgt; } catch (_) {}
+          audio.playbackRate = 1; needSeek = false; lockSince = 0;
+        } else if (Math.abs(diff) < DEADBAND_SEC) {
+          if (!lockSince) lockSince = now;
+          if (now - lockSince >= LOCK_HOLD_MS) synced = true;
+          audio.playbackRate = 1;
+        } else {
+          lockSince = 0;
+          audio.playbackRate = 1 + Math.max(-CATCHUP_CLAMP, Math.min(CATCHUP_CLAMP, diff * RATE_GAIN));
+        }
+      } else {
+        audio.playbackRate = Math.abs(diff) < HOLD_DEADBAND_SEC ? 1
+          : 1 + Math.max(-HOLD_CLAMP, Math.min(HOLD_CLAMP, diff * HOLD_GAIN));
+      }
+      $('capText').textContent = activeCue(audio.currentTime) || ' ';
+      renderStatus(diff);
+    }
+  }
+  setTimeout(control, 1000 / CTRL_HZ);
+}
+function renderStatus(diff) {
+  var ms = Math.round(diff * 1000), a = Math.abs(ms);
+  var col = synced ? 'var(--good)' : a < 150 ? 'var(--warn)' : 'var(--bad)';
+  $('pdot').style.background = col;
+  $('pstat').textContent = synced ? 'Synced' : a < 150 ? 'Aligning' : 'Catching up';
+  $('rDrift').textContent = (ms > 0 ? '+' : '') + ms + ' ms'; $('rDrift').style.color = col;
+  $('rOff').textContent = Math.round(clockOffsetMs) + ' ms (lat ' + latencyMs + ' ms)';
+  $('rPos').textContent = (audio.currentTime || 0).toFixed(1) + ' s';
+}
+
+// --- transport -------------------------------------------------------------
+$('play').addEventListener('click', function () {
+  if (!started) { started = true; applyTrack(true); }
+  running = !running;
+  if (running) {
+    resync();
+    audio.play().catch(function () {});
+    detectLatency(); setTimeout(detectLatency, 800);   // outputLatency reads reliably once audio runs
+    requestWakeLock();
+  } else { try { audio.pause(); } catch (_) {} releaseWakeLock(); }
+  $('playLabel').textContent = running ? 'Pause' : 'Play';
+  $('playIcon').innerHTML = running ? '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>';
+});
+$('toggle').addEventListener('click', function () {
+  var open = $('rows').hidden; $('rows').hidden = !open;
+});
+
+if (!payloadUrl) noGuide('This guide link is not valid.');
+else { poll(false); setTimeout(function () { clockWarm = true; }, WARMUP_MS); control(); }
+</script>
+</body>
+</html>
