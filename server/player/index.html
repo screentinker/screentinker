@@ -3642,7 +3642,7 @@
         saveConfig(config);
         console.log('Registered:', data.device_id);
         flushOfflinePlays();   // #299: authenticated, so any offline backlog can be replayed
-        maybeFetchAudioGuide();  // visitor audio sync: learn this screen's /listen QR (if view access is on)
+        if (typeof maybeFetchAudioGuide === 'function') maybeFetchAudioGuide();  // visitor audio sync: learn this screen's /listen QR (if view access is on)
         // #473: interactive-page sessions and incidents queued while offline (or before this boot).
         kioskFlushInFlight = false;
         flushKioskSessions();
@@ -6760,7 +6760,7 @@
       if (typeof campaignActive === 'function' && campaignActive()) return;   // 3.0: the campaign engine owns the stage
       if (!playlist.length || !Number.isFinite(currentIndex)) {
         teardownCurrentMedia();
-        updateAudioGuideQR(null);   // nothing playing: no audio-guide QR
+        if (typeof updateAudioGuideQR === 'function') updateAudioGuideQR(null);   // nothing playing: no audio-guide QR
         // The bed survives an ADVANCE, not the playlist going away — otherwise a screen with
         // nothing to show would sit there playing music to an empty stage.
         stopSlideVo();
@@ -6775,7 +6775,9 @@
       hideStatus();
       const item = playlist[currentIndex];
       console.log('Playing:', item.filename, `(${currentIndex + 1}/${playlist.length})`);
-      updateAudioGuideQR(item);   // visitor audio sync: show the on-screen QR for a guide-enabled item
+      // visitor audio sync: show the on-screen QR for a guide-enabled item. Guarded, and in a try: an
+      // overlay helper must never be able to stop playback.
+      try { if (typeof updateAudioGuideQR === 'function') updateAudioGuideQR(item); } catch (_) {}
       currentItemStartedAt = Date.now();
       // Slide audio, if this item carries any. Runs on every advance: the voiceover is replaced,
       // the bed is left playing when the next slide names the same track.

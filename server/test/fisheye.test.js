@@ -154,7 +154,7 @@ test('applying a layout to a screen pushes it to the screen (it used to wait for
 
 test('a saved view reaches the screens without a republish: read at send time, pushed on save', () => {
   const ds = fs.readFileSync(path.join(__dirname, '..', 'ws', 'deviceSocket.js'), 'utf8');
-  assert.match(ds, /width, height, video_prerotated, fisheye\n\s+FROM content WHERE id = \?/);
+  assert.match(ds, /width, height, video_prerotated, fisheye(?:, \w+)*\n\s+FROM content WHERE id = \?/);
   assert.match(ds, /if \(fisheye\) a\.fisheye = fisheye; else delete a\.fisheye;/);
   const cr = fs.readFileSync(path.join(__dirname, '..', 'routes', 'content.js'), 'utf8');
   assert.match(cr, /if \(prerotatedChanged \|\| fisheye !== undefined\) \{/);

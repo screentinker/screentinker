@@ -235,6 +235,12 @@
        #playerContainer, so corner positions track the visible content in every orientation.
        Pointer-transparent and empty (invisible) until an overlay is shown. */
     #pipContainer { position: fixed; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; z-index: 9000; }
+    /* Visitor audio sync: a small "Scan for audio guide" QR in a corner while a guide-enabled video
+       plays (per content item; the QR is this screen's /listen link). Below #pipContainer's 9000 so it
+       never covers a PiP or an emergency/trigger overlay. */
+    #audioGuideQR { position: fixed; right: 3vmin; bottom: 3vmin; z-index: 8000; background: #fff; padding: 1.2vmin 1.2vmin 0.8vmin; border-radius: 1vmin; box-shadow: 0 6px 28px rgba(0,0,0,0.55); display: none; text-align: center; }
+    #audioGuideQR .qr, #audioGuideQR .qr > svg { display: block; width: 16vmin; height: 16vmin; }
+    #audioGuideQR .cap { font: 600 1.9vmin/1.2 sans-serif; color: #111; margin-top: 0.7vmin; white-space: nowrap; }
     /* ⚠️ Two owners share this layer: the manual PiP path and the trigger engine. Without an
        explicit stack, DOM insertion order decides who paints on top — so a PiP pushed during an
        alarm would cover the alarm. A trigger always outranks a PiP. */
@@ -299,6 +305,7 @@
 
   <!-- #109: PiP overlay layer (above the player; never touched by playlist render) -->
   <div id="pipContainer"></div>
+  <div id="audioGuideQR"><div class="qr"></div><div class="cap">Scan for audio guide</div></div>
 
   <!-- Unpair PIN prompt. Esc opens it; nothing happens until the PIN is right. -->
   <div id="pinOverlay">
@@ -3171,6 +3178,7 @@ function connect(serverUrl) {
     saveConfig(config);
     console.log("Registered:", data.device_id);
     flushOfflinePlays();
+    if (typeof maybeFetchAudioGuide === "function") maybeFetchAudioGuide();
     kioskFlushInFlight = false;
     flushKioskSessions();
     flushKioskErrors();
@@ -5510,10 +5518,45 @@ function startPlaybackAt(idx) {
     showNothingScheduled();
   }
 }
+let audioGuideInfo = null;
+let audioGuideLastFetch = 0;
+function maybeFetchAudioGuide() {
+  if (VIEWER || typeof PREVIEW_MODE !== "undefined" && PREVIEW_MODE) return;
+  if (!config.deviceId || !config.deviceToken) return;
+  const now = Date.now();
+  if (audioGuideInfo || now - audioGuideLastFetch < 6e4) return;
+  audioGuideLastFetch = now;
+  fetch((config.serverUrl || window.location.origin) + "/api/device/audio-guide", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ device_id: config.deviceId, device_token: config.deviceToken })
+  }).then((r) => r.ok ? r.json() : null).then((d) => {
+    audioGuideInfo = d && d.enabled && d.qr_svg ? d : null;
+    if (playlist && Number.isFinite(currentIndex)) updateAudioGuideQR(playlist[currentIndex]);
+  }).catch(() => {
+  });
+}
+function updateAudioGuideQR(item) {
+  const el = document.getElementById("audioGuideQR");
+  if (!el) return;
+  const on = !!(item && item.audio_guide_enabled);
+  if (on && audioGuideInfo && audioGuideInfo.qr_svg) {
+    const holder = el.querySelector(".qr");
+    if (holder && holder.dataset.url !== audioGuideInfo.listen_url) {
+      holder.innerHTML = audioGuideInfo.qr_svg;
+      holder.dataset.url = audioGuideInfo.listen_url;
+    }
+    el.style.display = "block";
+  } else {
+    el.style.display = "none";
+    if (on && !audioGuideInfo) maybeFetchAudioGuide();
+  }
+}
 function playCurrentItem() {
   if (typeof campaignActive === "function" && campaignActive()) return;
   if (!playlist.length || !Number.isFinite(currentIndex)) {
     teardownCurrentMedia();
+    if (typeof updateAudioGuideQR === "function") updateAudioGuideQR(null);
     stopSlideVo();
     stopSlideBed();
     if (!renderDefaultContent()) showStatus("Waiting for content...");
@@ -5524,6 +5567,10 @@ function playCurrentItem() {
   hideStatus();
   const item = playlist[currentIndex];
   console.log("Playing:", item.filename, "(".concat(currentIndex + 1, "/").concat(playlist.length, ")"));
+  try {
+    if (typeof updateAudioGuideQR === "function") updateAudioGuideQR(item);
+  } catch (_) {
+  }
   currentItemStartedAt = Date.now();
   applySlideAudio(item);
   if (!PREVIEW_MODE && !(socket == null ? void 0 : socket.connected) && (!wallConfig || wallConfig.is_leader) && shouldLogPlay(item)) {

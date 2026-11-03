@@ -75,7 +75,9 @@ module.exports = function viewRoutes({ sendPlayer }) {
       return tracks.length ? { ...e, audio_tracks: tracks } : e;
     });
     const out = { rev, server_ms: Date.now(), now_playing, poll_ms: viewAccess.POLL_MS };
-    if (req.query.rev === rev) out.unchanged = true;
+    // lite=1: the audio guide only needs the clock + now_playing, never the full player payload.
+    if (req.query.lite === '1') out.unchanged = true;
+    else if (req.query.rev === rev) out.unchanged = true;
     else out.payload = body;
     res.json(out);
   }

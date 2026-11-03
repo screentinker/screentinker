@@ -139,6 +139,10 @@ test('an admin turns it on: the link serves the player in viewer mode and a read
   const again = await (await payloadOf(token, `?rev=${body.rev}`)).json();
   assert.equal(again.unchanged, true, 'an unchanged display answers without the body');
   assert.equal('payload' in again, false);
+  // lite=1 (the audio guide's poll): clock + now_playing only, never the player payload
+  const lite = await (await payloadOf(token, '?lite=1')).json();
+  assert.ok(lite.server_ms && Array.isArray(lite.now_playing), 'the clock and what is on screen');
+  assert.equal('payload' in lite, false, 'a lite poll never carries the player payload');
 
   assert.equal(deviceCount(), before, 'a viewer is never a display row');
   const list = await (await as('GET', '/api/devices')).json();

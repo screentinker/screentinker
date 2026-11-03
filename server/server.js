@@ -1551,7 +1551,13 @@ app.use('/api/public/requests', rateLimit(60000, 1500), require('./routes/reques
  * token is the credential, so each IP gets one bucket per route shape (lib/limit-paths.js), not one
  * per token. 4s polling is 15/min per open viewer; 240/min leaves room for a wall of them on one NAT.
  */
-app.get(['/view/:key', '/view/screen/:id', '/api/view/:kind/:key/payload', '/listen/:key', '/listen/screen/:id'], rateLimit(60000, 240), require('./routes/view')({ sendPlayer }));
+// The payload poll gets its own, larger bucket. All view payloads share ONE per-IP bucket (the
+// token is folded out of the key), and a venue puts every visitor's phone behind one Wi-Fi NAT: at
+// the old shared 240/min, ~16 audio-guide phones at a 4s poll exhausted it for the whole venue.
+// 2400/min covers ~160 phones; the lite poll it serves is a token check plus a cached lookup.
+app.get('/api/view/:kind/:key/payload', rateLimit(60000, 2400));
+app.get(['/view/:key', '/view/screen/:id', '/listen/:key', '/listen/screen/:id'], rateLimit(60000, 240));
+app.get(['/view/:key', '/view/screen/:id', '/api/view/:kind/:key/payload', '/listen/:key', '/listen/screen/:id'], require('./routes/view')({ sendPlayer }));
 // Canva OAuth callback (routes/canva.js): the browser returns from canva.com with no Authorization
 // header, so it cannot sit behind the JWT-only /api/canva mount below. It trusts only the signed
 // httpOnly transaction cookie set when the person pressed Connect.
