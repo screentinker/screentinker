@@ -66,7 +66,9 @@ test('the repair itself is unchanged — this fixes cadence, not behaviour', () 
   assert.match(backfill, /function closeStrandedPlays\(db, deviceId/,
     'the repair keeps its signature; only how often it is called changed');
   // The guarantees the query makes are load-bearing and must not have been "optimised" away.
-  assert.match(backfill, /n\.zone_id IS p\.zone_id/, 'same-zone matching must survive');
-  assert.match(backfill, /nxt\.next_start - nxt\.p_started <= nxt\.allowed/,
+  // #776 moved both into the bounded successor seek (x = the open play); play-backfill.test.js
+  // proves the rows closed are identical to the pre-#776 statement.
+  assert.match(backfill, /n\.zone_id IS x\.zone_id/, 'same-zone matching must survive');
+  assert.match(backfill, /n\.started_at <= x\.p_started \+ x\.allowed/,
     'the per-row ceiling that stops a 20s clip being credited with hours must survive');
 });
