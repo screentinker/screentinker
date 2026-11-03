@@ -36,7 +36,10 @@ before(async () => {
   const logFd = fs.openSync(LOG, 'w');
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test' },
+    env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test',
+      // The beat after the row is deleted comes ~400ms after an admitted one; with the #777 floor on it
+      // would be skipped and never reach the guard this file tests.
+      HEARTBEAT_MIN_INTERVAL_MS: '0' },
     stdio: ['ignore', logFd, logFd],
   });
   let up = false;

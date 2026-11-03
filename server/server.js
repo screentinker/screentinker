@@ -2488,6 +2488,7 @@ require('./lib/flap-limiter').startSweep();          // #146 Item B: evict idle 
 require('./lib/upload-session').startSweep();
 require('./lib/session-settle').startSweep();        // #148 patch2: evict idle session-settle entries
 require('./lib/content-ack-limiter').startSweep();   // #146 Item E: evict idle content-ack buckets
+require('./lib/heartbeat-floor').startSweep();       // #777: evict idle heartbeat-floor buckets
 const apkCache = require('./lib/apk-cache');
 apkCache.start();                                    // #146 Item C: resolve APK path/size/mtime once + refresh on interval (no per-request fs)
 const wgtCache = require('./lib/wgt-cache');
