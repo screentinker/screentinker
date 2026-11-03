@@ -107,7 +107,16 @@
      surface proven on the DB48E, while supported() remains the cache gate. */
   bridge.canRender = function (item) {
     if (!item || !item.widget_id) return supported(item);
-    return /^(clock|text|weather|rss|social|directory-board|directory-search|menu-board|room-display|radar|webpage|diag-smoothness)$/.test(String(item.widget_type || ''));
+    // 'template' joined 2026-11-03: the CMS template gallery publishes editable
+    // template widgets (widget_type 'template', config {template, values}) — a
+    // plain iframe render, same engine as text/webpage. Hardware-validated on a
+    // DB48E running this build: the Arabic clinic directory template renders
+    // correctly (RTL shaping, colors, layout) from the device's own playlist.
+    // Failure mode analysis: a template whose CSS is too modern for the 2012
+    // Maple browser degrades to a still frame at worst — the widget is gated
+    // server-side, not here — never a broken screen. Validate on hardware
+    // before widening further.
+    return /^(clock|text|weather|rss|social|directory-board|directory-search|menu-board|room-display|radar|webpage|diag-smoothness|template)$/.test(String(item.widget_type || ''));
   };
   function reportPlaylist(message) {
     try { var cfg = JSON.parse(global.localStorage.getItem('rd_web_player') || '{}'); if (cfg.deviceId) bridge.report('playlist', message, cfg.deviceId); } catch (ignore) {}
