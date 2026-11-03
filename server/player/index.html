@@ -8502,6 +8502,47 @@
      * keep playing untouched, a changed zone re-renders in its own div, a zone left empty is
      * cleared. Without it every zone is built from scratch. Returns the new zone state.
      */
+    /*
+     * #790: a widget in a zone got a new revision (a data source behind a slide changed, or it was
+     * edited) while the zone shows it. The zone used to be cleared and the new frame loaded into the
+     * empty zone, so it went blank until the slide parsed, and a multi-item zone restarted at its
+     * first item. Build the new frame HIDDEN on top of the old one and swap on load, the way the
+     * fullscreen path (renderWidgetBuffered) already does; the zone's dwell timer is untouched.
+     *
+     * div.__stYtToken is bumped by every showZoneItem, so a frame still loading when the zone moves
+     * on (or is cleared) is dropped instead of revealed over the next item. On a load timeout the
+     * old slide stays up, as fullscreen does. Literals only (no shared constants): this function is
+     * extracted + eval'd in isolation by test/player-zone-widget-refresh.test.js.
+     */
+    function refreshZoneWidget(div, a) {
+      const token = div.__stYtToken;
+      if (div.__stWidgetSwap) { clearTimeout(div.__stWidgetSwap.timer); try { div.__stWidgetSwap.iframe.remove(); } catch (e) {} div.__stWidgetSwap = null; }
+      const iframe = document.createElement('iframe');
+      iframe.src = `${config.serverUrl}/api/widgets/${a.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}&rev=${a.widget_rev||0}${a.transparent_bg ? '&transparent=1' : ''}${a.widget_panel ? '#panel=' + encodeURIComponent(a.widget_panel) : ''}`;
+      iframe.setAttribute('sandbox', widgetSandboxAttr(a));
+      iframe.style.position = 'absolute'; iframe.style.left = '0'; iframe.style.top = '0';
+      iframe.style.visibility = 'hidden';
+      const swap = { iframe, timer: null };
+      const drop = () => {
+        if (div.__stWidgetSwap === swap) div.__stWidgetSwap = null;
+        clearTimeout(swap.timer);
+        try { iframe.remove(); } catch (e) {}
+      };
+      iframe.addEventListener('load', () => {
+        if (div.__stWidgetSwap !== swap) return;                       // superseded
+        if (div.__stYtToken !== token || iframe.parentNode !== div) { drop(); return; }   // the zone moved on
+        div.__stWidgetSwap = null;
+        clearTimeout(swap.timer);
+        Array.prototype.slice.call(div.children).forEach((c) => { if (c !== iframe) { try { c.remove(); } catch (e) {} } });
+        iframe.style.position = ''; iframe.style.left = ''; iframe.style.top = '';
+        iframe.style.visibility = 'visible';
+        div.__stItem = a;
+      });
+      div.appendChild(iframe);
+      swap.timer = setTimeout(drop, 8000);
+      div.__stWidgetSwap = swap;
+    }
+
     function renderZones(container, defaultItem, prev) {
       if (!prev) clearZoneTimers();
       // Group assignments by zone, ordered by sort_order so each zone rotates its
@@ -8573,6 +8614,24 @@
           next.zones[zone.id] = had;
           return;
         }
+        /*
+         * #790: the SAME items, only a widget revision moved (a data source refresh, a slide edit).
+         * Keep the zone's place in its rotation and its timer; re-render the widget on screen
+         * through a buffered swap, and let the next rotation pick up any other new revision.
+         */
+        const baseSig = zoneItemsSig(items.map((a) => Object.assign({}, a, { widget_rev: '' })));
+        if (had && had.baseSig === baseSig && had.div.__stIdx != null) {
+          const idx = had.div.__stIdx % had.items.length;
+          const shown = had.div.__stItem || had.items[idx];
+          had.items.splice(0, had.items.length, ...items);
+          next.zones[zone.id] = { sig, baseSig, div: had.div, items: had.items };
+          const now = had.items[idx];
+          if (now && now.widget_id && shown && shown.widget_id === now.widget_id
+              && (shown.widget_rev || 0) !== (now.widget_rev || 0)) {
+            refreshZoneWidget(had.div, now);
+          }
+          return;
+        }
 
         let div = had && had.div;
         if (!div) {
@@ -8581,7 +8640,7 @@
           div.style.cssText = `left:${zone.x_percent}%;top:${zone.y_percent}%;width:${zone.width_percent}%;height:${zone.height_percent}%;z-index:${zone.z_index || 0}`;
           container.appendChild(div);
         }
-        next.zones[zone.id] = { sig, div, items };
+        next.zones[zone.id] = { sig, baseSig, div, items };
         showZoneItem(zone, div, items, 0);   // clears the zone's own timer and content first
       });
       // A zone rendered before that now has nothing of its own is cleared.
@@ -8646,11 +8705,16 @@
       if (div.__stSkipGuard && !div.__stSkipAdvance) div.__stSkipGuard.ended(Date.now() - (div.__stShownAt || 0));
       div.__stSkipAdvance = false;
       div.__stShownAt = Date.now();
+      // #790: a buffered revision swap still loading belongs to what this zone showed before.
+      if (div.__stWidgetSwap) { clearTimeout(div.__stWidgetSwap.timer); div.__stWidgetSwap = null; }
+      div.__stIdx = null; div.__stItem = null;   // set again below once an item is chosen
       // #74/#75: skip items whose schedule excludes them now; idle the zone if none.
       const activeIdx = zoneNextActive(items, index, zone.id);
       if (activeIdx === -1) { showZoneEmpty(zone, div, items, timers); return; }
       index = activeIdx;
       const a = items[index % items.length];
+      div.__stIdx = index % items.length;   // #790: renderZones keeps this place on a revision-only change
+      div.__stItem = a;
       // 3.0 campaigns: a campaign zone records proof-of-play for each item it shows.
       if (div.__stOnShow) { try { div.__stOnShow(a); } catch (e) { /* never let logging stop a zone */ } }
       // Scheduled zones must cycle (even a lone active item) so windows re-evaluate

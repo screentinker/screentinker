@@ -6993,6 +6993,58 @@ function showZoneEmpty(zone, div, items, timers = zoneTimers) {
   div.innerHTML = "";
   timers[zone.id] = setTimeout(() => showZoneItem(zone, div, items, 0, timers), 3e4);
 }
+function refreshZoneWidget(div, a) {
+  const token = div.__stYtToken;
+  if (div.__stWidgetSwap) {
+    clearTimeout(div.__stWidgetSwap.timer);
+    try {
+      div.__stWidgetSwap.iframe.remove();
+    } catch (e) {
+    }
+    div.__stWidgetSwap = null;
+  }
+  const iframe = document.createElement("iframe");
+  iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(a.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(a.widget_rev || 0).concat(a.transparent_bg ? "&transparent=1" : "").concat(a.widget_panel ? "#panel=" + encodeURIComponent(a.widget_panel) : "");
+  iframe.setAttribute("sandbox", widgetSandboxAttr(a));
+  iframe.style.position = "absolute";
+  iframe.style.left = "0";
+  iframe.style.top = "0";
+  iframe.style.visibility = "hidden";
+  const swap = { iframe, timer: null };
+  const drop = () => {
+    if (div.__stWidgetSwap === swap) div.__stWidgetSwap = null;
+    clearTimeout(swap.timer);
+    try {
+      iframe.remove();
+    } catch (e) {
+    }
+  };
+  iframe.addEventListener("load", () => {
+    if (div.__stWidgetSwap !== swap) return;
+    if (div.__stYtToken !== token || iframe.parentNode !== div) {
+      drop();
+      return;
+    }
+    div.__stWidgetSwap = null;
+    clearTimeout(swap.timer);
+    Array.prototype.slice.call(div.children).forEach((c) => {
+      if (c !== iframe) {
+        try {
+          c.remove();
+        } catch (e) {
+        }
+      }
+    });
+    iframe.style.position = "";
+    iframe.style.left = "";
+    iframe.style.top = "";
+    iframe.style.visibility = "visible";
+    div.__stItem = a;
+  });
+  div.appendChild(iframe);
+  swap.timer = setTimeout(drop, 8e3);
+  div.__stWidgetSwap = swap;
+}
 function renderZones(container, defaultItem, prev) {
   if (!prev) clearZoneTimers();
   const validZoneIds = new Set(layout.zones.map((z) => z.id));
@@ -7037,6 +7089,18 @@ function renderZones(container, defaultItem, prev) {
       next.zones[zone.id] = had;
       return;
     }
+    const baseSig = zoneItemsSig(items.map((a) => Object.assign({}, a, { widget_rev: "" })));
+    if (had && had.baseSig === baseSig && had.div.__stIdx != null) {
+      const idx = had.div.__stIdx % had.items.length;
+      const shown = had.div.__stItem || had.items[idx];
+      had.items.splice(0, had.items.length, ...items);
+      next.zones[zone.id] = { sig, baseSig, div: had.div, items: had.items };
+      const now = had.items[idx];
+      if (now && now.widget_id && shown && shown.widget_id === now.widget_id && (shown.widget_rev || 0) !== (now.widget_rev || 0)) {
+        refreshZoneWidget(had.div, now);
+      }
+      return;
+    }
     let div = had && had.div;
     if (!div) {
       div = document.createElement("div");
@@ -7044,7 +7108,7 @@ function renderZones(container, defaultItem, prev) {
       div.style.cssText = "left:".concat(zone.x_percent, "%;top:").concat(zone.y_percent, "%;width:").concat(zone.width_percent, "%;height:").concat(zone.height_percent, "%;z-index:").concat(zone.z_index || 0);
       container.appendChild(div);
     }
-    next.zones[zone.id] = { sig, div, items };
+    next.zones[zone.id] = { sig, baseSig, div, items };
     showZoneItem(zone, div, items, 0);
   });
   if (prev) {
@@ -7136,6 +7200,12 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
   if (div.__stSkipGuard && !div.__stSkipAdvance) div.__stSkipGuard.ended(Date.now() - (div.__stShownAt || 0));
   div.__stSkipAdvance = false;
   div.__stShownAt = Date.now();
+  if (div.__stWidgetSwap) {
+    clearTimeout(div.__stWidgetSwap.timer);
+    div.__stWidgetSwap = null;
+  }
+  div.__stIdx = null;
+  div.__stItem = null;
   const activeIdx = zoneNextActive(items, index, zone.id);
   if (activeIdx === -1) {
     showZoneEmpty(zone, div, items, timers);
@@ -7143,6 +7213,8 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
   }
   index = activeIdx;
   const a = items[index % items.length];
+  div.__stIdx = index % items.length;
+  div.__stItem = a;
   if (div.__stOnShow) {
     try {
       div.__stOnShow(a);
