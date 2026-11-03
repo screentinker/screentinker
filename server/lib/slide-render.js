@@ -29,6 +29,8 @@
  */
 
 const MAX_ELEMENTS = 40;
+// Video decoders a slide may ask for, the background video included (see the 'video' render branch).
+const MAX_SLIDE_VIDEOS = 2;
 const MAX_FIELD_CHARS = 2000;
 const MAX_FIELDS = 60;
 
@@ -97,6 +99,9 @@ const KINDS = Object.freeze({
   body:      { text: true,  glyphs: true,  live: null,        config: false },
   stat:      { text: true,  glyphs: true,  live: null,        config: false },
   image:     { text: false, glyphs: false, live: null,        config: false },
+  // A muted, looping clip placed like a photo. `config: true` keeps it away from the AI generator:
+  // it cannot pick a video any more than it can pick a URL (routes/ai.js already drops 'image').
+  video:     { text: false, glyphs: false, live: null,        config: true  },
   rule:      { text: false, glyphs: false, live: null,        config: false },
   box:       { text: false, glyphs: false, live: null,        config: false },
   // The payload is a FIELD, so the URL behind a QR can be changed later without rebuilding the
@@ -272,6 +277,9 @@ function kindConfig(kind, src) {
     case 'image':
       // Not marked `config` in KINDS: it has a sensible default, so the AI generator can still be
       // offered image elements without having to reason about it.
+      return { fit: pick(IMAGE_FITS, src.fit, 'cover') };
+    case 'video':
+      // Same fit vocabulary as a photo. Always muted and looping: see the render branch.
       return { fit: pick(IMAGE_FITS, src.fit, 'cover') };
     case 'lettering':
       // ⚠️ Always contained, and not settable. Cropping a word is not a styling choice: it removes
@@ -842,6 +850,8 @@ function renderSlideHtml(rawConfig, opts = {}) {
     return `'${f.css_family}', ${generic}`;
   };
 
+  // Decoders left for element videos once a background video has taken its one.
+  let videoBudget = MAX_SLIDE_VIDEOS - (slide.backgroundVideoContentId ? 1 : 0);
   const body = slide.elements.map((e) => {
     const s = e.style;
     const css = [
@@ -884,6 +894,30 @@ function renderSlideHtml(rawConfig, opts = {}) {
         ? `<img${fitCls} src="${escapeHtml(url)}" alt="">`
         // A slide whose photo is missing says so, quietly, rather than leaving a hole an operator
         // has to guess at. It is deliberately unobtrusive: on a wall this is better than a red box.
+        : `<div class="ph"></div>`;
+      return `<div class="e" style="${css.filter(Boolean).join(';')}">${inner}</div>`;
+    }
+
+    if (e.kind === 'video') {
+      css.push('overflow:hidden');
+      /*
+       * ⚠️ MUTED, LOOPING, AND AT MOST MAX_SLIDE_VIDEOS PER SLIDE (the background video counts).
+       *
+       * Muted because a muted clip is the only kind every engine autoplays without a gesture: zone
+       * iframes carry no allow="autoplay", and Tizen's widget iframe neither. Capped because each
+       * <video> is a hardware decoder on a Pi or an Android stick, and a slide that asks for four
+       * gets some of them black, differently on every model. Past the cap the element is the same
+       * quiet placeholder a missing photo gets, so the layout still reads.
+       *
+       * hwz="off" for the reason the background video has it (see bgLayers below): BrightSign draws
+       * a hardware video on a plane BEHIND the page, and a clip with a caption on top of it would
+       * lose the caption. Every other engine ignores the attribute.
+       */
+      const url = videoBudget > 0 ? resolveImage(e.contentId) : null;
+      if (url) videoBudget -= 1;
+      const fitCls = e.cfg.fit === 'contain' ? ' class="fit"' : '';
+      const inner = url
+        ? `<video${fitCls} autoplay muted loop playsinline hwz="off" src="${escapeHtml(url)}"></video>`
         : `<div class="ph"></div>`;
       return `<div class="e" style="${css.filter(Boolean).join(';')}">${inner}</div>`;
     }
@@ -1076,6 +1110,8 @@ function renderSlideHtml(rawConfig, opts = {}) {
   .e img { width:100%; height:100%; object-fit:cover; display:block; }
   /* A cut-out must fit inside its box, not be cropped to fill it. See IMAGE_FITS. */
   .e img.fit { object-fit:contain; }
+  .e video { width:100%; height:100%; object-fit:cover; display:block; }
+  .e video.fit { object-fit:contain; }
   .ph { width:100%; height:100%; background:rgba(255,255,255,.06);
         border:1px dashed rgba(255,255,255,.18); box-sizing:border-box; }
   @keyframes st-fade    { from { opacity:0 } to { opacity:var(--st-o,1) } }
@@ -1095,7 +1131,7 @@ function renderSlideHtml(rawConfig, opts = {}) {
 module.exports = {
   ANIMATIONS, EASINGS, KINDS,
   CLOCK_FORMATS, DATE_FORMATS, QR_EC, IMAGE_FITS,
-  MAX_ELEMENTS, MAX_FIELD_CHARS, MAX_FIELDS,
+  MAX_ELEMENTS, MAX_FIELD_CHARS, MAX_FIELDS, MAX_SLIDE_VIDEOS,
   normalizeSlide, settleTime, renderSlideHtml, interpolateDataSources,
   // Exported for tests: the QR matrix and the constant script are the two pieces whose properties
   // have to be asserted directly rather than inferred from a rendered document.

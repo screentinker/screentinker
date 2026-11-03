@@ -287,7 +287,7 @@ test('⚠️ the AI generator is not offered kinds it cannot fill', () => {
   // And the flag is actually set on the four that need it, so the filter above has something to bite.
   assert.deepEqual(
     Object.keys(R.KINDS).filter((k) => R.KINDS[k].config).sort(),
-    ['clock', 'countdown', 'date', 'lettering', 'qr'],
+    ['clock', 'countdown', 'date', 'lettering', 'qr', 'video'],
   );
 });
 
