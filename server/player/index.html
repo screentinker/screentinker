@@ -980,6 +980,66 @@
     }
 
     /*
+     * A SLIDE ASKING FOR ITS OWN MEDIA (lib/slide-render.js MEDIA_SCRIPT).
+     *
+     * The slide's frame is an opaque origin: this page's service worker never sees its requests, and
+     * a blob: URL made here is refused there. So the frame posts the content ids it shows and gets
+     * the BYTES back as Blobs, which it turns into blob: URLs of its own. Only what the cache already
+     * holds is sent (X-ST-Cache-Only, sw.js), only for ids the current payload listed as some
+     * slide's widget_media, and only to a frame this page mounted. With no worker in control there
+     * is no cache to answer from, and a plain fetch would download whole videos into memory, so
+     * nothing is sent and the slide keeps streaming as before.
+     */
+    // var, not let: requestOfflineCache can be reached from boot paths, and this file has been bricked
+    // once by a let read above its declaration (1.9.32).
+    var slideMediaIndex = new Map();   // content_id -> widget_media entry, rebuilt by requestOfflineCache
+    window.addEventListener('message', (ev) => {
+      const d = ev.data;
+      if (!d || d.type !== 'st-slide-media' || !Array.isArray(d.ids) || !ev.source) return;
+      if (!navigator.serviceWorker) return;
+      const ours = Array.prototype.some.call(document.querySelectorAll('iframe'), (f) => f.contentWindow === ev.source);
+      if (!ours) return;
+      answerSlideMedia(ev.source, d.ids.slice(0, 48));
+    });
+    /*
+     * Rebuild the content id -> widget_media index from a set of items, and return the entries.
+     * Called by requestOfflineCache AND on a cold start from the cached playlist: the slide frame
+     * asks as soon as it loads, which offline is long before the worker is ready to pin anything.
+     */
+    function indexSlideMedia(all) {
+      const out = [];
+      const next = new Map();
+      for (const it of all || []) {
+        if (!it || !Array.isArray(it.widget_media)) continue;
+        for (const m of it.widget_media) {
+          if (!m || !m.content_id || !m.filepath || m.remote_url) continue;
+          out.push(m);
+          next.set(m.content_id, m);
+        }
+      }
+      slideMediaIndex = next;
+      return out;
+    }
+    async function answerSlideMedia(win, ids) {
+      // A cold start: the frame can ask before the worker has claimed this page. Wait for it briefly.
+      if (!navigator.serviceWorker.controller) {
+        await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(r, 4000))]).catch(() => {});
+        if (!navigator.serviceWorker.controller) return;
+      }
+      const files = {};
+      let any = false;
+      for (const id of ids) {
+        const m = typeof id === 'string' && slideMediaIndex.get(id);
+        if (!m) continue;
+        try {
+          const r = await fetch(mediaUrl(m), { headers: { 'X-ST-Cache-Only': '1' }, credentials: 'omit' });
+          if (r.ok) { files[id] = await r.blob(); any = true; }
+        } catch (e) { /* not held: the slide keeps its network copy */ }
+      }
+      if (any) { try { win.postMessage({ type: 'st-slide-media-reply', files }, '*'); } catch (e) { /* frame gone */ } }
+    }
+
+    /*
      * Ask the service worker to hold this playlist's media for offline use.
      *
      * The worker stores whatever a playback fetch happens to complete, which on a healthy link is
@@ -1121,9 +1181,16 @@
         // exact scenario it exists for). A local (filepath) default is cached; a remote_url default
         // cannot be and simply will not show offline.
         const all = (items || []).concat(extraItems || [], defaultContent ? [defaultContent] : []);
-        const urls = all
+        /*
+         * A slide's own photos and clips (the server lists them as widget_media). Pinned like
+         * playlist media, so they are fetched and never pruned, and indexed by content id for the
+         * slide's request (answerSlideMedia below).
+         */
+        const slideMedia = indexSlideMedia(all);
+        const urls = all.concat(slideMedia)
           .filter((it) => it && it.filepath && !it.remote_url)
-          .map((it) => mediaUrl(it));
+          .map((it) => mediaUrl(it))
+          .filter((u, i, a) => a.indexOf(u) === i);
         // The site cache first: the worker must know where the LAN copy is before it starts fetching.
         postSiteCache(all);
         // `urls` is the COMPLETE set for this display, so the worker may treat anything else in
@@ -1147,6 +1214,16 @@
          * Fire-and-forget: the worker's rev-pinned branch stores whatever comes back, and a failure
          * here must never touch playback.
          */
+        /*
+         * And each SLIDE's page, for the same reason: its media is no use without the document that
+         * shows it. Fetched with the exact URL the iframe will load (routes/widgets.js marks a
+         * rev-pinned render immutable), so the frame's own request is a cache hit later.
+         */
+        for (const it of all) {
+          if (!it || it.widget_type !== 'slide' || !it.widget_id) continue;
+          fetch(`${config.serverUrl}/api/widgets/${it.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}&rev=${it.widget_rev||0}${it.transparent_bg ? '&transparent=1' : ''}`,
+            { credentials: 'omit' }).catch(() => {});
+        }
         for (const it of all) {
           if (!it || it.mime_type !== BUNDLE_MIME || !it.content_id) continue;
           fetch(`${config.serverUrl}/api/content/${it.content_id}/bundle?rev=${it.content_rev || 0}${it.transparent_bg ? '&transparent=1' : ''}`,
@@ -2935,6 +3012,7 @@
       if (cachedPlaylist.length > 0 && layoutKnown) {
         console.log('Restored cached playlist:', cachedPlaylist.length, 'items');
         playlist = cachedPlaylist;
+        try { indexSlideMedia(cachedPlaylist); } catch (e) { /* slide media offline only */ }
         layout = loadLayoutCache();
         document.getElementById('setupScreen').style.display = 'none';
         /*

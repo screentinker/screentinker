@@ -234,7 +234,12 @@ function setAssignments(db, cache, { device_ids: deviceIds, group_ids: groupIds 
 function contentIdsInPayload(payload) {
   const out = new Set();
   if (!payload || typeof payload !== 'object') return out;
-  const add = (it) => { if (it && typeof it === 'object' && it.content_id && !it.remote_url) out.add(String(it.content_id)); };
+  const add = (it) => {
+    if (!it || typeof it !== 'object') return;
+    if (it.content_id && !it.remote_url) out.add(String(it.content_id));
+    // A slide's own photos and clips (ws/deviceSocket.js refreshWidgetRevs, lib/slide-media.js).
+    if (Array.isArray(it.widget_media)) for (const m of it.widget_media) add(m);
+  };
   for (const it of Array.isArray(payload.assignments) ? payload.assignments : []) add(it);
   // 3.0 campaigns: every zone and full-screen item a campaign step can show.
   for (const it of require('../campaign').campaignItems(payload.campaign)) add(it);
