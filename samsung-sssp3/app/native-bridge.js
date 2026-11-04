@@ -47,11 +47,11 @@
     }
     if (item.remote_url) return item.remote_url;
     if (item.sssp3_rendition_url) return bridge.base + item.sssp3_rendition_url;
-    /* No ?rev= on the media path: the panel's XHR reached this route with a
-     * query once (template assets) and the 2012 engine still reported HTTP 0
-     * for media fetches; a cache-busting parameter is not worth the ambiguity
-     * since the cache path itself is revision-stamped. */
-    return bridge.base + '/uploads/content/' + encodeURIComponent(item.filepath);
+    /* 1302: the 2012 transports fail against the wrapped /uploads/content chain
+     * (SEF call 3246 + phantom completion; XHR empty at ~190 KB) while the same
+     * panel lands the launcher ZIP from plain static every time. Media rides
+     * the bare mirror route mounted beside the launcher static instead. */
+    return bridge.base + '/player/sssp3-native-candidate/media/' + encodeURIComponent(item.filepath);
   }
   function supported(item) {
     var mime = String(item && item.mime_type || '').toLowerCase();
