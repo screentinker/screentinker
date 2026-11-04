@@ -2,7 +2,7 @@
   'use strict';
   var bridge = global.__STNative = global.__STNative || {};
   var directory = '/mtd_down/common/screentinker_media';
-  var queue = [], current = null, desired = null, apply = null, timer = null, downloadedForUpdate = false;
+  var queue = [], current = null, desired = null, apply = null, timer = null, downloadedForUpdate = false, unavailable = {};
   var index = {}, fs, downloader, stateGeneration = 0, videoGeneration = 0, videoTimer = null, videoActive = false, gaplessPlugin = null, gaplessSession = null, gaplessGeneration = 0;
   var statePrefix = '/mtd_down/common/screentinker/state-', bootEventPath = '/mtd_down/common/screentinker/boot-event.json', reportTimes = {}, captureSequence = 0, heldFrame = null;
   var currentBuild = parseInt('__ST_BUILD__', 10) || 0;
@@ -104,29 +104,45 @@
   }
   bridge.frameReady = function () { var el = document.getElementById('st-media-diagnostic'); if (el) el.style.display = 'none'; };
   function finish() {
-    var callback = apply, payload = desired;
+    var callback = apply, payload = desired, applied, remaining;
     if (!callback || !payload) return;
     if (bridge.missing(payload).length) { bridge.error = 'Some media could not be cached; retaining previous playlist.'; status(bridge.error); reportPlaylist(bridge.error); return; }
-    reportPlaylist('Applying playlist with ' + (payload.assignments || []).length + ' items');
+    /* A permanently failed item must not strand unrelated content.  Apply the
+     * verified subset, but retain the previous state if there is nothing safe
+     * to render.  The next server payload retries the item from scratch. */
+    applied = payload;
+    if (Object.keys(unavailable).length) {
+      applied = {};
+      for (var prop in payload) if (Object.prototype.hasOwnProperty.call(payload, prop)) applied[prop] = payload[prop];
+      applied.assignments = (payload.assignments || []).filter(function (item) { return !unavailable[key(item)]; });
+      if (payload.default_content && unavailable[key(payload.default_content)]) applied.default_content = null;
+    }
+    remaining = applied.assignments.length || applied.default_content;
+    if (!remaining && (payload.assignments || []).length) {
+      bridge.error = 'All new media failed to cache; retaining previous playlist.';
+      status(bridge.error); reportPlaylist(bridge.error); desired = null; apply = null; downloadedForUpdate = false; return;
+    }
+    if (Object.keys(unavailable).length && Object.prototype.hasOwnProperty.call(applied, 'offline_plan')) delete applied.offline_plan;
+    reportPlaylist('Applying playlist with ' + applied.assignments.length + ' verified items');
     desired = null; apply = null;
     /* Commit a plan only after every supported dependency is locally verified.
        A power loss during preparation therefore leaves the prior complete plan
        and never an interval pointing at a partial cache. */
     try {
-      if (Object.prototype.hasOwnProperty.call(payload, 'offline_plan')) global.localStorage.setItem('st_offline_plan', JSON.stringify(payload.offline_plan || null));
+      if (Object.prototype.hasOwnProperty.call(applied, 'offline_plan')) global.localStorage.setItem('st_offline_plan', JSON.stringify(applied.offline_plan || null));
       /* The renderer keeps an assigned playlist ahead of this image, but the
        * standby choice is still part of the durable offline state.  Save it
        * before the cache journal so a restart cannot observe a new index with
        * an old (or absent) default. */
-      if (Object.prototype.hasOwnProperty.call(payload, 'default_content')) global.localStorage.setItem('st_default_content', JSON.stringify(payload.default_content || null));
+      if (Object.prototype.hasOwnProperty.call(applied, 'default_content')) global.localStorage.setItem('st_default_content', JSON.stringify(applied.default_content || null));
       bridge.persistStorage();
     } catch (ignore) {}
-    if (downloadedForUpdate) { payload.__nativeMediaChanged = true; status('Media cached. Starting playback...'); } downloadedForUpdate = false; callback(payload);
+    if (downloadedForUpdate) { applied.__nativeMediaChanged = true; status('Media cached. Starting playback...'); } downloadedForUpdate = false; callback(applied);
   }
   function queueDownload(entry) {
     try {
       lastDownResult = String(downloader.StartDownFile(source(entry.item), path(entry.item)));
-      timer = setTimeout(function () { bridge.error = 'Download timed out; waiting for Samsung downloader.'; status(bridge.error); reportPlaylist(bridge.error); try { if (downloader.CancelDownload) downloader.CancelDownload(); } catch (ignore) {} }, 120000);
+      timer = setTimeout(function () { try { if (downloader.CancelDownload) downloader.CancelDownload(); } catch (ignore) {} fail('Download timed out without a completion callback.'); }, 120000);
     } catch (e) { fail(String(e)); }
   }
   function selfFetchable(item) {
@@ -183,7 +199,7 @@
     if (failed && failed.cancelRequested) { next(); return; }
     bridge.error = reason; status('Download error: ' + reason); reportPlaylist('Download error: ' + reason);
     if (failed && failed.tries < 3) { failed.tries++; setTimeout(function () { if (desired && bridge.missing(desired).some(function (item) { return key(item) === key(failed.item); })) queue.push(failed); next(); }, failed.tries * 2000); }
-    else next();
+    else { if (failed) unavailable[key(failed.item)] = true; next(); }
   }
   global.STNativeDownloadComplete = function (result) {
     var done = current;
@@ -296,7 +312,7 @@
   }
   bridge.missing = function (payload) {
     var items = payloadItems(payload), missing = [], seen = {}, i, item, k;
-    for (i = 0; i < items.length; i++) { item = items[i]; if (!supported(item)) continue; k = key(item); if (!seen[k] && !cached(item)) { seen[k] = true; missing.push(item); } }
+    for (i = 0; i < items.length; i++) { item = items[i]; if (!supported(item)) continue; k = key(item); if (unavailable[k]) continue; if (!seen[k] && !cached(item)) { seen[k] = true; missing.push(item); } }
     return missing;
   };
   bridge.mediaUrl = function (item, fallback) { return supported(item) && cached(item) ? 'file://' + path(item) : fallback; };
@@ -309,7 +325,9 @@
   bridge.accept = function (payload, callback) {
     var pendingRenditions = payloadItems(payload).filter(function (item) { return item && item.sssp3_rendition_state && item.sssp3_rendition_state !== 'ready'; });
     if (pendingRenditions.length) { bridge.error = 'Media rendition is preparing; retaining previous playlist.'; status(bridge.error); reportPlaylist(bridge.error); return; }
-    var missing = bridge.missing(payload), i, known = {}, wanted = {}, selfCount = 0;
+    var missing, i, known = {}, wanted = {}, selfCount = 0;
+    unavailable = {};
+    missing = bridge.missing(payload);
     for (i = 0; i < missing.length; i++) wanted[key(missing[i])] = true;
     desired = payload; apply = callback;
     queue = queue.filter(function (entry) { return wanted[key(entry.item)]; });

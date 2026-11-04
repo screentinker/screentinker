@@ -91,6 +91,26 @@ test('failure never replaces the last good playlist', () => {
   for (let i = 0; i < 4; i++) { e.done('500'); const retry = e.scheduled.find(x => x.ms === (i + 1) * 2000); if (retry) retry.fn(); }
   assert.equal(activated.length, 0); assert.ok(e.b.error);
 });
+test('a permanently failing item does not block a separately verified item', () => {
+  const e = environment(), activated = [];
+  const bad = { content_id: 'bad', filepath: 'bad.jpg', mime_type: 'image/jpeg', content_rev: 1 };
+  const good = { content_id: 'good', filepath: 'good.jpg', mime_type: 'image/jpeg', content_rev: 1 };
+  e.b.accept({ assignments: [bad, good] }, p => activated.push(p));
+  e.done('500'); e.scheduled.find(x => x.ms === 2000).fn();
+  e.files[e.downloads.at(-1).destination] = true; e.done('1000?1');
+  for (let i = 2; i <= 4; i++) { e.done('500'); const retry = e.scheduled.filter(x => x.ms === i * 2000).at(-1); if (retry) retry.fn(); }
+  assert.equal(activated.length, 1);
+  assert.deepEqual(activated[0].assignments, [good]);
+});
+test('a downloader timeout advances even when CancelDownload never calls back', () => {
+  const e = environment(), activated = [], good = { content_id: 'good', filepath: 'good.jpg', mime_type: 'image/jpeg', content_rev: 1 };
+  e.b.accept({ assignments: [image, good] }, p => activated.push(p));
+  e.scheduled.find(x => x.ms === 120000).fn();
+  e.scheduled.find(x => x.ms === 2000).fn();
+  e.files[e.downloads.at(-1).destination] = true; e.done('1000?1');
+  for (let i = 2; i <= 4; i++) { e.done('500'); const retry = e.scheduled.filter(x => x.ms === i * 2000).at(-1); if (retry) retry.fn(); }
+  assert.deepEqual(activated[0].assignments, [good]);
+});
 test('changed revisions use different cache paths', () => {
   const e = environment();
   assert.notEqual(e.b._test.path(image), e.b._test.path({ ...image, content_rev: 2 }));
