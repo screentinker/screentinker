@@ -169,3 +169,8 @@ test('content cleanup removes rendition rows and files', async () => {
   assert.equal(db.prepare('SELECT count(*) AS n FROM sssp3_fit_renditions WHERE content_id = ?').get(item.content_id).n, 0);
   assert.equal(fs.existsSync(path.join(config.contentDir, row.filepath)), false);
 });
+
+test('rendition rows are classified as rebuildable cache state, not tenant export data', () => {
+  const { EXCLUDED } = require('../lib/trust/export-tables');
+  assert.match(EXCLUDED.sssp3_fit_renditions, /derived|cache|rebuilt/i);
+});
