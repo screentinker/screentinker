@@ -2,7 +2,58 @@
 
 ## 3.1.3
 
+### Added
+
+- **Library folders, search and quick views for Widgets, Playlists and Schedules** (#796, #801).
+  The Content Library's sidebar now organises the other three: folders and subfolders with counts,
+  All / Recently added / Unused (widgets, playlists) and All / Recently added / Active now /
+  Upcoming / Expired (schedules), search, filters and sorting. Schedules get a **List** view next to
+  Day/Week/Month. Folders are organisation only: filing lives in two new tables
+  (`library_folders`, `library_folder_items`), so moving an item never writes the widget, playlist,
+  schedule or playlist item, and no screen reloads. Existing items start in All. Deleting a folder
+  moves what is inside up a level. Requested by @MashaWaleed.
+
+- **Content requests can carry a website link** (#792, #800). A request form can take a web
+  address as well as (or instead of) an image or video. Off on every form until an admin ticks
+  **Website links**, optionally limited to listed domains. The address is checked like a file
+  (http(s) only, no credentials, the remote-URL SSRF gate, quotas), becomes a webpage widget, and
+  goes through the same review queue, dated schedule block and release gate. Declining or
+  withdrawing deletes the widget. The reviewer opens the page in a new tab; it is never framed in
+  the dashboard. New column `content_requests.widget_id`. Requested by @demesiooliveira.
+
+- **Slides: a video element** (#794). A clip from the library placed and sized like a photo, with
+  the same fit and corner radius; muted, looping, autoplaying. At most two videos per slide,
+  background included (one hardware decoder each on a Pi or Android stick).
+
+- **Slides: photos and videos play offline on the web player** (#795). A slide's media was never in
+  any offline cache, so with the network gone the words stayed up over empty boxes. The playlist
+  now lists each slide's media, the web player pins it, and the slide frame asks its parent for
+  the files from cache. Widget render epoch 3, service worker v32. Android, native and Tizen follow
+  separately.
+
+- **Data sources: what a sync changed** (#790, #799). The card shows **Last changed** next to Last
+  sync, and **Sync now** says whether the data changed and which variables. A slide bound to a
+  source reloads only when the data changes; when one reloads on every sync, the response carries
+  something that moves on every call (a timestamp, a request id), and this names it. Reported by
+  @olchinga-de.
+
 ### Fixed
+
+- **Web player: a data-source slide in a layout zone no longer blanks or restarts the zone** (#790,
+  #791). A new widget revision re-ran the zone: it emptied, went black until the slide parsed, and
+  a multi-item zone jumped back to its first item. The new slide is now built hidden over the old
+  one and swapped on load, keeping the rotation. Reported by @olchinga-de.
+
+- **Web player: a paired screen that boots offline shows "Connecting", not the setup form**
+  (#793). After a network drop and a browser reload, a paired screen with nothing cached came back
+  on "Server URL / Connect", inviting a re-pair. The form now returns only when the server
+  un-pairs the display. Reported by a customer evaluating ScreenTinker on LG panels.
+
+- **Screens no longer appear twice on the Displays page** (#788, #789). Two heartbeats in the same
+  second gave a screen two "latest" telemetry rows, and the duplicates pushed real screens off the
+  100-screen page. The latest row is now picked with a tie-break (lib/latest-row.js), in the
+  device list, the mesh projection and threshold alerts; 92 ms to 2 ms on a production copy.
+  Reported by @bold-media-group.
 
 - **Backups no longer use the host's sqlite3 tool on the live database.** `scripts/backup.sh`,
   `scripts/upgrade.sh` and the instance updater now snapshot and check the database through the

@@ -14,6 +14,18 @@
   ],
   "releases": [
     {
+      "version": "3.1.3",
+      "date": "2026-11-03",
+      "notes": [
+        "Widgets, playlists and schedules can now be organised in folders, like the content library, with search, filters, sorting and quick views such as Recently added and Unused. Schedules also get a list view. Moving things between folders never changes what plays.",
+        "Request forms can now accept a website link as well as images and videos. It is off until you turn it on for a form, can be limited to the domains you list, and still needs someone to approve it before it reaches a screen.",
+        "Slides can now include a video placed and sized like a photo, and on the web player a slide's photos and videos keep showing when the network drops.",
+        "Data sources now show when the data last changed, and Sync now tells you whether anything changed and which values, so you can see why a slide refreshed.",
+        "A slide fed by a data source no longer flashes blank or restarts its zone when the data updates, and a paired web player that starts without a network shows Connecting instead of the setup form.",
+        "Fixes: screens no longer appear twice on the Screens page, LG webOS panels download the right app version again, web players start from cache when the internet is down, and backups no longer risk damaging a busy database."
+      ]
+    },
+    {
       "version": "3.1.2",
       "date": "2026-11-02",
       "notes": [
