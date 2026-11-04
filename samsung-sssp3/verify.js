@@ -32,6 +32,7 @@ if (value(zipConfig, 'network') !== 'n') fail('package network permission must r
 if (value(zipConfig, 'autoUpdate') !== 'n') fail('package autoUpdate must be n so URL Launcher starts the installed ZIP when sssp_config is unreachable');
 const expectedCapabilities = [
   'playback.video', 'playback.image', 'playback.widget', 'playback.zones', 'playback.pip',
+  'playback.sssp3_fit_renditions',
   'remote.screenshot', 'system.restart_player', 'sync.clock', 'clock.tz_table', 'offline.schedule_plan',
 ];
 const renderer = readEntry(zip, 'renderer-main.js');

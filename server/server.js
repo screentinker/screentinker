@@ -1835,6 +1835,28 @@ app.get('/api/content/:id/file', (req, res) => {
 });
 
 /*
+ * A completed, server-approved intrinsic-size copy for legacy SSSP3 panels.
+ * This endpoint is deliberately read-only: payload construction is the only
+ * path that may approve/queue a rendition, so arbitrary public requests never
+ * spend CPU or allocate persistent files.
+ */
+app.get('/api/content/:id/sssp3-fit/:renditionId', (req, res) => {
+  const { db } = require('./db/database');
+  const content = db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id);
+  if (!content) return res.status(404).json({ error: 'Content not found' });
+  if (!isReferencedForPlayers(db, content) && !requesterCanAccessContent(req, content)) {
+    return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
+  }
+  const file = require('./lib/sssp3-fit-rendition').resolveReady(content.id, req.params.renditionId);
+  if (!file) return res.status(404).json({ error: 'Rendition not ready' });
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  hardenUploadResponse(res, file);
+  return res.sendFile(file);
+});
+
+/*
  * Previewing a bundle from the dashboard, before it is assigned to anything.
  *
  * ⚠️ THIS EXISTS BECAUSE THE PUBLIC ROUTE CANNOT ANSWER IT. /bundle is gated on the content being
@@ -2768,9 +2790,6 @@ app.use('/uploads/content', (req, res, next) => {
   hardenUploadResponse(res, req.path);
   // Scale-out C3: a cached copy read counts as recently used (LRU); a no-op on a stock install.
   if (config.primaryUrl) { try { require('./lib/mesh/content-cache').touch(require('./db/database').db, path.basename(req.path)); } catch (e) { /* */ } }
-  // Handle generated SSSP3 rendition names before express.static: a stale or
-  // malicious symlink must not be followed by the generic public file server.
-  if (require('./lib/sssp3-fit-rendition').tryServe(req, res, config.contentDir, hardenUploadResponse)) return;
   next();
 }, express.static(config.contentDir, {
   setHeaders: (res, filePath) => {
@@ -2900,6 +2919,13 @@ require('./lib/cloud-folders').start(io);   // SharePoint/OneDrive folder syncs
 // 3.0 TV-safe video copies: resume the queue (lib/video-variants.js). A finished copy re-sends the
 // payload of every screen playing that video, so it switches to the copy without a reboot.
 require('./lib/video-variants').start({
+  push: (deviceIds) => {
+    const { buildPlaylistPayload } = require('./ws/deviceSocket');
+    const commandQueue = require('./lib/command-queue');
+    for (const id of new Set(deviceIds || [])) commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), id, buildPlaylistPayload);
+  },
+});
+require('./lib/sssp3-fit-rendition').start({
   push: (deviceIds) => {
     const { buildPlaylistPayload } = require('./ws/deviceSocket');
     const commandQueue = require('./lib/command-queue');

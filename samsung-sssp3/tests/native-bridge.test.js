@@ -52,14 +52,17 @@ function assertFitDownload(e, item, fit, name) {
   assert.equal(item.fill_fit, fit);
   assert.equal(item.fill_width, 1920);
   assert.equal(item.fill_height, 1080);
-  assert.ok(e.downloads[0].url.includes(name + '.' + fit + '-1920x1080.'), 'fitted media URL includes the requested deterministic rendition name');
-  assert.match(e.downloads[0].url, new RegExp('fit=' + fit));
-  assert.match(e.downloads[0].url, /[?&]w=1920/);
-  assert.match(e.downloads[0].url, /[?&]h=1080/);
+  assert.match(e.downloads[0].url, /\/api\/content\/[^/]+\/sssp3-fit\/[a-f0-9]{32}/, 'only the approved opaque rendition URL is downloaded');
+}
+function approved(item, fit, width, height) {
+  item.fill_fit = fit; item.fill_width = width || 1920; item.fill_height = height || 1080;
+  item.sssp3_rendition_state = 'ready';
+  item.sssp3_rendition_url = '/api/content/' + item.content_id + '/sssp3-fit/' + 'a'.repeat(32) + '?rev=1';
+  return item;
 }
 test('zoned fill video downloads an intrinsic-size rendition of the same asset', () => {
   const e = environment();
-  const video = { content_id: 'motion', filepath: 'sssp-motion-test.mp4', mime_type: 'video/mp4', content_rev: 3, zone_id: 'z-pip-1', fit_mode: 'fill' };
+  const video = approved({ content_id: 'motion', filepath: 'sssp-motion-test.mp4', mime_type: 'video/mp4', content_rev: 3, zone_id: 'z-pip-1', fit_mode: 'fill' }, 'fill');
   e.b.accept({ assignments: [video], layout: pipLayout() }, () => {});
   assertFitDownload(e, video, 'fill', 'sssp-motion-test');
   const original = { content_id: 'motion', filepath: 'sssp-motion-test.mp4', mime_type: 'video/mp4', content_rev: 3 };
@@ -68,13 +71,13 @@ test('zoned fill video downloads an intrinsic-size rendition of the same asset',
 });
 test('zoned contain video downloads a letterboxed zone-sized rendition', () => {
   const e = environment();
-  const video = { content_id: 'motion', filepath: 'sssp-motion-test.mp4', mime_type: 'video/mp4', content_rev: 3, zone_id: 'z-pip-1', fit_mode: 'contain' };
+  const video = approved({ content_id: 'motion', filepath: 'sssp-motion-test.mp4', mime_type: 'video/mp4', content_rev: 3, zone_id: 'z-pip-1', fit_mode: 'contain' }, 'contain');
   e.b.accept({ assignments: [video], layout: pipLayout() }, () => {});
   assertFitDownload(e, video, 'contain', 'sssp-motion-test');
 });
 test('zoned cover video downloads a cropped zone-sized rendition', () => {
   const e = environment();
-  const video = { content_id: 'motion', filepath: 'sssp-motion-test.mp4', mime_type: 'video/mp4', content_rev: 3, zone_id: 'z-pip-1', fit_mode: 'cover' };
+  const video = approved({ content_id: 'motion', filepath: 'sssp-motion-test.mp4', mime_type: 'video/mp4', content_rev: 3, zone_id: 'z-pip-1', fit_mode: 'cover' }, 'cover');
   e.b.accept({ assignments: [video], layout: pipLayout() }, () => {});
   assertFitDownload(e, video, 'cover', 'sssp-motion-test');
 });
@@ -83,18 +86,18 @@ test('fitted SVG assets use a PNG cache extension', () => { const e = environmen
 test('zoned image contain/cover/fill download intrinsic-size renditions', () => {
   for (const fit of ['contain', 'cover', 'fill']) {
     const e = environment();
-    const imageItem = { content_id: 'probe', filepath: 'sssp-fit-probe.jpg', mime_type: 'image/jpeg', content_rev: 1, zone_id: 'z-pip-1', fit_mode: fit };
+    const imageItem = approved({ content_id: 'probe', filepath: 'sssp-fit-probe.jpg', mime_type: 'image/jpeg', content_rev: 1, zone_id: 'z-pip-1', fit_mode: fit }, fit);
     e.b.accept({ assignments: [imageItem], layout: pipLayout() }, () => {});
     assertFitDownload(e, imageItem, fit, 'sssp-fit-probe');
   }
 });
 test('fullscreen image still requests a 1920x1080 fitted rendition', () => {
   const e = environment();
-  const imageItem = { content_id: 'probe', filepath: 'sssp-fit-probe.jpg', mime_type: 'image/jpeg', content_rev: 1, fit_mode: 'cover' };
+  const imageItem = approved({ content_id: 'probe', filepath: 'sssp-fit-probe.jpg', mime_type: 'image/jpeg', content_rev: 1, fit_mode: 'cover' }, 'cover');
   e.b.accept({ assignments: [imageItem], layout: { id: 'tpl-fullscreen', zones: [{ id: 'z-fs-1', x_percent: 0, y_percent: 0, width_percent: 100, height_percent: 100 }] } }, () => {});
   assert.equal(imageItem.fill_fit, 'cover');
   assert.equal(imageItem.fill_width, 1920);
-  assert.match(e.downloads[0].url, /sssp-fit-probe\.cover-1920x1080\.jpg/);
+  assert.match(e.downloads[0].url, /\/api\/content\/probe\/sssp3-fit\/[a-f0-9]{32}/);
 });
 test('source-only supported image formats never request nonexistent fitted renditions', () => {
   for (const [extension, mime] of [['gif', 'image/gif'], ['bmp', 'image/bmp']]) {
@@ -115,11 +118,14 @@ test('unsupported image decoders are not downloaded into a black playback path',
     assert.equal(e.b.supports(item), false);
   }
 });
-test('contain and fill of the same asset use different cache paths', () => {
+test('two server-approved renditions of the same asset use different cache paths', () => {
   const e = environment();
   const fill = { content_id: 'motion', filepath: 'sssp-motion-test.mp4', mime_type: 'video/mp4', content_rev: 3, zone_id: 'z-pip-1', fit_mode: 'fill' };
   const contain = { ...fill, fit_mode: 'contain' };
-  e.b._test.stampFit({ assignments: [fill, contain], layout: pipLayout() });
+  approved(fill, 'fill', 960, 540);
+  approved(contain, 'contain', 960, 540);
+  fill.sssp3_rendition_url = '/api/content/motion/sssp3-fit/' + 'a'.repeat(32);
+  contain.sssp3_rendition_url = '/api/content/motion/sssp3-fit/' + 'b'.repeat(32);
   assert.notEqual(e.b._test.path(fill), e.b._test.path(contain));
 });
 test('fullscreen native video keeps the original encoded file', () => {

@@ -237,7 +237,7 @@ const TPL_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>body{b
     await page.waitForFunction(() => { const frame = document.querySelector('#playerContainer .zone iframe'); return frame && /^file:\/\/\/mtd_down\/common\/screentinker_media\//.test(frame.src); }, { timeout: 5000 });
     await page.evaluate(() => window.handlePlaylistUpdate({
       assignments: [
-        { content_id: 'pip-video', filepath: 'pip.mp4', mime_type: 'video/mp4', duration_sec: 10, zone_id: 'background', fit_mode: 'fill' },
+        { content_id: 'pip-video', filepath: 'pip.mp4', mime_type: 'video/mp4', duration_sec: 10, zone_id: 'background', fit_mode: 'fill', fill_fit: 'fill', fill_width: 1920, fill_height: 1080, sssp3_rendition_state: 'ready', sssp3_rendition_url: '/api/content/pip-video/sssp3-fit/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?rev=1' },
         { widget_id: 'pip-text', widget_type: 'text', widget_rev: 1, duration_sec: 10, zone_id: 'overlay' }
       ],
       layout: { id: 'tpl-pip', zones: [
@@ -267,11 +267,11 @@ const TPL_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>body{b
         downloads: (window.__testDownloads || []).map(d => d.url),
       };
     });
-    assert.ok(pipFit.downloads.some(url => /pip\.fill-1920x1080\.mp4/.test(url) && /fit=fill/.test(url) && /w=1920/.test(url) && /h=1080/.test(url)), 'PiP fill must request a 1920x1080 rendition of the same asset');
+    assert.ok(pipFit.downloads.some(url => /\/api\/content\/pip-video\/sssp3-fit\/a{32}\?rev=1/.test(url)), 'PiP fill must request only its server-approved opaque rendition');
     await page.evaluate(() => { window.__testDownloads = []; });
     await page.evaluate(() => window.handlePlaylistUpdate({
       assignments: [
-        { content_id: 'pip-video', filepath: 'pip.mp4', mime_type: 'video/mp4', duration_sec: 10, zone_id: 'background', fit_mode: 'contain' },
+        { content_id: 'pip-video', filepath: 'pip.mp4', mime_type: 'video/mp4', duration_sec: 10, zone_id: 'background', fit_mode: 'contain', fill_fit: 'contain', fill_width: 1920, fill_height: 1080, sssp3_rendition_state: 'ready', sssp3_rendition_url: '/api/content/pip-video/sssp3-fit/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?rev=1' },
         { widget_id: 'pip-text', widget_type: 'text', widget_rev: 1, duration_sec: 10, zone_id: 'overlay' }
       ],
       layout: { id: 'tpl-pip', zones: [
@@ -279,11 +279,11 @@ const TPL_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>body{b
         { id: 'overlay', x_percent: 65, y_percent: 5, width_percent: 30, height_percent: 30, z_index: 1 }
       ] }
     }));
-    await page.waitForFunction(() => (window.__testDownloads || []).some(d => /pip\.contain-1920x1080\.mp4/.test(d.url)), { timeout: 5000 });
+    await page.waitForFunction(() => (window.__testDownloads || []).some(d => /\/api\/content\/pip-video\/sssp3-fit\/b{32}\?rev=1/.test(d.url)), { timeout: 5000 });
     await page.evaluate(() => { window.__testDownloads = []; });
     await page.evaluate(() => window.handlePlaylistUpdate({
       assignments: [
-        { content_id: 'pip-video', filepath: 'pip.mp4', mime_type: 'video/mp4', duration_sec: 10, zone_id: 'background', fit_mode: 'cover' },
+        { content_id: 'pip-video', filepath: 'pip.mp4', mime_type: 'video/mp4', duration_sec: 10, zone_id: 'background', fit_mode: 'cover', fill_fit: 'cover', fill_width: 1920, fill_height: 1080, sssp3_rendition_state: 'ready', sssp3_rendition_url: '/api/content/pip-video/sssp3-fit/cccccccccccccccccccccccccccccccc?rev=1' },
         { widget_id: 'pip-text', widget_type: 'text', widget_rev: 1, duration_sec: 10, zone_id: 'overlay' }
       ],
       layout: { id: 'tpl-pip', zones: [
@@ -291,11 +291,11 @@ const TPL_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>body{b
         { id: 'overlay', x_percent: 65, y_percent: 5, width_percent: 30, height_percent: 30, z_index: 1 }
       ] }
     }));
-    await page.waitForFunction(() => (window.__testDownloads || []).some(d => /pip\.cover-1920x1080\.mp4/.test(d.url)), { timeout: 5000 });
+    await page.waitForFunction(() => (window.__testDownloads || []).some(d => /\/api\/content\/pip-video\/sssp3-fit\/c{32}\?rev=1/.test(d.url)), { timeout: 5000 });
     await page.evaluate(() => { window.__testDownloads = []; });
     await page.evaluate(() => window.handlePlaylistUpdate({
       assignments: [
-        { content_id: 'pip-image', filepath: 'probe.jpg', mime_type: 'image/jpeg', duration_sec: 10, zone_id: 'background', fit_mode: 'contain' },
+        { content_id: 'pip-image', filepath: 'probe.jpg', mime_type: 'image/jpeg', duration_sec: 10, zone_id: 'background', fit_mode: 'contain', fill_fit: 'contain', fill_width: 1920, fill_height: 1080, sssp3_rendition_state: 'ready', sssp3_rendition_url: '/api/content/pip-image/sssp3-fit/dddddddddddddddddddddddddddddddd?rev=1' },
         { widget_id: 'pip-text', widget_type: 'text', widget_rev: 1, duration_sec: 10, zone_id: 'overlay' }
       ],
       layout: { id: 'tpl-pip', zones: [
@@ -303,7 +303,7 @@ const TPL_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>body{b
         { id: 'overlay', x_percent: 65, y_percent: 5, width_percent: 30, height_percent: 30, z_index: 1 }
       ] }
     }));
-    await page.waitForFunction(() => (window.__testDownloads || []).some(d => /probe\.contain-1920x1080\.jpg/.test(d.url)), { timeout: 5000 });
+    await page.waitForFunction(() => (window.__testDownloads || []).some(d => /\/api\/content\/pip-image\/sssp3-fit\/d{32}\?rev=1/.test(d.url)), { timeout: 5000 });
     assert.equal(pipFit.width, pipFit.beforeWidth, 'PiP fill must not retry HTMLVideoElement width/height properties');
     assert.notEqual(pipFit.width, 1920, 'client scale cannot stretch Orsay HTML video');
     assert.equal(pipFit.canvas, false, 'PiP fill must not canvas-hide the plugin');

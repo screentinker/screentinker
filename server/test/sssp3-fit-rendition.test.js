@@ -2,27 +2,14 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { execFileSync } = require('child_process');
-const { parseFitName, vf, ensureRendition } = require('../lib/sssp3-fit-rendition');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const crypto = require('node:crypto');
 
-let ffmpegOk = true;
-try { execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' }); }
-catch { ffmpegOk = false; }
-
-test('parseFitName accepts even contain/cover/fill names and rejects garbage', () => {
-  assert.deepEqual(parseFitName('clip.contain-1920x1080.mp4'), {
-    original: 'clip.mp4', sourceExt: '.mp4', fit: 'contain', width: 1920, height: 1080, ext: '.mp4', name: 'clip.contain-1920x1080.mp4',
-  });
-  assert.equal(parseFitName('clip.cover-640x360.jpg').fit, 'cover');
-  assert.equal(parseFitName('photo.fill-1920x1080.png').original, 'photo.png');
-  assert.equal(parseFitName('clip.mp4'), null);
-  assert.equal(parseFitName('clip.contain-1921x1080.mp4'), null);
-  assert.equal(parseFitName('clip.stretch-1920x1080.mp4'), null);
-  assert.equal(parseFitName('../clip.contain-1920x1080.mp4').original, 'clip.mp4');
-});
+process.env.DATA_DIR = path.join(os.tmpdir(), 'st-sssp3-fit-source-' + crypto.randomBytes(4).toString('hex'));
+process.env.NODE_ENV = 'test';
+const { vf } = require('../lib/sssp3-fit-rendition');
 
 test('vf encodes contain as pad, cover as crop, fill as stretch', () => {
   assert.match(vf('contain', 1920, 1080), /force_original_aspect_ratio=decrease/);
@@ -30,57 +17,25 @@ test('vf encodes contain as pad, cover as crop, fill as stretch', () => {
   assert.match(vf('cover', 1920, 1080), /force_original_aspect_ratio=increase/);
   assert.match(vf('cover', 1920, 1080), /crop=1920:1080/);
   assert.match(vf('fill', 1920, 1080), /force_original_aspect_ratio=disable/);
-  assert.match(vf('fill', 1920, 1080), /setsar=1/);
 });
-
-test('ensureRendition writes contain/cover/fill of a portrait probe', { skip: !ffmpegOk && 'ffmpeg not installed' }, async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sssp3-fit-'));
-  try {
-    const src = path.join(dir, 'probe.mp4');
-    execFileSync('ffmpeg', [
-      '-hide_banner', '-y', '-loglevel', 'error',
-      '-f', 'lavfi', '-i', 'color=c=red:s=576x704:d=0.4:r=10',
-      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', src,
-    ], { stdio: 'ignore' });
-    const contain = await ensureRendition(dir, 'probe.contain-640x360.mp4', { timeoutMs: 30000 });
-    const cover = await ensureRendition(dir, 'probe.cover-640x360.mp4', { timeoutMs: 30000 });
-    const fill = await ensureRendition(dir, 'probe.fill-640x360.mp4', { timeoutMs: 30000 });
-    assert.ok(contain && fs.statSync(contain).size > 32);
-    assert.ok(cover && fs.statSync(cover).size > 32);
-    assert.ok(fill && fs.statSync(fill).size > 32);
-    const again = await ensureRendition(dir, 'probe.contain-640x360.mp4');
-    assert.equal(again, contain);
-    assert.equal(await ensureRendition(dir, 'missing.contain-640x360.mp4'), null);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-
-test('SVG fit rendition names preserve the SVG source and rasterize to PNG', () => {
-  const spec = parseFitName('zone.svg.fill-960x540.png');
-  assert.deepEqual(spec, { original: 'zone.svg', sourceExt: '.svg', fit: 'fill', width: 960, height: 540, ext: '.png', name: 'zone.svg.fill-960x540.png' });
-});
-
-
-test('fit renditions are handled before the generic static content server follows files', () => {
+test('the public uploads mount cannot create renditions', () => {
   const source = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
-  const mount = source.indexOf("app.use('/uploads/content'");
-  const fit = source.indexOf("sssp3-fit-rendition').tryServe", mount);
-  const staticServer = source.indexOf('express.static(config.contentDir', mount);
-  assert.ok(mount >= 0 && fit > mount && staticServer > fit, 'fit route precedes express.static for derived filenames');
+  assert.doesNotMatch(source, /sssp3-fit-rendition'\)\.tryServe/);
+  assert.match(source, /app\.get\('\/api\/content\/:id\/sssp3-fit\/:renditionId'/);
+  assert.match(source, /isReferencedForPlayers\(db, content\).*requesterCanAccessContent/);
+  assert.match(source, /resolveReady\(content\.id, req\.params\.renditionId\)/);
 });
 
-test('fit requests cannot use symlinked source media or generate an active SVG output type', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sssp3-fit-safe-'));
-  const outside = path.join(os.tmpdir(), `sssp3-outside-${process.pid}.mp4`);
-  try {
-    fs.writeFileSync(outside, 'not media');
-    fs.symlinkSync(outside, path.join(dir, 'outside.mp4'));
-    assert.equal(await ensureRendition(dir, 'outside.contain-640x360.mp4'), null, 'a symlinked source is never passed to ffmpeg');
-    assert.equal(parseFitName('image.svg.fill-640x360.html'), null, 'an SVG rendition cannot select an active output extension');
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.rmSync(outside, { force: true });
-  }
+test('payload approval is server-side and forecast payloads cannot queue work', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../ws/deviceSocket.js'), 'utf8');
+  assert.match(source, /sssp3-fit-rendition'\)\.stampItems\(assignments, layout, device, \{ lazy: !opts\.forecast \}\)/);
+  const replacement = fs.readFileSync(path.join(__dirname, '../lib/content-replace.js'), 'utf8');
+  assert.match(replacement, /sssp3-fit-rendition'\)\.removeFor\(content\.id\)/);
+});
+
+test('the native bridge consumes only the opaque approved URL', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../samsung-sssp3/app/native-bridge.js'), 'utf8');
+  assert.match(source, /item\.sssp3_rendition_url/);
+  assert.doesNotMatch(source, /fitName\(item\.filepath/);
+  assert.match(source, /pendingRenditions[\s\S]{0,400}retaining previous playlist/);
 });

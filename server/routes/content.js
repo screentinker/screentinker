@@ -918,6 +918,7 @@ function purgeContentRow(content) {
   unlinkIfUnreferenced(content.subtitle_url, id, 'subtitle_url'); // #216 sidecar (no-op pre-#216)
   // 3.0 TV-safe copies of a tall video (lib/video-variants.js): named per content id, never shared.
   try { require('../lib/video-variants').removeFor(id); } catch (_) { /* the orphan sweep gets them */ }
+  try { require('../lib/sssp3-fit-rendition').removeFor(id); } catch (_) { /* the orphan sweep gets them */ }
 
   /*
    * ⚠️ And the provenance row goes with it, because nothing else will take it. The table declares

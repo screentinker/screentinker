@@ -24,6 +24,7 @@ const sssp3Capabilities = [
   'playback.widget',
   'playback.zones',
   'playback.pip',
+  'playback.sssp3_fit_renditions',
   'remote.screenshot',
   'system.restart_player',
   'sync.clock',

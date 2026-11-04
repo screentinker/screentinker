@@ -1,114 +1,48 @@
 'use strict';
 
 /*
- * SSSP3/Orsay paints HTML video and images at encoded/intrinsic pixel size and
- * ignores client scale (CSS object-fit, transform, width/height, canvas).
- * Fit is therefore a same-asset rendition whose encoded WxH already match the
- * zone: contain letterboxes, cover crops, fill stretches. SAR is forced 1:1.
- *
- * The route serving these renditions is public for the same reason
- * /uploads/content is public: unauthenticated signage players fetch media by
- * immutable filename. It does not grant access to any source a caller could
- * not already request from that public media mount. This module nevertheless
- * treats both names and on-disk files as hostile: no traversal, symlinks,
- * non-regular files, output-controlled paths, shells, or ffmpeg networking.
+ * SSSP3's native media plane needs files encoded at the zone's pixel size.
+ * Only a trusted device payload may approve work. Public HTTP requests can
+ * resolve completed rows, but never create rows or start ffmpeg.
  */
-
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { db } = require('../db/database');
+const config = require('../config');
 
-const FIT_RE = /^(.+)\.(contain|cover|fill)-(\d+)x(\d+)(\.[A-Za-z0-9]{1,8})$/;
-const MAX_EDGE = 1920;
-const MAX_PIXELS = 1920 * 1080;
-const MIN_EDGE = 2;
-const MAX_CONCURRENT_RENDITIONS = 2;
-const RASTER_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+const CAPABILITY = 'playback.sssp3_fit_renditions';
+const MAX_VARIANTS_PER_CONTENT = 12;
+const MAX_CONCURRENT_RENDITIONS = 1;
+const MAX_PENDING_RENDITIONS = 256;
+const DEFAULT_CACHE_BYTES = 2 * 1024 * 1024 * 1024;
+const FILE_RE = /^ssf_([a-f0-9]{32})(\.(?:mp4|jpg|jpeg|png|webp))$/;
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v']);
+const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.svg']);
 
-class RenditionBusyError extends Error {
-  constructor() {
-    super('SSSP3 rendition capacity is busy');
-    this.name = 'RenditionBusyError';
-  }
+let running = new Map();
+let jobs = new Set();
+let timer = null;
+let started = false;
+let testEncode = null;
+let testCacheBytes = null;
+let pushFn = null;
+
+function evenPx(value) {
+  const n = Math.floor(Number(value) || 0);
+  return n >= 2 ? n - (n % 2) : 0;
 }
 
-function parseFitName(name) {
-  const base = path.basename(String(name || ''));
-  const m = FIT_RE.exec(base);
-  if (!m) return null;
-  const width = Number(m[3]);
-  const height = Number(m[4]);
-  if (!Number.isInteger(width) || !Number.isInteger(height)) return null;
-  if (width < MIN_EDGE || height < MIN_EDGE || width > MAX_EDGE || height > MAX_EDGE || width * height > MAX_PIXELS) return null;
-  if (width % 2 || height % 2) return null;
-  const outputExt = m[5].toLowerCase();
-  // SVG cannot safely be delivered as a rendered SVG after ffmpeg has rasterized
-  // it. The client requests `source.svg.fit-WxH.png`; retain `.svg` as the
-  // source name and permit only known raster output formats.
-  const svgSource = /\.svg$/i.test(m[1]);
-  if (svgSource && !RASTER_EXTENSIONS.has(outputExt)) return null;
-  return {
-    original: svgSource ? m[1] : m[1] + m[5],
-    sourceExt: svgSource ? '.svg' : outputExt,
-    fit: m[2],
-    width,
-    height,
-    ext: outputExt,
-    name: base,
-  };
+function validGeometry(width, height) {
+  return width >= 2 && height >= 2 && width <= 1920 && height <= 1920
+    && width * height <= 1920 * 1080 && width % 2 === 0 && height % 2 === 0;
 }
 
 function vf(fit, width, height) {
-  if (fit === 'fill') {
-    return `scale=${width}:${height}:force_original_aspect_ratio=disable,setsar=1,format=yuv420p`;
-  }
-  if (fit === 'contain') {
-    return `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p`;
-  }
+  if (fit === 'fill') return `scale=${width}:${height}:force_original_aspect_ratio=disable,setsar=1,format=yuv420p`;
+  if (fit === 'contain') return `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p`;
   return `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,format=yuv420p`;
-}
-
-function isVideo(ext) { return VIDEO_EXTENSIONS.has(ext); }
-function isImage(ext) { return RASTER_EXTENSIONS.has(ext) || ext === '.svg'; }
-
-function runFfmpeg(args, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const p = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
-    let err = '';
-    let timedOut = false;
-    p.stderr.on('data', (d) => { if (err.length < 4000) err += d; });
-    const t = setTimeout(() => {
-      timedOut = true;
-      try { p.kill('SIGKILL'); } catch (_) {}
-    }, timeoutMs);
-    p.on('error', (e) => { clearTimeout(t); reject(e); });
-    p.on('close', (code, sig) => {
-      clearTimeout(t);
-      if (code === 0 && !timedOut) return resolve();
-      if (timedOut) return reject(new Error('ffmpeg timed out'));
-      return reject(new Error(sig ? `ffmpeg stopped (${sig})` : (err.trim().split('\n').pop() || `ffmpeg exit ${code}`)));
-    });
-  });
-}
-
-function commonArgs(src) {
-  // No shell is used. Restrict protocol handling too: an uploaded SVG or media
-  // container must never make the server fetch a URL while producing a fit copy.
-  return ['-hide_banner', '-nostdin', '-y', '-loglevel', 'error', '-protocol_whitelist', 'file,pipe', '-threads', '1', '-i', src];
-}
-
-function videoArgs(src, dest, spec) {
-  return commonArgs(src).concat([
-    '-an', '-vf', vf(spec.fit, spec.width, spec.height),
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21',
-    '-profile:v', 'baseline', '-level', '3.1', '-pix_fmt', 'yuv420p',
-    '-map_metadata', '-1', '-metadata:s:v:0', 'rotate=0', '-movflags', '+faststart', dest,
-  ]);
-}
-
-function imageArgs(src, dest, spec) {
-  return commonArgs(src).concat(['-frames:v', '1', '-vf', vf(spec.fit, spec.width, spec.height), dest]);
 }
 
 function realRegularFile(file, root) {
@@ -117,88 +51,257 @@ function realRegularFile(file, root) {
   if (!stat.isFile() || stat.isSymbolicLink()) return null;
   let real;
   try { real = fs.realpathSync(file); } catch (_) { return null; }
-  return real === root || real.startsWith(root + path.sep) ? real : null;
+  return real.startsWith(root + path.sep) ? real : null;
 }
 
-function existingRendition(file, root) {
-  const real = realRegularFile(file, root);
-  if (!real) return null;
-  try { return fs.statSync(real).size > 0 ? real : null; } catch (_) { return null; }
+function outputExtension(sourceExt) {
+  if (VIDEO_EXTENSIONS.has(sourceExt)) return '.mp4';
+  if (sourceExt === '.svg') return '.png';
+  return IMAGE_EXTENSIONS.has(sourceExt) ? sourceExt : null;
 }
 
-const inflight = new Map();
-
-async function ensureRendition(contentDir, requestedName, opts = {}) {
-  const spec = parseFitName(requestedName);
-  if (!spec || (!isVideo(spec.sourceExt) && !isImage(spec.sourceExt))) return null;
-  let dir;
-  try { dir = fs.realpathSync(path.resolve(contentDir)); } catch (_) { return null; }
-  const dest = path.join(dir, spec.name);
-  const cached = existingRendition(dest, dir);
-  if (cached) return cached;
-  const src = realRegularFile(path.join(dir, spec.original), dir);
-  if (!src) return null;
-  const existing = inflight.get(dest);
-  if (existing) return existing;
-  if (inflight.size >= (opts.maxConcurrent || MAX_CONCURRENT_RENDITIONS)) throw new RenditionBusyError();
-
-  const work = (async () => {
-    let temporaryDirectory = null;
-    try {
-      temporaryDirectory = fs.mkdtempSync(path.join(dir, '.sssp3-fit-'));
-      const tmp = path.join(temporaryDirectory, 'rendition' + spec.ext);
-      const args = isVideo(spec.sourceExt) ? videoArgs(src, tmp, spec) : imageArgs(src, tmp, spec);
-      await runFfmpeg(args, opts.timeoutMs || (isVideo(spec.sourceExt) ? 180000 : 30000));
-      const rendered = realRegularFile(tmp, fs.realpathSync(temporaryDirectory));
-      if (!rendered || fs.statSync(rendered).size < 32) throw new Error('empty fit rendition');
-      // rename replaces an existing derived file rather than following it, so a
-      // pre-existing symlink cannot redirect the ffmpeg output outside contentDir.
-      fs.renameSync(rendered, dest);
-      const result = existingRendition(dest, dir);
-      if (!result) throw new Error('unsafe fit rendition output');
-      return result;
-    } finally {
-      if (temporaryDirectory) {
-        try { fs.rmSync(temporaryDirectory, { recursive: true, force: true }); } catch (_) {}
-      }
-      inflight.delete(dest);
-    }
-  })();
-  inflight.set(dest, work);
-  return work;
+function rowId(contentId, sourceFile, sourceRevision, fit, width, height) {
+  return crypto.createHash('sha256').update([contentId, sourceFile, sourceRevision, fit, width, height].join('\0')).digest('hex').slice(0, 32);
 }
 
-function tryServe(req, res, contentDir, harden) {
-  const spec = parseFitName(path.basename(req.path || ''));
-  if (!spec) return false;
-  const job = ensureRendition(contentDir, spec.name);
-  Promise.resolve(job).then((file) => {
-    if (!file || !fs.existsSync(file)) {
-      res.removeHeader('Cache-Control');
-      return res.status(404).type('application/json').json({ error: 'Not found' });
+function supports(device) {
+  try { return require('./player-capabilities').supports(device, CAPABILITY); } catch (_) { return false; }
+}
+
+function removeFile(name) {
+  if (!name || !FILE_RE.test(path.basename(name))) return;
+  try { fs.unlinkSync(path.join(config.contentDir, path.basename(name))); } catch (_) {}
+}
+
+function removeFor(contentId) {
+  let rows = [];
+  try { rows = db.prepare('SELECT filepath FROM sssp3_fit_renditions WHERE content_id = ?').all(contentId); } catch (_) { return; }
+  for (const row of rows) removeFile(row.filepath);
+  db.prepare('DELETE FROM sssp3_fit_renditions WHERE content_id = ?').run(contentId);
+}
+
+function approve(content, spec) {
+  const sourceFile = path.basename(String(content.filepath || ''));
+  const sourceRevision = Number(content.source_revision || content.updated_at || content.created_at || 0);
+  const outputExt = outputExtension(path.extname(sourceFile).toLowerCase());
+  if (!sourceFile || !outputExt || !validGeometry(spec.width, spec.height)) return null;
+  if (!['contain', 'cover', 'fill'].includes(spec.fit)) return null;
+
+  if (db.prepare('SELECT 1 FROM sssp3_fit_renditions WHERE content_id = ? AND (source_file != ? OR source_revision != ?) LIMIT 1').get(content.id, sourceFile, sourceRevision)) {
+    removeFor(content.id);
+  }
+  const id = rowId(content.id, sourceFile, sourceRevision, spec.fit, spec.width, spec.height);
+  let row = db.prepare('SELECT * FROM sssp3_fit_renditions WHERE id = ?').get(id);
+  if (row) {
+    db.prepare("UPDATE sssp3_fit_renditions SET last_used_at = strftime('%s','now') WHERE id = ?").run(id);
+    if (row.status === 'evicted') {
+      const pending = db.prepare("SELECT count(*) AS n FROM sssp3_fit_renditions WHERE status IN ('queued','running')").get().n;
+      if (pending >= MAX_PENDING_RENDITIONS) return row;
+      db.prepare("UPDATE sssp3_fit_renditions SET status = 'queued', filepath = ?, error = NULL, attempts = 0, updated_at = strftime('%s','now') WHERE id = ?")
+        .run(`ssf_${id}${row.output_ext}`, id);
+      schedule(0);
     }
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-    res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
-    if (harden) harden(res, file);
-    return res.sendFile(file);
-  }).catch((error) => {
-    res.removeHeader('Cache-Control');
-    if (error instanceof RenditionBusyError) {
-      res.setHeader('Retry-After', '5');
-      return res.status(503).type('application/json').json({ error: 'Rendition capacity is busy; retry shortly' });
+    return db.prepare('SELECT * FROM sssp3_fit_renditions WHERE id = ?').get(id);
+  }
+  const count = db.prepare('SELECT count(*) AS n FROM sssp3_fit_renditions WHERE content_id = ?').get(content.id).n;
+  if (count >= MAX_VARIANTS_PER_CONTENT) return null;
+  const pending = db.prepare("SELECT count(*) AS n FROM sssp3_fit_renditions WHERE status IN ('queued','running')").get().n;
+  if (pending >= MAX_PENDING_RENDITIONS) return null;
+  const filename = `ssf_${id}${outputExt}`;
+  db.prepare(`INSERT INTO sssp3_fit_renditions
+    (id,content_id,workspace_id,source_file,source_revision,fit,width,height,output_ext,status,filepath)
+    VALUES (?,?,?,?,?,?,?,?,?,'queued',?)`)
+    .run(id, content.id, content.workspace_id, sourceFile, sourceRevision, spec.fit, spec.width, spec.height, outputExt, filename);
+  schedule(0);
+  return db.prepare('SELECT * FROM sssp3_fit_renditions WHERE id = ?').get(id);
+}
+
+function stampItems(items, layout, device, { lazy = true } = {}) {
+  if (!lazy || !supports(device) || !Array.isArray(items)) return items;
+  const zones = Array.isArray(layout && layout.zones) ? layout.zones : [];
+  const multiZone = zones.length >= 2;
+  const byId = new Map(zones.filter(Boolean).map((zone) => [zone.id, zone]));
+  const lookup = db.prepare('SELECT id,workspace_id,filepath,mime_type,updated_at,created_at FROM content WHERE id = ?');
+  for (const item of items) {
+    if (!item || !item.content_id || item.remote_url || item.widget_id) continue;
+    const mime = String(item.mime_type || '').toLowerCase();
+    const video = mime === 'video/mp4';
+    const image = /^image\/(?:jpeg|png|webp|svg\+xml)$/.test(mime);
+    if ((!video && !image) || (video && !multiZone)) continue;
+    const content = lookup.get(item.content_id);
+    if (!content || path.basename(content.filepath || '') !== path.basename(item.filepath || '')) continue;
+    if (content.workspace_id !== (item.__origin_ws || device.workspace_id)) continue;
+    const zone = byId.get(item.zone_id);
+    if (video && !zone) continue;
+    const width = zone ? evenPx(1920 * Number(zone.width_percent) / 100) : 1920;
+    const height = zone ? evenPx(1080 * Number(zone.height_percent) / 100) : 1080;
+    const requested = item.fit_mode || (zone && zone.fit_mode) || 'contain';
+    const fit = ['contain', 'cover', 'fill'].includes(requested) ? requested : 'contain';
+    const row = approve(content, { fit, width, height });
+    if (!row) continue;
+    item.fill_fit = fit;
+    item.fill_width = width;
+    item.fill_height = height;
+    item.sssp3_rendition_state = row.status;
+    if (row.status === 'ready') {
+      item.sssp3_rendition_url = `/api/content/${encodeURIComponent(content.id)}/sssp3-fit/${row.id}?rev=${row.updated_at}`;
     }
-    return res.status(404).type('application/json').json({ error: 'Not found' });
+  }
+  return items;
+}
+
+function resolveReady(contentId, id) {
+  if (!/^[a-f0-9]{32}$/.test(String(id || ''))) return null;
+  const row = db.prepare("SELECT * FROM sssp3_fit_renditions WHERE id = ? AND content_id = ? AND status = 'ready'").get(id, contentId);
+  if (!row || !row.filepath || !FILE_RE.test(row.filepath)) return null;
+  const current = db.prepare('SELECT filepath,updated_at,created_at FROM content WHERE id = ?').get(contentId);
+  const revision = Number(current && (current.updated_at || current.created_at) || 0);
+  if (!current || path.basename(current.filepath || '') !== row.source_file || revision !== row.source_revision) return null;
+  let root;
+  try { root = fs.realpathSync(config.contentDir); } catch (_) { return null; }
+  const file = realRegularFile(path.join(root, row.filepath), root);
+  if (!file) return null;
+  try { return fs.statSync(file).size === row.file_size && row.file_size > 0 ? file : null; } catch (_) { return null; }
+}
+
+function ffmpegArgs(src, tmp, row) {
+  const common = ['-hide_banner', '-nostdin', '-y', '-loglevel', 'error', '-protocol_whitelist', 'file,pipe', '-threads', '1', '-i', src];
+  if (row.output_ext === '.mp4') return common.concat([
+    '-an', '-vf', vf(row.fit, row.width, row.height), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21',
+    '-profile:v', 'baseline', '-level', '3.1', '-pix_fmt', 'yuv420p', '-map_metadata', '-1',
+    '-metadata:s:v:0', 'rotate=0', '-movflags', '+faststart', tmp,
+  ]);
+  return common.concat(['-frames:v', '1', '-vf', vf(row.fit, row.width, row.height), tmp]);
+}
+
+function encode(job) {
+  if (testEncode) return testEncode(job);
+  return new Promise((resolve, reject) => {
+    const child = spawn('ffmpeg', ffmpegArgs(job.src, job.tmp, job.row), { stdio: ['ignore', 'ignore', 'pipe'] });
+    let error = '';
+    let timedOut = false;
+    child.stderr.on('data', (chunk) => { if (error.length < 4000) error += chunk; });
+    const timeout = setTimeout(() => { timedOut = true; try { child.kill('SIGKILL'); } catch (_) {} }, job.row.output_ext === '.mp4' ? 180000 : 30000);
+    child.once('error', (err) => { clearTimeout(timeout); reject(err); });
+    child.once('close', (code) => {
+      clearTimeout(timeout);
+      if (code === 0 && !timedOut) resolve();
+      else reject(new Error(timedOut ? 'ffmpeg timed out' : (error.trim().split('\n').pop() || `ffmpeg exit ${code}`)));
+    });
   });
-  return true;
+}
+
+function cacheLimit() {
+  if (testCacheBytes != null) return testCacheBytes;
+  const configured = Number(process.env.SSSP3_FIT_CACHE_BYTES);
+  return Number.isSafeInteger(configured) && configured > 0 ? configured : DEFAULT_CACHE_BYTES;
+}
+
+function makeRoom(bytes, protectedId) {
+  let total = Number(db.prepare("SELECT coalesce(sum(file_size),0) AS n FROM sssp3_fit_renditions WHERE status = 'ready'").get().n || 0);
+  if (bytes > cacheLimit()) return false;
+  const rows = db.prepare("SELECT * FROM sssp3_fit_renditions WHERE status = 'ready' AND id != ? ORDER BY last_used_at ASC,created_at ASC").all(protectedId);
+  for (const row of rows) {
+    if (total + bytes <= cacheLimit()) break;
+    removeFile(row.filepath);
+    db.prepare("UPDATE sssp3_fit_renditions SET status = 'evicted',filepath = NULL,file_size = NULL,updated_at = strftime('%s','now') WHERE id = ?").run(row.id);
+    total -= Number(row.file_size || 0);
+  }
+  return total + bytes <= cacheLimit();
+}
+
+async function processRow(row) {
+  let root;
+  try { root = fs.realpathSync(config.contentDir); } catch (_) { throw new Error('content directory unavailable'); }
+  const src = realRegularFile(path.join(root, row.source_file), root);
+  if (!src) throw new Error('source media is missing or unsafe');
+  const workDir = fs.mkdtempSync(path.join(root, '.sssp3-fit-'));
+  const tmp = path.join(workDir, 'rendition' + row.output_ext);
+  try {
+    await encode({ row, src, tmp });
+    const rendered = realRegularFile(tmp, fs.realpathSync(workDir));
+    if (!rendered) throw new Error('renderer produced no regular file');
+    const size = fs.statSync(rendered).size;
+    if (size < 1) throw new Error('renderer produced an empty file');
+    if (!makeRoom(size, row.id)) throw new Error('SSSP3 rendition cache quota exceeded');
+    const destination = path.join(root, `ssf_${row.id}${row.output_ext}`);
+    fs.renameSync(rendered, destination);
+    const committed = db.prepare("UPDATE sssp3_fit_renditions SET status = 'ready',filepath = ?,file_size = ?,error = NULL,updated_at = strftime('%s','now') WHERE id = ? AND status = 'running' AND source_file = ?")
+      .run(path.basename(destination), size, row.id, row.source_file);
+    if (!committed.changes) removeFile(path.basename(destination));
+  } finally {
+    try { fs.rmSync(workDir, { recursive: true, force: true }); } catch (_) {}
+  }
+}
+
+async function tick() {
+  const room = MAX_CONCURRENT_RENDITIONS - running.size;
+  if (room <= 0) return;
+  const rows = db.prepare("SELECT * FROM sssp3_fit_renditions WHERE status = 'queued' ORDER BY last_used_at DESC,created_at ASC LIMIT ?").all(room);
+  for (const row of rows) {
+    db.prepare("UPDATE sssp3_fit_renditions SET status = 'running',attempts = attempts + 1,updated_at = strftime('%s','now') WHERE id = ? AND status = 'queued'").run(row.id);
+    const job = processRow(row).catch((error) => {
+      db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',filepath = NULL,file_size = NULL,error = ?,updated_at = strftime('%s','now') WHERE id = ?")
+        .run(String(error && error.message || error).slice(0, 500), row.id);
+    }).finally(() => {
+      running.delete(row.id);
+      jobs.delete(job);
+      if (pushFn) {
+        try { pushFn(require('./devices-playing').devicesPlayingContent(row.content_id)); } catch (_) {}
+      }
+      schedule(0);
+    });
+    running.set(row.id, job);
+    jobs.add(job);
+  }
+}
+
+function schedule(delay) {
+  if (!started || timer) return;
+  timer = setTimeout(() => { timer = null; tick().catch((error) => console.warn(`[sssp3-fit] ${error.message}`)); }, delay);
+  if (timer.unref) timer.unref();
+}
+
+function sweepOrphans() {
+  try { db.prepare('DELETE FROM sssp3_fit_renditions WHERE content_id NOT IN (SELECT id FROM content)').run(); } catch (_) {}
+  let files = [];
+  try { files = fs.readdirSync(config.contentDir).filter((name) => FILE_RE.test(name)); } catch (_) { return 0; }
+  const known = new Set(db.prepare('SELECT filepath FROM sssp3_fit_renditions WHERE filepath IS NOT NULL').all().map((row) => row.filepath));
+  let removed = 0;
+  for (const file of files) if (!known.has(file)) { try { fs.unlinkSync(path.join(config.contentDir, file)); removed++; } catch (_) {} }
+  return removed;
+}
+
+function start({ push = null } = {}) {
+  if (started) return;
+  started = true;
+  pushFn = push;
+  db.prepare("UPDATE sssp3_fit_renditions SET status = CASE WHEN attempts < 2 THEN 'queued' ELSE 'failed' END,error = CASE WHEN attempts < 2 THEN NULL ELSE 'interrupted repeatedly' END WHERE status = 'running'").run();
+  sweepOrphans();
+  schedule(0);
+  const interval = setInterval(() => { sweepOrphans(); schedule(0); }, 6 * 60 * 60 * 1000);
+  if (interval.unref) interval.unref();
+}
+
+function stats() {
+  return { running: running.size, queued: Number(db.prepare("SELECT count(*) AS n FROM sssp3_fit_renditions WHERE status = 'queued'").get().n || 0) };
+}
+
+async function drain() { await Promise.all([...jobs]); }
+
+function resetForTest(options = {}) {
+  if (timer) clearTimeout(timer);
+  timer = null;
+  started = false;
+  running = new Map();
+  jobs = new Set();
+  testEncode = options.encodeFn || null;
+  testCacheBytes = options.cacheBytes == null ? null : options.cacheBytes;
+  pushFn = null;
 }
 
 module.exports = {
-  parseFitName,
-  vf,
-  ensureRendition,
-  tryServe,
-  FIT_RE,
-  RenditionBusyError,
-  MAX_CONCURRENT_RENDITIONS,
+  CAPABILITY, MAX_VARIANTS_PER_CONTENT, MAX_CONCURRENT_RENDITIONS, MAX_PENDING_RENDITIONS, FILE_RE,
+  vf, stampItems, resolveReady, removeFor, sweepOrphans, start, tick, stats,
+  _drain: drain, _resetForTest: resetForTest,
 };

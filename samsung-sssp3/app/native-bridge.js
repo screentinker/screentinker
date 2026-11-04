@@ -26,59 +26,6 @@
     if (ext === 'svg' && item.fill_width > 0 && item.fill_height > 0) ext = 'png';
     return directory + '/' + key(item) + '.' + ext;
   }
-  function evenPx(n) {
-    n = Math.round(Number(n) || 0);
-    if (n < 2) return 0;
-    return n % 2 ? n - 1 : n;
-  }
-  function fitName(filepath, fit, width, height) {
-    var file = String(filepath || '');
-    if (!(width > 0 && height > 0) || (fit !== 'fill' && fit !== 'contain' && fit !== 'cover')) return file;
-    return /\.svg$/i.test(file) ? file.replace(/\.svg$/i, '.svg.' + fit + '-' + width + 'x' + height + '.png') : file.replace(/(\.[A-Za-z0-9]{1,8})$/, '.' + fit + '-' + width + 'x' + height + '$1');
-  }
-  function fillName(filepath, width, height) {
-    return fitName(filepath, 'fill', width, height);
-  }
-  function stampFit(payload) {
-    var SCREEN_W = 1920, SCREEN_H = 1080;
-    var layout = payload && payload.layout, zones, map = {}, i, z, a, fit, items, w, h, isVideo, isImage, zoned;
-    zones = (layout && layout.zones) || [];
-    zoned = zones.length >= 2;
-    for (i = 0; i < zones.length; i++) {
-      z = zones[i];
-      if (z && z.id) map[z.id] = z;
-    }
-    items = payloadItems(payload);
-    for (i = 0; i < items.length; i++) {
-      a = items[i];
-      if (!a || a.widget_id) continue;
-      isVideo = /^video\//.test(a.mime_type || '');
-      isImage = /^image\//.test(a.mime_type || '');
-      if (!isVideo && !isImage) continue;
-      /* The server generates fitted JPEG, PNG, WebP and SVG derivatives. All
-         other image encodings must retain their original URL: requesting a
-         fabricated rendition gives the Samsung downloader a 404. */
-      if (isImage && !/^image\/(jpeg|png|webp|svg\+xml)$/i.test(a.mime_type || '')) continue;
-      /* Fullscreen native LFD video keeps the original encoded file. */
-      if (isVideo && !zoned) continue;
-      z = map[a.zone_id];
-      if (isVideo && !z) continue;
-      fit = a.fit_mode || (z && z.fit_mode) || 'contain';
-      if (fit !== 'fill' && fit !== 'contain' && fit !== 'cover') fit = 'contain';
-      if (z) {
-        w = evenPx(SCREEN_W * Number(z.width_percent) / 100);
-        h = evenPx(SCREEN_H * Number(z.height_percent) / 100);
-      } else {
-        w = SCREEN_W;
-        h = SCREEN_H;
-      }
-      if (!w || !h) continue;
-      a.fill_fit = fit;
-      a.fill_width = w;
-      a.fill_height = h;
-    }
-  }
-  function stampFill(payload) { return stampFit(payload); }
   function exists(name) {
     var f;
     try { f = fs.openCommonFile(name.replace(/^\/mtd_down\/common\//, ''), 'r'); if (f) { fs.closeCommonFile(f); return true; } } catch (ignore) {}
@@ -91,10 +38,8 @@
       return bridge.base + '/api/widgets/' + encodeURIComponent(item.widget_id) + '/render?device=' + encodeURIComponent(cfg.deviceId || '') + '&rev=' + encodeURIComponent(item.widget_rev || 0) + '&compat=sssp1228';
     }
     if (item.remote_url) return item.remote_url;
-    var file = fitName(item.filepath, item.fill_fit, item.fill_width, item.fill_height);
-    var url = bridge.base + '/uploads/content/' + encodeURIComponent(file) + '?rev=' + encodeURIComponent(item.content_rev || 0);
-    if (item.fill_width > 0 && item.fill_height > 0) url += '&fit=' + encodeURIComponent(item.fill_fit || 'fill') + '&w=' + item.fill_width + '&h=' + item.fill_height;
-    return url;
+    if (item.sssp3_rendition_url) return bridge.base + item.sssp3_rendition_url;
+    return bridge.base + '/uploads/content/' + encodeURIComponent(item.filepath) + '?rev=' + encodeURIComponent(item.content_rev || 0);
   }
   function supported(item) {
     var mime = String(item && item.mime_type || '').toLowerCase();
@@ -279,7 +224,8 @@
     return 'file://' + path(item);
   };
   bridge.accept = function (payload, callback) {
-    stampFit(payload);
+    var pendingRenditions = payloadItems(payload).filter(function (item) { return item && item.sssp3_rendition_state && item.sssp3_rendition_state !== 'ready'; });
+    if (pendingRenditions.length) { bridge.error = 'Media rendition is preparing; retaining previous playlist.'; status(bridge.error); reportPlaylist(bridge.error); return; }
     var missing = bridge.missing(payload), i, known = {}, wanted = {}, selfCount = 0;
     for (i = 0; i < missing.length; i++) wanted[key(missing[i])] = true;
     desired = payload; apply = callback;
@@ -734,5 +680,5 @@
     for (i = 0; i < queued.length; i++) sendReport(queued[i].kind, queued[i].message, queued[i].deviceId, true);
   };
   bridge.stopVideo = function () { var player = document.getElementById('NativePlayer'), session = gaplessSession, stage = document.getElementById('playerContainer'); gaplessGeneration++; closeGapless(session, 'teardown'); videoGeneration++; clearTimeout(videoTimer); bridge.activeRect = null; if (videoBackgrounds && stage && stage.style && document.body && document.documentElement) { stage.style.background = videoBackgrounds[0]; document.body.style.background = videoBackgrounds[1]; document.documentElement.style.background = videoBackgrounds[2]; videoBackgrounds = null; } if (!player) return; if (videoActive) { videoActive = false; try { player.Stop(); } catch (ignore2) {} } player.style.visibility = 'hidden'; };
-  bridge._test = { key: key, path: path, source: source, fillName: fillName, fitName: fitName, stampFill: stampFill, stampFit: stampFit, bootEventPath: bootEventPath, pendingReports: function () { return pendingReports.slice(); } };
+  bridge._test = { key: key, path: path, source: source, bootEventPath: bootEventPath, pendingReports: function () { return pendingReports.slice(); } };
 })(window);
