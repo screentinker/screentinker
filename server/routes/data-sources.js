@@ -482,6 +482,10 @@ router.post('/:id/refresh', requireWorkspaceWrite, async (req, res, next) => {
       last_status: synced.last_status,
       last_error: synced.last_error,
       last_fetched_at: synced.last_fetched_at,
+      updated_at: synced.updated_at,
+      // Whether this sync changed the data, and so re-rendered the slides bound to it (#790).
+      changed: synced.changed === true,
+      changed_keys: Array.isArray(synced.changed_keys) ? synced.changed_keys : [],
       data: synced.data,
     });
   } catch (err) {

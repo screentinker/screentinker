@@ -137,7 +137,7 @@ function renderDataSourcesList(container) {
       try {
         const r = await api.refreshDataSource(btn.dataset.id);
         if (r && r.last_status === 'error') showToast(r.last_error || t('common.error'), 'error');
-        else showToast(t('data_sources.synced_ok'), 'success');
+        else showToast(syncResultMessage(r), 'success');
         await loadDataSources();
       } catch (err) {
         showToast(err.message, 'error');
@@ -226,6 +226,7 @@ function renderDataSourceCard(ds) {
       <dl class="ds-meta">
         <div><dt>${esc(t('data_sources.source_label2'))}</dt><dd title="${esc(sourceSummary(ds))}">${esc(sourceSummary(ds))}</dd></div>
         <div><dt>${esc(t('data_sources.last_sync_label2'))}</dt><dd>${esc(relTime(ds.last_fetched_at))}</dd></div>
+        <div><dt>${esc(t('data_sources.last_changed_label'))}</dt><dd title="${esc(t('data_sources.last_changed_hint'))}">${esc(relTime(ds.updated_at))}</dd></div>
       </dl>
       ${ds.last_error ? `<div class="ds-card-error" role="alert">${esc(ds.last_error)}</div>` : ''}
       <button class="ds-vars-toggle" data-act="toggle-variables" data-id="${esc(ds.id)}" aria-expanded="false" aria-controls="vars-drawer-${esc(ds.id)}">
@@ -240,6 +241,19 @@ function renderDataSourceCard(ds) {
         <button class="btn btn-sm btn-danger" data-act="del" data-id="${esc(ds.id)}" ${canWrite() ? '' : 'hidden'}>${esc(t('common.delete'))}</button>
       </div>
     </article>`;
+}
+
+/*
+ * What "Sync now" did. A changed source re-renders every slide bound to it, so "synced" alone hides
+ * the one thing an operator chasing a reloading slide needs: whether this sync changed anything,
+ * and if so which variables. A key that changes on every sync (a timestamp, a request id) is why
+ * a slide reloads with "the same" data (#790).
+ */
+function syncResultMessage(r) {
+  if (!r || r.changed !== true) return t('data_sources.synced_unchanged');
+  const keys = Array.isArray(r.changed_keys) ? r.changed_keys : [];
+  if (!keys.length) return t('data_sources.synced_changed');
+  return t('data_sources.synced_changed_keys', { keys: keys.join(', ') });
 }
 
 /* A glanceable line of the live data on each card — what the screen is showing right now. */
