@@ -1243,9 +1243,13 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
    * `offlinePlan: false` is essential for the nested state payloads. Without
    * it this builder would recursively attach a plan to every future state.
    */
-  if (!opts.forecast && opts.offlinePlan !== false && device?.playlist_source === 'schedule' && !overrideNow && !hookNow
-      && capsLib.supports(device, 'offline.schedule_plan')) {
-    try {
+  if (!opts.forecast && opts.offlinePlan !== false && capsLib.supports(device, 'offline.schedule_plan')) {
+    // An override (emergency, automation or manual preview) is authoritative
+    // now. Explicitly clear an older persisted plan instead of leaving an
+    // offline client free to resurrect it after this payload is received.
+    if (overrideNow || hookNow) {
+      assembled.offline_plan = null;
+    } else try {
       const scheduler = require('../services/scheduler');
       const planBuilder = require('../lib/offline-schedule-plan');
       const row = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);

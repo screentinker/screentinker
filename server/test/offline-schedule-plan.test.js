@@ -96,4 +96,8 @@ test('only the explicit offline-plan capability gates the payload contract', () 
   const source = fs.readFileSync(path.join(__dirname, '../ws/deviceSocket.js'), 'utf8');
   assert.match(source, /capsLib\.supports\(device, 'offline\.schedule_plan'\)/);
   assert.doesNotMatch(source, /capsLib\.supports\(device, 'clock\.tz_table'\)[\s\S]{0,300}offline_schedule/);
+  assert.doesNotMatch(source, /offlinePlan !== false && device\?\.playlist_source === 'schedule'/,
+    'a future plan must be sent before its first schedule becomes active');
+  assert.match(source, /overrideNow \|\| hookNow\) \{\s*assembled\.offline_plan = null;/,
+    'an override explicitly clears a previously persisted plan');
 });
