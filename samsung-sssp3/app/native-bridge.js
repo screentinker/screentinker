@@ -124,6 +124,9 @@
     }
     if (Object.keys(unavailable).length && Object.prototype.hasOwnProperty.call(applied, 'offline_plan')) delete applied.offline_plan;
     reportPlaylist('Applying playlist with ' + applied.assignments.length + ' verified items');
+    /* A failed standby or sibling item is diagnostic information, not a reason
+       to leave a permanent error banner over an independently valid zone. */
+    if (applied.assignments.length) bridge.frameReady();
     desired = null; apply = null;
     /* Commit a plan only after every supported dependency is locally verified.
        A power loss during preparation therefore leaves the prior complete plan
