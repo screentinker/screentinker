@@ -137,7 +137,9 @@
     var fields = String(result).split('?');
     if (fields[0] === '1001' || fields[0] === '1002') return;
     clearTimeout(timer);
-    if (fields[0] !== '1000' || fields[1] !== '1') return fail('download failed: ' + String(result));
+    /* The DB48E completes with 1000?9 as well as 1000?1.  Keep ?0 as a
+     * failure; existence below remains the final file gate. */
+    if (fields[0] !== '1000' || (fields[1] !== '1' && fields[1] !== '9')) return fail('download failed: ' + String(result));
     if (!exists(path(done.item))) return fail('download completed, but the local file was not found: ' + path(done.item));
     index[key(done.item)] = path(done.item); downloadedForUpdate = true; current = null; bridge.persistStorage(); next();
   };

@@ -29,6 +29,13 @@ test('only activates the playlist after the complete local file is present', () 
   e.files[e.downloads[0].destination] = true; e.done('1000?1');
   assert.deepEqual(activated, [payload]); assert.match(e.b.mediaUrl(image, 'remote'), /^file:\/\//);
 });
+test('accepts the DB48E completed-download callback variant after verifying the file', () => {
+  const e = environment(), activated = [], payload = { assignments: [image] };
+  e.b.accept(payload, p => activated.push(p));
+  e.files[e.downloads[0].destination] = true;
+  e.done('1000?9');
+  assert.deepEqual(activated, [payload]);
+});
 test('failure never replaces the last good playlist', () => {
   const e = environment(), activated = [];
   e.b.accept({ assignments: [image] }, p => activated.push(p));
