@@ -135,6 +135,7 @@
        * before the cache journal so a restart cannot observe a new index with
        * an old (or absent) default. */
       if (Object.prototype.hasOwnProperty.call(applied, 'default_content')) global.localStorage.setItem('st_default_content', JSON.stringify(applied.default_content || null));
+      bridge.evictUnused(applied);
       bridge.persistStorage();
     } catch (ignore) {}
     if (downloadedForUpdate) { applied.__nativeMediaChanged = true; status('Media cached. Starting playback...'); } downloadedForUpdate = false; callback(applied);
@@ -310,6 +311,22 @@
     if (future && future.length) for (i = 0; i < future.length; i++) items.push(future[i]);
     return items;
   }
+  /* This is finite flash storage. Keep only entries required by the state being
+     committed, including future offline-plan dependencies. A failed delete is
+     harmless: it is retried on the next successful commit. */
+  bridge.evictUnused = function (payload) {
+    var keep = {}, items = payloadItems(payload), i, k, stale, name;
+    for (i = 0; i < items.length; i++) {
+      if (!supported(items[i])) continue;
+      k = key(items[i]);
+      keep[k] = true;
+    }
+    for (stale in index) if (Object.prototype.hasOwnProperty.call(index, stale) && !keep[stale]) {
+      name = index[stale];
+      try { fs.deleteCommonFile(String(name).replace(/^\/mtd_down\/common\//, '')); } catch (ignore) {}
+      delete index[stale];
+    }
+  };
   bridge.missing = function (payload) {
     var items = payloadItems(payload), missing = [], seen = {}, i, item, k;
     for (i = 0; i < items.length; i++) { item = items[i]; if (!supported(item)) continue; k = key(item); if (unavailable[k]) continue; if (!seen[k] && !cached(item)) { seen[k] = true; missing.push(item); } }

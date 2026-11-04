@@ -3,15 +3,14 @@
 // Resolves the SSSP3/Orsay native ZIP used by URL Launcher. Unlike Tizen's
 // package, the SSSP3 manifest has to match the package's own integer <ver>.
 // A ZIP cannot safely be introspected with Node built-ins, so an externally
-// mounted archive must declare that integer explicitly. The in-tree build has
-// release.json alongside its source and can therefore be served in development.
+// mounted archive must declare that integer explicitly. Production serves only
+// that explicit release artifact; the source tree is never an accidental
+// container fallback.
 const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 
 const WIDGET_NAME = 'ScreenTinkerSSSP3';
-const sourceRoot = path.join(__dirname, '..', '..', 'samsung-sssp3');
-const devZip = path.join(sourceRoot, 'dist', WIDGET_NAME + '.zip');
 
 function positiveInteger(value) {
   const text = String(value === undefined || value === null ? '' : value).trim();
@@ -24,18 +23,12 @@ function packageCandidates() {
   return [
     path.join(config.dataDir, WIDGET_NAME + '.zip'),
     path.join(__dirname, '..', '..', WIDGET_NAME + '.zip'),
-    devZip,
   ];
-}
-
-function devVersion() {
-  try { return positiveInteger(JSON.parse(fs.readFileSync(path.join(sourceRoot, 'release.json'), 'utf8')).version); } catch (_) { return null; }
 }
 
 function packageVersion(candidate) {
   const override = positiveInteger(process.env.SSSP3_WGT_VER);
-  if (override) return override;
-  return candidate === devZip ? devVersion() : null;
+  return override || null;
 }
 
 let cache = { path: null, exists: false, size: 0, mtime: 0, version: null, reason: 'missing' };
@@ -67,4 +60,4 @@ function sssp3ConfigXml(pkg = cache) {
   if (!pkg.exists) throw new Error('SSSP3 package is not ready');
   return '<?xml version="1.0" encoding="UTF-8"?>\n<widget><ver>' + pkg.version + '</ver><size>' + pkg.size + '</size><widgetname>' + WIDGET_NAME + '</widgetname></widget>\n';
 }
-module.exports = { WIDGET_NAME, positiveInteger, packageCandidates, packageVersion, devVersion, refresh, get, start, sssp3ConfigXml };
+module.exports = { WIDGET_NAME, positiveInteger, packageCandidates, packageVersion, refresh, get, start, sssp3ConfigXml };

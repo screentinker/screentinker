@@ -78,10 +78,10 @@ COPY scripts/ /app/scripts/
 # while working perfectly from a dev checkout — and a missing player asset fails silently, because
 # the SPA fallback answers 200 with HTML where JavaScript was expected.
 COPY brightsign/ /app/brightsign/
-# Portable legacy Samsung SSSP3 source: package-cache resolves this repo-root
-# directory when an operator builds and serves the native ZIP from the image.
-# The ZIP itself remains a generated/mounted release artifact.
-COPY samsung-sssp3/ /app/samsung-sssp3/
+# The SSSP3 ZIP is an operator-built, versioned release artifact mounted under
+# /data.  Do not copy its source into this image: this Dockerfile does not run
+# the SSSP3 build, so a source fallback would advertise a package that cannot
+# exist in a fresh container.
 # Bundled plugins (countdown sample, etc.). Loaded only when PLUGINS_ENABLED=true;
 # operator-installed copies live on the /data volume at $DATA_DIR/plugins.
 COPY plugins/ /app/plugins/

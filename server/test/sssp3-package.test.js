@@ -16,20 +16,17 @@ test('only positive safe integer versions are accepted', () => {
   for (const value of ['', '0', '-1', '1.2.3', '12x', Number.MAX_SAFE_INTEGER + 1]) assert.equal(sssp3Cache.positiveInteger(value), null);
 });
 
-test('an external ZIP needs an explicit matching version while the local build uses release.json', () => {
-  const [operatorZip, repoZip, devZip] = sssp3Cache.packageCandidates();
+test('every served ZIP needs an explicit matching version', () => {
+  const [operatorZip, repoZip] = sssp3Cache.packageCandidates();
   assert.match(operatorZip, /ScreenTinkerSSSP3\.zip$/);
-  assert.match(devZip, /[\\/]samsung-sssp3[\\/]dist[\\/]ScreenTinkerSSSP3\.zip$/);
-  assert.notEqual(repoZip, devZip);
   const old = process.env.SSSP3_WGT_VER;
   try {
     delete process.env.SSSP3_WGT_VER;
     assert.equal(sssp3Cache.packageVersion(operatorZip), null);
     assert.equal(sssp3Cache.packageVersion(repoZip), null);
-    assert.equal(sssp3Cache.packageVersion(devZip), sssp3Cache.devVersion());
     process.env.SSSP3_WGT_VER = '1288';
     assert.equal(sssp3Cache.packageVersion(operatorZip), 1288);
-    assert.equal(sssp3Cache.packageVersion(devZip), 1288);
+    assert.equal(sssp3Cache.packageVersion(repoZip), 1288);
   } finally {
     if (old === undefined) delete process.env.SSSP3_WGT_VER;
     else process.env.SSSP3_WGT_VER = old;

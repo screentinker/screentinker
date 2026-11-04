@@ -11,6 +11,7 @@ function environment(xhrBytesMap) {
   FileSystem.prototype.createCommonDir = function () {};
   FileSystem.prototype.openCommonFile = function (name, mode) { opened.push(name); if (name.indexOf('screentinker_media/') === 0) name = '/mtd_down/common/' + name; if (mode !== 'w' && !Object.prototype.hasOwnProperty.call(files, name)) throw Error('missing'); return { name, readAll() { return files[name]; }, writeAll(value) { files[name] = value; } }; };
   FileSystem.prototype.closeCommonFile = function () {};
+  FileSystem.prototype.deleteCommonFile = function (name) { if (name.indexOf('screentinker_media/') === 0) name = '/mtd_down/common/' + name; delete files[name]; };
   const downloader = { cancels: 0, StartDownFile: (url, destination) => downloads.push({ url, destination }), CancelDownload() { this.cancels++; } };
   const player = { style: {}, stops: 0, Stop() { this.stops++; }, InitPlayer(url) { this.url = url; }, SetDisplayArea() {}, SetInitialBuffer() {}, StartPlayback() { this.started = true; } };
   const container = { appendChild(el) { el.parentNode = container; }, removeChild(el) { el.parentNode = null; } };
@@ -114,6 +115,19 @@ test('a downloader timeout advances even when CancelDownload never calls back', 
 test('changed revisions use different cache paths', () => {
   const e = environment();
   assert.notEqual(e.b._test.path(image), e.b._test.path({ ...image, content_rev: 2 }));
+});
+test('a successful state commit evicts media no longer referenced by its cache plan', () => {
+  const e = environment({
+    'http://example.test/uploads/content/a.png': 'A',
+    'http://example.test/uploads/content/b.png': 'B'
+  });
+  const first = { ...image, file_size: 1 };
+  const second = { content_id: 'two', filepath: 'b.png', mime_type: 'image/png', content_rev: 1, file_size: 1 };
+  e.b.accept({ assignments: [first] }, () => {});
+  assert.ok(e.files[e.b._test.path(first)]);
+  e.b.accept({ assignments: [second] }, () => {});
+  assert.equal(e.files[e.b._test.path(first)], undefined, 'unreferenced bytes do not accumulate forever');
+  assert.ok(e.files[e.b._test.path(second)]);
 });
 function pipLayout() {
   return {

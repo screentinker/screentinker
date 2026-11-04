@@ -106,6 +106,16 @@
       'rd_triggers_cache' + sfx,
       'st_install_id' + sfx,        // see above — without this the whole wipe is theatre
       'st_group_sync',              // unsuffixed by design: one clock per player process
+      // SSSP3 keeps a durable offline schedule beside the generic playlist
+      // cache.  Leaving either key would let a newly unpaired panel select a
+      // previous tenant's future interval before it has been enrolled again.
+      'st_schedule_timezone',
+      'st_schedule_timezone_table',
+      'st_active_schedule',
+      'st_offline_plan',
+      'st_default_content',
+      'st_offline_plays',
+      'st_native_gapless',
     ];
   }
 
