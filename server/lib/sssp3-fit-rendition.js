@@ -23,6 +23,7 @@ const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.svg']);
 
 let running = new Map();
 let jobs = new Set();
+let activeWorkDirs = new Set();
 let timer = null;
 let started = false;
 let testEncode = null;
@@ -216,6 +217,7 @@ async function processRow(row) {
   const src = realRegularFile(path.join(root, row.source_file), root);
   if (!src) throw new Error('source media is missing or unsafe');
   const workDir = fs.mkdtempSync(path.join(root, '.sssp3-fit-'));
+  activeWorkDirs.add(workDir);
   const tmp = path.join(workDir, 'rendition' + row.output_ext);
   try {
     await encode({ row, src, tmp });
@@ -231,6 +233,7 @@ async function processRow(row) {
     if (!committed.changes) removeFile(path.basename(destination));
   } finally {
     try { fs.rmSync(workDir, { recursive: true, force: true }); } catch (_) {}
+    activeWorkDirs.delete(workDir);
   }
 }
 
@@ -264,11 +267,25 @@ function schedule(delay) {
 
 function sweepOrphans() {
   try { db.prepare('DELETE FROM sssp3_fit_renditions WHERE content_id NOT IN (SELECT id FROM content)').run(); } catch (_) {}
-  let files = [];
-  try { files = fs.readdirSync(config.contentDir).filter((name) => FILE_RE.test(name)); } catch (_) { return 0; }
+  let entries = [];
+  try { entries = fs.readdirSync(config.contentDir); } catch (_) { return 0; }
+  const files = entries.filter((name) => FILE_RE.test(name));
   const known = new Set(db.prepare('SELECT filepath FROM sssp3_fit_renditions WHERE filepath IS NOT NULL').all().map((row) => row.filepath));
   let removed = 0;
   for (const file of files) if (!known.has(file)) { try { fs.unlinkSync(path.join(config.contentDir, file)); removed++; } catch (_) {} }
+  // A killed server cannot run processRow's finally block. Reclaim only our
+  // private work directories, and never touch one owned by a live encoder.
+  for (const name of entries) {
+    if (!name.startsWith('.sssp3-fit-')) continue;
+    const dir = path.join(config.contentDir, name);
+    if (activeWorkDirs.has(dir)) continue;
+    try {
+      const stat = fs.lstatSync(dir);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
+      fs.rmSync(dir, { recursive: true, force: true });
+      removed++;
+    } catch (_) {}
+  }
   return removed;
 }
 
@@ -295,6 +312,7 @@ function resetForTest(options = {}) {
   started = false;
   running = new Map();
   jobs = new Set();
+  activeWorkDirs = new Set();
   testEncode = options.encodeFn || null;
   testCacheBytes = options.cacheBytes == null ? null : options.cacheBytes;
   pushFn = null;

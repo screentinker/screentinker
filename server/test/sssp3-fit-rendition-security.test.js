@@ -110,6 +110,37 @@ test('public lookup never creates or starts a rendition job', async () => {
   assert.equal(fit.stats().running, 0);
 });
 
+test('startup sweep removes interrupted work without touching unrelated directories', () => {
+  const stale = fs.mkdtempSync(path.join(config.contentDir, '.sssp3-fit-'));
+  fs.writeFileSync(path.join(stale, 'partial.mp4'), 'partial');
+  const unrelated = fs.mkdtempSync(path.join(config.contentDir, '.other-work-'));
+  fs.writeFileSync(path.join(unrelated, 'keep'), 'keep');
+
+  assert.equal(fit.sweepOrphans(), 1);
+  assert.equal(fs.existsSync(stale), false);
+  assert.equal(fs.existsSync(unrelated), true);
+  fs.rmSync(unrelated, { recursive: true, force: true });
+});
+
+test('orphan sweep never removes a live encoder work directory', async () => {
+  const item = content('fit-live-work-' + crypto.randomBytes(3).toString('hex'));
+  fit.stampItems([item], layout, device);
+  let release;
+  let workDir;
+  fit._resetForTest({ encodeFn: ({ tmp }) => new Promise((resolve) => {
+    workDir = path.dirname(tmp);
+    release = () => { fs.writeFileSync(tmp, 'complete'); resolve(); };
+  }) });
+
+  await fit.tick();
+  assert.ok(workDir && fs.existsSync(workDir));
+  assert.equal(fit.sweepOrphans(), 0);
+  assert.equal(fs.existsSync(workDir), true);
+  release();
+  await fit._drain();
+  assert.equal(fs.existsSync(workDir), false);
+});
+
 test('the bounded worker exposes only a complete atomic output', async () => {
   const item = content('fit-worker-' + crypto.randomBytes(3).toString('hex'));
   fit.stampItems([item], layout, device);
