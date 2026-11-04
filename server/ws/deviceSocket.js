@@ -1221,6 +1221,10 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
   // 3.0 TV-safe video: ready copies of tall videos, and for a screen that plays them, queue a missing
   // one now. Never from the forecast preview, which must not spend CPU on a "what if".
   try { require('../lib/video-variants').stampItems(assignments, device, { lazy: !opts.forecast }); } catch (_) { /* keep the payload playable */ }
+  try { require('../lib/sssp3-fit-rendition').stampItems(assignments, layout, device, { lazy: !opts.forecast }); } catch (_) { /* keep the payload playable */ }
+  if (default_content) {
+    try { require('../lib/sssp3-fit-rendition').stampItems([default_content], null, device, { lazy: !opts.forecast }); } catch (_) { /* keep idle content playable */ }
+  }
 
   // Weather and area conditions are decided here, for this screen (lib/local-conditions.js).
   if (trace) trace.before_local = assignments;

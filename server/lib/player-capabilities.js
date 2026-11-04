@@ -79,6 +79,7 @@ const CAPABILITIES = [
    * makes the server spend CPU on those copies: a workspace with no screen declaring it never gets
    * one. In NO baseline — an older player would not know what to do with the copy. */
   'playback.video_variants',
+  'playback.sssp3_fit_renditions',
   /* Zones on a VIDEO WALL: the wall's layout, in percent of the wall's player rect, each zone paced
    * by the shared clock (lib/wall-layout.js). A wall member without it still plays the wall's
    * playlist across the whole wall, so the dashboard names the panels that lack it. In NO baseline. */

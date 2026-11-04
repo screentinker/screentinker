@@ -3468,6 +3468,31 @@ const migrations = [
   // Every path that deletes content takes the copies' rows with it; the files go in the orphan sweep.
   `CREATE TRIGGER IF NOT EXISTS trg_content_video_variants_content_del AFTER DELETE ON content
      BEGIN DELETE FROM content_video_variants WHERE content_id = OLD.id; END`,
+  /* Server-approved intrinsic-size copies for legacy SSSP3 media planes. */
+  `CREATE TABLE IF NOT EXISTS sssp3_fit_renditions (
+     id TEXT PRIMARY KEY,
+     content_id TEXT NOT NULL,
+     workspace_id TEXT NOT NULL,
+     source_file TEXT NOT NULL,
+     source_revision INTEGER NOT NULL DEFAULT 0,
+     fit TEXT NOT NULL CHECK (fit IN ('contain','cover','fill')),
+     width INTEGER NOT NULL,
+     height INTEGER NOT NULL,
+     output_ext TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('queued','running','ready','failed','evicted')),
+     filepath TEXT,
+     file_size INTEGER,
+     error TEXT,
+     attempts INTEGER NOT NULL DEFAULT 0,
+     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     last_used_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     UNIQUE (content_id, source_file, fit, width, height))`,
+  'ALTER TABLE sssp3_fit_renditions ADD COLUMN source_revision INTEGER NOT NULL DEFAULT 0',
+  'CREATE INDEX IF NOT EXISTS idx_sssp3_fit_status ON sssp3_fit_renditions(status, created_at)',
+  'CREATE INDEX IF NOT EXISTS idx_sssp3_fit_content ON sssp3_fit_renditions(content_id)',
+  `CREATE TRIGGER IF NOT EXISTS trg_sssp3_fit_content_del AFTER DELETE ON content
+     BEGIN DELETE FROM sssp3_fit_renditions WHERE content_id = OLD.id; END`,
   `CREATE TABLE IF NOT EXISTS video_variant_usage (
      organization_id TEXT NOT NULL,
      month TEXT NOT NULL,

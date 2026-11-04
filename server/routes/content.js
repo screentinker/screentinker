@@ -920,6 +920,7 @@ function purgeContentRow(content) {
   audioTracks.removeAllForContent(id); // visitor audio sync: per-language narration tracks + their files
   // 3.0 TV-safe copies of a tall video (lib/video-variants.js): named per content id, never shared.
   try { require('../lib/video-variants').removeFor(id); } catch (_) { /* the orphan sweep gets them */ }
+  try { require('../lib/sssp3-fit-rendition').removeFor(id); } catch (_) { /* the orphan sweep gets them */ }
 
   /*
    * ⚠️ And the provenance row goes with it, because nothing else will take it. The table declares
