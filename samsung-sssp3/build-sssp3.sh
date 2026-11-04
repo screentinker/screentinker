@@ -15,6 +15,7 @@ set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 version=$(node -e "const r=require(process.argv[1]); if(!Number.isSafeInteger(r.version)||r.version<1) process.exit(1); process.stdout.write(String(r.version))" "$root/release.json")
 node "$root/prepare.js"
+node "$root/tests/build-config.cjs"
 node "$root/tests/legacy-block-functions.cjs"
 node --test "$root/tests/native-bridge.test.js" "$root/tests/schedule-legacy.test.js" "$root/tests/offline-plan.test.js"
 # Browser smoke tests are optional: they need a local Chromium (set CHROME_PATH).

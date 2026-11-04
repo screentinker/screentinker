@@ -50,6 +50,13 @@ Build locally:
 $ cd samsung-sssp3 && npm install && npm run build
 ```
 
+The portable build leaves the CMS URL unset so the first-run setup screen can
+store it on the panel. An operator producing a site-specific package may set
+`ST_ORSAY_BASE_URL` to an absolute HTTP(S) server URL; its update check then
+uses the same server's stable `/sssp3/` endpoint. `ST_ORSAY_CHANNEL` may
+override that endpoint with an absolute server path, but has no lab-specific
+default.
+
 Only build-time devDependencies in this directory are needed; nothing is
 added to the server's dependencies. Serve the result via the operator mount
 (`/data/ScreenTinkerSSSP3.zip`) or let the dev route fall back to the built
@@ -65,8 +72,8 @@ the player registers the regular capability list (`playback.*`,
 payload (and reconciles the returning schedule on reconnect) to players that
 declared `offline.schedule_plan`. Widgets the panel is asked to render are
 served through the `?compat=sssp1228` legacy path (static, script-free
-snapshots; the legacy Orsay engine cannot run iframes). Media is served in
-fit renditions (`<name>.<fit>-<WxH>.<ext>`) because Orsay paints video and
+snapshots; the legacy Orsay engine cannot run iframes). Media is served through
+opaque, server-approved fit-rendition URLs because Orsay paints video and
 images at encoded pixel size and ignores CSS scaling.
 
 The server contracts are split for independent review: safe renditions are in

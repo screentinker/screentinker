@@ -220,8 +220,16 @@ fs.writeFileSync(path.join(output, 'config.xml'), configXml);
  * player source. When ST_ORSAY_BASE_URL is unset nothing is stamped.
  */
 const orsayBase = (process.env.ST_ORSAY_BASE_URL || '').trim().replace(/\/+$/, '');
-const orsayChannel = (process.env.ST_ORSAY_CHANNEL || '/player/sssp3-native-candidate/').trim();
+const orsayChannel = (process.env.ST_ORSAY_CHANNEL || '/sssp3/').trim();
+if (orsayChannel[0] !== '/' || orsayChannel.includes('\\') || orsayChannel.includes('..')) {
+  throw new Error('ST_ORSAY_CHANNEL must be an absolute server path without traversal');
+}
 if (orsayBase) {
+  let parsedBase;
+  try { parsedBase = new URL(orsayBase); } catch (_) { throw new Error('ST_ORSAY_BASE_URL must be an absolute HTTP(S) URL'); }
+  if (!['http:', 'https:'].includes(parsedBase.protocol)) throw new Error('ST_ORSAY_BASE_URL must use HTTP or HTTPS');
+  const baseLiteral = JSON.stringify(orsayBase);
+  const launcherLiteral = JSON.stringify(orsayBase + orsayChannel);
   /* Matches the shape the 1288 package used: seed serverUrl for a wiped panel,
    * then define __STNative with the absolute base + launcher fallback. */
   const preludeDest = path.join(output, 'native-prelude.js');
@@ -229,13 +237,13 @@ if (orsayBase) {
   try {
     var config = JSON.parse(localStorage.getItem('rd_web_player') || '{}');
     if (!config.serverUrl) {
-      config.serverUrl = '${orsayBase}';
+      config.serverUrl = ${baseLiteral};
       localStorage.setItem('rd_web_player', JSON.stringify(config));
     }
   } catch (ignore) {}
   window.__STNative = {
-    base: '${orsayBase}',
-    launcherUrl: '${orsayBase + orsayChannel}',
+    base: ${baseLiteral},
+    launcherUrl: ${launcherLiteral},
     enabled: true
   };
 })();
