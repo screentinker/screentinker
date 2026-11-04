@@ -17,14 +17,21 @@ function environment(xhrBytesMap) {
   const storage = {};
   const window = { __STNative: { base: 'http://example.test' }, STOfflinePlan: { dependencies(plan) { const out = []; for (const s of (plan && plan.states) || []) { const payload = s && s.payload || {}; for (const item of (payload.assignments || [])) out.push(item); if (payload.default_content) out.push(payload.default_content); } return out; } }, localStorage: { getItem(key) { return Object.prototype.hasOwnProperty.call(storage, key) ? storage[key] : null; }, setItem(key, value) { storage[key] = String(value); } } };
   const body = { appendChild(p) { p.parentNode = body; }, removeChild(p) { p.parentNode = null; } };
-  // XHR stub mirrors the panel's same-origin fetch: bodies only for preset URLs.
-  const ctx = { window, FileSystem, XMLHttpRequest: function () { const r = this; r.open = function (method, url) { r._url = url; }; r.overrideMimeType = function () {}; r.abort = function () {}; r.send = function () { const present = Object.prototype.hasOwnProperty.call(xhrBodies, r._url); r.readyState = 4; r.status = present ? 200 : 404; r.responseText = present ? String(xhrBodies[r._url]) : ''; if (r.onreadystatechange) r.onreadystatechange(); }; }, document: { getElementById: (id) => id === 'NativePlayer' ? player : id === 'NativeDownloader' ? downloader : id === 'playerContainer' ? container : null, createElement: tag => { if (tag !== 'object') return { style: {} }; const p = { style: {}, calls: [], setAttribute() {}, Open() {}, Close() {}, Execute(...args) { this.calls.push(args); return 1; } }; plugins.push(p); return p; }, body }, setTimeout: (fn, ms) => { scheduled.push({ fn, ms }); return scheduled.length; }, clearTimeout: () => {} };
+  // XHR stub mirrors the panel's same-origin fetch: preset bodies (string,
+  // per-attempt array, or result function); absent URLs answer 404/empty.
+  function nextBody(url) {
+    const v = Object.prototype.hasOwnProperty.call(xhrBodies, url) ? xhrBodies[url] : undefined;
+    if (Array.isArray(v)) { const first = v.length ? v.shift() : undefined; return first === undefined ? undefined : String(first); }
+    if (typeof v === 'function') { const out = v(); return out === undefined ? undefined : String(out); }
+    return v === undefined ? undefined : String(v);
+  }
+  const ctx = { window, FileSystem, XMLHttpRequest: function () { const r = this; r.open = function (method, url) { r._url = url; }; r.overrideMimeType = function () {}; r.abort = function () {}; r.send = function () { const body = nextBody(r._url); r.readyState = 4; r.status = body === undefined ? 0 : 200; r.responseText = body === undefined ? '' : body; if (r.onreadystatechange) r.onreadystatechange(); }; }, document: { getElementById: (id) => id === 'NativePlayer' ? player : id === 'NativeDownloader' ? downloader : id === 'playerContainer' ? container : null, createElement: tag => { if (tag !== 'object') return { style: {} }; const p = { style: {}, calls: [], setAttribute() {}, Open() {}, Close() {}, Execute(...args) { this.calls.push(args); return 1; } }; plugins.push(p); return p; }, body }, setTimeout: (fn, ms) => { scheduled.push({ fn, ms }); return scheduled.length; }, clearTimeout: () => {} };
   vm.runInNewContext(code, ctx); window.__STNative.init();
   return { b: window.__STNative, done: window.STNativeDownloadComplete, files, downloads, scheduled, player, opened, plugins, downloader, storage };
 }
 const image = { content_id: 'one', filepath: 'a.png', mime_type: 'image/png', content_rev: 1 };
 test('a small playlist image is cached by the panel itself, verified write, no Samsung downloader round trip', () => {
-  const e = environment({ 'http://example.test/uploads/content/a.png?rev=1': '%PNG%DATA' }), activated = [];
+  const e = environment({ 'http://example.test/uploads/content/a.png': '%PNG%DATA' }), activated = [];
   const item = { ...image, file_size: 9 }, payload = { assignments: [item] };
   e.b.accept(payload, p => activated.push(p));
   assert.equal(e.downloads.length, 0, 'small images bypass the 2012 SEF downloader');
@@ -35,12 +42,22 @@ test('a small playlist image is cached by the panel itself, verified write, no S
 test('a refused direct fetch falls back to the Samsung downloader with unchanged behavior', () => {
   const e = environment(), activated = [], payload = { assignments: [{ ...image, file_size: 9 }] };
   e.b.accept(payload, p => activated.push(p));
-  assert.match(e.downloads[0].url, /uploads\/content\/a\.png\?rev=1$/, 'fallback keeps the downloader contract');
+  let flushes = 0;
+  while (e.downloads.length === 0 && flushes++ < 8) for (const s of e.scheduled.splice(0)) if (s.ms) s.fn();
+  assert.match(e.downloads[0].url, /uploads\/content\/a\.png$/, 'fallback keeps the downloader contract; media URLs carry no query');
   e.files[e.downloads[0].destination] = true; e.done('1000?1');
   assert.deepEqual(activated, [payload]);
 });
+test('an http 0 direct fetch is retried and the retry commits', () => {
+  const e = environment({ 'http://example.test/uploads/content/a.png': [undefined, '%PNG%RETRY'] }), activated = [], payload = { assignments: [{ ...image, file_size: 9 }] };
+  e.b.accept(payload, p => activated.push(p));
+  assert.equal(activated.length, 0, 'the first attempt must not complete the playlist');
+  for (const s of e.scheduled.splice(0)) if (s.ms) s.fn();
+  assert.deepEqual(activated, [payload], 'the second attempt cached the item');
+  assert.equal(e.files[e.b._test.path({ ...image, file_size: 9 })], '%PNG%RETRY');
+});
 test('a DB48E bogus completion is healed by a direct verified write when the source is fetchable', () => {
-  const e = environment({ 'http://example.test/uploads/content/a.png?rev=1': '%PNG%FIX' }), activated = [], payload = { assignments: [image] };
+  const e = environment({ 'http://example.test/uploads/content/a.png': '%PNG%FIX' }), activated = [], payload = { assignments: [image] };
   e.b.accept(payload, p => activated.push(p));
   assert.equal(e.downloads.length, 1);
   e.done('1000?9');
@@ -144,7 +161,7 @@ test('source-only supported image formats never request nonexistent fitted rendi
     const imageItem = { content_id: extension, filepath: 'asset.' + extension, mime_type: mime, content_rev: 1, fit_mode: 'fill' };
     e.b.accept({ assignments: [imageItem], layout: { id: 'tpl-fullscreen', zones: [{ id: 'z-fs-1', x_percent: 0, y_percent: 0, width_percent: 100, height_percent: 100 }] } }, () => {});
     assert.equal(imageItem.fill_width, undefined);
-    assert.match(e.downloads[0].url, new RegExp('asset\\.' + extension + '\\?rev=1$'));
+    assert.match(e.downloads[0].url, new RegExp('asset\\.' + extension + '$'));
     assert.equal(e.downloads[0].url.includes('fit='), false);
   }
 });
@@ -172,7 +189,7 @@ test('fullscreen native video keeps the original encoded file', () => {
   const video = { content_id: 'motion', filepath: 'sssp-motion-test.mp4', mime_type: 'video/mp4', content_rev: 3 };
   e.b.accept({ assignments: [video], layout: { id: 'tpl-fullscreen', zones: [{ id: 'z-fs-1', x_percent: 0, y_percent: 0, width_percent: 100, height_percent: 100 }] } }, () => {});
   assert.equal(video.fill_width, undefined);
-  assert.match(e.downloads[0].url, /sssp-motion-test\.mp4\?rev=3$/);
+  assert.match(e.downloads[0].url, /sssp-motion-test\.mp4$/);
   assert.equal(e.downloads[0].url.includes('fill-1920x1080'), false);
 });
 test('a future scheduled playlist is fully prepared before its plan is committed', () => {

@@ -47,7 +47,11 @@
     }
     if (item.remote_url) return item.remote_url;
     if (item.sssp3_rendition_url) return bridge.base + item.sssp3_rendition_url;
-    return bridge.base + '/uploads/content/' + encodeURIComponent(item.filepath) + '?rev=' + encodeURIComponent(item.content_rev || 0);
+    /* No ?rev= on the media path: the panel's XHR reached this route with a
+     * query once (template assets) and the 2012 engine still reported HTTP 0
+     * for media fetches; a cache-busting parameter is not worth the ambiguity
+     * since the cache path itself is revision-stamped. */
+    return bridge.base + '/uploads/content/' + encodeURIComponent(item.filepath);
   }
   function supported(item) {
     var mime = String(item && item.mime_type || '').toLowerCase();
@@ -134,21 +138,36 @@
   }
   function directFetch(entry) {
     lastDownResult = 'direct';
-    stXhr(source(entry.item), true, function (bytes) {
+    var url = source(entry.item);
+    stXhr(url, true, function (bytes) {
       if (current !== entry) return; /* a newer accept() replaced this job */
+      if (bytes.length > SELF_MEDIA_MAX_BYTES) {
+        reportPlaylist('Direct cache skipped, ' + bytes.length + ' B exceeds cap; using Samsung downloader for ' + url);
+        queueDownload(entry);
+        return;
+      }
       if (!bytes.length || !writeCommonFile(path(entry.item), String(bytes))) {
-        reportPlaylist('Direct cache not possible (' + (!bytes.length ? 'empty response' : 'write verification failed') + '); using Samsung downloader for ' + (entry.item.filename || entry.item.filepath || 'media'));
+        reportPlaylist('Direct cache not possible (' + (!bytes.length ? 'empty response' : 'write verification failed') + '); using Samsung downloader for ' + url);
         queueDownload(entry);
         return;
       }
       index[key(entry.item)] = path(entry.item); downloadedForUpdate = true;
       try { bridge.persistStorage(); } catch (ignore) {}
-      reportPlaylist('Media cached directly (' + String(bytes).length + ' B verified write): ' + (entry.item.filename || entry.item.filepath || 'media'));
+      reportPlaylist('Media cached directly (' + String(bytes).length + ' B verified write): ' + url);
       status('Media cached.');
       current = null; next();
     }, function (why) {
       if (current !== entry) return;
-      reportPlaylist('Direct cache not possible (' + why + '); using Samsung downloader for ' + (entry.item.filename || entry.item.filepath || 'media'));
+      /* The template pipeline is allowed three XHR tries; media fetches get the
+       * same courtesy, and every attempt leaves the URL + cause in the debug
+       * rows so the next hardware leg is a verdict row, not a guess. */
+      entry.directTries = (entry.directTries || 0) + 1;
+      if (entry.directTries < 3) {
+        reportPlaylist('Direct fetch ' + url + ' failed (' + why + '), retry ' + entry.directTries + '/3');
+        setTimeout(function () { if (current === entry) directFetch(entry); }, entry.directTries * 1500);
+        return;
+      }
+      reportPlaylist('Direct fetch gave up after 3 tries (' + why + '); using Samsung downloader for ' + url);
       queueDownload(entry);
     });
   }
@@ -182,17 +201,18 @@
        * own browser engine (template-cache proven) and heal the item locally
        * when the bytes are direct-cache sized. This turns the firmware's lying
        * completion into a working cache instead of another dead boot. */
-      stXhr(source(done.item), true, function (bytes) {
+      var healUrl = source(done.item);
+      stXhr(healUrl, true, function (bytes) {
         if (current !== done) return;
         if (bytes.length && bytes.length <= SELF_MEDIA_MAX_BYTES && writeCommonFile(path(done.item), String(bytes))) {
           index[key(done.item)] = path(done.item); downloadedForUpdate = true; current = null;
           try { bridge.persistStorage(); } catch (ignore) {}
-          reportPlaylist('Media healed by direct cache after Samsung completion without file (' + String(bytes).length + ' B verified write)');
+          reportPlaylist('Media healed by direct cache after Samsung completion without file (' + String(bytes).length + ' B verified write): ' + healUrl);
           return next();
         }
-        fail('download completed, but the local file was not found: ' + path(done.item) + ' (downloader call=' + lastDownResult + ', direct heal refused: ' + (bytes.length > SELF_MEDIA_MAX_BYTES ? bytes.length + ' B exceeds the 4 MB direct-cache cap' : 'verify read-back mismatch') + ')');
+        fail('download completed, but the local file was not found: ' + path(done.item) + ' for ' + healUrl + ' (downloader call=' + lastDownResult + ', direct heal refused: ' + (bytes.length > SELF_MEDIA_MAX_BYTES ? bytes.length + ' B exceeds the 4 MB direct-cache cap' : 'verify read-back mismatch') + ')');
       }, function (why) {
-        fail('download completed, but the local file was not found: ' + path(done.item) + ' (downloader call=' + lastDownResult + ', source probe: ' + why + ')');
+        fail('download completed, but the local file was not found: ' + path(done.item) + ' for ' + healUrl + ' (downloader call=' + lastDownResult + ', source probe: ' + why + ')');
       });
       return;
     }
