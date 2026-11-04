@@ -721,3 +721,129 @@ test('a request never reaches another workspace\'s screens', async () => {
   assert.equal(ap.status, 409); assert.equal(ap.json.problems[0].code, 'gone');
   assert.equal(db.prepare('SELECT COUNT(*) n FROM playlist_items WHERE playlist_id = ? AND content_id = ?').get(PL_OTHER, row.content_id).n, 0);
 });
+
+// ─── #792: a website instead of a file ───────────────────────────────────────────────────────
+
+async function webSubmit(form, url, opts = {}) {
+  const ticket = opts.ticket || await linkTicket(form.code, opts.email);
+  return pub('POST', `/form/${form.code}/submit`, goodBody(form, { url, ...(opts.body || {}) }), { ticket });
+}
+const widgetCount = () => db.prepare("SELECT COUNT(*) n FROM widgets WHERE workspace_id = ? AND widget_type = 'webpage'").get(WS).n;
+
+test('websites: off unless the form turns them on, and the domain list is validated and shown', async () => {
+  const plain = await makeForm();
+  assert.ok(!plain.file_rules.kinds.includes('web'), 'never on by default');
+  const n = widgetCount();
+  const refused = await webSubmit(plain, 'https://events.campus.edu/fair');
+  assert.equal(refused.status, 415); assert.equal(refused.json.code, 'type_not_allowed');
+  assert.equal(widgetCount(), n, 'a refused website leaves nothing behind');
+
+  const bad = await call('POST', '/api/content-requests/forms', 'ed', { title: 'W', targets: [{ label: 'Main lobby', device_id: DEV }], file_rules: { kinds: ['web'], web_domains: 'campus.edu, not a domain' } });
+  assert.equal(bad.status, 400); assert.equal(bad.json.code, 'bad_domain');
+
+  const f = await makeForm('ed', { file_rules: { kinds: ['web'], web_domains: '*.campus.edu, Partner.ORG' } });
+  assert.deepEqual(f.file_rules.kinds, ['web'], 'a website-only form is allowed');
+  assert.deepEqual(f.file_rules.web_domains, ['campus.edu', 'partner.org']);
+  const pf = await pub('GET', `/form/${f.code}`);
+  assert.deepEqual(pf.json.form ? pf.json.form.file_rules.web_domains : pf.json.file_rules.web_domains, ['campus.edu', 'partner.org']);
+});
+
+test('websites: only public http(s) addresses, no credentials, and only on the listed domains', async () => {
+  const f = await makeForm('ed', { file_rules: { kinds: ['image', 'web'], max_mb: 5, web_domains: ['campus.edu'] } });
+  const n = widgetCount();
+  const cases = [
+    ['javascript:alert(1)', 'bad_url'], ['ftp://campus.edu/x', 'bad_url'], ['data:text/html,hi', 'bad_url'], ['not a url', 'bad_url'],
+    ['https://user:pw@campus.edu/', 'bad_url'], ['https://campus.edu/' + 'a'.repeat(2100), 'bad_url'],
+    ['http://localhost/', 'url_not_allowed'], ['http://10.0.0.5/', 'url_not_allowed'], ['http://169.254.169.254/latest', 'url_not_allowed'],
+    ['http://printer.local/', 'url_not_allowed'], ['http://intranet/', 'url_not_allowed'],
+    ['https://evilcampus.edu/', 'url_domain_not_allowed'], ['https://campus.edu.evil.com/', 'url_domain_not_allowed'],
+  ];
+  for (const [url, code] of cases) {
+    cr._resetLimits();
+    const r = await webSubmit(f, url, { email: 'urls@campus.edu' });
+    assert.equal(r.status, 400, `${url}: ${JSON.stringify(r.json)}`);
+    assert.equal(r.json.code, code, url);
+  }
+  const both = await webSubmit(f, 'https://campus.edu/', { body: { upload_id: 'x' } });
+  assert.equal(both.json.code, 'file_and_url');
+  assert.equal(widgetCount(), n, 'nothing refused created a widget');
+  const domainMsg = await webSubmit(f, 'https://elsewhere.com/');
+  assert.deepEqual(domainMsg.json.domains, ['campus.edu'], 'the refusal names the allowed domains');
+  cr._resetLimits();
+  const ok = await webSubmit(f, 'https://events.campus.edu/fair?x=1');
+  assert.equal(ok.status, 201, JSON.stringify(ok.json));
+});
+
+test('websites, approval off: a webpage widget waits for Approve, then plays on its screens for its dates', async () => {
+  mailOn();
+  const f = await makeForm('ed', { file_rules: { kinds: ['image', 'web'], max_mb: 5 }, item_duration_sec: 25 });
+  const r = await webSubmit(f, 'https://events.campus.edu/open-day', { body: { targets: [f.targets[0].id, f.targets[1].id] } });
+  assert.equal(r.status, 201, JSON.stringify(r.json));
+  const row = db.prepare('SELECT * FROM content_requests WHERE ref = ?').get(r.json.ref);
+  assert.equal(row.content_id, null);
+  const w = db.prepare('SELECT * FROM widgets WHERE id = ?').get(row.widget_id);
+  assert.equal(w.widget_type, 'webpage'); assert.equal(w.workspace_id, WS); assert.equal(w.name, 'Blood drive');
+  assert.equal(JSON.parse(w.config).url, 'https://events.campus.edu/open-day');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM playlist_items WHERE widget_id = ?').get(w.id).n, 0, 'not on any screen yet');
+
+  const list = await call('GET', '/api/content-requests/requests?status=pending', 'ed');
+  const li = list.json.find((x) => x.id === row.id);
+  assert.equal(li.kind, 'web'); assert.equal(li.url, 'https://events.campus.edu/open-day');
+  const detail = await call('GET', `/api/content-requests/requests/${row.id}`, 'ed');
+  assert.equal(detail.json.kind, 'web'); assert.equal(detail.json.website.url, 'https://events.campus.edu/open-day');
+  const q = await call('GET', '/api/approvals/queue?status=open', 'ed');
+  const qs = q.json.find((s) => s.request_id === row.id);
+  assert.equal(qs.resource_type, 'widget'); assert.equal(qs.resource_id, w.id);
+  assert.match(qs.note, /website https:\/\/events\.campus\.edu\/open-day/);
+
+  const ap = await call('POST', `/api/content-requests/requests/${row.id}/approve`, 'ed', { version: detail.json.submission.version });
+  assert.equal(ap.status, 200, JSON.stringify(ap.json));
+  assert.equal(ap.json.all_published, true);
+  for (const pl of [PL, PL_CAF]) {
+    const item = db.prepare('SELECT * FROM playlist_items WHERE playlist_id = ? AND widget_id = ?').get(pl, w.id);
+    assert.ok(item, `added to ${pl}`);
+    assert.equal(item.content_id, null); assert.equal(item.duration_sec, 25, "the form's display duration");
+    const sch = db.prepare('SELECT * FROM playlist_item_schedules WHERE playlist_item_id = ?').get(item.id);
+    assert.equal(sch.start_date, row.start_date); assert.equal(sch.end_date, row.end_date);
+    const p = db.prepare('SELECT status, published_snapshot FROM playlists WHERE id = ?').get(pl);
+    assert.equal(p.status, 'published');
+    assert.ok(p.published_snapshot.includes(w.id), 'the published snapshot carries the widget');
+  }
+  assert.equal(db.prepare('SELECT status FROM submissions WHERE id = ?').get(row.submission_id).status, 'published');
+  assert.ok(mails.some((m) => m.to === 'pat@campus.edu' && /^Approved/.test(m.subject)));
+  assert.equal((await pub('POST', '/status', { token: r.json.status_token })).json.state, 'live');
+});
+
+test('websites: a declined or withdrawn request deletes its widget', async () => {
+  const f = await makeForm('ed', { file_rules: { kinds: ['web'] } });
+  const a = await webSubmit(f, 'https://campus.edu/a', { email: 'a@x.org' });
+  const ra = db.prepare('SELECT * FROM content_requests WHERE ref = ?').get(a.json.ref);
+  const rj = await call('POST', `/api/content-requests/requests/${ra.id}/reject`, 'ed', { reason: 'Not for the lobby.' });
+  assert.equal(rj.status, 200, JSON.stringify(rj.json));
+  assert.equal(db.prepare('SELECT 1 FROM widgets WHERE id = ?').get(ra.widget_id), undefined);
+  // The queue still lists the decided submission without its widget, and does not break on it.
+  assert.equal((await call('GET', '/api/approvals/queue?status=all', 'ed')).status, 200);
+
+  const b = await webSubmit(f, 'https://campus.edu/b', { email: 'b@x.org' });
+  const rb = db.prepare('SELECT * FROM content_requests WHERE ref = ?').get(b.json.ref);
+  const c = await pub('POST', '/status/cancel', { token: b.json.status_token });
+  assert.equal(c.status, 200);
+  assert.equal(db.prepare('SELECT 1 FROM widgets WHERE id = ?').get(rb.widget_id), undefined);
+});
+
+test('websites, approval on: only a reviewer decides, and the playlist release passes the gate', async () => {
+  await call('PUT', '/api/approvals/settings', 'a3', { reviewers: [U.rev], require_approval: true }, WS3);
+  const fr = await call('POST', '/api/content-requests/forms', 'ed3', { title: 'Reviewed web', targets: [{ label: 'Hall', playlist_id: PL3 }], file_rules: { kinds: ['web'] } }, WS3);
+  assert.equal(fr.status, 201, JSON.stringify(fr.json));
+  const f = cr.getForm(fr.json.id, WS3);
+  const r = await webSubmit(f, 'https://news.example.org/today', { email: 'aw@x.org' });
+  assert.equal(r.status, 201, JSON.stringify(r.json));
+  const row = db.prepare('SELECT * FROM content_requests WHERE ref = ?').get(r.json.ref);
+  assert.equal((await call('POST', `/api/content-requests/requests/${row.id}/approve`, 'ed3', {}, WS3)).status, 403);
+  const ok = await call('POST', `/api/content-requests/requests/${row.id}/approve`, 'rev', {}, WS3);
+  assert.equal(ok.status, 200, JSON.stringify(ok.json));
+  assert.equal(ok.json.all_published, true);
+  assert.ok(db.prepare('SELECT published_snapshot FROM playlists WHERE id = ?').get(PL3).published_snapshot.includes(row.widget_id));
+  assert.equal(db.prepare("SELECT status FROM submissions WHERE resource_type = 'widget' AND resource_id = ?").get(row.widget_id).status, 'published');
+  await call('PUT', '/api/approvals/settings', 'a3', { require_approval: false }, WS3);
+});

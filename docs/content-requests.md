@@ -21,10 +21,11 @@ A form has:
 | Who can use the link | **Anyone with the link** (the link is the key; name and email are taken as given), **Email in allowed domains** (the requester confirms a six-digit code sent to an address in one of your domains; needs outgoing email), or **Single sign-on** (the requester signs in with your organization's identity provider; needs org SSO with a verified domain). Options the server cannot support are shown greyed out with the reason. |
 | Allowed email domains | Required for email mode. For SSO it optionally narrows who may use the form. Exact match: `sub.campus.edu` is not `campus.edu` unless you list it. |
 | Extra questions | Audience and notes, each hidden, optional or required. |
-| File rules | Images and/or videos; largest file (MB, capped by the server's `MAX_FILE_SIZE`); minimum width and height; shape (16:9, 9:16, 4:3, 3:4, 1:1, 21:9, or any; 2% tolerance); longest video. |
+| File rules | Images, videos and/or **website links** (websites are off unless you tick them); largest file (MB, capped by the server's `MAX_FILE_SIZE`); minimum width and height; shape (16:9, 9:16, 4:3, 3:4, 1:1, 21:9, or any; 2% tolerance); longest video. |
 | Days of notice needed | The earliest start date is today plus this many days (UTC calendar days). |
 | Longest run | The longest start-to-end window a request may ask for. |
-| Seconds an image shows | The dwell time of the item that is added. Videos play for their own length. |
+| Website domains allowed | Optional. With websites on, limits them to these domains and their subdomains: `campus.edu` allows `events.campus.edu`, never `evilcampus.edu` or `campus.edu.evil.com`. Empty means any public website. |
+| Seconds an image shows | The dwell time of the item that is added (images and websites). Videos play for their own length. |
 | Requests per day | How many requests this form accepts in any 24 hours. |
 | Folder | Where the uploaded files are stored in the library. |
 
@@ -55,7 +56,11 @@ If a playlist changes between the check and the publish and one target fails, th
 
 ### When it ends
 
-Each added item carries a schedule block from the start date to the end date, applied by the screen in its own local time. The file also gets a library expiry 38 hours after midnight UTC at the end of its last day, so it is switched off everywhere after the last local day has ended, and the existing expiry sweep republishes the playlists without it. Declined and withdrawn requests have their file switched off immediately.
+Each added item carries a schedule block from the start date to the end date, applied by the screen in its own local time. A website stops when its schedule block ends; its widget stays in the widgets list until someone deletes it. The file also gets a library expiry 38 hours after midnight UTC at the end of its last day, so it is switched off everywhere after the last local day has ended, and the existing expiry sweep republishes the playlists without it. Declined and withdrawn requests have their file switched off immediately; a declined or withdrawn website has its widget deleted (unless someone has since added it to a playlist by hand).
+
+### Websites
+
+A form with **Website links** ticked lets the requester send a web address instead of a file. It becomes a **webpage widget** in the workspace, named after the request, and goes into the same review queue as a file. The inbox shows the host and full address with an **Open website in a new tab** button; the page is not embedded in the dashboard. Approving adds the widget to the targets with the same dated schedule block a file gets, and screens show it live, in the same sandboxed frame as any webpage widget, so the page can change after approval. Check it before approving, and use the domain list when you only want pages from sites you trust.
 
 ## For the people sending a request
 
@@ -65,7 +70,7 @@ Open the link you were given. Depending on the form you:
 - enter your name and an address in the listed domains, then the six-digit code emailed to you, or
 - sign in with your organization account. No ScreenTinker account is created.
 
-Then say what it is, tick where it should show, pick the first and last day, answer any extra questions, choose the file and press **Send request**. Large videos upload in small pieces; if the connection drops the upload carries on from where it stopped, and if you reload the page and pick the same file again it resumes.
+Then say what it is, tick where it should show, pick the first and last day, answer any extra questions, choose the file (or, on a form that takes websites, pick **A website link** and paste the address) and press **Send request**. Large videos upload in small pieces; if the connection drops the upload carries on from where it stopped, and if you reload the page and pick the same file again it resumes.
 
 You get a **reference number** and a **status link**. Keep the link: it shows whether the request is waiting, approved, on the screens, finished or declined (with the reason), and while it is still waiting it lets you withdraw it. If your email was verified you also get an email when it arrives and when it is decided; on an open-link form you get the decision email only.
 
@@ -117,6 +122,7 @@ What carries over is the agency's security model: confinement is one lookup agai
 | Flooding a form | Per form per 24 h (the form's quota, counting requests in flight), per email address per form per 24 h (5), per IP per form per 24 h (10), checked before any bytes are accepted and again at submit. At most 2 open uploads per requester and 10 per form. |
 | Spraying email | Codes: 3 per address per form per hour, 60 per form per hour, 5 wrong answers kill a code, 15-minute expiry, spent codes keep counting. Receipts go only to verified addresses; open-link forms mail only decisions a person made. |
 | Bad files | Declared size capped by the form and by `MAX_FILE_SIZE`, enforced on every chunk; content sniffed at 4 KB and again at submit; allow-list of image/video types (no SVG, no HTML bundles, no audio, no HEIC); dimensions, shape and video length measured before ingest, failing closed when a rule cannot be checked (for example no ffprobe); storage allowance checked at upload and at submit. |
+| Hostile website links | Websites are off per form until an admin ticks them, and can be limited to listed domains (suffix match on a dot boundary). Only `http:`/`https:`, at most 2048 characters, no user name or password in the address, and the SSRF gate every server-reachable remote URL passes (`lib/remote-url.validateRemoteUrl`: no localhost, RFC 1918, link-local, `.local` or `.internal`); single-label hosts are refused. The same per-form, per-address and per-IP quotas apply. A refused address creates nothing. The reviewer opens the page in a new tab with `noopener noreferrer`; it is never framed in the dashboard. |
 | HTML / script injection | Requester and form text fields refuse markup (`<tag`, entities) instead of cleaning it; everything is rendered with `textContent` or `esc()`; the workspace's custom CSS is not applied to the public page; the logo must be an `https:` or same-origin path. |
 | Domain restriction bypass | A strict single-address pattern (one `@`, ASCII hostname) and an exact domain match: `a@campus.edu@evil.test`, `a@campus.edu.evil.test`, `a@sub.campus.edu`, look-alike Unicode and quoted local parts are refused. A ticket earned under a weaker mode is rejected once the form changes mode. |
 | Picking a target outside the allowed set | The requester can only name target ids the form handed out; anything else is a 400, never ignored. Approval re-checks that each playlist is still in the workspace. |
@@ -142,7 +148,7 @@ Public side, no account (`/api/public/requests`):
 - `POST /form/:code/verify` `{ name, email }`, `POST /form/:code/verify/confirm` `{ email, code }` (email mode)
 - `GET /form/:code/sso` (SSO mode; redirects to the identity provider and back to `/r/<code>#ticket=…`)
 - `POST /form/:code/uploads` `{ filename, size }`, `GET|PATCH|DELETE /form/:code/uploads/:id` (resumable; `Upload-Offset` header, raw bytes)
-- `POST /form/:code/submit` `{ upload_id, title, targets: [id], start_date, end_date, audience?, notes? }`
+- `POST /form/:code/submit` `{ upload_id, title, targets: [id], start_date, end_date, audience?, notes? }`, or with `url` in place of `upload_id` on a form whose `file_rules.kinds` includes `web`. Website refusals: `type_not_allowed` (415, the form takes no websites), `bad_url`, `url_not_allowed`, `url_domain_not_allowed` (with `domains`), `file_and_url`.
 - `POST /status` `{ token }`, `POST /status/cancel` `{ token }`
 
 Upload, submit and the upload-status calls carry the ticket in an `X-Request-Ticket` header. Pages: `/r/<code>` and `/r/status#<token>`.

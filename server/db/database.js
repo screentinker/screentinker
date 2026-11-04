@@ -5293,6 +5293,13 @@ migrationStep('#720 device Wi-Fi networks', () => {
 });
 
 /*
+ * #792: a content request can carry a WEBSITE instead of a file. It becomes a webpage widget (the
+ * thing every player already renders for a URL), so the request points at a widget instead of a
+ * content row. Exactly one of content_id / widget_id is set on a request.
+ */
+try { db.prepare('ALTER TABLE content_requests ADD COLUMN widget_id TEXT').run(); console.log('[migrate] content_requests.widget_id added'); } catch (_) { /* present */ }
+
+/*
  * Corporate (head office) playlists: every table and column of the feature, applied here because
  * organizations only exists once the multi-tenancy phase above has run. Idempotent; see
  * lib/corporate/schema-sql.js.

@@ -87,6 +87,8 @@ function explain(e) {
     too_large: ['creq.pub.rule_size', { mb: d.max_mb }], lead_time: ['creq.pub.err_lead', d], window_too_long: ['creq.pub.err_window', d],
     unreadable: ['creq.pub.err_unreadable'], target_not_allowed: ['creq.pub.err_targets'], form_paused: ['creq.pub.paused'], form_closed: ['creq.pub.closed'],
     storage_full: ['creq.pub.err_storage'], not_found: ['creq.pub.not_found'],
+    bad_url: ['creq.pub.err_url'], url_not_allowed: ['creq.pub.err_url_not_allowed'],
+    url_domain_not_allowed: ['creq.pub.url_domains', { domains: (d.domains || []).join(', ') }],
   }[e.code];
   return known ? t(known[0], known[1]) : (e.message || t('creq.pub.err_generic'));
 }
@@ -219,7 +221,7 @@ function renderGate(ssoError) {
 function rulesText() {
   const r = form.file_rules || {};
   const parts = [];
-  const kinds = (r.kinds || []).map((k) => t('creq.kind.' + k)).join(t('creq.pub.or'));
+  const kinds = (r.kinds || []).filter((k) => k !== 'web').map((k) => t('creq.kind.' + k)).join(t('creq.pub.or'));
   if (kinds) parts.push(kinds);
   if (r.max_mb) parts.push(t('creq.pub.rule_size', { mb: r.max_mb }));
   if (r.min_width && r.min_height) parts.push(t('creq.pub.rule_min', { w: r.min_width, h: r.min_height }));
@@ -233,13 +235,19 @@ function rulesText() {
 function renderRequest(who) {
   const f = form.fields || {};
   const opt = (mode) => (mode === 'required' ? '' : ` <span class="hint">(${esc(t('creq.pub.optional'))})</span>`);
-  const accept = (form.file_rules.kinds || []).map((k) => (k === 'image' ? 'image/jpeg,image/png,image/gif,image/webp,image/avif,image/bmp' : 'video/mp4,video/webm,video/quicktime')).join(',');
+  const kinds = form.file_rules.kinds || [];
+  const fileKinds = kinds.filter((k) => k !== 'web');
+  // #792: a form may take a website as well as (or instead of) a file. With both, the requester picks.
+  const takesWeb = kinds.includes('web');
+  const takesFile = fileKinds.length > 0;
+  const webDomains = form.file_rules.web_domains || [];
+  const accept = fileKinds.map((k) => (k === 'image' ? 'image/jpeg,image/png,image/gif,image/webp,image/avif,image/bmp' : 'video/mp4,video/webm,video/quicktime')).join(',');
   const c = card(`
     <h2>${esc(t('creq.pub.request_title'))}</h2>
     <p class="hint">${esc(t('creq.pub.signed_as', { name: who.name || who.email, email: who.email }))} <a href="#" data-switch>${esc(t('creq.pub.not_you'))}</a></p>
     <label for="rqTitle">${esc(t('creq.pub.what'))}</label><input id="rqTitle" type="text" maxlength="120">
     <label>${esc(t('creq.pub.where_q'))}</label>
-    <div class="choices">${form.targets.map((tg) => `<label class="choice"><input type="checkbox" value="${esc(tg.id)}" ${form.targets.length === 1 ? 'checked' : ''}> ${esc(tg.label)}</label>`).join('')}</div>
+    <div class="choices" data-targets>${form.targets.map((tg) => `<label class="choice"><input type="checkbox" value="${esc(tg.id)}" ${form.targets.length === 1 ? 'checked' : ''}> ${esc(tg.label)}</label>`).join('')}</div>
     <div class="row">
       <div><label for="rqStart">${esc(t('creq.pub.start'))}</label><input id="rqStart" type="date" min="${esc(form.earliest_start)}" value="${esc(form.earliest_start)}"></div>
       <div><label for="rqEnd">${esc(t('creq.pub.end'))}</label><input id="rqEnd" type="date" min="${esc(form.earliest_start)}"></div>
@@ -247,23 +255,50 @@ function renderRequest(who) {
     ${form.lead_days ? `<p class="hint">${esc(t('creq.pub.lead', { n: form.lead_days, date: form.earliest_start }))}</p>` : ''}
     ${f.audience !== 'off' ? `<label for="rqAudience">${esc(t('creq.pub.audience'))}${opt(f.audience)}</label><input id="rqAudience" type="text" maxlength="300">` : ''}
     ${f.notes !== 'off' ? `<label for="rqNotes">${esc(t('creq.pub.notes'))}${opt(f.notes)}</label><textarea id="rqNotes" maxlength="2000"></textarea>` : ''}
-    <label for="rqFile">${esc(t('creq.pub.file'))}<div class="hint">${esc(rulesText())}</div></label>
-    <input id="rqFile" type="file" accept="${esc(accept)}">
+    ${takesWeb && takesFile ? `<label>${esc(t('creq.pub.send_what'))}</label>
+    <div class="choices"><label class="choice"><input type="radio" name="rqKind" value="file" checked> ${esc(t('creq.pub.send_file'))}</label><label class="choice"><input type="radio" name="rqKind" value="web"> ${esc(t('creq.pub.send_web'))}</label></div>` : ''}
+    ${takesFile ? `<div data-part="file"><label for="rqFile">${esc(t('creq.pub.file'))}<div class="hint">${esc(rulesText())}</div></label>
+    <input id="rqFile" type="file" accept="${esc(accept)}"></div>` : ''}
+    ${takesWeb ? `<div data-part="web" ${takesFile ? 'hidden' : ''}><label for="rqUrl">${esc(t('creq.pub.url'))}<div class="hint">${esc(webDomains.length ? t('creq.pub.url_domains', { domains: webDomains.join(', ') }) : t('creq.pub.url_hint'))}</div></label>
+    <input id="rqUrl" type="url" inputmode="url" maxlength="2048" placeholder="https://"></div>` : ''}
     <div class="bar" hidden><div></div></div>
     <button type="button" data-submit>${esc(t('creq.pub.submit'))}</button>`);
   show(header(), c);
   c.querySelector('[data-switch]').addEventListener('click', (e) => { e.preventDefault(); store.del(ticketKey()); renderGate(); });
   const btn = c.querySelector('[data-submit]');
   const bar = c.querySelector('.bar'), fill = bar.firstElementChild;
+  const sendingWeb = () => (takesWeb && takesFile ? (c.querySelector('input[name="rqKind"]:checked') || {}).value === 'web' : takesWeb);
+  c.querySelectorAll('input[name="rqKind"]').forEach((r) => r.addEventListener('change', () => {
+    c.querySelector('[data-part="file"]').hidden = sendingWeb();
+    c.querySelector('[data-part="web"]').hidden = !sendingWeb();
+  }));
   btn.addEventListener('click', async () => {
     message(c, '');
     const val = (id) => { const el = c.querySelector(id); return el ? el.value.trim() : ''; };
-    const file = c.querySelector('#rqFile').files[0];
-    const targets = [...c.querySelectorAll('.choices input:checked')].map((i) => i.value);
+    const web = sendingWeb();
+    const fileEl = c.querySelector('#rqFile');
+    const file = !web && fileEl ? fileEl.files[0] : null;
+    const targets = [...c.querySelectorAll('[data-targets] input:checked')].map((i) => i.value);
     const body = { title: val('#rqTitle'), start_date: val('#rqStart'), end_date: val('#rqEnd'), targets, audience: val('#rqAudience'), notes: val('#rqNotes') };
     if (!body.title) { message(c, t('creq.pub.err_title')); return; }
     if (!targets.length) { message(c, t('creq.pub.err_targets_none')); return; }
     if (!body.start_date || !body.end_date) { message(c, t('creq.pub.err_dates')); return; }
+    if (web) {
+      const url = val('#rqUrl');
+      let ok = false;
+      try { ok = /^https?:$/.test(new URL(url).protocol); } catch { ok = false; }
+      if (!ok) { message(c, t('creq.pub.err_url')); return; }
+      btn.disabled = true;
+      btn.textContent = t('creq.pub.sending');
+      try {
+        renderDone(await call('POST', `/form/${encodeURIComponent(code)}/submit`, { body: { ...body, url }, ticket: who.ticket }));
+      } catch (e) {
+        if (e.code === 'ticket_invalid') { store.del(ticketKey()); renderGate(); return; }
+        message(c, explain(e));
+        btn.disabled = false; btn.textContent = t('creq.pub.submit');
+      }
+      return;
+    }
     if (!file) { message(c, t('creq.pub.err_file')); return; }
     if (form.file_rules.max_mb && file.size > form.file_rules.max_mb * 1048576) { message(c, t('creq.pub.rule_size', { mb: form.file_rules.max_mb })); return; }
     btn.disabled = true;
