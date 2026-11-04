@@ -78,6 +78,7 @@ function replacePatternOnce(pattern, replacement, label) {
 }
 replaceOnce('let config = getConfig();', 'let config = getConfig();\nif (!config.serverUrl || config.serverUrl === "null") config.serverUrl = window.__STNative.base;');
 replaceOnce('let socket = null;', 'let socket = null;\nfunction stSetWidgetOffline() { var frames = document.querySelectorAll("iframe[data-st-widget-remote]"); var i, f, target; for (i = 0; i < frames.length; i++) { f = frames[i]; target = f.getAttribute("data-st-widget-local") || f.getAttribute("data-st-widget-remote"); if (target && f.src !== target) f.src = target; } }');
+replaceOnce('let defaultContent = null;', 'let defaultContent = (function () { try { var saved = JSON.parse(localStorage.getItem("st_default_content") || "null"); return saved && typeof saved === "object" ? saved : null; } catch (ignore) { return null; } })();');
 replaceOnce('    app_version: hostPackageVersion() || PLAYER_VERSION,', '    app_version: String(window.__ST_NATIVE_BUILD || hostPackageVersion() || PLAYER_VERSION),');
 replaceOnce('  data.client_version = PLAYER_VERSION;', '  data.client_version = String(window.__ST_NATIVE_BUILD || PLAYER_VERSION);');
 replacePatternOnce(/data\.platform = ON_BRIGHTSIGN \?[^;]+browserPlatform\(\)[^;]*;/g, "data.platform = 'Samsung SSSP3/Orsay';", 'device platform');

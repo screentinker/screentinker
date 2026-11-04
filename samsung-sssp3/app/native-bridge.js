@@ -104,6 +104,11 @@
        and never an interval pointing at a partial cache. */
     try {
       if (Object.prototype.hasOwnProperty.call(payload, 'offline_plan')) global.localStorage.setItem('st_offline_plan', JSON.stringify(payload.offline_plan || null));
+      /* The renderer keeps an assigned playlist ahead of this image, but the
+       * standby choice is still part of the durable offline state.  Save it
+       * before the cache journal so a restart cannot observe a new index with
+       * an old (or absent) default. */
+      if (Object.prototype.hasOwnProperty.call(payload, 'default_content')) global.localStorage.setItem('st_default_content', JSON.stringify(payload.default_content || null));
       bridge.persistStorage();
     } catch (ignore) {}
     if (downloadedForUpdate) { payload.__nativeMediaChanged = true; status('Media cached. Starting playback...'); } downloadedForUpdate = false; callback(payload);
@@ -175,7 +180,7 @@
     downloader.OnComplete = 'STNativeDownloadComplete';
   };
   bridge.persistStorage = function () {
-    var keys = ['rd_web_player', 'rd_playlist_cache', 'rd_layout_cache', 'st_group_sync', 'st_install_id', 'st_schedule_timezone', 'st_schedule_timezone_table', 'st_clock_offset', 'st_active_schedule', 'st_offline_plan', 'st_native_gapless'], saved = {}, i;
+    var keys = ['rd_web_player', 'rd_playlist_cache', 'rd_layout_cache', 'st_group_sync', 'st_install_id', 'st_schedule_timezone', 'st_schedule_timezone_table', 'st_clock_offset', 'st_active_schedule', 'st_offline_plan', 'st_default_content', 'st_native_gapless'], saved = {}, i;
     try { for (i = 0; i < keys.length; i++) saved[keys[i]] = global.localStorage.getItem(keys[i]); saved.__cacheIndex = index; return bridge.writeState(saved); } catch (ignore) { return false; }
   };
   bridge.restoreStorage = function () {

@@ -168,6 +168,23 @@ test('current and future standby images are prepared with their offline states',
   assert.match(e.b.mediaUrl(futureStandby, 'remote'), /^file:\/\//);
 });
 
+test('a new default is journaled with its cache even while an assigned playlist remains active', () => {
+  const e = environment(), applied = [];
+  const assigned = { content_id: 'assigned', filepath: 'assigned.jpg', mime_type: 'image/jpeg', content_rev: 1 };
+  const firstDefault = { content_id: 'default-a', filepath: 'default-a.jpg', mime_type: 'image/jpeg', content_rev: 1 };
+  const nextDefault = { content_id: 'default-b', filepath: 'default-b.jpg', mime_type: 'image/jpeg', content_rev: 2 };
+  e.b.accept({ assignments: [assigned], default_content: firstDefault }, p => applied.push(p));
+  for (let i = 0; i < 2; i++) { e.files[e.downloads[i].destination] = true; e.done('1000?1'); }
+  e.b.accept({ assignments: [assigned], default_content: nextDefault }, p => applied.push(p));
+  assert.equal(e.downloads.length, 3, 'a default revision changes its cache key even when assignments do not');
+  e.files[e.downloads[2].destination] = true; e.done('1000?1');
+  assert.deepEqual(applied.map(p => p.assignments), [[assigned], [assigned]], 'default caching must not replace the assigned playlist');
+  assert.deepEqual(JSON.parse(e.storage.st_default_content), nextDefault);
+  const restored = e.b.readState();
+  assert.deepEqual(JSON.parse(restored.st_default_content), nextDefault, 'the cache index and standby choice commit in one journal generation');
+  assert.match(e.b.mediaUrl(nextDefault, 'remote'), /^file:\/\//);
+});
+
 test('an interval state does not erase the parent offline plan after activation', () => {
   const e = environment(), plan = { protocol_version: 1, states: [] }, future = { content_id: 'future', filepath: 'future.jpg', mime_type: 'image/jpeg', content_rev: 1 };
   e.storage.st_offline_plan = JSON.stringify(plan);
