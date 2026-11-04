@@ -95,13 +95,9 @@ function approve(content, spec) {
   let row = db.prepare('SELECT * FROM sssp3_fit_renditions WHERE id = ?').get(id);
   if (row) {
     db.prepare("UPDATE sssp3_fit_renditions SET last_used_at = strftime('%s','now') WHERE id = ?").run(id);
-    if (row.status === 'evicted') {
-      const pending = db.prepare("SELECT count(*) AS n FROM sssp3_fit_renditions WHERE status IN ('queued','running')").get().n;
-      if (pending >= MAX_PENDING_RENDITIONS) return row;
-      db.prepare("UPDATE sssp3_fit_renditions SET status = 'queued', filepath = ?, error = NULL, attempts = 0, updated_at = strftime('%s','now') WHERE id = ?")
-        .run(`ssf_${id}${row.output_ext}`, id);
-      schedule(0);
-    }
+    // Eviction is terminal for this source revision. A frequently delivered
+    // payload must fall back to the original media, never silently requeue
+    // ffmpeg and rebuild the cache in a permanent eviction/requeue loop.
     return db.prepare('SELECT * FROM sssp3_fit_renditions WHERE id = ?').get(id);
   }
   const count = db.prepare('SELECT count(*) AS n FROM sssp3_fit_renditions WHERE content_id = ?').get(content.id).n;
