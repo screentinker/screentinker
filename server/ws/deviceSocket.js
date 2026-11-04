@@ -1220,7 +1220,7 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
     playlistBg = (db.prepare('SELECT published_background_color FROM playlists WHERE id = ?').get(bgPlaylistId) || {}).published_background_color || null;
   }
   const assembled = assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: playlistBg || device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints: deviceEndpoints });
-  if (!opts.forecast && opts.offlinePlan !== false && device?.playlist_source === 'schedule' && !overrideNow && !hookNow && capsLib.supports(device, 'clock.tz_table')) {
+  if (!opts.forecast && opts.offlinePlan !== false && device?.playlist_source === 'schedule' && !overrideNow && !hookNow && capsLib.supports(device, 'offline.schedule_plan')) {
     try {
       const scheduler = require('../services/scheduler');
       const row = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);

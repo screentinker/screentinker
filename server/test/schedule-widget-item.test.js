@@ -99,6 +99,17 @@ test('an explicit playlist override still wins and no playlist is invented', asy
   assert.equal(db.prepare('SELECT COUNT(*) n FROM playlists').get().n, before, 'no throwaway playlist created');
 });
 
+test('a widget from another workspace cannot be turned into an auto-generated schedule playlist', async () => {
+  db.prepare("INSERT OR IGNORE INTO workspaces (id,organization_id,name) VALUES ('ws-sw-foreign', ?, 'Other workspace')").run(O);
+  db.prepare(`INSERT OR IGNORE INTO widgets (id,user_id,widget_type,name,config,workspace_id)
+              VALUES ('w-sw-foreign', ?, 'template', 'Other workspace', '{}', 'ws-sw-foreign')`).run(U);
+  const before = db.prepare('SELECT COUNT(*) n FROM playlists').get().n;
+  const { status, body } = await createSchedule({ ...BASE, title: 'Cross-workspace widget', widget_id: 'w-sw-foreign' });
+  assert.equal(status, 403);
+  assert.match(body.error, /not in this workspace/);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM playlists').get().n, before, 'refusal happens before an auto-generated playlist is created');
+});
+
 test('a gallery (NULL workspace) widget schedules like a workspace widget', async () => {
   const { status } = await createSchedule({ ...BASE, title: 'Gallery hour', widget_id: WG });
   assert.equal(status, 201);

@@ -266,6 +266,9 @@ test('overrides: a store manager gets a 403 with the reason, an org admin a 409 
     ['store', `/api/layouts/device/${dev}`, 'PUT', { layout_id: null }, STORE, 403, 'CORPORATE_OVERRIDE'],
     ['store', '/api/schedules', 'POST', { device_id: dev, playlist_id: ownPl, start_time: '2026-01-01T09:00', end_time: '2026-01-01T10:00' }, STORE, 403, 'CORPORATE_SCHEDULE'],
     ['admin', '/api/schedules', 'POST', { device_id: dev, playlist_id: ownPl, start_time: '2026-01-01T09:00', end_time: '2026-01-01T10:00' }, STORE, 409, 'CORPORATE_SCHEDULE'],
+    // Widget-only schedules take the same auto-playlist writer path; the mandate gate must run before it.
+    ['store', '/api/schedules', 'POST', { device_id: dev, widget_id: crypto.randomUUID(), start_time: '2026-01-01T09:00', end_time: '2026-01-01T10:00' }, STORE, 403, 'CORPORATE_SCHEDULE'],
+    ['admin', '/api/schedules', 'POST', { device_id: dev, widget_id: crypto.randomUUID(), start_time: '2026-01-01T09:00', end_time: '2026-01-01T10:00' }, STORE, 409, 'CORPORATE_SCHEDULE'],
   ];
   for (const [who, p, m, b, ws, status, code] of cases) {
     const r = await api(p, J(who, b, m, ws));

@@ -1434,6 +1434,10 @@ function legacyWeatherSnapshot(url) {
   return pending;
 }
 
+function scriptJson(value) {
+  return JSON.stringify(value).replace(/[<\u2028\u2029]/g, (ch) => ({ '<': '\\u003c', '\u2028': '\\u2028', '\u2029': '\\u2029' }[ch]));
+}
+
 function renderWeather(c, snapshot) {
   const weatherUrl = `https://wttr.in/${encodeURIComponent(c.__place_query || c.location || 'New York')}?format=j1${/^[A-Za-z]{2}$/.test(String(c.locale || '').slice(0, 2)) ? '&lang=' + encodeURIComponent(String(c.locale).slice(0, 2).toLowerCase()) : ''}`;
   return `<!DOCTYPE html><html><head><style>
@@ -1493,7 +1497,7 @@ function load() {
     xhr.send(null);
   } catch (ignore) { unavailable(); }
 }
-${snapshot ? `applyWeather(${JSON.stringify(snapshot)});` : 'load(); setInterval(load, 600000);'}
+${snapshot ? `applyWeather(${scriptJson(snapshot)});` : 'load(); setInterval(load, 600000);'}
 </script></body></html>`;
 }
 
@@ -2697,4 +2701,5 @@ module.exports.dataResolverFor = dataResolverFor;
 module.exports.imageResolverFor = imageResolverFor;
 module.exports.widgetIframeSandboxForWorkspace = widgetIframeSandboxForWorkspace;
 module.exports.legacyWeatherSnapshot = legacyWeatherSnapshot;
+module.exports.scriptJson = scriptJson;
 module.exports.legacyWeatherCache = legacyWeatherCache;
