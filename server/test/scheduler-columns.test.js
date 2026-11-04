@@ -86,24 +86,14 @@ test('⚠️ THE RESTART: a fresh process re-derives the same state, with nothin
   assert.equal(resolveDevicePlaylist(deviceId).playlist_id, schedPlaylist);
 });
 
-test('a reconnect can reconcile one stale device before its first payload without pushing a stale intermediate state', () => {
+test('offline-plan reconnect reconciles one device without an intermediate push', () => {
   setSchedule(true);
-  // This is the row shape after a panel has been away while the schedule
-  // changed: the authoritative schedule is active, but the periodic sweep has
-  // not yet refreshed this device's derived columns.
-  db.prepare('UPDATE devices SET scheduled_playlist_id = NULL, scheduled_layout_id = NULL WHERE id = ?').run(deviceId);
+  db.prepare('UPDATE devices SET scheduled_playlist_id = NULL WHERE id = ?').run(deviceId);
   const emitted = [];
-  const reconnectIo = { of: () => ({
-    to: (room) => ({ emit: (event) => emitted.push({ room, event }) }),
-    emit: () => {},
-  }) };
-
+  const reconnectIo = { of: () => ({ to: (room) => ({ emit: (event) => emitted.push({ room, event }) }), emit() {} }) };
   evaluateSchedules(reconnectIo, undefined, { deviceId, skipReboots: true, noPush: true });
-
-  assert.equal(row().scheduled_playlist_id, schedPlaylist,
-    'the reconnect payload builder will now resolve the active scheduled playlist');
-  assert.deepEqual(emitted, [],
-    'the reconciliation itself must not emit an old or duplicate playlist update');
+  assert.equal(row().scheduled_playlist_id, schedPlaylist);
+  assert.deepEqual(emitted, []);
 });
 
 test('when the schedule stops applying, the column is CLEARED and the device returns', () => {

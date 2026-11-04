@@ -1232,20 +1232,6 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
     playlistBg = (db.prepare('SELECT published_background_color FROM playlists WHERE id = ?').get(bgPlaylistId) || {}).published_background_color || null;
   }
   const assembled = assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: playlistBg || device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints: deviceEndpoints });
-  if (!opts.forecast && device?.playlist_source === 'schedule' && !overrideNow && !hookNow && capsLib.supports(device, 'clock.tz_table')) {
-    try {
-      const scheduler = require('../services/scheduler');
-      const row = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);
-      const zone = scheduler.scheduleClockTz(row) || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-      const active = scheduler.pickActiveSchedule(scheduler.schedulesForDevice(row), new Date(), zone);
-      if (active && active.playlist_id === device.playlist_id) {
-        assembled.offline_schedule = {
-          schedule: { start_time: active.start_time, end_time: active.end_time, recurrence: active.recurrence, recurrence_end: active.recurrence_end },
-          table: require('../lib/tz-table').tzTable(zone),
-        };
-      }
-    } catch (e) { console.warn(`[scheduler] offline schedule for ${deviceId} unavailable: ${e.message}`); }
-  }
   /*
    * A last-playlist cache is not offline scheduling: it cannot select a
    * playlist that has not become active yet, and it inevitably resurrects
@@ -1257,7 +1243,7 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
    * `offlinePlan: false` is essential for the nested state payloads. Without
    * it this builder would recursively attach a plan to every future state.
    */
-  if (!opts.forecast && opts.offlinePlan !== false && !overrideNow && !hookNow
+  if (!opts.forecast && opts.offlinePlan !== false && device?.playlist_source === 'schedule' && !overrideNow && !hookNow
       && capsLib.supports(device, 'offline.schedule_plan')) {
     try {
       const scheduler = require('../services/scheduler');
@@ -1269,7 +1255,7 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
         const plan = planBuilder.build({
           schedules,
           timezone: zone,
-          pickAt: scheduler.pickActiveScheduleAt,
+          pickAt: require('../lib/offline-schedule-eval').pickActiveScheduleAt,
           clock: makeClock(zone),
         });
         const states = {};
@@ -3207,7 +3193,9 @@ module.exports = function setupDeviceSocket(io) {
                 // 60-second sweep overwrites it. Do this before flushing too: a queued
                 // playlist marker is rebuilt at flush time and must see the reconciled rows.
                 // noPush avoids a duplicate socket update.
-                require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
+                if (capsLib.supports(existing, 'offline.schedule_plan')) {
+                  require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
+                }
                 // Flush any commands/playlist-updates queued while this device was offline.
                 commandQueue.flushQueue(deviceNs, existing.device_id, buildPlaylistPayload);
                 // Send playlist
@@ -3254,7 +3242,9 @@ module.exports = function setupDeviceSocket(io) {
                   emitToDeviceWorkspace(dashboardNs, existing.device_id, 'dashboard:device-status', { device_id: existing.device_id, status: 'online', liveness: heartbeat.livenessFor(existing.device_id) });
                   // This branch is normally unpaired, but may retain a schedule after an
                   // interrupted claim. Make its first payload deterministic as well.
-                  require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
+                  if (capsLib.supports(existing, 'offline.schedule_plan')) {
+                    require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
+                  }
                   // Flush any commands/playlist-updates queued while this device was offline.
                   commandQueue.flushQueue(deviceNs, existing.device_id, buildPlaylistPayload);
                   // Send playlist
@@ -3436,7 +3426,9 @@ module.exports = function setupDeviceSocket(io) {
           // flushQueue rebuilds its pending marker on demand, so its position matters.
           // This prevents an offline Samsung from briefly activating its stale base playlist
           // while it waits for the normal one-minute scheduler sweep.
-          require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: device_id, noPush: true });
+          if (capsLib.supports(device, 'offline.schedule_plan')) {
+            require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: device_id, noPush: true });
+          }
           // Flush any commands/playlist-updates queued while this device was offline.
           commandQueue.flushQueue(deviceNs, device_id, buildPlaylistPayload);
           // #720: the screen's managed Wi-Fi list, every connect (a change made while it was offline
