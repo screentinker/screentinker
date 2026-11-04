@@ -207,18 +207,9 @@ fs.writeFileSync(path.join(output, 'socket.io.js'), socketCompiled);
 const configXml = fs.readFileSync(path.join(app, 'config.xml'), 'utf8')
   .replace(/<ver>\d+<\/ver>/, '<ver>' + build + '</ver>');
 fs.writeFileSync(path.join(output, 'config.xml'), configXml);
-/*
- * ⚠️ 2026-11-03 (post-1289-incident): the Orsay widget page runs from a local
- * file:// origin, and __STNative.base is the URL every relative bridge call
- * resolves against (renderer POSTs, /api/player-debug, content/widget fetches,
- * offline-queue flushes). The clean source prelude ships base:'' — fine for the
- * generic web player, DEAD for the installed candidate: 1289 on the DB48E
- * registered + heartbeated + played cached media while every bridge POST
- * vanished silently (HARDWARE-RESULTS.md 1289-silent-session row). Build 1288's
- * published package had carried the base inside its prelude, so the stamp lives
- * in BUILD SCAFFOLDING here, sourced from the environment — never a literal in
- * player source. When ST_ORSAY_BASE_URL is unset nothing is stamped.
- */
+// A packaged Orsay app runs from file://, so it cannot derive the CMS origin.
+// Site-specific builds may stamp one here; portable builds leave first-run
+// setup responsible for persisting it. No server address lives in app source.
 const orsayBase = (process.env.ST_ORSAY_BASE_URL || '').trim().replace(/\/+$/, '');
 const orsayChannel = (process.env.ST_ORSAY_CHANNEL || '/sssp3/').trim();
 if (orsayChannel[0] !== '/' || orsayChannel.includes('\\') || orsayChannel.includes('..')) {
