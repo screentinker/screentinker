@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- **Backups no longer use the host's sqlite3 tool on the live database.** `scripts/backup.sh`,
+  `scripts/upgrade.sh` and the instance updater now snapshot and check the database through the
+  server's own SQLite (new `scripts/db-tool.js`), and fall back to `sqlite3` only when node cannot
+  load the driver. The sqlite3 package on Ubuntu 24.04 (3.45.1) predates SQLite's fix for the
+  WAL-reset bug (3.51.3), which can corrupt a WAL database when a second process joins it while the
+  server writes and checkpoints. The hosted service's database was damaged twice in nine days, both
+  times during the nightly backup. `backup.sh` also verifies each snapshot and discards one that
+  fails, so a bad copy is never counted as a backup.
+
 - **LG webOS: the .ipk a panel downloads is the version it was promised.** `/webos/version.json`
   reported this server's version for whatever `.ipk` happened to be found first, and an older copy
   left in the data directory won that search. On the hosted service a 2.5.1 `ScreenTinker.ipk` was

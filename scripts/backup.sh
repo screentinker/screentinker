@@ -5,7 +5,7 @@
 #   1. Set SCREENTINKER_DIR if your install isn't at /opt/screentinker.
 #   2. Add a root (or service-user) cron entry, e.g.:
 #        0 3 * * * /opt/screentinker/scripts/backup.sh
-#   3. Restore with:  sqlite3 .backup files copy straight back;
+#   3. Restore with:  stop the server, copy the .db straight back over the live one;
 #        cp -a backups/content-<ts>/<file> server/uploads/<file>
 #
 # What it keeps in $BACKUP_DIR:
@@ -40,11 +40,28 @@ mkdir -p "$BACKUP_DIR"
 log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
 log "=== backup start $TIMESTAMP (app=$APP_DIR) ==="
 
-# 1) Atomic DB backup (safe while the server is running).
-if sqlite3 "$DB" ".backup '$BACKUP_DIR/remote_display-$TIMESTAMP.db'" 2>>"$LOG"; then
+# 1) Atomic DB backup (safe while the server is running), verified before it is kept.
+#
+# ⚠️ Taken through the SERVER'S OWN SQLite (scripts/db-tool.js), not the host's sqlite3 tool, which is
+# only a fallback for a host without node. The sqlite3 package on Ubuntu 24.04 (3.45.1) predates the
+# fix for SQLite's WAL-reset bug (3.51.3): a second process joining the live WAL database with it can
+# corrupt the database while the server writes and checkpoints. Production was corrupted twice in
+# nine days, both times inside this backup window (2026-10-26, 2026-11-03). db-tool.js explains more.
+DB_TOOL="$APP_DIR/scripts/db-tool.js"
+RAW="$BACKUP_DIR/remote_display-$TIMESTAMP.db"
+if command -v node >/dev/null 2>&1 && [ -f "$DB_TOOL" ]; then
+  # VACUUM INTO + quick_check of the copy; prints "ok", or what SQLite said.
+  node "$DB_TOOL" snapshot "$DB" "$RAW" >>"$LOG" 2>&1
+else
+  log "WARN: node or $DB_TOOL not found - using the host sqlite3 tool for the snapshot"
+  sqlite3 "$DB" ".backup '$RAW'" 2>>"$LOG"
+fi
+rc=$?
+if [ "$rc" -eq 0 ]; then
   log "db backup ok: remote_display-$TIMESTAMP.db"
 else
-  log "ERROR: db backup failed (exit $?)"
+  rm -f "$RAW"   # never keep a copy that failed its check: retention would count it as a backup
+  log "ERROR: db backup failed (exit $rc) - see the lines above; prior backups kept"
 fi
 
 # 2) Refresh the live content mirror (full, incl. screenshots - current-state DR).
