@@ -115,11 +115,11 @@ test('DST: a 07:00 New York breakfast schedule starts at 12:00Z before the chang
   const r = at('own', '2026-03-09T11:00:00Z');
   assert.equal(r.active_schedule.title, 'breakfast');
   assert.equal(r.local.schedule, '2026-03-09T07:00', 'reported in the screen\'s own wall clock');
-  // Recurring schedules use the recurrence engine's half-open end.
-  const boundary = at('own', '2026-03-09T14:30:00Z');
-  assert.equal(boundary.active_schedule, null);
-  assert.equal(boundary.resolved.source, 'device');
-  assert.deepEqual(Object.keys(itemsOf(boundary)).sort(), ['a.jpg', 'expiring.jpg']);
+  // The schedule's end minute is inclusive (the scheduler's <=); the item daypart's is exclusive.
+  const last = at('own', '2026-03-09T14:30:00Z');
+  assert.equal(last.active_schedule.title, 'breakfast');
+  assert.equal(itemsOf(last)['a.jpg'], 'daypart', 'the 07:00-10:30 item daypart has ended at 10:30');
+  assert.equal(at('own', '2026-03-09T14:31:00Z').resolved.source, 'device');
 });
 
 test('device timezone, not the server\'s, decides — and a screen with no zone is flagged', () => {
@@ -242,8 +242,8 @@ test('items this player cannot play are named, and weather can be asked "what if
 });
 
 test('the preview payload holds only what plays then, with the time gates off and nothing that acts on a LAN', () => {
-  const p = sim.previewPayload(f.devices.own, T('2026-03-09T14:30:00Z'));   // 10:30: recurring schedule has ended
-  assert.deepEqual(p.assignments.map((a) => a.filename), ['a.jpg', 'expiring.jpg']);
+  const p = sim.previewPayload(f.devices.own, T('2026-03-09T14:30:00Z'));   // 10:30: daypart item has ended
+  assert.deepEqual(p.assignments.map((a) => a.filename), ['b.mp4']);
   for (const a of p.assignments) for (const k of ['schedules', 'play_from', 'play_until', 'play_when', '_ds']) assert.ok(!(k in a), k);
   assert.deepEqual(p.triggers, []);
   assert.equal(p.trigger_config, null);

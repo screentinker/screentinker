@@ -24,8 +24,8 @@ let base;
 test.before(async () => { await new Promise(r => server.listening ? r() : server.once('listening', r)); base = `http://127.0.0.1:${server.address().port}`; });
 test.after(() => { server.close(); db.close(); });
 
-const seed = (id, type, config, workspaceId = 'ws1') => db.prepare('INSERT INTO widgets (id, widget_type, config, workspace_id) VALUES (?,?,?,?)').run(id, type, JSON.stringify(config), workspaceId);
-const render = async (id, query = '') => (await fetch(`${base}/api/widgets/${id}/render${query}`)).text();
+const seed = (id, type, config) => db.prepare('INSERT INTO widgets (id, widget_type, config, workspace_id) VALUES (?,?,?,?)').run(id, type, JSON.stringify(config), 'ws1');
+const render = async (id) => (await fetch(`${base}/api/widgets/${id}/render`)).text();
 
 const CSS_BREAKOUT = 'red}</style><script>document.title="pwned"</script><style>{';
 
@@ -51,17 +51,6 @@ test('text widget: raw HTML is isolated in a null-origin sandboxed iframe', asyn
   assert.ok(html.includes('<iframe sandbox="allow-scripts"'), 'user HTML wrapped in sandboxed iframe');
   assert.ok(!/<body[^>]*>\s*<script>parent\.localStorage/.test(html), 'raw script must not sit in the top-level (same-origin) document');
   assert.ok(html.includes('&lt;script&gt;parent.localStorage'), 'user script is escaped into srcdoc, runs only in the sandboxed frame');
-});
-
-test('SSSP3 text widget is a safe static fallback because cached nested frames do not paint', async () => {
-  seed('text-sssp3', 'text', { html: '<h1 onclick="steal()">Legacy &amp; panel</h1><script>parent.localStorage.token</script ><img src=x onerror="steal()">', css: 'body{background:url(https://evil.test)}' });
-  const html = await render('text-sssp3', '?compat=sssp1228');
-  assert.ok(html.includes('<div id="st-legacy-text">Legacy &amp; panel</div>'), 'readable copy remains');
-  assert.ok(!html.includes('srcdoc='), 'the unsupported SSSP3 path is absent');
-  assert.ok(!html.includes('src="data:'), 'the file-cache-incompatible data navigation is absent');
-  assert.ok(!html.includes('<iframe'), 'the firmware-incompatible nested document is absent');
-  assert.ok(!html.includes('parent.localStorage') && !html.includes('steal()'), 'active author content is removed');
-  assert.ok(!html.includes('evil.test'), 'author CSS is not copied into the local wrapper');
 });
 
 test('valid color/gradient backgrounds are preserved', async () => {
@@ -119,122 +108,4 @@ test('rss widget: a feed URL with quotes and markup reaches the page only as an 
   // In the page's JSON block, so `&` is written \u0026.
   assert.match(html, /\/api\/news-feeds\/items\?m=feed\\u0026u=https%3A%2F%2Fexample\.com%2Ffeed/);
   assert.ok(!html.includes('rss2json'), 'no third-party converter');
-});
-
-test('SSSP3 directory and menu widgets use static legacy pages instead of unsupported grid/animation layout', async () => {
-  seed('dir-sssp3', 'directory-board', {
-    title: 'Reception directory', categories: [{ name: 'Front desk', entries: [{ identifier: '101', name: 'Ada', subtitle: 'Support', available: true }] }],
-  });
-  seed('menu-sssp3', 'menu-board', {
-    title: 'Cafe menu', sections: [{ name: 'Drinks', items: [{ name: 'Coffee', price: '40 EGP', description: 'Freshly prepared' }] }],
-  });
-  const directory = await render('dir-sssp3', '?compat=sssp1228');
-  const menu = await render('menu-sssp3', '?compat=sssp1228');
-  assert.match(directory, /Reception directory/);
-  assert.match(directory, /Ada/);
-  assert.doesNotMatch(directory, /dir-pan|display:grid/);
-  assert.match(menu, /Cafe menu/);
-  assert.match(menu, /Coffee/);
-  assert.doesNotMatch(menu, /<template id="src">/);
-});
-
-
-test("SSSP3 directory search cannot read another workspace's source widget", async () => {
-  seed('directory-ws2', 'directory-board', {
-    title: 'Workspace two directory', categories: [{ name: 'Private', entries: [{ identifier: '2', name: 'Not visible', available: true }] }],
-  }, 'ws2');
-  seed('search-ws1', 'directory-search', { source_widget_id: 'directory-ws2', title: 'Reception search' }, 'ws1');
-  const html = await render('search-ws1', '?compat=sssp1228');
-  assert.match(html, /Directory source not found/);
-  assert.doesNotMatch(html, /Workspace two directory|Not visible/);
-});
-
-test('SSSP3 directory search can use a source widget from its own workspace', async () => {
-  seed('directory-ws1', 'directory-board', {
-    title: 'Workspace one directory', categories: [{ name: 'Reception', entries: [{ identifier: '1', name: 'Visible', available: true }] }],
-  }, 'ws1');
-  seed('search-own-ws1', 'directory-search', { source_widget_id: 'directory-ws1', title: 'Reception search' }, 'ws1');
-  const html = await render('search-own-ws1', '?compat=sssp1228');
-  assert.match(html, /Visible/);
-});
-
-test('SSSP3 RSS has a deterministic static fallback instead of relying on legacy animation APIs', async () => {
-  seed('rss-sssp3', 'rss', { feed_url: 'https://feeds.example.test/news.xml', layout: 'ticker' });
-  const html = widgetsRouter.renderWidgetHtml('rss', { feed_url: 'https://feeds.example.test/news.xml' }, { legacyDataFrame: true });
-  assert.match(html, /Waiting for feed data/);
-  assert.doesNotMatch(html, /strip\.animate|<script>/);
-});
-
-test('SSSP3 room display is a display-only static snapshot, not a nested live panel', () => {
-  const html = widgetsRouter.renderLegacyRoomDisplay(
-    { background: '#123456' },
-    { room: { name: 'Reception room', timezone: 'Africa/Cairo' }, server_now: Date.UTC(2026, 10, 2, 10, 0), events: [
-      { start: Date.UTC(2026, 10, 2, 9, 30), end: Date.UTC(2026, 10, 2, 10, 30), title: 'Design review' },
-    ] }
-  );
-  assert.match(html, /Reception room/);
-  assert.match(html, /BUSY/);
-  assert.match(html, /Design review/);
-  assert.doesNotMatch(html, /<script|<iframe|fetch\(/, 'the SSSP3 cache never needs a nested live panel');
-});
-
-test('SSSP3 social wall is a static approved-post snapshot, not a live animated frame', () => {
-  const html = widgetsRouter.renderLegacySocial(
-    { id: 'social1', workspace_id: 'ws1' },
-    { title: 'Reception updates', background: '#123456' },
-    { configured: true, posts: [{ a: 'ScreenTinker Cairo', h: '@screentinker', n: 'instagram', t: 'Welcome to the lobby.' }] }
-  );
-  assert.match(html, /Reception updates/);
-  assert.match(html, /ScreenTinker Cairo/);
-  assert.match(html, /Welcome to the lobby/);
-  assert.doesNotMatch(html, /<script|<iframe|fetch\(|animate\(/, 'the cache stores only the approved display snapshot');
-});
-
-
-test('SSSP3 webpage wrappers pass compatibility mode only to same-server widget pages', () => {
-  const url = 'http://screen.test/api/widgets/11111111-1111-4111-8111-111111111111/render?rev=3';
-  const html = widgetsRouter.renderWidgetHtml('webpage', { url }, { origin: 'http://screen.test', legacyDataFrame: true });
-  assert.match(html, /compat=sssp1228/);
-  const external = widgetsRouter.renderWidgetHtml('webpage', { url: 'https://example.test/page' }, { origin: 'http://screen.test', legacyDataFrame: true });
-  assert.doesNotMatch(external, /compat=sssp1228/);
-});
-
-
-test('SSSP3 webpages inline same-workspace ScreenTinker widgets instead of using an unpainted nested frame', async () => {
-  seed('11111111-1111-4111-8111-111111111111', 'directory-board', { title: 'Linked directory', categories: [{ name: 'Desk', entries: [{ identifier: '1', name: 'Ada', available: true }] }] });
-  seed('22222222-2222-4222-8222-222222222222', 'webpage', { url: `${base}/api/widgets/11111111-1111-4111-8111-111111111111/render` });
-  const html = await render('22222222-2222-4222-8222-222222222222', '?compat=sssp1228');
-  assert.match(html, /Linked directory/);
-  assert.match(html, /Ada/);
-  assert.doesNotMatch(html, /<iframe/);
-});
-
-
-test('weather snapshot data remains data when a provider returns a script terminator', () => {
-  const payload = { current_condition: [{ temp_C: '27', weatherDesc: [{ value: '</script><script>globalThis.pwned=1</script>' }] }] };
-  const literal = widgetsRouter.scriptJson(payload);
-  assert.doesNotMatch(literal, /<\/script><script>globalThis\.pwned/, 'provider text cannot end the renderer script');
-  assert.match(literal, /\\u003c\/script>/, 'the dangerous character is escaped in the JavaScript literal');
-  assert.doesNotMatch(literal, /[\u2028\u2029]/, 'line separators are escaped too');
-});
-
-test('SSSP3 weather snapshots share a bounded server cache instead of fetching once per panel render', async () => {
-  const originalFetch = global.fetch;
-  let calls = 0;
-  widgetsRouter.legacyWeatherCache.clear();
-  global.fetch = async () => {
-    calls++;
-    return { ok: true, json: async () => ({ current_condition: [{ temp_C: '27' }] }) };
-  };
-  try {
-    const url = 'https://wttr.in/Cairo?format=j1';
-    const [first, second] = await Promise.all([widgetsRouter.legacyWeatherSnapshot(url), widgetsRouter.legacyWeatherSnapshot(url)]);
-    assert.equal(calls, 1, 'concurrent panel renders share the pending upstream request');
-    assert.deepEqual(first, second);
-    await widgetsRouter.legacyWeatherSnapshot(url);
-    assert.equal(calls, 1, 'a completed snapshot is reused during its TTL');
-  } finally {
-    global.fetch = originalFetch;
-    widgetsRouter.legacyWeatherCache.clear();
-  }
 });

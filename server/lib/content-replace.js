@@ -213,7 +213,6 @@ async function replaceContentBytes({ content, file, actor, writer = null, reqOrI
 
   // 3.0 TV-safe video: copies of the old bytes are stale (their source_file no longer matches);
   // queue the new ones the workspace's TVs need before the payloads go out.
-  try { require('./sssp3-fit-rendition').removeFor(content.id); } catch (_) { /* orphan sweep is the fallback */ }
   try { require('./video-variants').onContentIngested(db.prepare('SELECT * FROM content WHERE id = ?').get(content.id)); } catch (_) { /* lazily later */ }
   const affected = devicesPlayingContent(content.id);
   pushDevices(reqOrIo, affected);

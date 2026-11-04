@@ -713,6 +713,10 @@ const migrations = [
   "ALTER TABLE users ADD COLUMN trial_expired_at INTEGER",
   "ALTER TABLE users ADD COLUMN trial_ending_email_sent_at INTEGER",
   "ALTER TABLE users ADD COLUMN trial_expired_email_sent_at INTEGER",
+  // Renewal date for a manually-billed / comped account (PO or invoice, no Stripe sub). Epoch
+  // seconds, NULL for everyone else. services/renewalReminder.js emails the account and CCs the
+  // platform admins at 90/60/30/7 days before this date. Set via POST /api/subscription/assign.
+  "ALTER TABLE users ADD COLUMN renewal_at INTEGER",
   /*
    * Dunning: a PAID subscription whose payment failed. `past_due_since` is the grace clock —
    * stamped when Stripe reports the first failed invoice and cleared the moment a payment
@@ -2552,6 +2556,15 @@ const migrations = [
      trigger TEXT NOT NULL,
      sent_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
      PRIMARY KEY (user_id, trigger))`,
+  // Once-per-milestone idempotency for renewal reminders (services/renewalReminder.js). One row per
+  // (user, milestone-days) the day that reminder is sent; keyed to renewal_at so moving the date
+  // re-arms the milestones that are now in the future (the service deletes stale rows on change).
+  `CREATE TABLE IF NOT EXISTS renewal_reminders (
+     user_id TEXT NOT NULL,
+     milestone_days INTEGER NOT NULL,
+     renewal_at INTEGER NOT NULL,
+     sent_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     PRIMARY KEY (user_id, milestone_days))`,
   /*
    * 3.0: single-use codes handing a single sign-on session to the Manager app (routes/auth.js
    * /sso/app-exchange). Stored hashed, live for 2 minutes, deleted on use and swept on each insert.
@@ -3455,31 +3468,6 @@ const migrations = [
   // Every path that deletes content takes the copies' rows with it; the files go in the orphan sweep.
   `CREATE TRIGGER IF NOT EXISTS trg_content_video_variants_content_del AFTER DELETE ON content
      BEGIN DELETE FROM content_video_variants WHERE content_id = OLD.id; END`,
-  /* Server-approved intrinsic-size copies for legacy SSSP3 media planes. */
-  `CREATE TABLE IF NOT EXISTS sssp3_fit_renditions (
-     id TEXT PRIMARY KEY,
-     content_id TEXT NOT NULL,
-     workspace_id TEXT NOT NULL,
-     source_file TEXT NOT NULL,
-     source_revision INTEGER NOT NULL DEFAULT 0,
-     fit TEXT NOT NULL CHECK (fit IN ('contain','cover','fill')),
-     width INTEGER NOT NULL,
-     height INTEGER NOT NULL,
-     output_ext TEXT NOT NULL,
-     status TEXT NOT NULL CHECK (status IN ('queued','running','ready','failed','evicted')),
-     filepath TEXT,
-     file_size INTEGER,
-     error TEXT,
-     attempts INTEGER NOT NULL DEFAULT 0,
-     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-     last_used_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-     UNIQUE (content_id, source_file, fit, width, height))`,
-  'ALTER TABLE sssp3_fit_renditions ADD COLUMN source_revision INTEGER NOT NULL DEFAULT 0',
-  'CREATE INDEX IF NOT EXISTS idx_sssp3_fit_status ON sssp3_fit_renditions(status, created_at)',
-  'CREATE INDEX IF NOT EXISTS idx_sssp3_fit_content ON sssp3_fit_renditions(content_id)',
-  `CREATE TRIGGER IF NOT EXISTS trg_sssp3_fit_content_del AFTER DELETE ON content
-     BEGIN DELETE FROM sssp3_fit_renditions WHERE content_id = OLD.id; END`,
   `CREATE TABLE IF NOT EXISTS video_variant_usage (
      organization_id TEXT NOT NULL,
      month TEXT NOT NULL,
@@ -3525,6 +3513,30 @@ const migrations = [
   // reads as mains everywhere (dashboard and alerts) regardless of what the board claims. Off by
   // default; the honest boards are handled by the player's EXTRA_PRESENT gate and need no switch.
   "ALTER TABLE devices ADD COLUMN ignore_battery INTEGER NOT NULL DEFAULT 0",
+  // Visitor audio sync: per-content multilingual narration tracks (audio + optional WebVTT caption)
+  // that a visitor's phone plays in sync with the video on a display. Extends the single-subtitle
+  // pattern (#216) to a LIST keyed by (content_id, lang); the single subtitle_url column cannot hold
+  // multiple languages. Files live in contentDir, served at /uploads/content/<key> like subtitles.
+  // v1 is local-first (not cloud-replicated): SQLite cannot ALTER the content_locations.kind CHECK to
+  // add an 'audio' kind, so a dedicated table is the clean fit for multiple languages anyway.
+  `CREATE TABLE IF NOT EXISTS content_audio_tracks (
+     id          TEXT PRIMARY KEY,
+     content_id  TEXT NOT NULL,
+     lang        TEXT NOT NULL,
+     label       TEXT,
+     audio_key   TEXT NOT NULL,
+     caption_key TEXT,
+     is_default  INTEGER NOT NULL DEFAULT 0,
+     sort_order  INTEGER NOT NULL DEFAULT 0,
+     created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     updated_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+   )`,
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_content_audio_tracks_lang ON content_audio_tracks(content_id, lang)',
+  'CREATE INDEX IF NOT EXISTS idx_content_audio_tracks_content ON content_audio_tracks(content_id)',
+  // Per-video opt-in for the visitor audio guide. Off by default: a video can carry language tracks
+  // without the guide being live. When on AND the video has tracks, visitors get the guide (the
+  // /listen poll exposes the tracks) and the player shows a "Scan for audio guide" QR while it plays.
+  "ALTER TABLE content ADD COLUMN audio_guide_enabled INTEGER NOT NULL DEFAULT 0",
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.
@@ -5279,6 +5291,58 @@ migrationStep('#720 device Wi-Fi networks', () => {
   // NULL = an older or non-Android player, about which the dashboard says nothing. capture_mode style.
   try { db.prepare('ALTER TABLE devices ADD COLUMN wifi_mode TEXT').run(); console.log('[migrate] devices.wifi_mode added'); } catch (_) { /* present */ }
 });
+
+migrationStep('#796 library folders for widgets, playlists and schedules', () => {
+  /*
+   * #796: the Content Library's folders, for widgets, playlists and schedules (routes/library-folders.js).
+   *
+   * ⚠️ ORGANISATIONAL ONLY, BY CONSTRUCTION. Where an item is filed lives in library_folder_items,
+   * never in a column of widgets / playlists / schedules. So filing something cannot touch a row a
+   * player depends on: widgets.updated_at is the widget's revision on the screen, a playlist row
+   * carries its publish state and snapshot, and the schedules table is rebuilt by older migrations
+   * from its column list. None of those rows changes when an item moves. No row = the root.
+   *
+   * One table for the three kinds (a `kind` column), not three tables and not content_folders:
+   * content_folders has a dozen readers (smart-playlist folder rules, agency upload folders, request
+   * forms, cloud sync, migrations) that would all need a kind filter, while these three kinds share
+   * one router and one set of rules. Tenancy: workspace_id NOT NULL on both tables; every read and
+   * write in the router checks it against the caller's workspace.
+   */
+  const had = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'library_folder_items'").get();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS library_folders (
+      id           TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      kind         TEXT NOT NULL CHECK (kind IN ('widget','playlist','schedule')),
+      parent_id    TEXT REFERENCES library_folders(id),
+      name         TEXT NOT NULL,
+      created_by   TEXT,
+      created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_library_folders_ws ON library_folders (workspace_id, kind, parent_id);
+    CREATE TABLE IF NOT EXISTS library_folder_items (
+      kind         TEXT NOT NULL CHECK (kind IN ('widget','playlist','schedule')),
+      item_id      TEXT NOT NULL,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      -- CASCADE drops only the filing row, never the item. The router re-files a deleted folder's
+      -- items into its parent first, so this only matters to a purge that bypasses it.
+      folder_id    TEXT NOT NULL REFERENCES library_folders(id) ON DELETE CASCADE,
+      filed_at     INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      PRIMARY KEY (kind, item_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_library_folder_items_folder ON library_folder_items (folder_id);
+    CREATE INDEX IF NOT EXISTS idx_library_folder_items_ws ON library_folder_items (workspace_id, kind);
+  `);
+  if (!had) console.log('[migrate] library_folders + library_folder_items created (#796)');
+});
+
+/*
+ * #792: a content request can carry a WEBSITE instead of a file. It becomes a webpage widget (the
+ * thing every player already renders for a URL), so the request points at a widget instead of a
+ * content row. Exactly one of content_id / widget_id is set on a request.
+ */
+try { db.prepare('ALTER TABLE content_requests ADD COLUMN widget_id TEXT').run(); console.log('[migrate] content_requests.widget_id added'); } catch (_) { /* present */ }
 
 /*
  * Corporate (head office) playlists: every table and column of the feature, applied here because

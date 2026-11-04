@@ -6,7 +6,6 @@ const { resolveWithin } = require('../lib/safe-path');
 const { isRtspsUrl } = require('../lib/remote-url');
 const { db, pruneTelemetry, pruneScreenshots } = require('../db/database');
 const { effectiveDeviceTz } = require('../lib/device-timezone');
-const { makeClock } = require('../lib/local-clock');
 const config = require('../config');
 const heartbeat = require('../services/heartbeat');
 const bootDefer = require('../lib/boot-defer');   // 2.0.1 first-boot player defer
@@ -24,6 +23,7 @@ const screenVerify = require('../lib/screen-verify');
 const previewRefresh = require('../lib/preview-refresh');
 const reconnectThrottle = require('../lib/reconnect-throttle');
 const contentAckLimiter = require('../lib/content-ack-limiter');
+const heartbeatFloor = require('../lib/heartbeat-floor');   // #777: per-device floor on heartbeat side effects
 const statusLogWriter = require('../lib/status-log-writer');
 const { normalizeTransitions } = require('../lib/transition-config');
 const { normalizeWallRotation } = require('../lib/wall-geometry'); // #236 per-panel mounting rotation
@@ -575,6 +575,13 @@ function refreshWidgetRevs(assignments, deviceId = null) {
         if (wl.followsScreen(facts.widget_type, cfg)) rev = Number(rev) + wl.revSalt(facts.widget_type, cfg, wl.screenPlace(db, deviceId, facts.workspace_id));
       }
       a.widget_rev = rev;
+      /*
+       * The photos and clips a slide shows (lib/slide-media.js), so a player can hold them offline
+       * the way it holds playlist media. Live, like the rev: an edit that swaps a photo changes what
+       * must be cached without a re-publish. Only for slides; anything else carries none.
+       */
+      if (facts.widget_type === 'slide') a.widget_media = require('../lib/slide-media').slideMediaFor(db, facts.config, facts.workspace_id);
+      else if (a.widget_media) delete a.widget_media;
       // A cloud document is framed same-origin too: Google's embed breaks in an opaque origin, and its
       // render document runs no script at all (lib/cloud-docs.js, enforced by its CSP).
       a.widget_allow_same_origin = Number(facts.same_origin || 0) === 1 || facts.widget_type === 'cloud-doc';
@@ -612,7 +619,7 @@ function refreshWidgetRevs(assignments, deviceId = null) {
  */
 const contentFactsOf = db.prepare(`
   SELECT COALESCE(NULLIF(updated_at, 0), created_at) AS rev, filepath, mime_type, file_size, bundle_entry,
-         width, height, video_prerotated, fisheye
+         width, height, video_prerotated, fisheye, audio_guide_enabled
     FROM content WHERE id = ?
 `);
 function refreshContentRevs(assignments) {
@@ -648,6 +655,10 @@ function refreshContentRevs(assignments) {
       const fisheye = row.fisheye && require('../lib/remote-url').LIVE_MIMES.includes(a.mime_type)
         ? require('../lib/fisheye').normalize(row.fisheye) : null;
       if (fisheye) a.fisheye = fisheye; else delete a.fisheye;
+      /* Visitor audio sync: the player overlays a "Scan for audio guide" QR while a guide-enabled
+       * video plays. Read at send time (no republish), and a TOP-LEVEL per-item field, so it is NOT
+       * in the player's change-fingerprint — toggling it adopts in place and never restarts a screen. */
+      if (Number(row.audio_guide_enabled) === 1) a.audio_guide_enabled = 1; else delete a.audio_guide_enabled;
     } catch (_) { /* keep published */ }
   }
 }
@@ -1210,10 +1221,6 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
   // 3.0 TV-safe video: ready copies of tall videos, and for a screen that plays them, queue a missing
   // one now. Never from the forecast preview, which must not spend CPU on a "what if".
   try { require('../lib/video-variants').stampItems(assignments, device, { lazy: !opts.forecast }); } catch (_) { /* keep the payload playable */ }
-  try { require('../lib/sssp3-fit-rendition').stampItems(assignments, layout, device, { lazy: !opts.forecast }); } catch (_) { /* keep the payload playable */ }
-  if (default_content) {
-    try { require('../lib/sssp3-fit-rendition').stampItems([default_content], null, device, { lazy: !opts.forecast }); } catch (_) { /* keep idle content playable */ }
-  }
 
   // Weather and area conditions are decided here, for this screen (lib/local-conditions.js).
   if (trace) trace.before_local = assignments;
@@ -1224,79 +1231,6 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
     playlistBg = (db.prepare('SELECT published_background_color FROM playlists WHERE id = ?').get(bgPlaylistId) || {}).published_background_color || null;
   }
   const assembled = assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: playlistBg || device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints: deviceEndpoints });
-  if (!opts.forecast && opts.offlinePlan !== false && device?.playlist_source === 'schedule' && !overrideNow && !hookNow && capsLib.supports(device, 'offline.schedule_plan')) {
-    try {
-      const scheduler = require('../services/scheduler');
-      const row = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);
-      const zone = scheduler.scheduleClockTz(row) || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-      const active = scheduler.pickActiveSchedule(scheduler.schedulesForDevice(row), new Date(), zone);
-      if (active && active.playlist_id === device.playlist_id) {
-        assembled.offline_schedule = {
-          schedule: { start_time: active.start_time, end_time: active.end_time, recurrence: active.recurrence, recurrence_end: active.recurrence_end },
-          table: require('../lib/tz-table').tzTable(zone),
-        };
-      }
-    } catch (e) { console.warn(`[scheduler] offline schedule for ${deviceId} unavailable: ${e.message}`); }
-  }
-  /*
-   * A last-playlist cache is not offline scheduling: it cannot select a
-   * playlist that has not become active yet, and it inevitably resurrects
-   * expired content after a cold boot. Players that explicitly implement the
-   * schedule-plan contract receive a bounded, server-resolved UTC timeline and
-   * a payload for every distinct scheduled state in that timeline. The player
-   * downloads all supported dependencies before committing the plan.
-   *
-   * `offlinePlan: false` is essential for the nested state payloads. Without
-   * it this builder would recursively attach a plan to every future state.
-   */
-  if (!opts.forecast && opts.offlinePlan !== false && !overrideNow && !hookNow
-      && capsLib.supports(device, 'offline.schedule_plan')) {
-    try {
-      const scheduler = require('../services/scheduler');
-      const planBuilder = require('../lib/offline-schedule-plan');
-      const row = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);
-      const zone = scheduler.scheduleClockTz(row) || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-      const schedules = scheduler.schedulesForDevice(row);
-      if (schedules.length) {
-        const plan = planBuilder.build({
-          schedules,
-          timezone: zone,
-          pickAt: require('../lib/offline-schedule-eval').pickActiveScheduleAt,
-          clock: makeClock(zone),
-        });
-        const states = {};
-        for (const interval of plan.intervals) {
-          if (!interval.schedule_id || states[interval.schedule_id]) continue;
-          const schedule = schedules.find((s) => s.id === interval.schedule_id);
-          if (!schedule) continue;
-          // A schedule without an explicit layout still inherits the published
-          // layout of its playlist, then the device layout. The live resolver
-          // does this through device_resolved_playlist; an offline-plan state
-          // must carry the same resolved layout instead of replacing it with
-          // null and collapsing all zone items into one fullscreen sequence.
-          const schedulePlaylist = schedule.playlist_id
-            ? db.prepare('SELECT published_layout_id FROM playlists WHERE id = ?').get(schedule.playlist_id)
-            : null;
-          const stateLayoutId = schedule.layout_id || schedulePlaylist?.published_layout_id || row.layout_id || null;
-          states[interval.schedule_id] = {
-            schedule_id: schedule.id,
-            playlist_id: schedule.playlist_id || null,
-            layout_id: stateLayoutId,
-            payload: buildPlaylistPayloadUnchecked(deviceId, {
-              resolved: { playlist_id: schedule.playlist_id || null, source: 'schedule', layout_id: stateLayoutId },
-              offlinePlan: false,
-            }),
-          };
-        }
-        assembled.offline_plan = { ...plan, states: Object.values(states) };
-      } else {
-        // This is the only successful path that explicitly removes a saved
-        // plan.  Do not clear the panel's last verified plan merely because a
-        // transient server-side resolution error occurred.
-        assembled.offline_plan = null;
-      }
-    } catch (e) { console.warn(`[scheduler] offline plan for ${deviceId} unavailable: ${e.message}`); }
-  }
   /*
    * Audience counting (lib/audience.js). Top-level and outside the item list, so switching it on or
    * off never restarts playback (#234). Rides EVERY payload, and null means OFF — so a screen that
@@ -1856,6 +1790,19 @@ const EVENT_APPLIERS = Object.freeze({
     if (!device_id || device_id !== deviceId) return;
 
     heartbeat.updateHeartbeat(device_id);
+
+    // #777: liveness above is recorded on EVERY beat; the DB writes, telemetry row and dashboard push
+    // below run at most once per floor per device (lib/heartbeat-floor.js). A 1.9.0 screen beating
+    // ~20/s otherwise drove 100+ statements a second and 20 dashboard re-renders a second.
+    const floor = heartbeatFloor.admit(device_id);
+    if (!floor.pass) {
+      if (floor.logStart) {
+        const secs = Math.max(1, Math.round(floor.windowMs / 1000));
+        console.warn(`[heartbeat] ${device_id} is over the heartbeat floor: ${floor.beats} beats in ${secs}s (~${(floor.beats / secs).toFixed(1)}/s); `
+          + `writing at most one per ${floor.floorMs / 1000}s. A player this chatty is usually an old build (update it from /download).`);
+      }
+      return;
+    }
 
     // A heartbeat is the device asserting it is alive. Online is normally broadcast to the panel
     // only at device:register time (one shot); heartbeats just write the DB. So if the panel
@@ -2437,6 +2384,7 @@ const EVENT_APPLIERS = Object.freeze({
    */
   'offline'(deviceId, data, ctx) {
     pendingOfflines.delete(deviceId);
+    heartbeatFloor.clear(deviceId);   // #777: its first beat back is written (and flips the card) at once
     // Re-check at fire time: did a DIFFERENT socket reclaim during the
     // grace window? If activeConn exists but it's still our (now-closed)
     // socket's entry, the entry is just stale - heartbeat.removeConnection
@@ -3180,14 +3128,6 @@ module.exports = function setupDeviceSocket(io) {
                 socket.join(existing.device_id);
                 logDeviceStatus(existing.device_id, 'online');
                 emitToDeviceWorkspace(dashboardNs, existing.device_id, 'dashboard:device-status', { device_id: existing.device_id, status: 'online', liveness: heartbeat.livenessFor(existing.device_id) });
-                // Reconcile the active schedule before the reconnect payload. Without this,
-                // a panel that was offline can receive the stale base playlist until the next
-                // 60-second sweep overwrites it. Do this before flushing too: a queued
-                // playlist marker is rebuilt at flush time and must see the reconciled rows.
-                // noPush avoids a duplicate socket update.
-                if (capsLib.supports(existing, 'offline.schedule_plan')) {
-                  require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
-                }
                 // Flush any commands/playlist-updates queued while this device was offline.
                 commandQueue.flushQueue(deviceNs, existing.device_id, buildPlaylistPayload);
                 // Send playlist
@@ -3232,11 +3172,6 @@ module.exports = function setupDeviceSocket(io) {
                   socket.join(existing.device_id);
                   logDeviceStatus(existing.device_id, 'online');
                   emitToDeviceWorkspace(dashboardNs, existing.device_id, 'dashboard:device-status', { device_id: existing.device_id, status: 'online', liveness: heartbeat.livenessFor(existing.device_id) });
-                  // This branch is normally unpaired, but may retain a schedule after an
-                  // interrupted claim. Make its first payload deterministic as well.
-                  if (capsLib.supports(existing, 'offline.schedule_plan')) {
-                    require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
-                  }
                   // Flush any commands/playlist-updates queued while this device was offline.
                   commandQueue.flushQueue(deviceNs, existing.device_id, buildPlaylistPayload);
                   // Send playlist
@@ -3414,13 +3349,6 @@ module.exports = function setupDeviceSocket(io) {
             socket.emit('device:paired', { device_id, name: device.name || 'Display', settings_pin: device.settings_pin || undefined, brand: playerBrandForDevice(db, device_id) });
           }
           logDeviceStatus(device_id, 'online');
-          // Resolve the active schedule before *any* reconnect playlist can be generated.
-          // flushQueue rebuilds its pending marker on demand, so its position matters.
-          // This prevents an offline Samsung from briefly activating its stale base playlist
-          // while it waits for the normal one-minute scheduler sweep.
-          if (capsLib.supports(device, 'offline.schedule_plan')) {
-            require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: device_id, noPush: true });
-          }
           // Flush any commands/playlist-updates queued while this device was offline.
           commandQueue.flushQueue(deviceNs, device_id, buildPlaylistPayload);
           // #720: the screen's managed Wi-Fi list, every connect (a change made while it was offline

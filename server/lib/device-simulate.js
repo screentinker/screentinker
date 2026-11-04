@@ -38,9 +38,9 @@ const { MANDATE_EXPR } = require('./playlist-resolver-sql');
 const { effectiveDeviceTz } = require('./device-timezone');
 const capsLib = require('./player-capabilities');
 const localConditions = require('./local-conditions');
-const { makeClock } = require('./local-clock');
 
 const MINUTE = 60 * 1000;
+const BUCKET = 15 * MINUTE;            // every real UTC-offset change lands on a 15-minute UTC boundary
 const MAX_RANGE_MS = 14 * 24 * 60 * MINUTE;
 const MAX_GROUP_DEVICES = 200;
 
@@ -50,6 +50,47 @@ function scheduler() { return require('../services/scheduler'); }
 /* ================================ clock ================================ */
 
 const p2 = (n) => (n < 10 ? '0' : '') + n;
+
+/**
+ * A fast UTC -> local-parts function for one zone, returning the SAME shape as schedule-eval's
+ * _localParts ({y, mo, day, dow, min}). The UTC offset is looked up once per 15-minute bucket and
+ * memoised; the rest is arithmetic. A falsy zone uses the server's own clock, exactly as
+ * _localParts does. An unknown zone (which no live path accepts) falls back to the server clock.
+ */
+function makeClock(tz) {
+  let fmt = null;
+  if (tz) {
+    try {
+      fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+      });
+    } catch (_) { fmt = null; }
+  }
+  const offsets = new Map();
+  function offsetAt(ms) {
+    const b = Math.floor(ms / BUCKET) * BUCKET;
+    let off = offsets.get(b);
+    if (off !== undefined) return off;
+    if (!fmt) {
+      off = -new Date(b).getTimezoneOffset() * MINUTE;
+    } else {
+      const p = {};
+      for (const part of fmt.formatToParts(new Date(b))) p[part.type] = part.value;
+      const wall = Date.UTC(+p.year, +p.month - 1, +p.day, (+p.hour) % 24, +p.minute, +p.second);
+      off = wall - b;
+    }
+    offsets.set(b, off);
+    return off;
+  }
+  function parts(ms) {
+    const d = new Date(ms + offsetAt(ms));
+    return { y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1, day: d.getUTCDate(), dow: d.getUTCDay(), min: d.getUTCHours() * 60 + d.getUTCMinutes() };
+  }
+  parts.offsetAt = offsetAt;
+  parts.zone = fmt ? tz : null;
+  return parts;
+}
 
 function stampOf(L) {
   return `${L.y}-${p2(L.mo)}-${p2(L.day)}T${p2(Math.floor(L.min / 60))}:${p2(L.min % 60)}`;

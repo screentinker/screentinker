@@ -89,20 +89,6 @@ test('a DAILY interval is honoured rather than drawn every day', () => {
   assert.equal(ev.length, 4, 'Mon, Wed, Fri, Sun');
 });
 
-test('weekly and monthly intervals match the live scheduler instead of drawing every period', () => {
-  const fortnight = expandSchedule(
-    mk('FREQ=WEEKLY;BYDAY=MO;INTERVAL=2', '2026-07-27T09:00:00'),
-    new Date('2026-08-03T00:00:00'), new Date('2026-08-23T23:59:59'),
-  );
-  assert.deepEqual(fortnight.map((e) => e.instance_start.slice(0, 10)), ['2026-08-10']);
-
-  const everyOtherMonth = expandSchedule(
-    mk('FREQ=MONTHLY;INTERVAL=2', '2026-07-09T09:00:00'),
-    new Date('2026-08-01T00:00:00'), new Date('2026-11-30T23:59:59'),
-  );
-  assert.deepEqual(everyOtherMonth.map((e) => e.instance_start.slice(0, 10)), ['2026-09-09', '2026-11-09']);
-});
-
 test('recurrence_end stops the drawing', () => {
   const ev = expandSchedule(
     mk('FREQ=DAILY', '2026-07-27T09:00:00', '2026-08-05T23:59:59'), WEEK_START, WEEK_END);

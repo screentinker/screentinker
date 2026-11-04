@@ -23,7 +23,6 @@ const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
-const vm = require('node:vm');
 
 const { freePort } = require('./helpers/free-port');
 let PORT, BASE, jwt;
@@ -125,20 +124,6 @@ test('#323: seconds can be turned off', async () => {
   assert.match(html, /minute:\s*'2-digit'/, 'hours and minutes are still shown');
 });
 
-test('legacy engines that ignore time formatting options still honor seconds and timezone', async () => {
-  const html = await renderOf({ timezone: 'Africa/Cairo', format: '12h', show_seconds: false, show_date: false });
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-  const instant = Date.now();
-  class OldDate extends Date {
-    constructor(...args) { super(...(args.length ? args : [instant])); }
-    toLocaleTimeString() { return '17:34:56 GMT'; }
-  }
-  const elements = { time: { textContent: '', style: {}, getBoundingClientRect: () => ({ left: 0, right: 100, top: 0, bottom: 50 }) } };
-  vm.runInNewContext(script, { Date: OldDate, document: { documentElement: { clientWidth: 1920, clientHeight: 1080 }, getElementById: id => elements[id] }, window: { innerWidth: 1920, innerHeight: 1080, addEventListener() {} }, setInterval() {} });
-  const expected = new Intl.DateTimeFormat('en-US', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit', hour12: true }).format(new Date(instant));
-  assert.equal(elements.time.textContent, expected.replace(/\u202f/g, ' '));
-});
-
 test('#323: seconds stay on by default, so existing widgets do not change', async () => {
   for (const cfg of [{ timezone: 'UTC', format: '24h' }, { timezone: 'UTC', format: '24h', show_seconds: true }]) {
     const html = await renderOf(cfg);
@@ -231,10 +216,4 @@ test('#324: a locale reaches the weather provider, and junk does not', async () 
   const junk = await renderWeather({ location: 'Madrid', locale: "x'); alert(1);//" });
   assert.doesNotMatch(junk, /alert\(1\)/);
   assert.doesNotMatch(junk, url, 'an unusable locale is simply omitted from the request');
-});
-
-test('weather output remains executable on the legacy SSSP3 runtime', async () => {
-  const html = await renderWeather({ location: 'Cairo' });
-  assert.match(html, /new XMLHttpRequest\(\)/);
-  assert.doesNotMatch(html, /async function|\bfetch\(|\bconst\b|=>/);
 });

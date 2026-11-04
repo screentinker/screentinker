@@ -19,20 +19,18 @@ function startScheduler(socketIo) {
 
 // ioOverride lets a test drive one evaluation without startScheduler's 60s setInterval, which keeps
 // the process alive and turns the test run into a hang rather than a failure.
-function evaluateSchedules(ioOverride, nowOverride, { skipReboots = false, deviceId = null, noPush = false } = {}) {
+function evaluateSchedules(ioOverride, nowOverride) {
   const deviceNs = (ioOverride || io)?.of('/device');
   if (!deviceNs) return;
 
   // nowOverride is a TEST SEAM (the preview-at-time equivalence tests drive the live tick at a fixed
   // instant and compare it with lib/device-simulate.js). The live timer never passes it.
   const now = nowOverride instanceof Date ? nowOverride : new Date();
-  const onlineDevices = deviceId
-    ? db.prepare(`SELECT * FROM devices WHERE status = 'online' AND id = ? AND ${LOCAL_ROWS_SQL('devices')}`).all(deviceId)
-    : db.prepare(`SELECT * FROM devices WHERE status = 'online' AND ${LOCAL_ROWS_SQL('devices')}`).all();
+  const onlineDevices = db.prepare(`SELECT * FROM devices WHERE status = 'online' AND ${LOCAL_ROWS_SQL('devices')}`).all();
 
   for (const device of onlineDevices) {
     // #12 scheduled reboot — evaluated independently of playlist/layout overrides.
-    if (!skipReboots) maybeRebootDevice(device, now, deviceNs);
+    maybeRebootDevice(device, now, deviceNs);
 
     // Which schedules this screen follows and on whose clock: one definition, shared with the
     // "what will this screen show at…" preview (lib/device-simulate.js), so the forecast and the
@@ -68,7 +66,7 @@ function evaluateSchedules(ioOverride, nowOverride, { skipReboots = false, devic
         .run(wantPlaylist, wantLayout, device.id);
     }
 
-    if (changed && !noPush) pushPlaylistToDevice(device.id, deviceNs);
+    if (changed) pushPlaylistToDevice(device.id, deviceNs);
   }
 }
 

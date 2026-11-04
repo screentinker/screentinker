@@ -205,6 +205,7 @@ app.use((req, res, next) => {
   if (req.path === '/' || req.path === '/landing.html') return exempt();
   if (req.path.startsWith('/player')) return exempt();
   if (req.path.startsWith('/view/')) return exempt(); // view-only display page: the web player (routes/view.js)
+  if (req.path.startsWith('/listen/')) return exempt(); // visitor audio-guide page, inline JS like the player (routes/view.js)
   if (req.path === '/docs') return exempt(); // Redoc API reference needs a relaxed CSP
   if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/render')) return exempt();
   if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/data.json')) return exempt();
@@ -1550,7 +1551,13 @@ app.use('/api/public/requests', rateLimit(60000, 1500), require('./routes/reques
  * token is the credential, so each IP gets one bucket per route shape (lib/limit-paths.js), not one
  * per token. 4s polling is 15/min per open viewer; 240/min leaves room for a wall of them on one NAT.
  */
-app.get(['/view/:key', '/view/screen/:id', '/api/view/:kind/:key/payload'], rateLimit(60000, 240), require('./routes/view')({ sendPlayer }));
+// The payload poll gets its own, larger bucket. All view payloads share ONE per-IP bucket (the
+// token is folded out of the key), and a venue puts every visitor's phone behind one Wi-Fi NAT: at
+// the old shared 240/min, ~16 audio-guide phones at a 4s poll exhausted it for the whole venue.
+// 2400/min covers ~160 phones; the lite poll it serves is a token check plus a cached lookup.
+app.get('/api/view/:kind/:key/payload', rateLimit(60000, 2400));
+app.get(['/view/:key', '/view/screen/:id', '/listen/:key', '/listen/screen/:id'], rateLimit(60000, 240));
+app.get(['/view/:key', '/view/screen/:id', '/api/view/:kind/:key/payload', '/listen/:key', '/listen/screen/:id'], require('./routes/view')({ sendPlayer }));
 // Canva OAuth callback (routes/canva.js): the browser returns from canva.com with no Authorization
 // header, so it cannot sit behind the JWT-only /api/canva mount below. It trusts only the signed
 // httpOnly transaction cookie set when the person pressed Connect.
@@ -1832,28 +1839,6 @@ app.get('/api/content/:id/file', (req, res) => {
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   hardenUploadResponse(res, content.filepath);
   res.sendFile(safePath);
-});
-
-/*
- * A completed, server-approved intrinsic-size copy for legacy SSSP3 panels.
- * This endpoint is deliberately read-only: payload construction is the only
- * path that may approve/queue a rendition, so arbitrary public requests never
- * spend CPU or allocate persistent files.
- */
-app.get('/api/content/:id/sssp3-fit/:renditionId', (req, res) => {
-  const { db } = require('./db/database');
-  const content = db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id);
-  if (!content) return res.status(404).json({ error: 'Content not found' });
-  if (!isReferencedForPlayers(db, content) && !requesterCanAccessContent(req, content)) {
-    return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
-  }
-  const file = require('./lib/sssp3-fit-rendition').resolveReady(content.id, req.params.renditionId);
-  if (!file) return res.status(404).json({ error: 'Rendition not ready' });
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-  hardenUploadResponse(res, file);
-  return res.sendFile(file);
 });
 
 /*
@@ -2503,6 +2488,7 @@ require('./lib/flap-limiter').startSweep();          // #146 Item B: evict idle 
 require('./lib/upload-session').startSweep();
 require('./lib/session-settle').startSweep();        // #148 patch2: evict idle session-settle entries
 require('./lib/content-ack-limiter').startSweep();   // #146 Item E: evict idle content-ack buckets
+require('./lib/heartbeat-floor').startSweep();       // #777: evict idle heartbeat-floor buckets
 const apkCache = require('./lib/apk-cache');
 apkCache.start();                                    // #146 Item C: resolve APK path/size/mtime once + refresh on interval (no per-request fs)
 const wgtCache = require('./lib/wgt-cache');
@@ -2677,6 +2663,34 @@ app.post('/api/device/exit', (req, res) => {
   const e = liveness.sanitizeExitReason(reason, detail);   // unknown/invalid -> null -> device falls to 'silent'
   if (e) db.prepare("UPDATE devices SET offline_reason = ?, offline_reason_at = strftime('%s','now'), offline_detail = ? WHERE id = ?").run(e.reason, e.detail, device_id);
   res.status(204).end();
+});
+
+// Visitor audio sync: a device asks for ITS OWN "scan for audio guide" QR — the /listen URL for this
+// screen — so the player can overlay it while a guide-enabled video plays. Device-token auth, exactly
+// like /api/device/exit above. Returns the QR only when view-only access is ALREADY enabled for this
+// screen (a token exists); we never silently enable view access here, that stays an admin choice.
+app.post('/api/device/audio-guide', (req, res) => {
+  const { db } = require('./db/database');
+  const { device_id, device_token } = req.body || {};
+  if (!device_id || typeof device_token !== 'string') return res.status(401).json({ enabled: false });
+  const row = db.prepare('SELECT device_token, view_enabled, view_token_enc FROM devices WHERE id = ?').get(device_id);
+  let ok = false;
+  try {
+    ok = !!(row && row.device_token && device_token.length === row.device_token.length &&
+      crypto.timingSafeEqual(Buffer.from(row.device_token), Buffer.from(device_token)));
+  } catch (_) { ok = false; }
+  if (!ok) return res.status(401).json({ enabled: false });
+  const cfg = require('./config');
+  if (!cfg.viewOnlyEnabled || !row.view_enabled || !row.view_token_enc) {
+    return res.json({ enabled: false });   // no on-screen QR until view-only access is turned on for this screen
+  }
+  try {
+    const token = require('./lib/secretbox').decrypt(row.view_token_enc);
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const listen_url = `${origin}/listen/${token}`;
+    const qr_svg = require('./lib/slide-render').qrSvg(listen_url, 'M', '#000000', '#ffffff');
+    return res.json(qr_svg ? { enabled: true, listen_url, qr_svg } : { enabled: false });
+  } catch (_) { return res.json({ enabled: false }); }
 });
 
 // (Content file endpoint moved above protected routes)
@@ -2925,13 +2939,6 @@ require('./lib/video-variants').start({
     for (const id of new Set(deviceIds || [])) commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), id, buildPlaylistPayload);
   },
 });
-require('./lib/sssp3-fit-rendition').start({
-  push: (deviceIds) => {
-    const { buildPlaylistPayload } = require('./ws/deviceSocket');
-    const commandQueue = require('./lib/command-queue');
-    for (const id of new Set(deviceIds || [])) commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), id, buildPlaylistPayload);
-  },
-});
 require('./lib/automation/overrides').setIo(io);   // automation: timed playlist overrides
 require('./lib/automation/events').start();          // automation: REST-hook deliveries, screen up/down events
 require('./lib/social/feeds').start(io);   // social walls: fetch feeds, cache images
@@ -3065,6 +3072,9 @@ try { require('./services/freshness-digest').startFreshnessDigest(); } catch (e)
 // The feedback loop's daily run (services/feedback-digest.js): follow-up emails for lapsed trials and
 // cancellations (HOSTED_INSTANCE), and the platform admins' feedback + funnel digest. 15:00 UTC.
 try { require('./services/feedback-digest').startFeedbackDigest(); } catch (e) { console.warn(`[feedback] daily run not scheduled: ${e && e.message}`); }
+// Renewal reminders for comped / PO-billed accounts: 90/60/30/7 days before users.renewal_at, to the
+// account with platform admins CC'd (services/renewalReminder.js; hosted-only, no-op without renewal_at set).
+try { require('./services/renewalReminder').startRenewalReminder(); } catch (e) { console.warn(`[renewal] reminders not scheduled: ${e && e.message}`); }
 // 3.0 complete exports and scheduled organization deletions (lib/trust): resume queued exports,
 // expire old archives, carry out deletions whose grace period has passed. Hourly or slower.
 try { require('./lib/trust/export').start(); require('./lib/trust/org-deletion').start(); } catch (e) { console.warn(`[trust] background jobs not scheduled: ${e && e.message}`); }
@@ -3510,56 +3520,6 @@ app.get('/tizen/ScreenTinker.wgt', (req, res) => {
   res.sendFile(wgt.path);
 });
 
-// ==================== Samsung SSSP3 (Orsay) native install ====================
-// The legacy SSSP3 platform (pre-Tizen WebKit build) has no web-page launcher; it
-// polls an entered URL for sssp_config.xml, downloads the named package and runs it
-// from local storage. Our player package source lives in samsung-sssp3/ (build it
-// with samsung-sssp3/build-sssp3.sh). Deployables are resolved like the Tizen .wgt:
-// an operator mount /data/ScreenTinkerSSSP3.zip, a repo-root drop, then the local
-// dev build. The manifest unit is BYTES on this platform (not the Tizen kilobytes).
-const sssp3Cache = require('./lib/sssp3-package-cache');
-
-function sssp3NotAvailable(res) {
-  return res.status(404).send('<!DOCTYPE html><html><head><title>SSSP3 Player Not Available</title>'
-    + '<style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}div{text-align:center;max-width:520px;padding:24px}h1{color:#f87171;font-size:24px}code{background:#1e293b;padding:2px 8px;border-radius:4px;font-size:14px}p{line-height:1.6;color:#94a3b8}</style></head>'
-    + '<body><div><h1>SSSP3 Player Not Available</h1><p>No ready <code>ScreenTinkerSSSP3.zip</code> is hosted on this instance. Build it with <code>samsung-sssp3/build-sssp3.sh</code>; for an externally mounted ZIP, also set matching integer <code>SSSP3_WGT_VER</code>.</p></div></body></html>');
-}
-
-app.get('/sssp3/sssp_config.xml', (req, res) => {
-  const pkg = sssp3Cache.get();
-  if (!pkg.exists) return sssp3NotAvailable(res);
-  res.setHeader('Content-Type', 'text/xml; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.send(sssp3Cache.sssp3ConfigXml(pkg));
-});
-
-app.get('/sssp3/ScreenTinkerSSSP3.zip', (req, res) => {
-  const pkg = sssp3Cache.get();
-  if (!pkg.exists) return sssp3NotAvailable(res);
-  res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.sendFile(pkg.path);
-});
-
-// Human-facing landing (a panel appends /sssp_config.xml itself, so it never lands here).
-app.get(['/sssp3', '/sssp3/'], (req, res) => {
-  const pkg = sssp3Cache.get();
-  const base = '/sssp3';
-  if (!pkg.exists) return sssp3NotAvailable(res);
-  res.setHeader('Cache-Control', 'no-cache');
-  res.type('text/plain').send(
-    'ScreenTinker SSSP3 native player\n'
-    + `version: ${pkg.version} (integer, installs move upward)\n`
-    + `bytes: ${pkg.size}\n`
-    + `manifest: ${base}/sssp_config.xml\n`
-    + `package: ${base}/ScreenTinkerSSSP3.zip\n`
-    + 'On the panel enter this URL under URL Launcher: '
-    + `<entry-host>${base}</entry-host>`
-  );
-});
-
-sssp3Cache.start();
-
 // ---- LG webOS Signage ------------------------------------------------------------------------
 // The shell app (webos/) is installed from USB or an SI server and then keeps itself current
 // against these two routes: version.json says what is published, the .ipk is what it installs.
@@ -3604,10 +3564,25 @@ app.get(['/webos', '/webos/'], (req, res) => {
         + '<ol><li>On a FAT32 USB stick, make a folder named <code>application</code> at the root and put the file in it.</li>'
         + '<li>On the panel, open <b>Server Settings</b>: set <b>Application Launch Mode</b> to <b>Local</b> and the application type to <b>IPK</b>, then run <b>Local Application Upgrade</b> from <b>USB</b>.</li>'
         + '<li>Restart the panel when the upgrade finishes.</li></ol>'
+        /*
+         * ⚠️ AN SI SERVER IN LOCAL MODE INSTALLS THIS FILE, NOT ScreenTinker.ipk. A panel in Local
+         * launch mode upgrades its one Local app (id com.lg.app.signage) from the address given, and
+         * refuses a package with another id ("failed to upgrade IPK"). This page used to send SI
+         * server installs to ScreenTinker.ipk. With Fully Qualified Domain Name on, the address is
+         * the file itself; give the https:// one, since the plain http address answers with a
+         * redirect that a panel's downloader may not follow.
+         */
+        + `<h2>SI server, Local application mode</h2><p>The panel downloads the file itself from this server. In <b>Server Settings → SI Server Settings</b>:</p>`
+        + '<ol><li><b>Application Launch Mode</b>: <b>Local</b>. <b>Application Type</b>: <b>IPK</b>.</li>'
+        + `<li><b>Fully Qualified Domain Name</b>: <b>On</b>, and the address exactly <code>${base}/webos/com.lg.app.signage.ipk</code> (https, the full path to the file).</li>`
+        + '<li><b>Auto Set</b>: <b>Off</b> where the panel has it. <b>Local Application Upgrade</b>: <b>Remote</b>, then Confirm.</li>'
+        + '<li>Restart the panel when the upgrade finishes. Check the panel’s date and time first: a wrong clock fails the secure download.</li></ol>'
       : '')
     + `<h2>${local.exists ? 'Other install routes' : 'Install'}</h2><p>Download <a href="${base}/webos/ScreenTinker.ipk">ScreenTinker.ipk</a> and install it on the panel:</p>`
     + '<ol><li><b>USB:</b> copy the file to a USB stick, plug it into the panel, open <b>Settings \u2192 General \u2192 Install App</b> (the exact path varies by webOS version), and pick it.</li>'
-    + '<li><b>SI server:</b> host the file and point the panel\u2019s SI Server setting at it.</li></ol>'
+    + (local.exists
+      ? '<li><b>SI server:</b> a panel in Local application launch mode needs <code>com.lg.app.signage.ipk</code> instead (above); it refuses this file.</li></ol>'
+      : '<li><b>SI server:</b> host the file and point the panel\u2019s SI Server setting at it.</li></ol>')
     + `<p>Then launch ScreenTinker, enter <code>${base}</code>, and claim the pairing code in your dashboard.</p>`
     + `<p class="mut">The app checks <code>${base}/webos/version.json</code> and installs a newer build itself when the panel\u2019s SCAP library is present. Without it (or from a browser) the web player runs at <a href="${base}/player">${base}/player</a>.</p>`
     + '</div></body></html>');
