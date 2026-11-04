@@ -31,7 +31,7 @@ function environment(xhrBytesMap) {
 }
 const image = { content_id: 'one', filepath: 'a.png', mime_type: 'image/png', content_rev: 1 };
 test('a small playlist image is cached by the panel itself, verified write, no Samsung downloader round trip', () => {
-  const e = environment({ 'http://example.test/player/sssp3-native-candidate/media/a.png': '%PNG%DATA' }), activated = [];
+  const e = environment({ 'http://example.test/uploads/content/a.png': '%PNG%DATA' }), activated = [];
   const item = { ...image, file_size: 9 }, payload = { assignments: [item] };
   e.b.accept(payload, p => activated.push(p));
   assert.equal(e.downloads.length, 0, 'small images bypass the 2012 SEF downloader');
@@ -44,12 +44,12 @@ test('a refused direct fetch falls back to the Samsung downloader with unchanged
   e.b.accept(payload, p => activated.push(p));
   let flushes = 0;
   while (e.downloads.length === 0 && flushes++ < 8) for (const s of e.scheduled.splice(0)) if (s.ms) s.fn();
-  assert.match(e.downloads[0].url, /player\/sssp3-native-candidate\/media\/a.png$/, 'fallback keeps the downloader contract; media URLs carry no query');
+  assert.match(e.downloads[0].url, /uploads\/content\/a.png$/, 'fallback keeps the normal content-serving contract; media URLs carry no query');
   e.files[e.downloads[0].destination] = true; e.done('1000?1');
   assert.deepEqual(activated, [payload]);
 });
 test('an http 0 direct fetch is retried and the retry commits', () => {
-  const e = environment({ 'http://example.test/player/sssp3-native-candidate/media/a.png': [undefined, '%PNG%RETRY'] }), activated = [], payload = { assignments: [{ ...image, file_size: 9 }] };
+  const e = environment({ 'http://example.test/uploads/content/a.png': [undefined, '%PNG%RETRY'] }), activated = [], payload = { assignments: [{ ...image, file_size: 9 }] };
   e.b.accept(payload, p => activated.push(p));
   assert.equal(activated.length, 0, 'the first attempt must not complete the playlist');
   for (const s of e.scheduled.splice(0)) if (s.ms) s.fn();
@@ -57,7 +57,7 @@ test('an http 0 direct fetch is retried and the retry commits', () => {
   assert.equal(e.files[e.b._test.path({ ...image, file_size: 9 })], '%PNG%RETRY');
 });
 test('a DB48E bogus completion is healed by a direct verified write when the source is fetchable', () => {
-  const e = environment({ 'http://example.test/player/sssp3-native-candidate/media/a.png': '%PNG%FIX' }), activated = [], payload = { assignments: [image] };
+  const e = environment({ 'http://example.test/uploads/content/a.png': '%PNG%FIX' }), activated = [], payload = { assignments: [image] };
   e.b.accept(payload, p => activated.push(p));
   assert.equal(e.downloads.length, 1);
   e.done('1000?9');
