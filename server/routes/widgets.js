@@ -817,8 +817,8 @@ function renderWidgetHtml(type, config, opts = {}) {
   const iframeSandbox = opts.iframeSandbox || 'allow-scripts';
   config = config || {};
   switch (type) {
-    case 'clock': return renderClock(config);
-    case 'weather': return renderWeather(config, opts.weatherSnapshot);
+    case 'clock': return renderClock(config, opts.legacyDataFrame === true);
+    case 'weather': return renderWeather(config, opts.weatherSnapshot, opts.legacyDataFrame === true);
     case 'radar': return require('../lib/radar/widget').previewHtml(config, { origin: opts.origin });
     case 'rss': return opts.legacyDataFrame ? renderLegacyRSS(config) : renderRSS(config, { seed: opts.seed });
     case 'text': return renderText(config, iframeSandbox, opts.legacyDataFrame === true);
@@ -1307,8 +1307,8 @@ router.get('/preview-session/:id', (req, res) => {
   res.send(html);
 });
 
-function renderClock(c) {
-  const legacyTable = require('../lib/tz-table').tzTable(safeTimezone(c.timezone));
+function renderClock(c, legacy = false) {
+  const legacyTable = legacy ? require('../lib/tz-table').tzTable(safeTimezone(c.timezone)) : null;
   const datePosition = clockDatePosition(c.date_position);
   const dateFirst = datePosition === 'above' || datePosition === 'left';
   const row = datePosition === 'left' || datePosition === 'right';
@@ -1316,6 +1316,22 @@ function renderClock(c) {
     ? (dateFirst ? 'margin-right:8px;' : 'margin-left:8px;')
     : (dateFirst ? 'margin-bottom:8px;' : 'margin-top:8px;');
   const dateHtml = c.show_date !== false ? '<div id="date"></div>' : '';
+  const updateScript = legacy ? `
+function update() {
+  var now = new Date(), spans = ${JSON.stringify(legacyTable && legacyTable.spans || [])}, offset = spans[0].offset_min, i;
+  for (i = 1; i < spans.length && now.getTime() >= spans[i].from_ms; i++) offset = spans[i].offset_min;
+  var local = new Date(now.getTime() + offset * 60000), h = local.getUTCHours();
+  var pad = function (n) { return ('0' + n).slice(-2); };
+  var suffix = ${c.format !== '24h'} ? (h < 12 ? ' AM' : ' PM') : '';
+  if (${c.format !== '24h'}) h = h % 12 || 12;
+  document.getElementById('time').textContent = pad(h) + ':' + pad(local.getUTCMinutes()) + ${c.show_seconds === false ? "''" : "':' + pad(local.getUTCSeconds())"} + suffix;
+  ${c.show_date !== false ? "document.getElementById('date').textContent = local.toUTCString().replace(/ \\d{2}:\\d{2}:\\d{2} GMT$/, '');" : ''}
+}` : `
+function update() {
+  const opts = fixHourCycle(${safeLocale(c.locale)}, { hour12: ${c.format !== '24h'}, timeZone: '${safeTimezone(c.timezone)}', hour:'2-digit', minute:'2-digit'${c.show_seconds === false ? '' : ", second:'2-digit'"} });
+  document.getElementById('time').textContent = new Date().toLocaleTimeString(${safeLocale(c.locale)}, opts);
+  ${c.show_date !== false ? `document.getElementById('date').textContent = new Date().toLocaleDateString(${safeLocale(c.locale)}, { timeZone: '${safeTimezone(c.timezone)}', ${clockDateFormat(c.date_format)} });` : ''}
+}`;
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:${safeCss(c.background, 'transparent')}; display:flex; flex-direction:${row ? 'row' : 'column'}; align-items:center; justify-content:center; height:100vh; font-family:-apple-system,sans-serif; overflow:hidden; }
@@ -1328,29 +1344,7 @@ ${dateFirst ? dateHtml : ''}
 ${dateFirst ? '' : dateHtml}
 <script>
 ${FIX_HOUR_CYCLE_JS}
-function update() {
-  // show_seconds defaults TRUE so existing widgets keep the clock they already had (#323).
-  // Modern engines use Intl options with the hour-cycle fix (#761). Orsay-era SSSP3 WebKit
-  // cannot resolve DateTimeFormat options at all, so the probe falls back to the server
-  // tz-table spans and computes local time in plain ES5 below.
-  var now = new Date();
-  if (supportsClockOptions) {
-    var opts = fixHourCycle(${safeLocale(c.locale)}, { hour12: ${c.format !== '24h'}, timeZone: '${safeTimezone(c.timezone)}', hour:'2-digit', minute:'2-digit'${c.show_seconds === false ? '' : ", second:'2-digit'"} });
-    document.getElementById('time').textContent = now.toLocaleTimeString(${safeLocale(c.locale)}, opts);
-    ${c.show_date !== false ? `document.getElementById('date').textContent = now.toLocaleDateString(${safeLocale(c.locale)}, { timeZone: '${safeTimezone(c.timezone)}', ${clockDateFormat(c.date_format)} });` : ''}
-  } else {
-    var spans = ${JSON.stringify(legacyTable.spans)}, offset = spans[0].offset_min, i;
-    for (i = 1; i < spans.length && now.getTime() >= spans[i].from_ms; i++) offset = spans[i].offset_min;
-    var local = new Date(now.getTime() + offset * 60000), h = local.getUTCHours();
-    var pad = function (n) { return ('0' + n).slice(-2); };
-    var suffix = ${c.format !== '24h'} ? (h < 12 ? ' AM' : ' PM') : '';
-    if (${c.format !== '24h'}) h = h % 12 || 12;
-    document.getElementById('time').textContent = pad(h) + ':' + pad(local.getUTCMinutes()) + ${c.show_seconds === false ? "''" : "':' + pad(local.getUTCSeconds())"} + suffix;
-    ${c.show_date !== false ? "document.getElementById('date').textContent = local.toUTCString().replace(/ \\d{2}:\\d{2}:\\d{2} GMT$/, '');" : ''}
-  }
-}
-var supportsClockOptions = false;
-try { var probe = new Date(Date.UTC(2000, 0, 1, 12, 34, 56)).toLocaleTimeString('en', { timeZone:'UTC', hour:'2-digit', minute:'2-digit', hour12:false }); supportsClockOptions = /12\\D+34/.test(probe) && !/56|GMT|UTC/i.test(probe); } catch (ignore) {}
+${updateScript}
 /*
  * Fit the zone. The font size is a fixed px value, and a clock in a small zone (12-hour time with
  * seconds in a corner strip) wrapped "AM" onto a second line that the zone then cut off. The time
@@ -1439,8 +1433,50 @@ function scriptJson(value) {
   return JSON.stringify(value).replace(/[<\u2028\u2029]/g, (ch) => ({ '<': '\\u003c', '\u2028': '\\u2028', '\u2029': '\\u2029' }[ch]));
 }
 
-function renderWeather(c, snapshot) {
+function renderWeather(c, snapshot, legacy = false) {
   const weatherUrl = `https://wttr.in/${encodeURIComponent(c.__place_query || c.location || 'New York')}?format=j1${/^[A-Za-z]{2}$/.test(String(c.locale || '').slice(0, 2)) ? '&lang=' + encodeURIComponent(String(c.locale).slice(0, 2).toLowerCase()) : ''}`;
+  const weatherScript = legacy ? `
+var weatherUrl = ${JSON.stringify(weatherUrl)};
+function unavailable() { document.getElementById('desc').textContent = 'Weather unavailable'; }
+function applyWeather(d) {
+  var cur = d && d.current_condition && d.current_condition[0], langKey = null, k, code, icons;
+  if (!cur) { unavailable(); return; }
+  document.getElementById('temp').textContent = cur[${JSON.stringify(c.units === 'metric' ? 'temp_C' : 'temp_F')}] + ${JSON.stringify(c.units === 'metric' ? '°C' : '°F')};
+  for (k in cur) if (Object.prototype.hasOwnProperty.call(cur, k) && k.indexOf('lang_') === 0) { langKey = k; break; }
+  document.getElementById('desc').textContent = (langKey && cur[langKey] && cur[langKey][0] && cur[langKey][0].value) || (cur.weatherDesc && cur.weatherDesc[0] && cur.weatherDesc[0].value) || '';
+  code = parseInt(cur.weatherCode, 10);
+  icons = {113:'☀️',116:'⛅',119:'☁️',122:'☁️',143:'🌫️',176:'🌧️',200:'⛈️',227:'🌨️',260:'🌫️',263:'🌧️',266:'🌧️',293:'🌧️',296:'🌧️',299:'🌧️',302:'🌧️',305:'🌧️',308:'🌧️',311:'🌧️',314:'🌧️',317:'🌧️',320:'🌨️',323:'🌨️',326:'🌨️',329:'🌨️',332:'🌨️',335:'🌨️',338:'🌨️',350:'🌧️',353:'🌧️',356:'🌧️',359:'🌧️',362:'🌨️',365:'🌨️',368:'🌨️',371:'🌨️',374:'🌨️',377:'🌨️',386:'⛈️',389:'⛈️',392:'⛈️',395:'🌨️'};
+  document.getElementById('icon').textContent = icons[code] || '🌡️';
+}
+function load() {
+  var xhr;
+  try {
+    xhr = new XMLHttpRequest(); xhr.open('GET', weatherUrl, true);
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) return;
+      if (xhr.status < 200 || xhr.status >= 300) { unavailable(); return; }
+      try { applyWeather(JSON.parse(xhr.responseText)); } catch (ignore) { unavailable(); }
+    };
+    xhr.onerror = unavailable; xhr.send(null);
+  } catch (ignore) { unavailable(); }
+}
+${snapshot ? `applyWeather(${scriptJson(snapshot)});` : 'load(); setInterval(load, 600000);'}` : `
+async function load() {
+  try {
+    const r = await fetch(${JSON.stringify(weatherUrl)});
+    const d = await r.json();
+    const cur = d.current_condition[0];
+    const unit = '${c.units === 'metric' ? 'temp_C' : 'temp_F'}';
+    const deg = '${c.units === 'metric' ? '°C' : '°F'}';
+    document.getElementById('temp').textContent = cur[unit] + deg;
+    const langKey = Object.keys(cur).find((k) => k.startsWith('lang_'));
+    document.getElementById('desc').textContent = (langKey && cur[langKey] && cur[langKey][0] && cur[langKey][0].value) || cur.weatherDesc[0].value;
+    const code = parseInt(cur.weatherCode);
+    const icons = {113:'☀️',116:'⛅',119:'☁️',122:'☁️',143:'🌫️',176:'🌧️',200:'⛈️',227:'🌨️',260:'🌫️',263:'🌧️',266:'🌧️',293:'🌧️',296:'🌧️',299:'🌧️',302:'🌧️',305:'🌧️',308:'🌧️',311:'🌧️',314:'🌧️',317:'🌧️',320:'🌨️',323:'🌨️',326:'🌨️',329:'🌨️',332:'🌨️',335:'🌨️',338:'🌨️',350:'🌧️',353:'🌧️',356:'🌧️',359:'🌧️',362:'🌨️',365:'🌨️',368:'🌨️',371:'🌨️',374:'🌨️',377:'🌨️',386:'⛈️',389:'⛈️',392:'⛈️',395:'🌨️'};
+    document.getElementById('icon').textContent = icons[code] || '🌡️';
+  } catch(e) { document.getElementById('desc').textContent = 'Weather unavailable'; }
+}
+load(); setInterval(load, 600000);`;
   return `<!DOCTYPE html><html><head><style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:${safeCss(c.background, 'transparent')}; display:flex; align-items:center; justify-content:center; height:100vh; font-family:-apple-system,sans-serif; color:${safeCss(c.color, '#FFF')}; }
@@ -1472,33 +1508,7 @@ function renderWeather(c, snapshot) {
   </div>
 </div>
 <script>
-var weatherUrl = ${JSON.stringify(weatherUrl)};
-function unavailable() { document.getElementById('desc').textContent = 'Weather unavailable'; }
-function applyWeather(d) {
-  var cur = d && d.current_condition && d.current_condition[0], langKey = null, k, code, icons;
-  if (!cur) { unavailable(); return; }
-  document.getElementById('temp').textContent = cur[${JSON.stringify(c.units === 'metric' ? 'temp_C' : 'temp_F')}] + ${JSON.stringify(c.units === 'metric' ? '°C' : '°F')};
-  for (k in cur) if (Object.prototype.hasOwnProperty.call(cur, k) && k.indexOf('lang_') === 0) { langKey = k; break; }
-  document.getElementById('desc').textContent = (langKey && cur[langKey] && cur[langKey][0] && cur[langKey][0].value) || (cur.weatherDesc && cur.weatherDesc[0] && cur.weatherDesc[0].value) || '';
-  code = parseInt(cur.weatherCode, 10);
-  icons = {113:'☀️',116:'⛅',119:'☁️',122:'☁️',143:'🌫️',176:'🌧️',200:'⛈️',227:'🌨️',260:'🌫️',263:'🌧️',266:'🌧️',293:'🌧️',296:'🌧️',299:'🌧️',302:'🌧️',305:'🌧️',308:'🌧️',311:'🌧️',314:'🌧️',317:'🌧️',320:'🌨️',323:'🌨️',326:'🌨️',329:'🌨️',332:'🌨️',335:'🌨️',338:'🌨️',350:'🌧️',353:'🌧️',356:'🌧️',359:'🌧️',362:'🌨️',365:'🌨️',368:'🌨️',371:'🌨️',374:'🌨️',377:'🌨️',386:'⛈️',389:'⛈️',392:'⛈️',395:'🌨️'};
-  document.getElementById('icon').textContent = icons[code] || '🌡️';
-}
-function load() {
-  var xhr;
-  try {
-    xhr = new XMLHttpRequest();
-    xhr.open('GET', weatherUrl, true);
-    xhr.onreadystatechange = function () {
-      if (xhr.readyState !== 4) return;
-      if (xhr.status < 200 || xhr.status >= 300) { unavailable(); return; }
-      try { applyWeather(JSON.parse(xhr.responseText)); } catch (ignore) { unavailable(); }
-    };
-    xhr.onerror = unavailable;
-    xhr.send(null);
-  } catch (ignore) { unavailable(); }
-}
-${snapshot ? `applyWeather(${scriptJson(snapshot)});` : 'load(); setInterval(load, 600000);'}
+${weatherScript}
 </script></body></html>`;
 }
 

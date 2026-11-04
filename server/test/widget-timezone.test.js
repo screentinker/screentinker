@@ -114,9 +114,9 @@ test('the clock editor can ask the server for its own timezone', async () => {
 // ---------------------------------------------------------------------------
 
 const mkClock = (cfg) => post(jwt, { widget_type: 'clock', name: 'c' + crypto.randomBytes(3).toString('hex'), config: cfg });
-const renderOf = async (cfg) => {
+const renderOf = async (cfg, compat = false) => {
   const w = await (await fetch(BASE + '/api/widgets', mkClock(cfg))).json();
-  return (await fetch(BASE + '/api/widgets/' + w.id + '/render')).text();
+  return (await fetch(BASE + '/api/widgets/' + w.id + '/render' + (compat ? '?compat=sssp1228' : ''))).text();
 };
 
 test('#323: seconds can be turned off', async () => {
@@ -126,7 +126,7 @@ test('#323: seconds can be turned off', async () => {
 });
 
 test('legacy engines that ignore time formatting options still honor seconds and timezone', async () => {
-  const html = await renderOf({ timezone: 'Africa/Cairo', format: '12h', show_seconds: false, show_date: false });
+  const html = await renderOf({ timezone: 'Africa/Cairo', format: '12h', show_seconds: false, show_date: false }, true);
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   const instant = Date.now();
   class OldDate extends Date {
@@ -137,6 +137,15 @@ test('legacy engines that ignore time formatting options still honor seconds and
   vm.runInNewContext(script, { Date: OldDate, document: { documentElement: { clientWidth: 1920, clientHeight: 1080 }, getElementById: id => elements[id] }, window: { innerWidth: 1920, innerHeight: 1080, addEventListener() {} }, setInterval() {} });
   const expected = new Intl.DateTimeFormat('en-US', { timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit', hour12: true }).format(new Date(instant));
   assert.equal(elements.time.textContent, expected.replace(/\u202f/g, ' '));
+});
+
+test('legacy clock code is emitted only for the explicit SSSP3 compatibility mode', async () => {
+  const normal = await renderOf({ timezone: 'Africa/Cairo', format: '12h' });
+  const legacy = await renderOf({ timezone: 'Africa/Cairo', format: '12h' }, true);
+  assert.match(normal, /toLocaleTimeString/);
+  assert.doesNotMatch(normal, /offset_min/);
+  assert.match(legacy, /offset_min/);
+  assert.doesNotMatch(legacy, /toLocaleTimeString/);
 });
 
 test('#323: seconds stay on by default, so existing widgets do not change', async () => {
@@ -187,11 +196,11 @@ test('clock dates can be hidden, formatted, and placed around the time', async (
 // #324: the weather widget scales as a whole, and can speak the operator's language.
 // ---------------------------------------------------------------------------
 
-const renderWeather = async (cfg) => {
+const renderWeather = async (cfg, compat = false) => {
   const w = await (await fetch(BASE + '/api/widgets', post(jwt, {
     widget_type: 'weather', name: 'w' + crypto.randomBytes(3).toString('hex'), config: cfg,
   }))).json();
-  return (await fetch(BASE + '/api/widgets/' + w.id + '/render')).text();
+  return (await fetch(BASE + '/api/widgets/' + w.id + '/render' + (compat ? '?compat=sssp1228' : ''))).text();
 };
 
 test('#324: every text size scales with font_size, not just the temperature', async () => {
@@ -234,7 +243,17 @@ test('#324: a locale reaches the weather provider, and junk does not', async () 
 });
 
 test('weather output remains executable on the legacy SSSP3 runtime', async () => {
-  const html = await renderWeather({ location: 'Cairo' });
+  const html = await renderWeather({ location: 'Cairo' }, true);
   assert.match(html, /new XMLHttpRequest\(\)/);
   assert.doesNotMatch(html, /async function|\bfetch\(|\bconst\b|=>/);
+});
+
+test('normal weather keeps the existing renderer while SSSP3 compatibility is isolated', async () => {
+  const normal = await renderWeather({ location: 'Cairo' });
+  const legacy = await renderWeather({ location: 'Cairo' }, true);
+  assert.match(normal, /async function load\(\)/);
+  assert.match(normal, /\bfetch\(/);
+  assert.doesNotMatch(normal, /new XMLHttpRequest\(\)/);
+  assert.match(legacy, /new XMLHttpRequest\(\)/);
+  assert.doesNotMatch(legacy, /async function|\bfetch\(/);
 });
