@@ -176,7 +176,10 @@
   bridge.init = function () {
     fs = new FileSystem();
     try { fs.createCommonDir('/mtd_down/common/screentinker'); } catch (ignore) {}
-    try { fs.createCommonDir('screentinker_media'); } catch (ignore2) {}
+    /* The downloader writes an absolute common-filesystem path.  Creating a
+     * relative directory here can succeed in a different plugin namespace,
+     * then leave its actual destination absent on DB48E. */
+    try { fs.createCommonDir(directory); } catch (ignore2) {}
     downloader = document.getElementById('NativeDownloader');
     if (!downloader || !downloader.StartDownFile) throw new Error('Samsung downloader unavailable');
     downloader.OnComplete = 'STNativeDownloadComplete';
