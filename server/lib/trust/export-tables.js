@@ -60,6 +60,9 @@ const EXPORTED = {
   // content
   content: { category: 'content', scope: ws() },
   content_folders: { category: 'content', scope: ws() },
+  // #796 folders of the widget, playlist and schedule libraries, and where each item is filed.
+  library_folders: { category: 'content', scope: ws() },
+  library_folder_items: { category: 'content', scope: ws() },
   content_locations: { category: 'content', scope: via('content_id', 'content') },
   content_audio_tracks: { category: 'content', scope: via('content_id', 'content') },
   custom_fonts: { category: 'content', scope: ws() },

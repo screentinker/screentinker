@@ -174,6 +174,9 @@ const TABLES = Object.freeze([
   { table: 'playlist_items',       pk: 'id', scope: { via: 'playlist_id', parent: 'playlists' } },
   { table: 'playlist_item_schedules', pk: 'id', scope: { via: 'playlist_item_id', parent: 'playlist_items' } },
   { table: 'schedules',            pk: 'id', scope: 'workspace_id' },
+  // #796 library folders (after the three kinds they organise; folders before what is filed in them).
+  { table: 'library_folders',      pk: 'id', scope: 'workspace_id' },
+  { table: 'library_folder_items', pk: ['kind', 'item_id'], scope: 'workspace_id' },
   { table: 'device_groups',        pk: 'id', scope: 'workspace_id' },
   { table: 'devices',              pk: 'id', scope: 'workspace_id', updateOf: 'config' },
   { table: 'device_group_members', pk: ['device_id', 'group_id'], scope: { via: 'group_id', parent: 'device_groups' } },

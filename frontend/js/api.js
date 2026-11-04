@@ -626,6 +626,23 @@ export const api = {
     body: JSON.stringify({ parent_id: parentId || null })
   }),
   deleteFolder: (id) => request(`/folders/${id}`, { method: 'DELETE' }),
+
+  // #796 folders of the widget, playlist and schedule libraries (server routes/library-folders.js).
+  // kind: 'widget' | 'playlist' | 'schedule'. Organisational only: a move never changes the item.
+  getLibraryFolders: (kind) => request(`/library-folders/${encodeURIComponent(kind)}`),
+  createLibraryFolder: (kind, name, parentId) => request(`/library-folders/${encodeURIComponent(kind)}/folders`, {
+    method: 'POST',
+    body: JSON.stringify({ name, parent_id: parentId || null })
+  }),
+  updateLibraryFolder: (kind, id, patch) => request(`/library-folders/${encodeURIComponent(kind)}/folders/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(patch || {})
+  }),
+  deleteLibraryFolder: (kind, id) => request(`/library-folders/${encodeURIComponent(kind)}/folders/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  moveLibraryItems: (kind, ids, folderId) => request(`/library-folders/${encodeURIComponent(kind)}/move`, {
+    method: 'POST',
+    body: JSON.stringify({ ids, folder_id: folderId || null })
+  }),
   // #212: accepts a single File or an array/FileList of Files. All go up in one request
   // under the `files` field (the server also still accepts the legacy `file` field).
   // onProgress reports aggregate percent across the whole batch. Resolves to the content

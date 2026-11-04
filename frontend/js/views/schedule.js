@@ -3,6 +3,7 @@ import { showToast } from '../components/toast.js';
 import { t, tn } from '../i18n.js';
 import { workspaceCoverage } from '../components/corporate-ui.js';
 import { canWrite } from '../utils.js';
+import { mountResourceLibrary } from '../components/library/resource-library.js';
 import {
   HOUR_PX, pxToMinutes, minutesToPx, rangeFromDrag, moveRange, resizeRange,
   toLocalStamp, formatRange, canMoveAcrossDays, editsWholeSeries, isDrag,
@@ -12,6 +13,7 @@ import {
   VIEWS, DEFAULT_VIEW, VIEW_STORAGE_KEY, RAIL_STORAGE_KEY, WORK_DAYS, WORK_START_MIN, WORK_END_MIN,
   periodRange, stepAnchor, monthGrid, isAllDay, packColumns, presetFor, describeRecurrence,
   WEEKDAYS_RULE, WEEKENDS_RULE, RRULE_DAYS, startOfDay, addDays, sameDay, ymd, planOccurrenceEdit,
+  scheduleTimeStatus,
 } from '../lib/schedule-calendar.js';
 
 /*
@@ -191,6 +193,7 @@ const MONTH_PILLS = 3;
 function esc(str) { const d = document.createElement('div'); d.textContent = str == null ? '' : String(str); return d.innerHTML; }
 
 const readStored = (k, fallback) => { try { return localStorage.getItem(k) ?? fallback; } catch (_) { return fallback; } };
+const LIST_MODE_KEY = 'st_schedule_list';   // #796: the schedule library is showing instead of the calendar
 const writeStored = (k, v) => { try { localStorage.setItem(k, v); } catch (_) { /* private mode */ } };
 
 export async function render(container) {
@@ -246,8 +249,11 @@ export async function render(container) {
       <div class="sched-views" role="group" aria-label="${t('schedule.view_week')}">
         ${VIEWS.map((v) => `<button type="button" data-view="${v}">${t(v === 'day' ? 'schedule.view_day' : v === 'workweek' ? 'schedule.view_workweek' : v === 'week' ? 'schedule.view_week' : 'schedule.view_month')}</button>`).join('')}
       </div>
+      <!-- #796: the schedule library (folders, search, status views), beside the calendar views. -->
+      <button type="button" class="btn btn-secondary btn-sm" id="schedListBtn" aria-pressed="false">${t('schedule.lib.view_list')}</button>
       <button class="btn btn-primary btn-sm" id="addScheduleBtn" ${canWrite() ? '' : 'hidden'}>${t('schedule.new')}</button>
     </div>
+    <div class="sched-library" id="schedLibrary" hidden></div>
     <div class="sched-shell">
       <aside class="sched-rail" id="schedRail">
         <div>
@@ -404,6 +410,10 @@ export async function render(container) {
   let editingId = null;
   let railOpen = readStored(RAIL_STORAGE_KEY, isNarrow() ? '0' : '1') === '1';
   let calSearch = '';
+  // #796: the schedule library (a list) instead of the calendar, and its frame. Declared up here,
+  // before anything renders, because renderToolbar and loadCalendar read them.
+  let listMode = readStored(LIST_MODE_KEY, '0') === '1';
+  let library = null;
   const visibleKeys = new Set();              // target keys currently ticked in the rail
 
   // The date the modal is currently working on: a dragged day, the date of the schedule being
@@ -542,7 +552,7 @@ export async function render(container) {
 
   function renderToolbar() {
     document.getElementById('schedDateLabel').textContent = dateLabel();
-    document.querySelectorAll('.sched-views button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+    document.querySelectorAll('.sched-views button').forEach((b) => b.classList.toggle('active', !listMode && b.dataset.view === view));
     const rail = document.getElementById('schedRail');
     rail.classList.toggle('collapsed', !railOpen);
   }
@@ -632,6 +642,7 @@ export async function render(container) {
   }
 
   async function loadCalendar() {
+    if (listMode) loadLibrary();   // #796: a save or delete refreshes the list as well
     period = periodRange(effectiveView(), anchor);
     renderToolbar();
     allEvents = await API(`/schedules/week?date=${ymd(period.fetchStart)}&all=1&days=${period.fetchDays}`);
@@ -1404,23 +1415,153 @@ export async function render(container) {
     if (isWall) data.wall_id = targetId; else if (isGroup) data.group_id = targetId; else data.device_id = targetId;
     try {
       if (editingId) await API(`/schedules/${editingId}`, { method: 'PUT', body: JSON.stringify(data) });
-      else await API('/schedules', { method: 'POST', body: JSON.stringify(data) });
+      else {
+        const created = await API('/schedules', { method: 'POST', body: JSON.stringify(data) });
+        // #796: made from the list while a folder is open, it is filed there (organisational only).
+        if (listMode && library && created && created.id) await library.fileNew(created.id);
+      }
       document.getElementById('scheduleModal').style.display = 'none';
       showToast(t('schedule.toast.saved'), 'success');
       loadCalendar();
     } catch (err) { showToast(err.message, 'error'); }
   };
 
+  // ---------------------------------------------------------------- #796 the schedule library
+  /*
+   * The same schedules as the calendar, as a library: folders, search by name, status views and
+   * filters, sorting. Folders are organisational only: filing a schedule never touches the schedule
+   * row, so its timing, recurrence, priority and screens are exactly as they were. Opening one opens
+   * the same dialog the calendar uses.
+   */
+  const deviceNameOf = new Map(allDevices.map((d) => [d.id, d.name]));
+  const libTargetOf = (s) => (s.wall_id ? { type: 'wall', name: s.wall_name || t('schedule.target_wall') }
+    : s.group_id ? { type: 'group', name: s.group_name || t('schedule.target_group') }
+      : { type: 'device', name: deviceNameOf.get(s.device_id) || s.device_name || t('schedule.target_device') });
+  const libStatusLabel = (st) => ({
+    active: t('schedule.lib.status_active'), upcoming: t('schedule.lib.status_upcoming'),
+    expired: t('schedule.lib.status_expired'), disabled: t('schedule.lib.status_disabled'),
+  })[st] || st;
+  const timeMs = (v) => { const n = new Date(v).getTime(); return Number.isNaN(n) ? 0 : n; };
+  const fmtWhen = (v) => { const d = new Date(v); return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }); };
+  function whenText(s) {
+    const start = new Date(s.start_time), end = new Date(s.end_time);
+    if (s.recurrence) {
+      const until = s.recurrence_end ? new Date(String(s.recurrence_end).slice(0, 10) + 'T00:00:00') : null;
+      return recurrenceSentence(s.recurrence, { startMin: minsOf(start), endMin: minsOf(end), until, startDate: start });
+    }
+    return `${fmtWhen(s.start_time)} - ${fmtWhen(s.end_time)}`;
+  }
+
+  function mountLibrary() {
+    if (library) return;
+    const byName = (a, b) => labelOf(a).localeCompare(labelOf(b), undefined, { sensitivity: 'base' });
+    library = mountResourceLibrary(document.getElementById('schedLibrary'), {
+      kind: 'schedule',
+      idPrefix: 'slib',
+      allLabel: t('schedule.lib.all'),
+      searchLabel: t('schedule.lib.search_label'),
+      searchPlaceholder: t('schedule.lib.search_placeholder'),
+      nameOf: (s) => labelOf(s),
+      searchText: (s) => `${libTargetOf(s).name} ${s.playlist_name || ''} ${s.content_name || ''} ${s.widget_name || ''}`,
+      views: [
+        { id: 'recent', icon: 'recent', label: t('library.nav.recent'), test: (s, c) => Number(s.created_at || 0) * 1000 >= c.now - c.recentDays * 86400000 },
+        { id: 'active', icon: 'active', label: t('schedule.lib.view_active'), test: (s) => !!s.enabled && scheduleTimeStatus(s) === 'active' },
+        { id: 'upcoming', icon: 'upcoming', label: t('schedule.lib.view_upcoming'), test: (s) => !!s.enabled && scheduleTimeStatus(s) === 'upcoming' },
+        { id: 'expired', icon: 'expired', label: t('schedule.lib.view_expired'), test: (s) => scheduleTimeStatus(s) === 'expired' },
+      ],
+      viewNote: (c) => t('schedule.lib.views_note', { days: c.recentDays }),
+      filters: [
+        { id: 'when', label: t('schedule.lib.filter_when'), allText: t('schedule.lib.when_all'),
+          options: [['active', t('schedule.lib.status_active')], ['upcoming', t('schedule.lib.status_upcoming')], ['expired', t('schedule.lib.status_expired')]],
+          test: (s, v) => scheduleTimeStatus(s) === v },
+        { id: 'enabled', label: t('schedule.lib.filter_enabled'), allText: t('schedule.lib.enabled_all'),
+          options: [['on', t('schedule.lib.enabled_on')], ['off', t('schedule.lib.status_disabled')]],
+          test: (s, v) => (v === 'on' ? !!s.enabled : !s.enabled) },
+        { id: 'target', label: t('schedule.lib.filter_target'), allText: t('schedule.lib.target_all'),
+          options: [['device', t('schedule.target_device')], ['group', t('schedule.target_group')], ['wall', t('schedule.target_wall')]],
+          test: (s, v) => libTargetOf(s).type === v },
+        { id: 'repeat', label: t('schedule.lib.filter_repeat'), allText: t('schedule.lib.repeat_all'),
+          options: [['once', t('schedule.repeat_none')], ['repeats', t('schedule.lib.repeat_yes')]],
+          test: (s, v) => (v === 'repeats' ? !!s.recurrence : !s.recurrence) },
+      ],
+      sorts: [
+        ['start_asc', t('schedule.lib.sort_start_asc'), (a, b) => timeMs(a.start_time) - timeMs(b.start_time)],
+        ['start_desc', t('schedule.lib.sort_start_desc'), (a, b) => timeMs(b.start_time) - timeMs(a.start_time)],
+        ['end_asc', t('schedule.lib.sort_end_asc'), (a, b) => timeMs(a.end_time) - timeMs(b.end_time)],
+        ['end_desc', t('schedule.lib.sort_end_desc'), (a, b) => timeMs(b.end_time) - timeMs(a.end_time)],
+        ['date_desc', t('content.sort_newest'), (a, b) => (b.created_at || 0) - (a.created_at || 0)],
+        ['date_asc', t('content.sort_oldest'), (a, b) => (a.created_at || 0) - (b.created_at || 0)],
+        ['modified', t('rlib.sort.modified'), (a, b) => (b.updated_at || 0) - (a.updated_at || 0)],
+        ['name', t('content.sort_name'), byName],
+        ['name_desc', t('library.sort.name_desc'), (a, b) => byName(b, a)],
+        ['priority', t('schedule.lib.sort_priority'), (a, b) => (b.priority || 0) - (a.priority || 0)],
+      ],
+      defaultSort: 'start_asc',
+      emptyHtml: () => `<div class="lib-state"><h2>${esc(t('schedule.lib.empty'))}</h2><p>${esc(t('schedule.lib.empty_hint'))}</p></div>`,
+      renderItems: (box, list, h) => {
+        box.innerHTML = `<div class="rl-table-wrap"><table class="rl-table">
+          <thead><tr><th scope="col"><span class="lib-visually-hidden">${esc(t('schedule.lib.col_select'))}</span></th>
+            <th scope="col">${esc(t('schedule.lib.col_name'))}</th><th scope="col">${esc(t('schedule.lib.col_target'))}</th>
+            <th scope="col" class="rl-col-wide">${esc(t('schedule.lib.col_when'))}</th><th scope="col" class="rl-col-wide">${esc(t('schedule.priority'))}</th>
+            <th scope="col">${esc(t('schedule.lib.col_status'))}</th></tr></thead>
+          <tbody>${list.map((s) => {
+            const st = s.enabled ? scheduleTimeStatus(s) : 'disabled';
+            const plays = s.playlist_name || s.content_name || s.widget_name || '';
+            return `<tr class="rl-item${h.isSelected(s) ? ' is-selected' : ''}" ${h.dragAttrs(s)}>
+              <td>${h.selectBox(s)}</td>
+              <td><span class="rl-sched-dot" style="background:${esc(/^#[0-9a-f]{3,8}$/i.test(colorOf(s)) ? colorOf(s) : DEFAULT_SCHEDULE_COLOR)}" aria-hidden="true"></span><button type="button" class="rl-sched-name" data-open-schedule="${esc(s.id)}">${esc(labelOf(s))}</button>
+                ${plays && plays !== labelOf(s) ? `<span class="rl-sub">${esc(plays)}</span>` : ''}${h.folderLine(s)}</td>
+              <td>${esc(libTargetOf(s).name)}</td>
+              <td class="rl-col-wide">${esc(whenText(s))}</td>
+              <td class="rl-col-wide">${esc(s.priority || 0)}</td>
+              <td><span class="rl-badge is-${esc(st)}">${esc(libStatusLabel(st))}</span></td>
+            </tr>`;
+          }).join('')}</tbody></table></div>`;
+        box.querySelectorAll('[data-open-schedule]').forEach((b) => b.addEventListener('click', () => {
+          const s = list.find((x) => x.id === b.dataset.openSchedule);
+          if (s) editSchedule(s);
+        }));
+      },
+    });
+  }
+
+  async function loadLibrary() {
+    mountLibrary();
+    try {
+      const rows = await API('/schedules');
+      library.setItems(Array.isArray(rows) ? rows : []);
+      library.reloadFolders();
+    } catch (err) { showToast(err.message, 'error'); }
+  }
+
+  function setListMode(on) {
+    listMode = !!on;
+    writeStored(LIST_MODE_KEY, listMode ? '1' : '0');
+    const btn = document.getElementById('schedListBtn');
+    btn.setAttribute('aria-pressed', String(listMode));
+    btn.classList.toggle('active', listMode);
+    document.getElementById('schedLibrary').hidden = !listMode;
+    document.querySelector('.sched-shell').style.display = listMode ? 'none' : '';
+    for (const sel of ['#schedRailBtn', '#schedToday', '#schedPrev', '#schedNext', '#schedDateLabel', '.sched-kbd']) {
+      const el = document.querySelector(sel);
+      if (el) el.style.visibility = listMode ? 'hidden' : '';
+    }
+    closePopovers();
+    renderToolbar();
+    if (listMode) loadLibrary(); else loadCalendar();
+  }
+  document.getElementById('schedListBtn').onclick = () => setListMode(!listMode);
+
   // ---------------------------------------------------------------- toolbar wiring + keyboard
   document.getElementById('schedToday').onclick = goToday;
   document.getElementById('schedPrev').onclick = () => step(-1);
   document.getElementById('schedNext').onclick = () => step(1);
-  document.querySelectorAll('.sched-views button').forEach((b) => { b.onclick = () => setView(b.dataset.view); });
+  document.querySelectorAll('.sched-views button').forEach((b) => { b.onclick = () => { if (listMode) setListMode(false); setView(b.dataset.view); }; });
 
   const modalOpen = () => ['scheduleModal', 'schedSeriesModal'].some((id) => document.getElementById(id)?.style.display === 'flex');
   const onKey = (e) => {
     if (e.key === 'Escape') { if (popover) { closePopovers(); e.preventDefault(); } return; }
-    if (modalOpen() || popover) return;
+    if (modalOpen() || popover || listMode) return;
     const tag = (e.target && e.target.tagName) || '';
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || e.target?.isContentEditable || e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key.toLowerCase();
@@ -1451,7 +1592,8 @@ export async function render(container) {
     dragState = null; monthDrag = null;
   });
 
-  loadCalendar();
+  if (listMode) setListMode(true); else loadCalendar();
+  cleanupFns.push(() => { if (library) { library.destroy(); library = null; } });
 }
 
 export function cleanup() { while (cleanupFns.length) { try { cleanupFns.pop()(); } catch (_) { /* */ } } }

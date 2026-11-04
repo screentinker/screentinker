@@ -1,6 +1,6 @@
 import { api, assertLocalCallAllowed } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { t } from '../i18n.js';
+import { t, tn } from '../i18n.js';
 import { openHistoryModal } from '../components/history-modal.js';
 import { renderApprovalBar } from '../components/approval-actions.js';
 import { backgroundField, readBackground } from '../components/background-field.js';
@@ -53,6 +53,7 @@ import { mountBiEditor, readBiConfig } from '../components/bi-dashboard-editor.j
 import { mountSocialEditor, readSocialConfig } from '../components/social-wall-editor.js';
 import { mountFeedPicker, readFeedPicker } from '../components/news-feed-picker.js';
 import { mountRoomEditor, readRoomConfig } from '../components/room-display-editor.js';
+import { mountResourceLibrary } from '../components/library/resource-library.js';
 
 // A refused request must reject, not resolve.
 //
@@ -539,7 +540,8 @@ export async function render(container) {
       `).join('')}
     </div>
     ${readOnlyNote()}
-    <div class="content-grid" id="widgetGrid"></div>
+    <!-- #796: the library frame (folders, quick views, search, filters, sort). The cards go inside. -->
+    <div id="widgetLibrary"><div class="content-grid" id="widgetGrid"></div></div>
     <div id="pluginSubmitCard" style="display:none;margin-top:32px" class="corp-card"></div>
 
     <!-- Widget Config Modal -->
@@ -569,6 +571,7 @@ export async function render(container) {
   // Cached widget list from the last load — used to populate the directory-search
   // source-board dropdown without a second fetch.
   let loadedWidgets = [];
+  let library = null;   // #796, mounted once the plugin types are known (the type filter lists them)
 
   document.getElementById('newWidgetBtn').onclick = () => {
     const grid = document.getElementById('widgetTypeGrid');
@@ -1599,6 +1602,8 @@ export async function render(container) {
         saved = await API(`/widgets/${editingWidget.id}`, { method: 'PUT', body: JSON.stringify({ name, config }) });
       } else {
         saved = await API('/widgets', { method: 'POST', body: JSON.stringify({ widget_type: type, name, config }) });
+        // #796: made while a folder is open, it is filed there (organisational only).
+        if (library && saved && saved.id) await library.fileNew(saved.id);
       }
       document.getElementById('widgetModal').style.display = 'none';
       showToast(saved && saved.pending_review ? t('review.toast.saved_as_draft') : t('widget.toast.saved'), 'success');
@@ -1625,26 +1630,86 @@ export async function render(container) {
   async function loadWidgets() {
     const widgets = await API('/widgets');
     loadedWidgets = Array.isArray(widgets) ? widgets : [];
+    if (library) { library.setItems(loadedWidgets); library.reloadFolders(); }
+  }
+
+  const typeLabelOf = (w) => {
+    const plugin = pluginTypeById().get(w.widget_type);
+    return WIDGET_TYPES.includes(w.widget_type)
+      ? widgetTypeName(w.widget_type)
+      : w.widget_type === 'template' ? templateWidgetLabel(w)
+        : (plugin ? (plugin.label || plugin.type) : w.widget_type);
+  };
+
+  /*
+   * #796: the widget library. Folders and moves are organisational only: filing a widget never
+   * touches the widget row, so its revision (updated_at, which reloads every screen showing it) and
+   * every playlist that uses it are exactly as they were.
+   */
+  function mountLibrary() {
+    const host = document.getElementById('widgetLibrary');
+    if (!host) return;
+    const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
+    const typeOptions = [
+      ...WIDGET_TYPES.map((id) => [id, widgetTypeName(id)]),
+      ['template', t('widget.lib.type_template')],
+      ...pluginTypes.map((p) => [p.type, p.label || p.type]),
+    ];
+    library = mountResourceLibrary(host, {
+      kind: 'widget',
+      idPrefix: 'wlib',
+      allLabel: t('widget.lib.all'),
+      searchLabel: t('widget.lib.search_label'),
+      searchPlaceholder: t('widget.lib.search_placeholder'),
+      views: [
+        { id: 'recent', icon: 'recent', label: t('library.nav.recent'), test: (w, c) => Number(w.created_at || 0) * 1000 >= c.now - c.recentDays * 86400000 },
+        { id: 'unused', icon: 'unused', label: t('widget.lib.unused'), test: (w, c) => !c.usage[w.id] },
+      ],
+      viewNote: (c) => t('widget.lib.views_note', { days: c.recentDays }),
+      filters: [
+        { id: 'type', label: t('widget.lib.filter_type'), allText: t('widget.lib.type_all'), options: typeOptions, test: (w, v) => w.widget_type === v },
+        { id: 'usage', label: t('library.filter.usage_label'), allText: t('library.filter.usage_all'),
+          options: [['used', t('library.filter.used')], ['unused', t('library.usage.unused')]],
+          test: (w, v, c) => (v === 'used' ? !!c.usage[w.id] : !c.usage[w.id]) },
+        { id: 'source', label: t('widget.lib.filter_source'), allText: t('widget.lib.source_all'),
+          options: [['mine', t('widget.lib.source_workspace')], ['template', t('widget.lib.source_template')]],
+          test: (w, v) => (v === 'template' ? !w.workspace_id : !!w.workspace_id) },
+      ],
+      sorts: [
+        ['date_desc', t('content.sort_newest'), (a, b) => (b.created_at || 0) - (a.created_at || 0)],
+        ['date_asc', t('content.sort_oldest'), (a, b) => (a.created_at || 0) - (b.created_at || 0)],
+        ['modified', t('rlib.sort.modified'), (a, b) => (b.updated_at || 0) - (a.updated_at || 0)],
+        ['name', t('content.sort_name'), byName],
+        ['name_desc', t('library.sort.name_desc'), (a, b) => byName(b, a)],
+        ['type', t('library.sort.type'), (a, b) => typeLabelOf(a).localeCompare(typeLabelOf(b))],
+      ],
+      defaultSort: 'date_desc',
+      // A platform template is shared by every workspace, so no one workspace files it.
+      canFile: (w) => !!w.workspace_id,
+      emptyHtml: () => `<div class="empty-state"><h3>${t('widget.empty_title')}</h3><p>${t('widget.empty_desc')}</p></div>`,
+      renderItems: (box, list, h) => renderWidgetCards(box, list, h),
+    });
+  }
+
+  function renderWidgetCards(box, list, h) {
+    const widgets = loadedWidgets;
+    box.innerHTML = '<div class="content-grid" id="widgetGrid"></div>';
     const grid = document.getElementById('widgetGrid');
-    if (!widgets.length) {
-      grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><h3>${t('widget.empty_title')}</h3><p>${t('widget.empty_desc')}</p></div>`;
-      return;
-    }
-    grid.innerHTML = widgets.map(w => {
+    grid.innerHTML = list.map(w => {
       const plugin = pluginTypeById().get(w.widget_type);
       const icon = WIDGET_ICONS[w.widget_type] || (plugin ? esc(plugin.icon || '🔌') : '?');
-      const typeLabel = WIDGET_TYPES.includes(w.widget_type)
-        ? widgetTypeName(w.widget_type)
-        : w.widget_type === 'template' ? templateWidgetLabel(w)
-          : (plugin ? (plugin.label || plugin.type) : w.widget_type);
+      const typeLabel = typeLabelOf(w);
+      const uses = h.usageOf(w);
       return `
-        <div class="content-item">
+        <div class="content-item rl-item${h.isSelected(w) ? ' is-selected' : ''}" ${h.dragAttrs(w)}>
+          ${h.selectBox(w)}
           <div class="content-item-preview" style="display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px">
             <span style="font-size:36px">${icon}</span>
           </div>
           <div class="content-item-body">
             <div class="content-item-name">${escAttr(w.name)}</div>
-            <div class="content-item-size">${escAttr(typeLabel)}</div>
+            <div class="content-item-size">${escAttr(typeLabel)} · ${escAttr(uses ? tn('widget.lib.used_n', uses) : t('widget.lib.unused_badge'))}</div>
+            ${h.folderLine(w)}
           </div>
           <div class="content-item-actions">
             <button class="btn btn-secondary btn-sm" data-edit-widget="${escAttr(w.id)}">${t('common.edit')}</button>
@@ -1659,7 +1724,7 @@ export async function render(container) {
 
     // Draft / review state per card. Only widgets with a pending draft or open submission render
     // anything beyond History, so the grid stays quiet when approval is off.
-    for (const w of widgets) {
+    for (const w of list) {
       const host = grid.querySelector(`[data-approval-widget="${CSS.escape(w.id)}"]`);
       if (host) renderApprovalBar(host, { type: 'widget', id: w.id, name: w.name, onChanged: () => loadWidgets() }).then(() => {
         // Hide the History button the bar renders; the card already has one.
@@ -1683,6 +1748,9 @@ export async function render(container) {
             body: JSON.stringify({ name: src ? t('widget.copy_name', { name: src.name }).slice(0, 120) : undefined }),
           });
           showToast(t('widget.toast.duplicated', { name: copy.name }), 'success');
+          // #796: the copy is filed beside its source (organisational only).
+          const srcFolder = src ? h.folderIdOf(src) : null;
+          if (srcFolder && copy && copy.id) { try { await api.moveLibraryItems('widget', [copy.id], srcFolder); } catch (_) { /* stays at the root */ } }
           await loadWidgets();
           const edit = document.querySelector(`#widgetGrid [data-edit-widget="${CSS.escape(copy.id)}"]`);
           if (edit) { edit.scrollIntoView({ block: 'center' }); edit.click(); }
@@ -1751,7 +1819,7 @@ export async function render(container) {
     };
   }
 
-  loadPluginTypes().then(() => loadWidgets());
+  loadPluginTypes().then(() => { mountLibrary(); return loadWidgets(); });
 }
 
 export function cleanup() {}

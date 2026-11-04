@@ -1670,6 +1670,7 @@ router.delete('/:id', requirePlaylistWrite, (req, res) => {
   const fillScreens = corpFillsLib().devicesPlayingFill(db, req.params.id);
 
   db.prepare('DELETE FROM playlists WHERE id = ?').run(req.params.id);
+  require('../lib/library-folders').forget(db, 'playlist', req.params.id);   // #796: where it was filed
   if (fillScreens.length) require('../lib/corporate/fanout').pushDevices(req, fillScreens);
 
   // Tell them. The database detaches correctly, but nothing was emitted — so a screen kept showing
