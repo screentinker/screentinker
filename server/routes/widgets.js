@@ -813,6 +813,28 @@ function legacyLinkedWidget(url, origin, workspaceId) {
   } catch (_) { return null; }
 }
 
+function renderLegacyLinkedWidget(linked, opts) {
+  const widget = linked.widget;
+  const config = linked.config;
+  const common = {
+    ...opts, workspaceId: widget.workspace_id,
+    resolveImage: imageResolverFor(widget),
+    resolveFont: require('./fonts').fontResolverFor(widget),
+    resolveData: dataResolverFor(widget),
+  };
+  // Linked widgets must use the saved widget's resolvers, not the preview
+  // switch: templates otherwise lose their images, fonts and data bindings.
+  if (widget.widget_type === 'template') return require('../lib/templates/widget').renderTemplateWidget(widget, {
+    origin: opts.origin, resolveImage: common.resolveImage, resolveFont: common.resolveFont, resolveData: common.resolveData,
+  }).html;
+  if (widget.widget_type === 'cap_alert') {
+    const feed = config.feed_id && db.prepare('SELECT * FROM cap_feeds WHERE id = ? AND workspace_id = ?').get(config.feed_id, widget.workspace_id);
+    return require('../lib/cap/card').renderCard(feed ? require('../lib/cap/feeds').liveAlerts(db, feed) : [], { title: feed ? feed.name : 'Emergency alert' });
+  }
+  if (widget.widget_type === 'room-display') return renderLegacyRoomDisplay(config, null);
+  return renderWidgetHtml(widget.widget_type, config, common);
+}
+
 function renderWidgetHtml(type, config, opts = {}) {
   const iframeSandbox = opts.iframeSandbox || 'allow-scripts';
   config = config || {};
@@ -974,6 +996,9 @@ router.get('/:id/render', (req, res) => {
     return res.send(cd.renderCloudDoc(config));
   }
   if (widget.widget_type === 'social' && req.query.compat === 'sssp1228') {
+    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
     return res.send(renderLegacySocial(widget, config));
   }
   /*
@@ -1071,7 +1096,7 @@ router.get('/:id/render', (req, res) => {
       if (linked.widget.widget_type === 'rss') {
         return legacyRssSnapshot(linked.config).then((snapshot) => res.send(renderLegacyRSS(linked.config, snapshot)));
       }
-      return res.send(renderWidgetHtml(linked.widget.widget_type, linked.config, renderOpts));
+      return res.send(renderLegacyLinkedWidget(linked, renderOpts));
     }
   }
   if (widget.widget_type === 'weather' && req.query.compat === 'sssp1228') {
@@ -1308,7 +1333,7 @@ router.get('/preview-session/:id', (req, res) => {
 });
 
 function renderClock(c, legacy = false) {
-  const legacyTable = legacy ? require('../lib/tz-table').tzTable(safeTimezone(c.timezone)) : null;
+  const legacyTable = legacy ? require('../lib/tz-table').tzTable(safeTimezone(c.timezone), Date.now(), 400 * 24 * 3600 * 1000) : null;
   const datePosition = clockDatePosition(c.date_position);
   const dateFirst = datePosition === 'above' || datePosition === 'left';
   const row = datePosition === 'left' || datePosition === 'right';
@@ -1344,6 +1369,17 @@ ${dateFirst ? dateHtml : ''}
 ${dateFirst ? '' : dateHtml}
 <script>
 ${FIX_HOUR_CYCLE_JS}
+function legacyDate(d, locale, format) {
+  var enMonths = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var enDays = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var arMonths = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  var arDays = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+  var ar = /^ar(?:-|$)/i.test(locale || ''), months = ar ? arMonths : enMonths, days = ar ? arDays : enDays;
+  var day = d.getUTCDate(), month = d.getUTCMonth(), year = d.getUTCFullYear();
+  if (format === 'short') return ar ? day + '/' + (month + 1) + '/' + String(year).slice(-2) : ('0' + (month + 1)).slice(-2) + '/' + ('0' + day).slice(-2) + '/' + String(year).slice(-2);
+  if (format === 'medium') return ar ? day + ' ' + months[month] + ' ' + year : months[month].slice(0, 3) + ' ' + day + ', ' + year;
+  return ar ? days[d.getUTCDay()] + '، ' + day + ' ' + months[month] + ' ' + year : days[d.getUTCDay()] + ', ' + months[month] + ' ' + day + ', ' + year;
+}
 ${updateScript}
 /*
  * Fit the zone. The font size is a fixed px value, and a clock in a small zone (12-hour time with
