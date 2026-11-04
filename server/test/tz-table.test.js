@@ -107,3 +107,11 @@ test('the same hour gives the same table; the next hour moves the window', () =>
   a.spans[0].offset_min = 999;
   assert.notEqual(tzTable('America/Chicago', iso('2026-10-11T10:30:00Z')).spans[0].offset_min, 999);
 });
+
+test('a bounded long-horizon table carries an offline legacy clock across DST', () => {
+  const now = iso('2026-01-15T12:00:00Z');
+  const t = tzTable('America/Chicago', now, 400 * 24 * H);
+  assert.equal(lookup(t, iso('2026-03-08T07:59:00Z')), -360);
+  assert.equal(lookup(t, iso('2026-03-08T08:00:00Z')), -300);
+  assert.equal(lookup(t, iso('2026-11-01T07:00:00Z')), -360);
+});
