@@ -23,7 +23,7 @@ if [ -x "${CHROME_PATH:-/usr/bin/chromium}" ]; then
   node "$root/tests/renderer-smoke.cjs"
   node "$root/tests/launcher-ready.cjs"
 else
-  echo "CHROME_PATH not found; skipping browser smoke tests"
+  echo "::warning::CHROME_PATH not found; browser smoke tests were NOT run"
 fi
 python3 - "$root" "$version" <<'PY'
 from pathlib import Path

@@ -1,7 +1,7 @@
 'use strict';
 const puppeteer = require('puppeteer-core');
 const http = require('http');
-let Server; try { Server = require('../../server/node_modules/socket.io'); } catch (e) { console.log('skipped: socket.io unavailable (npm install in server/)'); process.exit(0); }
+let Server; try { Server = require('../../server/node_modules/socket.io').Server; } catch (e) { console.log('skipped: socket.io unavailable (npm install in server/)'); process.exit(0); }
 const path = require('path');
 (async () => {
   const server = http.createServer();
