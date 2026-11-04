@@ -86,8 +86,16 @@ jobs:
           cp tizen/ScreenTinker.wgt ScreenTinker.wgt
           ls -la ScreenTinker.wgt
 
-      - name: Build LG webOS .ipk (no SCAP library in CI; see webos/vendor/README.md)
+      # Packaged by LG's own ares-package (pinned), so the release .ipk is the archive LG's tool writes
+      # and not one assembled by hand; build-ipk.sh then unpacks and checks it before it is shipped.
+      # The SCAP library is still absent (not redistributable; see webos/vendor/README.md).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Build LG webOS .ipk with ares-package
         run: |
+          npm i -g @webos-tools/cli@3.2.6
+          ares-package --version
           chmod +x webos/build-ipk.sh
           ( cd webos && ./build-ipk.sh && ./build-ipk.sh --app-id com.lg.app.signage )
           cp webos/ScreenTinker.ipk ScreenTinker.ipk
