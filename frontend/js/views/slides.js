@@ -43,6 +43,7 @@ const KINDS = {
   body: { icon: 'T', label: 'Text', size: 3, weight: 400 },
   stat: { icon: '#', label: 'Big number', size: 14, weight: 700 },
   image: { icon: '▣', label: 'Photo', size: 0, weight: 400 },
+  video: { icon: '▶', label: 'Video', size: 0, weight: 400 },
   rule: { icon: '▬', label: 'Rule', size: 0, weight: 400 },
   box: { icon: '◻', label: 'Panel', size: 0, weight: 400 },
   clock: { icon: '◷', label: 'Clock', size: 9, weight: 700 },
@@ -286,7 +287,7 @@ function newElement(kind) {
       // A QR must stay square or it does not scan; the renderer letterboxes the SVG inside the box,
       // so an equal-ish w/h is what makes the code as large as the space allows.
       ...(kind === 'qr' ? { h: 32 } : {}),
-      ...(kind === 'image' || kind === 'box' ? { h: 30 } : {}),
+      ...(kind === 'image' || kind === 'video' || kind === 'box' ? { h: 30 } : {}),
     },
     style: { color: '#FFFFFF', font: 'sans', size_cqw: k.size || 3, weight: k.weight, align: 'left', opacity: 1, radius_cqw: 0 },
     motion: { animation: 'slideU', delay: 0.2, duration: 0.55, easing: 'ease-out' },
@@ -714,8 +715,25 @@ function renderEditor(container) {
             Shape
             <select id="aspectSel" class="input" style="margin:0;padding:3px 6px;font-size:12px">
               ${ASPECT_CHOICES.map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join('')}
+              <option value="custom">${esc(t('slides.edit.aspect_custom'))}</option>
             </select>
           </label>
+          <span id="aspectCustomWrap" style="display:none;align-items:center;gap:3px;font-size:12px;color:var(--text-muted)">
+            <input type="number" id="aspectW" min="1" max="99" step="1" class="input" aria-label="${esc(t('slides.edit.aspect_w'))}" style="width:52px;margin:0;padding:3px 4px;font-size:12px">
+            :
+            <input type="number" id="aspectH" min="1" max="99" step="1" class="input" aria-label="${esc(t('slides.edit.aspect_h'))}" style="width:52px;margin:0;padding:3px 4px;font-size:12px">
+          </span>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted)" title="${esc(t('slides.edit.led_grid_hint'))}">
+            <input type="checkbox" id="ledGridOn" style="margin:0"> ${esc(t('slides.edit.led_grid'))}
+          </label>
+          <span id="ledGridWrap" style="display:none;align-items:center;gap:3px;font-size:12px;color:var(--text-muted)">
+            <input type="number" id="ledCols" min="1" max="512" step="1" class="input" aria-label="${esc(t('slides.edit.led_cols'))}" title="${esc(t('slides.edit.led_cols'))}" style="width:60px;margin:0;padding:3px 4px;font-size:12px">
+            ×
+            <input type="number" id="ledRows" min="1" max="512" step="1" class="input" aria-label="${esc(t('slides.edit.led_rows'))}" title="${esc(t('slides.edit.led_rows'))}" style="width:60px;margin:0;padding:3px 4px;font-size:12px">
+            <select id="ledMatch" class="input" style="margin:0;padding:3px 6px;font-size:12px;max-width:170px" aria-label="${esc(t('slides.edit.led_match'))}">
+              <option value="">${esc(t('slides.edit.led_match_pick'))}</option>
+            </select>
+          </span>
           <span style="margin-left:auto;font-size:12px;color:var(--text-muted)" id="settleLabel"></span>
         </div>
         <!-- 3.0: arrange, align and undo for the canvas selection (PowerPoint's Arrange group). -->
@@ -790,7 +808,53 @@ function renderEditor(container) {
   });
   bindEditorKeys();
   container.querySelector('#aspectSel').addEventListener('change', (e) => {
-    state.deck.doc.aspect = e.target.value;
+    // Custom starts from the shape the deck already has, so switching to it changes nothing yet.
+    state.deck.doc.aspect = e.target.value === 'custom' ? deckAspect() : e.target.value;
+    state.customAspect = e.target.value === 'custom';
+    // A grid laid out for the old shape would stretch over the new one: start it again for this one.
+    if (ledGrid()) state.deck.doc.led_grid = suggestedLedGrid();
+    touch(container);
+    paintAll(container);
+  });
+  const onCustomAspect = () => {
+    const w = Number(container.querySelector('#aspectW').value);
+    const h = Number(container.querySelector('#aspectH').value);
+    const a = `${w}:${h}`;
+    if (!CUSTOM_ASPECT_RE.test(a)) return;   // half-typed or out of range: wait for a real value
+    state.deck.doc.aspect = a;
+    state.customAspect = true;
+    if (ledGrid()) state.deck.doc.led_grid = suggestedLedGrid();
+    touch(container);
+    paintAll(container);
+  };
+  container.querySelector('#aspectW').addEventListener('change', onCustomAspect);
+  container.querySelector('#aspectH').addEventListener('change', onCustomAspect);
+  container.querySelector('#ledGridOn').addEventListener('change', (e) => {
+    state.deck.doc.led_grid = e.target.checked ? (ledGrid() || suggestedLedGrid()) : null;
+    touch(container);
+    paintAll(container);
+    if (e.target.checked) loadLedScreens().then(() => refreshLedMatch(container));
+  });
+  const onLedSize = () => {
+    const cols = Number(container.querySelector('#ledCols').value);
+    const rows = Number(container.querySelector('#ledRows').value);
+    if (!validLedGrid(cols, rows)) return;
+    state.deck.doc.led_grid = { cols, rows };
+    touch(container);
+    paintAll(container);
+  };
+  container.querySelector('#ledCols').addEventListener('change', onLedSize);
+  container.querySelector('#ledRows').addEventListener('change', onLedSize);
+  container.querySelector('#ledMatch').addEventListener('change', (e) => {
+    const scr = (state.ledScreens || []).find((x) => x.id === e.target.value);
+    e.target.value = '';
+    if (!scr) return;
+    // A screen's LEDs decide both the grid and the shape, so the canvas is that panel exactly.
+    state.deck.doc.led_grid = { cols: scr.cols, rows: scr.rows };
+    const { aspect, exact } = aspectForGrid(scr.cols, scr.rows);
+    state.deck.doc.aspect = aspect;
+    state.customAspect = isCustomAspect();
+    if (!exact) showToast(t('slides.edit.led_approx', { size: `${scr.cols}×${scr.rows}`, aspect }), 'info');
     touch(container);
     paintAll(container);
   });
@@ -1092,8 +1156,38 @@ function renderStage(container) {
   // PowerPoint's editor: the canvas shows the settled slide and only previews motion on request.
   stage.classList.remove('playing');
   stage.style.aspectRatio = aspectCss();      // the shape this deck is authored for
+  /*
+   * ⚠️ A TALL SHAPE IS CAPPED BY HEIGHT, NOT LEFT TO THE COLUMN'S WIDTH. The stage is as wide as
+   * its column, so a 1:16 tower would be fourteen thousand pixels tall and the editor unusable (1:4
+   * already ran off the screen). Narrower instead, so the whole slide stays in view.
+   */
+  const [aw, ah] = aspectParts();
+  stage.style.width = `min(100%, calc(72vh * ${aw} / ${ah}))`;
+  stage.style.marginLeft = 'auto';
+  stage.style.marginRight = 'auto';
+  const custom = isCustomAspect() || !!state.customAspect;
   const sel = container.querySelector('#aspectSel');
-  if (sel && sel.value !== deckAspect()) sel.value = deckAspect();
+  const selValue = custom ? 'custom' : deckAspect();
+  if (sel && sel.value !== selValue) sel.value = selValue;
+  const customWrap = container.querySelector('#aspectCustomWrap');
+  if (customWrap) {
+    customWrap.style.display = custom ? 'inline-flex' : 'none';
+    const wEl = container.querySelector('#aspectW'); const hEl = container.querySelector('#aspectH');
+    if (wEl && document.activeElement !== wEl) wEl.value = String(aw);
+    if (hEl && document.activeElement !== hEl) hEl.value = String(ah);
+  }
+  const grid = ledGrid();
+  const gridOn = container.querySelector('#ledGridOn');
+  if (gridOn) gridOn.checked = !!grid;
+  const gridWrap = container.querySelector('#ledGridWrap');
+  if (gridWrap) {
+    gridWrap.style.display = grid ? 'inline-flex' : 'none';
+    const cEl = container.querySelector('#ledCols'); const rEl = container.querySelector('#ledRows');
+    if (grid && cEl && document.activeElement !== cEl) cEl.value = String(grid.cols);
+    if (grid && rEl && document.activeElement !== rEl) rEl.value = String(grid.rows);
+    refreshLedMatch(container);
+    if (grid && !state.ledScreens) loadLedScreens().then(() => refreshLedMatch(container));
+  }
 
   const musicSel = container.querySelector('#deckMusic');
   if (musicSel) {
@@ -1164,6 +1258,16 @@ function renderStage(container) {
             e.fit === 'contain' ? 'contain' : 'cover'};display:block">`
         : `<div style="width:100%;height:100%;display:grid;place-items:center;background:rgba(255,255,255,.07);
              border:1px dashed rgba(255,255,255,.22);color:rgba(255,255,255,.45);font-size:2.2cqw">photo</div>`;
+    } else if (e.kind === 'video') {
+      // Muted and looping, as the renderer emits it (lib/slide-render.js), so the editor shows what
+      // a panel shows. Past the per-slide video cap a panel shows the placeholder instead.
+      const url = contentUrl(e.content_id);
+      d.style.overflow = 'hidden';
+      d.innerHTML = url
+        ? `<video src="${esc(url)}" autoplay muted loop playsinline style="width:100%;height:100%;object-fit:${
+            e.fit === 'contain' ? 'contain' : 'cover'};display:block;pointer-events:none"></video>`
+        : `<div style="width:100%;height:100%;display:grid;place-items:center;background:rgba(255,255,255,.07);
+             border:1px dashed rgba(255,255,255,.22);color:rgba(255,255,255,.45);font-size:2.2cqw">video</div>`;
     } else if (e.kind === 'lettering') {
       const url = contentUrl(e.content_id);
       d.style.overflow = 'hidden';
@@ -1189,6 +1293,7 @@ function renderStage(container) {
     }
     stage.appendChild(d);
   });
+  paintLedGrid(stage);
   // Selection chrome goes on last, above every element; the nodes themselves stay listener-free.
   paintOutlines(container);
   paintOverlay(container);
@@ -1229,7 +1334,7 @@ const GRAB_PX = 3;            // pointer travel below this is a click, not a dra
 const SNAP_PX = 6;            // how close an edge has to come before it snaps
 const HANDLE_DIRS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 /* Pictures keep their shape by default, as in PowerPoint; Shift frees them (and locks the rest). */
-const KEEP_ASPECT_KINDS = ['image', 'lettering'];
+const KEEP_ASPECT_KINDS = ['image', 'video', 'lettering'];
 /* Kinds whose words are typed straight onto the canvas with a double-click. */
 const INLINE_TEXT_KINDS = ['head', 'body', 'stat'];
 
@@ -1944,7 +2049,7 @@ function renderStrip(container) {
   container.querySelector('#strip').innerHTML = d.doc.slides.map((s, i) => `
     <button data-slide="${i}" style="flex:0 0 auto;width:124px;padding:0;cursor:pointer;text-align:left;
       border:1px solid ${i === state.si ? 'var(--primary)' : 'var(--border)'};border-radius:4px;overflow:hidden;background:var(--surface)">
-      <div style="position:relative;aspect-ratio:${esc(aspectCss())};container-type:size;background:${esc(s.template.background || '#000')}">
+      <div style="position:relative;aspect-ratio:${esc(aspectCss())};width:min(100%, calc(96px * ${aspectParts()[0]} / ${aspectParts()[1]}));margin:0 auto;container-type:size;background:${esc(s.template.background || '#000')}">
         ${contentUrl(s.template.background_content_id) ? `<div style="position:absolute;inset:0;background-size:cover;background-position:center;background-image:url(${esc(contentUrl(s.template.background_content_id))})"></div>` : ''}
         ${(s.template.background_dim || 0) > 0 && (contentUrl(s.template.background_content_id) || s.template.background_video_content_id) ? `<div style="position:absolute;inset:0;background:rgba(0,0,0,${s.template.background_dim})"></div>` : ''}
         ${elementsOf(s).map((e) => `<div style="position:absolute;overflow:hidden;${esc(styleFor(e))}">${
@@ -2216,6 +2321,17 @@ function renderProps(container) {
                  Pick from the content library — the slide stores a reference, not a copy.
                  Use <strong>Fit inside</strong> for a cut-out with transparency — filling the box
                  crops it, which slices through the object itself.</p>`
+          : e.kind === 'video'
+          ? row('Video', `<select class="input" id="pImg"><option value="">— none —</option>${
+              videoContent().map((c) => `<option value="${esc(c.id)}" ${
+                c.id === e.content_id ? 'selected' : ''}>${esc(c.filename)}</option>`).join('')}</select>`)
+            + row('Fit', `<select class="input" id="pFit">
+                 <option value="cover" ${(e.fit || 'cover') === 'cover' ? 'selected' : ''}>Fill the box (crop)</option>
+                 <option value="contain" ${e.fit === 'contain' ? 'selected' : ''}>Fit inside (whole video)</option>
+               </select>`)
+            + `<p style="font-size:11.5px;color:var(--text-muted);grid-column:1/-1;margin:0">
+                 Plays muted and on a loop. Up to two videos per slide, counting a video background;
+                 a third shows as an empty box. Roku shows a still frame.</p>`
           : `<p style="font-size:12px;color:var(--text-muted)">Decorative — no text.</p>`)
       + `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
            <button class="btn btn-secondary btn-sm" id="pFwd">↑ Forward</button>
@@ -2380,7 +2496,7 @@ function renderProps(container) {
       + grp('Appearance',
         `<div class="sl-row"><label for="pColor">Colour</label>
            <input type="color" class="sl-colour" id="pColor" value="${esc(st.color)}"></div>`
-        + ((e.kind === 'image' || e.kind === 'box') ? pair('Corner', 'pRad', 0, 12, 0.2, st.radius_cqw || 0, '') : '')
+        + ((e.kind === 'image' || e.kind === 'video' || e.kind === 'box') ? pair('Corner', 'pRad', 0, 12, 0.2, st.radius_cqw || 0, '') : '')
         + pair('Opacity', 'pOp', 0.1, 1, 0.05, st.opacity == null ? 1 : st.opacity, ''))
 
       + `<p class="sl-note" style="margin-top:9px">Sizes are relative to the screen, so a slide looks
@@ -2974,22 +3090,137 @@ const ASPECT_CHOICES = [
   ['5:3', 'E-Paper 5:3'],
   ['4:1', 'Banner 4:1 (LED / Ticker)'],
   ['1:4', 'Tower 1:4 (LED / Column)'],
+  ['8:1', 'Banner 8:1 (LED strip / matrix)'],
+  ['1:8', 'Tower 1:8 (LED column)'],
+  ['16:1', 'Banner 16:1 (LED strip)'],
+  ['1:16', 'Tower 1:16 (LED column)'],
 ];
+
+/*
+ * A custom shape: two whole numbers from 1 to 99, the same rule as server/lib/slide-deck.js
+ * normalizeAspect (and what the renderer parses). Digits only, so it is safe in a CSS aspect-ratio.
+ */
+const CUSTOM_ASPECT_RE = /^([1-9]\d?):([1-9]\d?)$/;
 
 function deckAspect() {
   const a = state.deck && state.deck.doc && state.deck.doc.aspect;
-  return ASPECT_CHOICES.some(([v]) => v === a) ? a : '16:9';
+  if (ASPECT_CHOICES.some(([v]) => v === a)) return a;
+  return CUSTOM_ASPECT_RE.test(String(a || '')) ? a : '16:9';
 }
+
+function isCustomAspect() { return !ASPECT_CHOICES.some(([v]) => v === deckAspect()); }
+function aspectParts() { return deckAspect().split(':').map(Number); }
 
 /** CSS wants `16/9`, the stored value is `16:9`. */
 function aspectCss() { return deckAspect().replace(':', '/'); }
 
-/** Pixel dimensions to ask an image generator for, in the deck's shape. */
+/*
+ * Pixel dimensions to ask an image generator for, in the deck's shape. The routes accept 256 to 4096
+ * per side (routes/ai.js), so a long banner keeps its short side at 256 and grows the long one, as
+ * far as 4096 allows, rather than asking for a strip 112px tall that the route would widen anyway.
+ */
 function aspectPixels() {
-  const [w, h] = deckAspect().split(':').map(Number);
-  const long = 1792;
-  return w >= h ? { width: long, height: Math.round(long * h / w) }
-    : { height: long, width: Math.round(long * w / h) };
+  const [w, h] = aspectParts();
+  const ratio = Math.max(w, h) / Math.min(w, h);
+  let long = 1792;
+  let short = Math.round(long / ratio);
+  if (short < 256) { short = 256; long = Math.min(4096, Math.round(256 * ratio)); }
+  return w >= h ? { width: long, height: short } : { width: short, height: long };
+}
+
+/*
+ * ⚠️ THE LED GRID IS A DRAWING AID, NOTHING MORE. An LED strip or matrix shows a slide at its own
+ * resolution (its screen profile's width x height), so an operator laying out text for a 64x8
+ * matrix needs to see which LEDs each letter lands on. The grid is drawn over the canvas in the
+ * editor only; the embedded renderer never reads it. Bounded like an LED profile (512 a side,
+ * 16384 LEDs), the same rule as slide-deck.js normalizeLedGrid.
+ */
+const LED_GRID_MAX_SIDE = 512;
+const LED_GRID_MAX_LEDS = 16384;
+
+function validLedGrid(cols, rows) {
+  return Number.isInteger(cols) && Number.isInteger(rows) && cols >= 1 && rows >= 1
+    && cols <= LED_GRID_MAX_SIDE && rows <= LED_GRID_MAX_SIDE && cols * rows <= LED_GRID_MAX_LEDS;
+}
+
+function ledGrid() {
+  const g = state.deck && state.deck.doc && state.deck.doc.led_grid;
+  return g && validLedGrid(g.cols, g.rows) ? g : null;
+}
+
+/** A starting grid for the deck's shape: 8 LEDs across the short side, the common matrix height. */
+function suggestedLedGrid() {
+  const [w, h] = aspectParts();
+  let cols = w >= h ? Math.round(8 * w / h) : 8;
+  let rows = w >= h ? 8 : Math.round(8 * h / w);
+  cols = Math.min(LED_GRID_MAX_SIDE, Math.max(1, cols));
+  rows = Math.min(LED_GRID_MAX_SIDE, Math.max(1, rows));
+  return validLedGrid(cols, rows) ? { cols, rows } : { cols: 64, rows: 8 };
+}
+
+/**
+ * The deck shape for an LED grid: cols:rows reduced, scaled down to fit two digits if it must.
+ * Returns { aspect, exact }.
+ */
+function aspectForGrid(cols, rows) {
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+  const g = gcd(cols, rows);
+  let w = cols / g; let h = rows / g;
+  if (w <= 99 && h <= 99) return { aspect: `${w}:${h}`, exact: true };
+  const k = 99 / Math.max(w, h);
+  w = Math.max(1, Math.round(w * k)); h = Math.max(1, Math.round(h * k));
+  return { aspect: `${w}:${h}`, exact: false };
+}
+
+/*
+ * The screens in this workspace that are LED panels, with the size they render at. An LED profile
+ * is the parameterized XIAO preset or a raw RGB888 profile; its width x height is the LED count.
+ * Fetched once per editor; a failure just leaves the "Match a screen" list empty.
+ */
+async function loadLedScreens() {
+  if (state.ledScreens) return state.ledScreens;
+  state.ledScreens = [];
+  try {
+    const devices = await api.getDevices();
+    for (const d of Array.isArray(devices) ? devices : []) {
+      let p = null;
+      try {
+        p = typeof d.screen_profile === 'string' && d.screen_profile.trim().startsWith('{')
+          ? JSON.parse(d.screen_profile)
+          : (d.screen_profile && typeof d.screen_profile === 'object' ? d.screen_profile : null);
+      } catch (_) { p = null; }
+      if (!p) continue;
+      const led = p.preset === 'seeed-xiao-led'
+        || ((p.colorDepth === '24bit-rgb888' || p.colorDepth === 'rgb888') && p.outputFormat === 'raw');
+      const cols = parseInt(p.width, 10); const rows = parseInt(p.height, 10);
+      if (led && validLedGrid(cols, rows)) state.ledScreens.push({ id: d.id, name: d.name || d.id, cols, rows });
+    }
+  } catch (_) { /* no list: the operator types the size */ }
+  return state.ledScreens;
+}
+
+/** The "Match a screen" list, rebuilt only when it changed (the stage repaints on every edit). */
+function refreshLedMatch(container) {
+  const match = container.querySelector('#ledMatch');
+  if (!match) return;
+  const screens = state.ledScreens || [];
+  const opts = ['<option value="">' + esc(t(screens.length ? 'slides.edit.led_match_pick' : 'slides.edit.led_match_none')) + '</option>']
+    .concat(screens.map((x) => `<option value="${esc(x.id)}">${esc(x.name)} (${x.cols}×${x.rows})</option>`)).join('');
+  if (match.innerHTML !== opts) match.innerHTML = opts;
+}
+
+/** Draw the LED grid over the canvas: a dark mask with one round hole per LED. */
+function paintLedGrid(stage) {
+  const g = ledGrid();
+  if (!g) return;
+  const d = document.createElement('div');
+  d.className = 'sl-led-grid';
+  d.setAttribute('aria-hidden', 'true');
+  // z-index 4: over the slide's elements (which set none), under the selection overlay (5).
+  d.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:4;'
+    + 'background-image:radial-gradient(circle at center, transparent 0 36%, rgba(0,0,0,.62) 44%);'
+    + `background-size:calc(100% / ${g.cols}) calc(100% / ${g.rows});`;
+  stage.appendChild(d);
 }
 
 function contentUrl(id) {

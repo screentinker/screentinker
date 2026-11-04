@@ -111,6 +111,7 @@ function removeUnreferencedContent(contentId) {
   unlinkIfUnreferenced(row.filepath, row.id, 'filepath');
   unlinkIfUnreferenced(row.thumbnail_path, row.id, 'thumbnail_path');
   unlinkIfUnreferenced(row.subtitle_url, row.id, 'subtitle_url');
+  require('./content-audio-tracks').removeAllForContent(row.id); // per-language narration tracks + files
   releaseMeshProvenance(row.id);
   db.prepare('DELETE FROM content WHERE id = ?').run(row.id);
   // Copies in a storage backend: rows now, objects once nothing else names them (lib/storage).
@@ -141,6 +142,7 @@ function removeDeletedContentFiles(rows, { unlink } = {}) {
       if (r.filepath && rm(r.filepath, 'filepath').unlinked) { out.files_removed++; out.bytes_freed += r.file_size || 0; }
       if (r.thumbnail_path) rm(r.thumbnail_path, 'thumbnail_path');
       if (r.subtitle_url) rm(r.subtitle_url, 'subtitle_url');
+      require('./content-audio-tracks').removeAllForContent(r.id); // per-language narration tracks + files
       require('./revisions').removeRetainedFiles(r.id);
       // Bucket copies (asset, thumbnail, subtitle, retained history) of the deleted row, refcounted.
       require('./storage/locations').releaseDeletedContent([r.id]);

@@ -102,4 +102,33 @@ const subtitleUpload = multer({
 });
 upload.subtitleUpload = subtitleUpload;
 
+// Visitor audio sync: per-language narration tracks for a video. Like subtitleUpload, a dedicated
+// instance so the main video/image filter does not apply and the audio bytes skip the batch sniffer
+// the same way subtitles do. Accepts `audio` (required) plus an optional `caption` .vtt via .fields();
+// each lands in contentDir with a uuid name (served at /uploads/content/<file>).
+const AUDIO_TRACK_EXT = /\.(mp3|m4a|m4b|aac|ogg|oga|opus|wav|flac)$/i;
+const audioTrackUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, config.contentDir),
+    filename: (req, file, cb) => {
+      if (file.fieldname === 'caption') return cb(null, `${uuidv4()}.vtt`);
+      const m = AUDIO_TRACK_EXT.exec(file.originalname || '');
+      cb(null, `${uuidv4()}${m ? m[0].toLowerCase() : '.m4a'}`);
+    },
+  }),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB per language track
+  fileFilter: (req, file, cb) => {
+    if (file.fieldname === 'caption') {
+      const ok = /\.vtt$/i.test(file.originalname || '')
+        && ['text/vtt', 'text/plain', 'application/octet-stream'].includes(file.mimetype);
+      return ok ? cb(null, true) : cb(new Error('Caption must be a .vtt file'), false);
+    }
+    const okExt = AUDIO_TRACK_EXT.test(file.originalname || '');
+    const okMime = String(file.mimetype || '').startsWith('audio/')
+      || ['application/ogg', 'application/octet-stream', ''].includes(file.mimetype);
+    return (okExt && okMime) ? cb(null, true) : cb(new Error('Audio must be an mp3/m4a/aac/ogg/wav/flac file'), false);
+  },
+});
+upload.audioTrackUpload = audioTrackUpload;
+
 module.exports = upload;

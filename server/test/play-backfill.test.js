@@ -374,3 +374,83 @@ test('unknown length (a widget) falls back to a modest absolute cap', () => {
   addRow(db2, { content_id: null, started_at: NOW, ended_at: NOW + 10 });
   assert.equal(closeStrandedPlays(db2, 'dev1'), 0, 'beyond the fallback cap it stays open');
 });
+
+/* ===================================================== #776: the repair must not walk history */
+
+// The 3.1.0 play_logs indexes that matter here (db/schema.sql + db/database.js).
+const REAL_INDEXES = `
+  CREATE INDEX idx_play_logs_device ON play_logs(device_id, started_at DESC);
+  CREATE INDEX idx_play_logs_time ON play_logs(started_at, ended_at);
+  CREATE INDEX idx_play_logs_open ON play_logs(device_id, started_at DESC, id DESC) WHERE ended_at IS NULL;
+`;
+
+// The pre-#776 statement, verbatim in substance: the reference the new one must agree with.
+function closeStrandedPlaysOld(db, deviceId, unknownMaxSec = INFER_UNKNOWN_MAX_SEC) {
+  return db.prepare(`
+    UPDATE play_logs
+       SET ended_at = nxt.next_start, duration_sec = nxt.next_start - play_logs.started_at
+      FROM (SELECT p.id AS id, p.started_at AS p_started, MIN(n.started_at) AS next_start,
+                   CASE WHEN c.duration_sec IS NOT NULL AND c.duration_sec > 0 THEN c.duration_sec + 60 ELSE ? END AS allowed
+              FROM play_logs p
+              LEFT JOIN content c ON c.id = p.content_id
+              JOIN play_logs n ON n.device_id = p.device_id AND n.started_at > p.started_at AND n.zone_id IS p.zone_id
+             WHERE p.device_id = ? AND p.ended_at IS NULL
+             GROUP BY p.id) AS nxt
+     WHERE play_logs.id = nxt.id AND nxt.next_start - nxt.p_started <= nxt.allowed
+  `).run(unknownMaxSec, deviceId).changes;
+}
+
+// A deterministic, messy history: two devices, fullscreen + two zones, known and unknown lengths,
+// open plays scattered through it, some with near successors, some with week-long gaps.
+function seedHistory(db) {
+  let seed = 776;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  db.prepare('INSERT INTO content (id, duration_sec) VALUES (?, ?)').run('k20', 20);
+  db.prepare('INSERT INTO content (id, duration_sec) VALUES (?, ?)').run('k0', 0);
+  for (const dev of ['dev1', 'dev2']) {
+    for (const zone of [null, 'zA', 'zB']) {
+      let t = NOW - 30 * 24 * 3600;
+      for (let i = 0; i < 400; i++) {
+        t += rnd() < 0.03 ? Math.floor(rnd() * 8 * 24 * 3600) : 5 + Math.floor(rnd() * 120);
+        const open = rnd() < 0.08;
+        const content = ['k20', 'k0', 'unknown'][Math.floor(rnd() * 3)];
+        addRow(db, { device_id: dev, zone_id: zone, content_id: content, started_at: t,
+          ended_at: open ? null : t + 10, duration_sec: open ? null : 10 });
+      }
+    }
+  }
+}
+const snapshot = (db) => db.prepare('SELECT id, ended_at, duration_sec FROM play_logs ORDER BY id').all();
+
+for (const indexed of [false, true]) {
+  test(`#776: the bounded repair closes exactly the rows the old statement did (${indexed ? 'real indexes' : 'no partial index'})`, () => {
+    const a = freshDb(), b = freshDb();
+    if (indexed) { a.exec(REAL_INDEXES); b.exec(REAL_INDEXES); }
+    seedHistory(a); seedHistory(b);
+    for (const dev of ['dev1', 'dev2']) {
+      assert.equal(closeStrandedPlays(b, dev), closeStrandedPlaysOld(a, dev), `${dev}: same number closed`);
+    }
+    assert.deepEqual(snapshot(b), snapshot(a), 'and the same rows, with the same ends');
+    const stillOpen = b.prepare('SELECT COUNT(*) c FROM play_logs WHERE ended_at IS NULL').get().c;
+    assert.ok(stillOpen > 0, 'the fixture keeps some plays open (week gaps / no successor), so it is not vacuous');
+  });
+}
+
+test('#776: with the real indexes, the open-play lookup rides idx_play_logs_open', () => {
+  const db = freshDb(); db.exec(REAL_INDEXES); seedHistory(db);
+  const { runPinned } = require('../lib/play-backfill');
+  const plan = runPinned(db, (pin) => `EXPLAIN QUERY PLAN SELECT p.id FROM play_logs p ${pin} WHERE p.device_id = 'dev1' AND p.ended_at IS NULL`, 'all', [])
+    .map((r) => r.detail).join(' | ');
+  assert.match(plan, /idx_play_logs_open/, plan);
+  const count = runPinned(db, (pin) => `EXPLAIN QUERY PLAN SELECT COUNT(*) FROM play_logs ${pin} WHERE ended_at IS NULL`, 'all', [])
+    .map((r) => r.detail).join(' | ');
+  assert.match(count, /idx_play_logs_open/, 'the open count no longer scans the covering time index: ' + count);
+});
+
+test('#776: a missing partial index degrades to the planner, and any other error still throws', () => {
+  const { runPinned } = require('../lib/play-backfill');
+  const db = freshDb();   // no idx_play_logs_open
+  addRow(db, { started_at: NOW - 100 });
+  assert.equal(runPinned(db, (pin) => `SELECT COUNT(*) AS n FROM play_logs ${pin} WHERE ended_at IS NULL`, 'get', []).n, 1);
+  assert.throws(() => runPinned(db, (pin) => `SELECT nope FROM play_logs ${pin}`, 'get', []), /no such column/);
+});

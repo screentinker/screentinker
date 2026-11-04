@@ -60,7 +60,11 @@ const EXPORTED = {
   // content
   content: { category: 'content', scope: ws() },
   content_folders: { category: 'content', scope: ws() },
+  // #796 folders of the widget, playlist and schedule libraries, and where each item is filed.
+  library_folders: { category: 'content', scope: ws() },
+  library_folder_items: { category: 'content', scope: ws() },
   content_locations: { category: 'content', scope: via('content_id', 'content') },
+  content_audio_tracks: { category: 'content', scope: via('content_id', 'content') },
   custom_fonts: { category: 'content', scope: ws() },
   custom_shaders: { category: 'content', scope: ws() },
   brand_kits: { category: 'content', scope: ws() },
@@ -224,6 +228,7 @@ const EXCLUDED = {
   template_seen: 'a person\'s "seen" markers: in their personal export',
   feedback_prompts: 'which feedback questions a person has already been asked (lib/feedback.js): the hosting service\'s bookkeeping',
   feedback_followups: 'which feedback follow-up emails a person was sent (lib/feedback.js): the hosting service\'s bookkeeping',
+  renewal_reminders: 'which renewal reminders have been sent for an account (services/renewalReminder.js): the hosting service\'s billing bookkeeping',
   recovery_grants: 'break-glass credentials (secret)',
   support_grants: 'support access credentials (secret)',
   support_requests: 'support access codes (secret)',

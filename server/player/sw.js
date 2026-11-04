@@ -31,7 +31,12 @@
 // v31: chunked downloads are no longer joined into a second copy (twice the quota, which an LG webOS
 // panel did not have), cached media is served by Blob.slice, and the page can ask how offline-ready
 // it is (st-cache-status). Bumped so warm players take the new shell.
-const CACHE_NAME = 'rd-player-v31';
+// v32: slides ask the player for their photos and clips from this cache (index.html answerSlideMedia),
+// with X-ST-Cache-Only so a miss is a quick 504 instead of a download into the page's memory.
+// v33: the shell's network-first fetch gives up on a silent network after 8s and serves the cached
+// shell, so a panel that boots with its link up and its WAN down comes up from cache instead of
+// sitting dark through the TV's TCP timeout. Bumped so warm players take the new worker.
+const CACHE_NAME = 'rd-player-v33';
 // Content lives in its own cache so the shell can be re-versioned (the activate handler deletes
 // every cache that is not CACHE_NAME) WITHOUT throwing away megabytes of media that are still
 // perfectly valid. Rolling the shell used to mean a player re-downloaded its entire playlist.
@@ -124,25 +129,18 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Player page and static assets: network-first, fall back to cache
+  // Player page and static assets: network-first, fall back to cache.
+  //
+  // Network-first, but NOT network-forever. With the cable pulled the fetch fails at once and the
+  // cached shell loads; with the link up and the WAN down (the router answers, nothing behind it)
+  // a TV's network stack sits in the TCP handshake for a minute or more, and for all of that the
+  // panel shows nothing — or its own "check network connection" page, if the browser gives up on
+  // the navigation first. So a request that has not answered in SHELL_NETWORK_MS is served from the
+  // cache when there is a copy, and only a panel with no copy keeps waiting on the network, since
+  // for it the network is the only way to a picture. A cached copy is always a shell this panel
+  // ran before; a later load with the network back fetches the current one as before.
   if (url.pathname.startsWith('/player') || url.pathname === '/socket.io/socket.io.js') {
-    event.respondWith(
-      fetch(event.request).then(response => {
-        if (response.ok && response.type !== 'opaque') {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
-        }
-        return response;
-      }).catch(() =>
-        caches.match(event.request, { ignoreSearch: true }).then(cached =>
-          cached || new Response('Offline', {
-            status: 503,
-            statusText: 'Service Unavailable',
-            headers: { 'Content-Type': 'text/plain' }
-          })
-        )
-      )
-    );
+    event.respondWith(shellNetworkFirst(event.request));
     return;
   }
 
@@ -164,6 +162,39 @@ self.addEventListener('fetch', (event) => {
   // Everything else (API calls, sockets, etc.): don't intercept.
   // Returning without event.respondWith lets the browser handle it natively.
 });
+
+const SHELL_NETWORK_MS = 8000;
+
+async function shellNetworkFirst(request) {
+  const fromCache = () => caches.match(request, { ignoreSearch: true });
+  const fromNetwork = fetch(request).then((response) => {
+    if (response.ok && response.type !== 'opaque') {
+      const clone = response.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(request, clone)).catch(() => {});
+    }
+    return response;
+  });
+  // The network's answer, or, if it is still silent when the timer goes and a cached copy exists,
+  // that copy. The network promise keeps running either way, so a late success still refreshes the
+  // cache for the next load.
+  let timer = null;
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve('timeout'), SHELL_NETWORK_MS); });
+  try {
+    const winner = await Promise.race([fromNetwork.then((r) => r, () => 'failed'), timeout]);
+    if (winner !== 'timeout' && winner !== 'failed') return winner;
+    const cached = await fromCache();
+    if (cached) return cached;
+    if (winner === 'timeout') {
+      // Nothing cached: the network is the only way to a picture, so wait it out after all.
+      try { return await fromNetwork; } catch (e) { /* fall through */ }
+    }
+  } catch (e) { /* fall through */ } finally { if (timer) clearTimeout(timer); fromNetwork.catch(() => {}); }
+  return new Response('Offline', {
+    status: 503,
+    statusText: 'Service Unavailable',
+    headers: { 'Content-Type': 'text/plain' },
+  });
+}
 
 /*
  * PREFETCH — the half that makes the cache fill on a link that cannot carry a whole asset.
@@ -535,6 +566,12 @@ async function handleContent(request) {
     // Unsatisfiable against the cached copy: fall through to the network rather than inventing a
     // 416 that might be wrong if the cached copy is somehow stale.
   }
+  /*
+   * A slide asking for its media (index.html answerSlideMedia) wants what is HELD, nothing else: a
+   * miss fetched from the network would pull a whole video into the page's memory just to hand it
+   * to a frame that is already streaming it. Answer the miss at once.
+   */
+  if (request.headers.get('x-st-cache-only')) return new Response(null, { status: 504, statusText: 'Not cached' });
 
   // 3.0: a miss the site's LAN cache can fill. Bounded to what is quick to pull across a LAN in one
   // go; a bigger asset streams from the origin this time while the prefetch fills it from the box.

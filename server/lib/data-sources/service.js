@@ -239,6 +239,8 @@ async function syncDataSourceRow(row, force) {
       last_error: null,
       updated_at: dataChanged ? doneSec : row.updated_at,
       data: resolvedData,
+      changed: dataChanged,
+      changed_keys: dataChanged ? changedKeys(row.cached_data, resolvedData) : [],
     };
   } catch (err) {
     console.warn(`[data-sources] Sync failed for "${row.name}" (${row.id}): ${err.message}`);
@@ -289,6 +291,32 @@ function keepUpdatedStamp(data, prevJson) {
   if (!prev || typeof prev !== 'object' || !('updated' in prev)) return data;
   const strip = (o) => { const c = { ...o }; delete c.updated; return JSON.stringify(c); };
   return strip(data) === strip(prev) ? { ...data, updated: prev.updated } : data;
+}
+
+/*
+ * Which variables a sync changed, for the dashboard's "Sync now" answer. A changed source re-renders
+ * every slide bound to it, and a slide that reloads on every sync almost always means the response
+ * carries something that moves on every call (a timestamp, a request id, a counter). Naming those
+ * keys is what lets an operator see that without diffing JSON by hand (#790). Capped: a table
+ * source can change hundreds of row keys at once and the toast only needs the first few.
+ */
+const MAX_CHANGED_KEYS = 10;
+function changedKeys(prevJson, next) {
+  let prev = {};
+  try { prev = prevJson ? JSON.parse(prevJson) : {}; } catch (_) { prev = {}; }
+  if (!prev || typeof prev !== 'object') prev = {};
+  if (!next || typeof next !== 'object') return [];
+  const out = [];
+  const seen = new Set();
+  for (const k of [...Object.keys(next), ...Object.keys(prev)]) {
+    if (seen.has(k)) continue;
+    seen.add(k);
+    if (JSON.stringify(next[k]) !== JSON.stringify(prev[k])) {
+      out.push(k);
+      if (out.length >= MAX_CHANGED_KEYS) break;
+    }
+  }
+  return out;
 }
 
 // "Not allowed", plus how to allow it where the operator can (a hosted tenant cannot set env).
@@ -422,6 +450,7 @@ function getWorkspaceDataMapSync(workspaceId) {
 module.exports = {
   syncDataSource,
   bumpDependentWidgets,
+  changedKeys,
   describeSyncError,
   notAllowedMessage,
   getWorkspaceDataMapSync,

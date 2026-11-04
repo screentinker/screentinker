@@ -109,42 +109,65 @@ function boundBatch(plays) {
  *
  * @returns {number} rows closed
  */
+/*
+ * #776: pin the open-play lookup to the partial index, and fall back to the planner's choice if it is
+ * missing. Left to itself, SQLite picks idx_play_logs_device (no ended_at), so it read EVERY play the
+ * screen ever logged to find the open ones, even when there were none. `INDEXED BY` errors when the
+ * index does not exist (a failed migration, a test fixture); that must degrade to slow, never to
+ * broken, because this runs on a live play.
+ */
+const OPEN_INDEX = 'idx_play_logs_open';
+function runPinned(db, build, method, args) {
+  try {
+    return db.prepare(build(`INDEXED BY ${OPEN_INDEX}`))[method](...args);
+  } catch (e) {
+    if (!/no such index/i.test(String(e && e.message))) throw e;
+    return db.prepare(build(''))[method](...args);
+  }
+}
+
 function closeStrandedPlays(db, deviceId, unknownMaxSec = INFER_UNKNOWN_MAX_SEC) {
   /*
    * The per-row ceiling is computed INSIDE the subquery. SQLite's UPDATE ... FROM cannot see the
    * target table from a join in the FROM list, so joining `content` against play_logs.content_id
    * out there fails with "no such column: play_logs.content_id".
+   *
+   * ⚠️ #776 (bold-media-group, 35M plays): the successor is found by a CORRELATED `ORDER BY
+   * started_at LIMIT 1` that is BOUNDED by the ceiling, not a `MIN()` over a join + GROUP BY. The
+   * MIN form could not stop at the first match: one play left open weeks ago made it read weeks of
+   * that screen's history, synchronously, on every reconnect (16.5s warm, >30s cold for 16 open
+   * plays). Bounded, it is one index seek per open play. Same rows closed: a successor beyond the
+   * ceiling was already rejected by the old outer `next_start - p_started <= allowed`, and the
+   * earliest one within it is the same MIN.
    */
-  const info = db.prepare(`
+  const info = runPinned(db, (pin) => `
     UPDATE play_logs
        SET ended_at = nxt.next_start,
            duration_sec = nxt.next_start - play_logs.started_at
-      FROM (SELECT p.id           AS id,
-                   p.started_at   AS p_started,
-                   MIN(n.started_at) AS next_start,
-                   CASE WHEN c.duration_sec IS NOT NULL AND c.duration_sec > 0
-                        THEN c.duration_sec + ?
-                        ELSE ?
-                   END AS allowed
-              FROM play_logs p
-              LEFT JOIN content c ON c.id = p.content_id
-              JOIN play_logs n
-                ON n.device_id = p.device_id
-               AND n.started_at > p.started_at
-               -- SAME ZONE ONLY. A multi-zone device plays several items AT ONCE, so the next row
-               -- for the device can belong to a different zone that started while this one was
-               -- still on screen. Closing against it would cut the play short and under-report it.
-               -- IS rather than = so the fullscreen case (zone_id NULL) matches itself.
-               -- (No backticks in here: this is a JS template literal and they would end it.)
-               AND n.zone_id IS p.zone_id
-             WHERE p.device_id = ? AND p.ended_at IS NULL
-             GROUP BY p.id) AS nxt
-     WHERE play_logs.id = nxt.id
-       -- The item's OWN length is the ceiling where we know it; a 20s clip cannot have played for
-       -- hours however long the gap says. Anything beyond stays open rather than being credited
-       -- with downtime it slept through.
-       AND nxt.next_start - nxt.p_started <= nxt.allowed
-  `).run(INFER_GRACE_SEC, unknownMaxSec, deviceId);
+      FROM (SELECT x.id,
+                   (SELECT n.started_at FROM play_logs n
+                     WHERE n.device_id = x.device_id
+                       AND n.started_at > x.p_started
+                       -- The item's OWN length is the ceiling where we know it; a 20s clip cannot have
+                       -- played for hours however long the gap says. Anything beyond stays open rather
+                       -- than being credited with downtime it slept through.
+                       AND n.started_at <= x.p_started + x.allowed
+                       -- SAME ZONE ONLY. A multi-zone device plays several items AT ONCE, so the next
+                       -- row for the device can belong to a different zone that started while this
+                       -- one was still on screen. IS rather than = so fullscreen (zone_id NULL)
+                       -- matches itself. (No backticks in here: this is a JS template literal.)
+                       AND n.zone_id IS x.zone_id
+                     ORDER BY n.started_at LIMIT 1) AS next_start
+              FROM (SELECT p.id, p.device_id, p.zone_id, p.started_at AS p_started,
+                           CASE WHEN c.duration_sec IS NOT NULL AND c.duration_sec > 0
+                                THEN c.duration_sec + ?
+                                ELSE ?
+                           END AS allowed
+                      FROM play_logs p ${pin}
+                      LEFT JOIN content c ON c.id = p.content_id
+                     WHERE p.device_id = ? AND p.ended_at IS NULL) AS x) AS nxt
+     WHERE play_logs.id = nxt.id AND nxt.next_start IS NOT NULL
+  `, 'run', [INFER_GRACE_SEC, unknownMaxSec, deviceId]);
   return info.changes;
 }
 
@@ -208,6 +231,7 @@ module.exports = {
   normalizeBackfillPlay,
   boundBatch,
   closeStrandedPlays,
+  runPinned,
   expireStrandedPlays,
   MAX_BACKFILL_BATCH,
   BACKFILL_MAX_AGE_SEC,

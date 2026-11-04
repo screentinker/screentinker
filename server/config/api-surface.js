@@ -104,6 +104,9 @@ const JWT_ONLY_ROUTERS = [
   // #720 Wi-Fi networks of a screen (routes/device-wifi.js): credentials into a customer's network,
   // so signed-in people only. Keeps them out of reach of API tokens and the MCP tools as well.
   { path: '/api/device-wifi', mod: './routes/device-wifi',  tenancy: true },
+  // #796 folders for the widget, playlist and schedule libraries (routes/library-folders.js). A
+  // dashboard organising surface: JWT only for now, so the token door's reviewed set is unchanged.
+  { path: '/api/library-folders', mod: './routes/library-folders', tenancy: true },
   { path: '/api/provision',   mod: './routes/provisioning', tenancy: true },
   { path: '/api/teams',       mod: './routes/teams',        tenancy: true },
   { path: '/api/white-label', mod: './routes/white-label',  tenancy: true },

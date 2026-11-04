@@ -5,7 +5,7 @@ const config = require('../config');
 const { deviceRoom, emitToWorkspace } = require('../lib/socket-rooms');
 const statusLogWriter = require('../lib/status-log-writer');
 const { chunkedDelete, currentBand, yieldTick } = require('../lib/chunked-prune'); // #146 non-blocking sweeps
-const { expireStrandedPlays } = require('../lib/play-backfill');
+const { expireStrandedPlays, runPinned } = require('../lib/play-backfill');
 const bootDefer = require('../lib/boot-defer');   // 2.0.1 first-boot player defer
 const playRollup = require('./play-rollup');      // proof-of-play aggregation; gates the raw prune
 const pluginHooks = require('../lib/plugins/hooks');
@@ -285,10 +285,14 @@ async function expireStrandedPlaysChunked() {
   return total;
 }
 
-/** The open set, counted once. Rides the #307 partial index (idx_play_logs_open). */
+/**
+ * The open set, counted once, on the #307 partial index (idx_play_logs_open). #776: it is PINNED,
+ * because the planner preferred the covering idx_play_logs_time and scanned the whole table (8.5s
+ * warm, 22s cold on 35M plays), twice per first-boot drain. Falls back if the index is missing.
+ */
 function countOpenPlays() {
   try {
-    return db.prepare('SELECT COUNT(*) AS n FROM play_logs WHERE ended_at IS NULL').get().n;
+    return runPinned(db, (pin) => `SELECT COUNT(*) AS n FROM play_logs ${pin} WHERE ended_at IS NULL`, 'get', []).n;
   } catch { return 0; }
 }
 

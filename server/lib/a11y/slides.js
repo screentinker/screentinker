@@ -148,6 +148,8 @@ function checkSlide(rawSlide, view, opts = {}) {
           else if (a >= 0.95) bg = { rgb: col };
         } else if (o.kind === 'image' || o.kind === 'lettering') {
           bg = { unknown: 'image' };
+        } else if (o.kind === 'video') {
+          bg = { unknown: 'video' };   // moving pictures: no colour to measure, like a background video
         } else if (o.kind === 'qr') {
           bg = { rgb: C.parseHex(o.cfg && o.cfg.bg) || [255, 255, 255] };
         }

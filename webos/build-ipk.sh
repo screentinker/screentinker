@@ -10,11 +10,16 @@
 # Application Launch Mode: Local, Type: IPK, Local Application Upgrade: USB). The file name is also
 # stamped into the shell, so the build updates itself from the file it was installed as.
 #
-# Uses LG's `ares-package` when it is on PATH (npm i -g @webos-tools/cli) and otherwise assembles
-# the same Debian-style archive itself: an `ar` of debian-binary + control.tar.gz + data.tar.gz,
-# with the app under usr/palm/applications/<id>/ and its packageinfo.json under
-# usr/palm/packages/<id>/. CI has no LG CLI, so releases take the second path; the layout is what
-# ares-package writes, but a build from a machine with the CLI is the one to trust for a fleet.
+# Packaging is done by LG's own `ares-package` (npm i -g @webos-tools/cli) whenever it is on PATH;
+# CI installs it, so a release .ipk is exactly what LG's tool writes. Only when the tool is missing
+# does the script assemble the archive itself, byte-for-byte in the same shape ares-package writes:
+# an `ar` of debian-binary + control.tar.gz + data.tar.gz, plain member names, the control record
+# with LG's field names, the app under usr/palm/applications/<id>/ and its packageinfo.json under
+# usr/palm/packages/<id>/, no "./" prefixes. Either way the result is unpacked and checked before
+# the script reports success, so a package that would not install is never published.
+#
+# ares-package is told not to minify. The shell is hand-written ES5 so that a webOS 4 panel's
+# Chrome 53 can run it, and a minifier is one more thing that could change that under us.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -36,6 +41,7 @@ VER="$(grep -oE '"version": *"[^"]+"' appinfo.json | head -1 | sed -E 's/.*"([^"
 TITLE="$(grep -oE '"title": *"[^"]+"' appinfo.json | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
 VENDOR="$(grep -oE '"vendor": *"[^"]+"' appinfo.json | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
 [ -n "$APPID" ] && [ -n "$VER" ] || { echo "appinfo.json: id/version not found" >&2; exit 1; }
+printf '%s' "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "appinfo.json: version must be numeric x.y.z, got '$VER'" >&2; exit 1; }
 
 # Stamp the app version into the shell from the single source (appinfo.json), the same way the
 # Tizen build stamps from config.xml.
@@ -61,17 +67,58 @@ else
   for f in cordova.webos.js storage.js configuration.js deviceInfo.js power.js; do : > "$APP/vendor/$f"; done
 fi
 
+# ---------------------------------------------------------------------------------------------
+# Check the finished archive the way a panel reads it. Every assertion here is one a real install
+# depends on; a failure is a build error, never a warning.
+verify() {
+  local f="$1" dir="$STAGE/verify" members
+  rm -rf "$dir"; mkdir -p "$dir"
+  ( cd "$dir" && ar x "$f" ) || { echo "verify: $f is not an ar archive" >&2; return 1; }
+  members="$(ar t "$f" | tr '\n' ' ')"
+  [ "$members" = "debian-binary control.tar.gz data.tar.gz " ] \
+    || { echo "verify: members are '$members', expected debian-binary control.tar.gz data.tar.gz" >&2; return 1; }
+  [ "$(cat "$dir/debian-binary")" = "2.0" ] || { echo "verify: debian-binary is not 2.0" >&2; return 1; }
+  mkdir -p "$dir/c" "$dir/d"
+  tar xzf "$dir/control.tar.gz" -C "$dir/c" || { echo "verify: control.tar.gz does not unpack" >&2; return 1; }
+  tar xzf "$dir/data.tar.gz" -C "$dir/d" || { echo "verify: data.tar.gz does not unpack" >&2; return 1; }
+  [ -f "$dir/c/control" ] || { echo "verify: no control file in control.tar.gz" >&2; return 1; }
+  grep -qE "^Package: $APPID\$" "$dir/c/control" || { echo "verify: control Package is not $APPID" >&2; return 1; }
+  grep -qE "^Version: $VER\$" "$dir/c/control" || { echo "verify: control Version is not $VER" >&2; return 1; }
+  grep -qE "^Architecture: all\$" "$dir/c/control" || { echo "verify: control Architecture is not all" >&2; return 1; }
+  local a="$dir/d/usr/palm/applications/$APPID" p="$dir/d/usr/palm/packages/$APPID/packageinfo.json"
+  for need in appinfo.json index.html icon.png largeIcon.png js/app.js js/device-control.js css/style.css; do
+    [ -s "$a/$need" ] || { echo "verify: $need missing or empty under usr/palm/applications/$APPID/" >&2; return 1; }
+  done
+  grep -qE "\"id\": *\"$APPID\"" "$a/appinfo.json" || { echo "verify: packaged appinfo.json id is not $APPID" >&2; return 1; }
+  grep -qE "\"version\": *\"$VER\"" "$a/appinfo.json" || { echo "verify: packaged appinfo.json version is not $VER" >&2; return 1; }
+  [ -s "$p" ] || { echo "verify: packageinfo.json missing" >&2; return 1; }
+  grep -qE "\"id\": *\"$APPID\"" "$p" || { echo "verify: packageinfo.json id is not $APPID" >&2; return 1; }
+  grep -qE "\"version\": *\"$VER\"" "$p" || { echo "verify: packageinfo.json version is not $VER" >&2; return 1; }
+  grep -qE "var IPK_FILE = '$IPK_FILE';" "$a/js/app.js" || { echo "verify: app.js is not stamped with IPK_FILE=$IPK_FILE" >&2; return 1; }
+  grep -qE "var APP_VERSION_FALLBACK = '$VER';" "$a/js/app.js" || { echo "verify: app.js is not stamped with version $VER" >&2; return 1; }
+  # Anything other than plain paths (a "./" prefix, an absolute path) is not what ares-package writes.
+  if tar tzf "$dir/data.tar.gz" | grep -qvE '^usr/'; then
+    echo "verify: data.tar.gz has entries outside usr/ (a './' prefix?)" >&2; return 1
+  fi
+  if command -v ares-package >/dev/null 2>&1; then
+    ares-package -i "$f" >/dev/null 2>&1 || { echo "verify: ares-package cannot read $f" >&2; return 1; }
+  fi
+}
+
 if command -v ares-package >/dev/null 2>&1; then
-  ares-package -o "$STAGE/out" "$APP"
+  ares-package --no-minify -o "$STAGE/out" "$APP" >/dev/null
   BUILT="$(ls "$STAGE"/out/*.ipk | head -1)"
   cp "$BUILT" "$OUT"
-  echo "Built $OUT with ares-package ($(wc -c < "$OUT") bytes, $APPID $VER)"
+  verify "$OUT" || { rm -f "$OUT"; exit 1; }
+  echo "Built $OUT with ares-package $(ares-package --version 2>/dev/null | head -1) ($(wc -c < "$OUT") bytes, $APPID $VER, verified)"
   exit 0
 fi
 
 DATA="$STAGE/data"
-mkdir -p "$DATA/usr/palm/applications/$APPID" "$DATA/usr/palm/packages/$APPID" "$STAGE/control"
+CONTROL="$STAGE/control"
+mkdir -p "$DATA/usr/palm/applications/$APPID" "$DATA/usr/palm/packages/$APPID" "$CONTROL"
 cp -R "$APP"/. "$DATA/usr/palm/applications/$APPID/"
+# The same packageinfo.json ares-package writes.
 cat > "$DATA/usr/palm/packages/$APPID/packageinfo.json" <<PKG
 {
   "app": "$APPID",
@@ -83,7 +130,9 @@ cat > "$DATA/usr/palm/packages/$APPID/packageinfo.json" <<PKG
 }
 PKG
 SIZE_KB="$(du -sk "$DATA" | cut -f1)"
-cat > "$STAGE/control/control" <<CTL
+# LG's field names (webOS-Package-Format-Version, webOS-Packager-Version), exactly as ares-package
+# spells them; earlier builds wrote webOS_package_format_version, which no LG tool writes.
+cat > "$CONTROL/control" <<CTL
 Package: $APPID
 Version: $VER
 Section: misc
@@ -92,12 +141,27 @@ Architecture: all
 Installed-Size: $SIZE_KB
 Maintainer: $VENDOR <hello@screentinker.com>
 Description: $TITLE - digital signage player
-webOS_package_format_version: 2
-webOS_manifest_version: 1
+webOS-Package-Format-Version: 2
+webOS-Packager-Version: build-ipk.sh
 CTL
-( cd "$STAGE/control" && tar czf ../control.tar.gz --owner=0 --group=0 . )
-( cd "$DATA" && tar czf ../data.tar.gz --owner=0 --group=0 . )
+# ustar, plain relative paths (no "./"), root-owned: the layout ares-package writes.
+TARFLAGS=(--format=ustar --owner=0 --group=0 --numeric-owner)
+( cd "$CONTROL" && tar czf ../control.tar.gz "${TARFLAGS[@]}" control )
+( cd "$DATA" && tar czf ../data.tar.gz "${TARFLAGS[@]}" usr )
 printf '2.0\n' > "$STAGE/debian-binary"
+
+# The ar archive, written here rather than by ar(1): GNU ar always writes its own "name/" member
+# spelling, and this is the plain spelling ares-package (and dpkg) writes. Every header is 60 bytes:
+# name(16) mtime(12) uid(6) gid(6) mode(8) size(10) and the "`\n" magic; members are padded to an
+# even length.
+NOW="$(date +%s)"
 rm -f "$OUT"
-( cd "$STAGE" && ar -rc "$OUT" debian-binary control.tar.gz data.tar.gz )
-echo "Built $OUT without ares-package ($(wc -c < "$OUT") bytes, $APPID $VER)"
+printf '!<arch>\n' > "$OUT"
+for m in debian-binary control.tar.gz data.tar.gz; do
+  size="$(wc -c < "$STAGE/$m")"
+  printf '%-16s%-12s%-6s%-6s%-8s%-10s`\n' "$m" "$NOW" 0 0 100644 "$size" >> "$OUT"
+  cat "$STAGE/$m" >> "$OUT"
+  [ $((size % 2)) -eq 1 ] && printf '\n' >> "$OUT"
+done
+verify "$OUT" || { rm -f "$OUT"; exit 1; }
+echo "Built $OUT without ares-package ($(wc -c < "$OUT") bytes, $APPID $VER, verified)"

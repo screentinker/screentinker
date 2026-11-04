@@ -39,32 +39,95 @@ test('webos: the app version is the server version, so bump-version keeps them t
   assert.match(fs.readFileSync(path.join(ROOT, 'scripts', 'bump-version.sh'), 'utf8'), /webos\/appinfo\.json/);
 });
 
+/*
+ * Both packaging paths. CI packages with LG's ares-package; a machine without it gets the script's
+ * own archive, which must be the SAME shape: plain ar member names, LG's control field names, the
+ * app under usr/palm/applications/<id>/ with no "./" prefix. A panel reads one format, and a package
+ * in any other was the kind of thing "it still failed to install" came back about.
+ */
+function checkIpk(out, id) {
+  const members = execFileSync('ar', ['t', out]).toString().trim().split('\n');
+  assert.deepEqual(members, ['debian-binary', 'control.tar.gz', 'data.tar.gz'], 'the ar members, in this order');
+  // Plain member names, as ares-package and dpkg write them, never GNU ar's "name/" spelling.
+  const raw = fs.readFileSync(out);
+  assert.equal(raw.toString('latin1', 0, 8), '!<arch>\n');
+  assert.equal(raw.toString('latin1', 8, 24), 'debian-binary   ', 'plain ar member name');
+  assert.equal(execFileSync('bash', ['-c', `ar p "${out}" debian-binary`]).toString(), '2.0\n');
+  const data = execFileSync('bash', ['-c', `ar p "${out}" data.tar.gz | tar tzf -`]).toString().trim().split('\n');
+  for (const entry of data) assert.match(entry, /^usr\//, `every data entry is a plain usr/ path, got ${entry}`);
+  const esc = id.replace(/\./g, '\\.');
+  assert.ok(data.some((e) => new RegExp(`^usr/palm/applications/${esc}/appinfo\\.json$`).test(e)));
+  assert.ok(data.some((e) => new RegExp(`^usr/palm/packages/${esc}/packageinfo\\.json$`).test(e)));
+  assert.ok(data.some((e) => new RegExp(`^usr/palm/applications/${esc}/js/app\\.js$`).test(e)));
+  assert.ok(data.some((e) => new RegExp(`^usr/palm/applications/${esc}/js/device-control\\.js$`).test(e)));
+  const controlMembers = execFileSync('bash', ['-c', `ar p "${out}" control.tar.gz | tar tzf -`]).toString().trim().split('\n');
+  assert.ok(controlMembers.includes('control'), 'control.tar.gz holds `control` at its root, not ./control');
+  const control = execFileSync('bash', ['-c', `ar p "${out}" control.tar.gz | tar xzf - -O control`]).toString();
+  assert.match(control, new RegExp(`^Package: ${esc}$`, 'm'));
+  assert.match(control, new RegExp(`^Version: ${appinfo.version}$`, 'm'));
+  assert.match(control, /^Architecture: all$/m);
+  assert.match(control, /^webOS-Package-Format-Version: 2$/m, "LG's spelling of the field");
+  const read = (member) => execFileSync('bash', ['-c', `ar p "${out}" data.tar.gz | tar xzf - -O "${member}"`]).toString();
+  const packaged = JSON.parse(read(`usr/palm/applications/${id}/appinfo.json`));
+  assert.equal(packaged.id, id);
+  assert.equal(packaged.version, appinfo.version);
+  const pkginfo = JSON.parse(read(`usr/palm/packages/${id}/packageinfo.json`));
+  assert.equal(pkginfo.id, id);
+  assert.equal(pkginfo.app, id);
+  assert.equal(pkginfo.version, appinfo.version);
+  // Not minified: the shell is hand-written ES5 for a webOS 4 panel's Chrome 53, and the stamps
+  // the server and the tests look for must survive packaging.
+  const app = read(`usr/palm/applications/${id}/js/app.js`);
+  assert.match(app, new RegExp(`var APP_VERSION_FALLBACK = '${appinfo.version}';`));
+  assert.match(app, /^\(function \(\) \{$/m, 'app.js is packaged as written, not minified');
+  // And the server's reader (lib/ipk-cache.js) reads this archive as what it is.
+  const ipk = require('../lib/ipk-cache');
+  assert.deepEqual(ipk.readIpk(out), { id, version: appinfo.version });
+  return { data, control, read };
+}
+
+const HAVE_ARES = (() => { try { execFileSync('bash', ['-c', 'command -v ares-package']); return true; } catch { return false; } })();
+
 test('webos: the build script is valid bash and assembles an installable-looking .ipk', () => {
   const script = path.join(WEBOS, 'build-ipk.sh');
   execFileSync('bash', ['-n', script]);
   const out = path.join(os.tmpdir(), `st-webos-${process.pid}.ipk`);
   try {
-    execFileSync('bash', [script, out], { cwd: WEBOS, stdio: 'pipe' });
-    const members = execFileSync('ar', ['t', out]).toString().trim().split('\n');
-    assert.deepEqual(members, ['debian-binary', 'control.tar.gz', 'data.tar.gz'], 'the ar members, in this order');
-    const data = execFileSync('bash', ['-c', `ar p "${out}" data.tar.gz | tar tzf -`]).toString();
-    assert.match(data, new RegExp(`usr/palm/applications/${appinfo.id.replace(/\\./g, '\\\\.')}/appinfo\\.json`));
-    assert.match(data, new RegExp(`usr/palm/packages/${appinfo.id.replace(/\\./g, '\\\\.')}/packageinfo\\.json`));
-    assert.match(data, /applications\/[^/]+\/js\/app\.js/);
-    assert.match(data, /applications\/[^/]+\/js\/device-control\.js/);
-    const controlMembers = execFileSync('bash', ['-c', `ar p "${out}" control.tar.gz | tar tzf -`]).toString().trim().split('\n');
-    const controlName = controlMembers.includes('./control') ? './control' : 'control';
-    assert.ok(controlMembers.includes(controlName), 'control.tar.gz contains its control file');
-    const control = execFileSync('bash', ['-c', `ar p "${out}" control.tar.gz | tar xzf - -O "${controlName}"`]).toString();
-    assert.match(control, new RegExp(`^Package: ${appinfo.id}$`, 'm'));
-    assert.match(control, new RegExp(`^Version: ${appinfo.version}$`, 'm'));
-    assert.match(control, /^webOS(?:_package_format_version|-Package-Format-Version): 2$/m);
+    const log = execFileSync('bash', [script, out], { cwd: WEBOS, stdio: 'pipe' }).toString();
+    assert.match(log, /verified\)/, 'the build checks its own output');
+    assert.match(log, HAVE_ARES ? /with ares-package/ : /without ares-package/);
+    checkIpk(out, appinfo.id);
     // The build stamps js/app.js from appinfo.json, exactly as the Tizen build stamps from config.xml.
     assert.match(fs.readFileSync(path.join(WEBOS, 'js', 'app.js'), 'utf8'),
       new RegExp(`var APP_VERSION_FALLBACK = '${appinfo.version}';`));
   } finally {
     try { fs.unlinkSync(out); } catch { /* */ }
   }
+});
+
+test('webos: the fallback packager (no ares-package on PATH) writes the same archive shape', () => {
+  const script = path.join(WEBOS, 'build-ipk.sh');
+  const out = path.join(os.tmpdir(), `st-webos-fallback-${process.pid}.ipk`);
+  try {
+    const log = execFileSync('bash', [script, out], { cwd: WEBOS, stdio: 'pipe', env: { ...process.env, PATH: '/usr/bin:/bin' } }).toString();
+    assert.match(log, /without ares-package/);
+    assert.match(log, /verified\)/);
+    checkIpk(out, appinfo.id);
+    if (HAVE_ARES) {
+      // LG's own tool reads the hand-assembled archive exactly as it reads its own.
+      const info = execFileSync('ares-package', ['-i', out]).toString();
+      assert.match(info, new RegExp(`^Package: ${appinfo.id.replace(/\./g, '\\.')}$`, 'm'));
+      assert.match(info, new RegExp(`^Version: ${appinfo.version}$`, 'm'));
+    }
+  } finally {
+    try { fs.unlinkSync(out); } catch { /* */ }
+  }
+});
+
+test('webos: the release workflow packages with a pinned ares-package', () => {
+  const rel = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
+  assert.match(rel, /npm i -g @webos-tools\/cli@\d+\.\d+\.\d+/, 'pinned, so a release is reproducible');
+  assert.ok(rel.indexOf('@webos-tools/cli') < rel.indexOf('webos/build-ipk.sh'), 'installed before the build runs');
 });
 
 test('webos: the shell scripts parse, and device-control degrades to nothing without SCAP', () => {
@@ -90,7 +153,14 @@ test('webos: the server serves the artifact and the version the shell polls', ()
   assert.deepEqual(v, {
     version: '2.1.0', available: true, size: 12345, url: '/webos/ScreenTinker.ipk',
     files: { 'ScreenTinker.ipk': true, 'com.lg.app.signage.ipk': false },
+    versions: { 'ScreenTinker.ipk': '2.1.0' },
   });
+  // Each build reports its own version: the two files on an instance can differ, and a Local mode
+  // panel must compare itself against com.lg.app.signage.ipk, not against ScreenTinker.ipk.
+  const both = ipk.versionJson({ version: '2.5.1', exists: true, size: 1 }, { version: '3.1.2', exists: true, size: 2 });
+  assert.deepEqual(both.versions, { 'ScreenTinker.ipk': '2.5.1', 'com.lg.app.signage.ipk': '3.1.2' });
+  const shell = fs.readFileSync(path.join(WEBOS, 'js', 'app.js'), 'utf8');
+  assert.match(shell, /j\.versions && j\.versions\[IPK_FILE]\) \|\| j\.version/, 'the shell reads its own entry');
   assert.equal(ipk.versionJson({ version: '2.1.0', exists: false, size: 0 }).available, false,
     'a version with no file behind it must not send a panel to download nothing');
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
@@ -174,17 +244,10 @@ test('webos: --app-id builds the Local application mode package under its own id
   try {
     const out = path.join(dir, 'com.lg.app.signage.ipk');
     execFileSync('bash', [script, '--app-id', 'com.lg.app.signage', out], { cwd: WEBOS, stdio: 'pipe' });
-    const data = execFileSync('bash', ['-c', `ar p "${out}" data.tar.gz | tar tzf -`]).toString();
-    assert.match(data, /usr\/palm\/applications\/com\.lg\.app\.signage\/appinfo\.json/);
-    assert.match(data, /usr\/palm\/packages\/com\.lg\.app\.signage\/packageinfo\.json/);
-    assert.doesNotMatch(data, /com\.screentinker\.player/, 'nothing left under the other id');
-    const read = (member) => execFileSync('bash', ['-c', `ar p "${out}" data.tar.gz | tar xzf - -O "${member}"`]).toString();
-    const appDir = data.includes('./usr/') ? './usr/palm/applications/com.lg.app.signage' : 'usr/palm/applications/com.lg.app.signage';
-    assert.equal(JSON.parse(read(`${appDir}/appinfo.json`)).id, 'com.lg.app.signage');
-    assert.match(read(`${appDir}/js/app.js`), /var IPK_FILE = 'com\.lg\.app\.signage\.ipk';/,
+    const { data, read } = checkIpk(out, 'com.lg.app.signage');
+    assert.ok(!data.some((e) => /com\.screentinker\.player/.test(e)), 'nothing left under the other id');
+    assert.match(read('usr/palm/applications/com.lg.app.signage/js/app.js'), /var IPK_FILE = 'com\.lg\.app\.signage\.ipk';/,
       'it updates itself from the file it was installed as');
-    const control = execFileSync('bash', ['-c', `ar p "${out}" control.tar.gz | tar xzf - -O ./control 2>/dev/null || ar p "${out}" control.tar.gz | tar xzf - -O control`]).toString();
-    assert.match(control, /^Package: com\.lg\.app\.signage$/m);
 
     // The default build is unchanged, and the committed manifest was never touched.
     const def = path.join(dir, 'ScreenTinker.ipk');
@@ -225,4 +288,20 @@ test('webos: the downloads page offers the Local mode build, and only when a fil
   assert.equal(full.available, true);
   assert.equal(full.url, '/webos/com.lg.app.signage.ipk');
   assert.equal(full.file, 'com.lg.app.signage.ipk');
+});
+
+test('webos: an SI server in Local mode is sent to com.lg.app.signage.ipk by its full https address, never ScreenTinker.ipk', () => {
+  // A panel in Local launch mode upgrades its one Local app (id com.lg.app.signage) from the SI
+  // server address and refuses any other id with "failed to upgrade IPK". The /webos page used to
+  // point SI servers at ScreenTinker.ipk (reported from a real panel, 2026-11).
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const page = src.slice(src.indexOf("app.get(['/webos', '/webos/']"), src.indexOf("app.get(['/tizen', '/tizen/']"));
+  assert.match(page, /SI server, Local application mode/);
+  assert.match(page, /Fully Qualified Domain Name[\s\S]{0,120}\$\{base\}\/webos\/com\.lg\.app\.signage\.ipk/);
+  assert.match(page, /Local Application Upgrade<\/b>: <b>Remote/);
+  assert.match(page, /needs <code>com\.lg\.app\.signage\.ipk<\/code> instead/);
+  const di = require('../lib/download-index');
+  const rows = di.entries({ ipk: { exists: true }, ipkLocal: { exists: true } });
+  assert.doesNotMatch(rows.find((e) => e.id === 'webos').what, /or an SI server\./);
+  assert.match(rows.find((e) => e.id === 'webos-local').what, /SI server/);
 });

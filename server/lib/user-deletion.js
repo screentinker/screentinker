@@ -46,6 +46,8 @@ const WORKSPACE_SCOPED = [
   // #720: a screen's Wi-Fi passwords (lib/device-wifi.js). device_id cascades with the device too;
   // listed so a purge never depends on foreign keys being on.
   'device_wifi_networks',
+  // #796 library folders: where items are filed first, then the folders (folder_id references them).
+  'library_folder_items', 'library_folders',
 ];
 // Logs that carry a device_id but NO foreign key (so they don't block, but we
 // clean them to avoid dangling rows).

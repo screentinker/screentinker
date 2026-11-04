@@ -287,7 +287,7 @@ test('⚠️ the AI generator is not offered kinds it cannot fill', () => {
   // And the flag is actually set on the four that need it, so the filter above has something to bite.
   assert.deepEqual(
     Object.keys(R.KINDS).filter((k) => R.KINDS[k].config).sort(),
-    ['clock', 'countdown', 'date', 'lettering', 'qr'],
+    ['clock', 'countdown', 'date', 'lettering', 'qr', 'video'],
   );
 });
 
@@ -473,7 +473,8 @@ test('⚠️ a cut-out fits inside its box instead of being cropped to fill it',
 test('⚠️ a slide authored before this option renders byte for byte as it did', () => {
   // A layout change nobody asked for is a worse bug than a missing option: these are on screens.
   const before = renderWithImages([{ kind: 'image', content_id: 'x' }, { kind: 'head', slot: 'a' }], { a: 'hi' });
-  assert.ok(before.includes('<img src='), 'no class attribute on a default image');
+  // (data-st-cid is the offline-media marker, lib/slide-render.js cidAttr: not a layout attribute.)
+  assert.match(before, /<img(?: data-st-cid="[^"]+")? src=/, 'no class attribute on a default image');
   assert.ok(!before.includes('class="fit"'));
 });
 
@@ -565,7 +566,7 @@ test('⚠️ the artwork carries the words as alt text', () => {
     template: { elements: [{ kind: 'lettering', slot: 'w', content_id: 'c' }] },
     fields: { w: 'AUTUMN SALE' },
   }, { resolveImage: () => '/uploads/content/a.png' });
-  assert.match(html, /<img class="fit" src="[^"]+" alt="AUTUMN SALE">/);
+  assert.match(html, /<img class="fit"(?: data-st-cid="[^"]+")? src="[^"]+" alt="AUTUMN SALE">/);
 });
 
 test('⚠️ words that look like markup are escaped into the alt attribute', () => {

@@ -14,6 +14,32 @@
   ],
   "releases": [
     {
+      "version": "3.1.3",
+      "date": "2026-11-03",
+      "notes": [
+        "Widgets, playlists and schedules can now be organised in folders, like the content library, with search, filters, sorting and quick views such as Recently added and Unused. Schedules also get a list view. Moving things between folders never changes what plays.",
+        "Request forms can now accept a website link as well as images and videos. It is off until you turn it on for a form, can be limited to the domains you list, and still needs someone to approve it before it reaches a screen.",
+        "Slides can now include a video placed and sized like a photo, and on the web player a slide's photos and videos keep showing when the network drops.",
+        "Data sources now show when the data last changed, and Sync now tells you whether anything changed and which values, so you can see why a slide refreshed.",
+        "A slide fed by a data source no longer flashes blank or restarts its zone when the data updates, and a paired web player that starts without a network shows Connecting instead of the setup form.",
+        "Fixes: screens no longer appear twice on the Screens page, LG webOS panels download the right app version again, web players start from cache when the internet is down, and backups no longer risk damaging a busy database."
+      ]
+    },
+    {
+      "version": "3.1.2",
+      "date": "2026-11-02",
+      "notes": [
+        "New audio guide: add narration in several languages to a video, and visitors scan a QR code on the screen to hear it on their own phone, in sync with what's playing, with captions. No app needed.",
+        "ScreenTinker now asks for a quick rating and comment at a few key moments (after your first screen is paired, during and after a trial), so you can tell us what is and isn't working. You can also send feedback any time from the sidebar.",
+        "New slide shapes for LED strips and matrices (8:1, 1:8, 16:1, 1:16, and a custom size), with an optional LED grid drawn over the canvas so you can see which LEDs your text lands on.",
+        "Changing your password now signs you out everywhere else right away, including browsers left open on the dashboard.",
+        "Wi-Fi networks set from the dashboard on Android screens now survive a reboot, and a layout no longer flashes to black when one zone's content updates.",
+        "Operators: accounts billed by invoice or PO can carry a renewal date and get reminder emails at 90, 60, 30 and 7 days, with the admins copied.",
+        "On the Raspberry Pi and Windows player, switching between slides or web pages in a zone no longer flashes black.",
+        "Self-hosted servers with a large play history or older Android screens no longer stall: reconnecting screens and very chatty 1.9.0 players are handled without freezing the server or the dashboard."
+      ]
+    },
+    {
       "version": "3.1.1",
       "date": "2026-11-01",
       "notes": [

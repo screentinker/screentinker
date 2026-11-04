@@ -261,3 +261,38 @@ Item {
     assert obj.property("hasSink") is True
     from PySide6.QtMultimedia import QVideoSink
     assert hasattr(QVideoSink, "videoFrameChanged")
+
+
+SURFACE_QML = os.path.join(os.path.dirname(__file__), "..", "screentinker_native", "ui", "qml", "Surface.qml")
+
+
+def test_web_item_is_revealed_on_its_first_paint_not_load_succeeded():
+    """#780: LoadSucceeded is "document loaded", not "a frame is composited". Revealing then (and
+    unloading the previous item in the same frame) showed a few black frames between published slide
+    widgets on a Pi 4. A web slot is revealed only once its paint probe answers (fonts + late images +
+    two animation frames), with a cap so a silent page is still shown."""
+    with open(SLOT_QML) as f:
+        src = f.read()
+    web = src[src.index("id: webComp"):]
+    on_load = web.split("onLoadingChanged", 1)[1].split("LoadFailedStatus", 1)[0]
+    assert "slot.markReady()" not in on_load, "load succeeded must not reveal the page by itself"
+    assert "runJavaScript(paintProbe)" in on_load and "paintCap.restart()" in on_load
+    assert "document.fonts.ready" in web and "requestAnimationFrame(function(){requestAnimationFrame" in web
+    assert "console.log('ST_PAINTED')" in web and 'message === "ST_PAINTED"' in web
+    assert re.search(r"id:\s*paintCap;\s*interval:\s*\d+;\s*onTriggered:\s*slot\.markReady\(\)", web), "a page that never answers is still shown"
+    assert "setTimeout(f,1200)" in web, "and the probe caps itself inside the page too"
+
+
+def test_a_hard_cut_to_a_web_item_keeps_the_old_item_underneath_briefly_by_token():
+    """#780 belt and braces: the web view is transparent until Chromium's frame lands, so the outgoing
+    slot stays under it for a moment instead of being unloaded in the same frame. By token, so a slot
+    reloaded with a new item before the timer fires is never unloaded; images keep the immediate cut."""
+    with open(SURFACE_QML) as f:
+        src = f.read()
+    reveal = src[src.index("function reveal(slot)"):src.index("Rectangle {")]
+    hard = reveal.split("} else {", 1)[1]
+    assert 'slot.kind === "web"' in hard and "deferredUnload.restart()" in hard
+    assert "old.unload()" in hard.split("} else {", 1)[1], "non-web items still cut immediately"
+    timer = src[src.index("id: deferredUnload"):src.index("TransitionRunner {")]
+    assert "s.item.token !== token" in timer and "s === surface.frontSlot()" in timer
+    assert "deferredUnload.stop()" in src[src.index("function clear()"):src.index("function slotFor")]

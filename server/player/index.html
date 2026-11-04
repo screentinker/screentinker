@@ -235,6 +235,12 @@
        #playerContainer, so corner positions track the visible content in every orientation.
        Pointer-transparent and empty (invisible) until an overlay is shown. */
     #pipContainer { position: fixed; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; z-index: 9000; }
+    /* Visitor audio sync: a small "Scan for audio guide" QR in a corner while a guide-enabled video
+       plays (per content item; the QR is this screen's /listen link). Below #pipContainer's 9000 so it
+       never covers a PiP or an emergency/trigger overlay. */
+    #audioGuideQR { position: fixed; right: 3vmin; bottom: 3vmin; z-index: 8000; background: #fff; padding: 1.2vmin 1.2vmin 0.8vmin; border-radius: 1vmin; box-shadow: 0 6px 28px rgba(0,0,0,0.55); display: none; text-align: center; }
+    #audioGuideQR .qr, #audioGuideQR .qr > svg { display: block; width: 16vmin; height: 16vmin; }
+    #audioGuideQR .cap { font: 600 1.9vmin/1.2 sans-serif; color: #111; margin-top: 0.7vmin; white-space: nowrap; }
     /* ⚠️ Two owners share this layer: the manual PiP path and the trigger engine. Without an
        explicit stack, DOM insertion order decides who paints on top — so a PiP pushed during an
        alarm would cover the alarm. A trigger always outranks a PiP. */
@@ -299,6 +305,7 @@
 
   <!-- #109: PiP overlay layer (above the player; never touched by playlist render) -->
   <div id="pipContainer"></div>
+  <div id="audioGuideQR"><div class="qr"></div><div class="cap">Scan for audio guide</div></div>
 
   <!-- Unpair PIN prompt. Esc opens it; nothing happens until the PIN is right. -->
   <div id="pinOverlay">
@@ -973,6 +980,66 @@
     }
 
     /*
+     * A SLIDE ASKING FOR ITS OWN MEDIA (lib/slide-render.js MEDIA_SCRIPT).
+     *
+     * The slide's frame is an opaque origin: this page's service worker never sees its requests, and
+     * a blob: URL made here is refused there. So the frame posts the content ids it shows and gets
+     * the BYTES back as Blobs, which it turns into blob: URLs of its own. Only what the cache already
+     * holds is sent (X-ST-Cache-Only, sw.js), only for ids the current payload listed as some
+     * slide's widget_media, and only to a frame this page mounted. With no worker in control there
+     * is no cache to answer from, and a plain fetch would download whole videos into memory, so
+     * nothing is sent and the slide keeps streaming as before.
+     */
+    // var, not let: requestOfflineCache can be reached from boot paths, and this file has been bricked
+    // once by a let read above its declaration (1.9.32).
+    var slideMediaIndex = new Map();   // content_id -> widget_media entry, rebuilt by requestOfflineCache
+    window.addEventListener('message', (ev) => {
+      const d = ev.data;
+      if (!d || d.type !== 'st-slide-media' || !Array.isArray(d.ids) || !ev.source) return;
+      if (!navigator.serviceWorker) return;
+      const ours = Array.prototype.some.call(document.querySelectorAll('iframe'), (f) => f.contentWindow === ev.source);
+      if (!ours) return;
+      answerSlideMedia(ev.source, d.ids.slice(0, 48));
+    });
+    /*
+     * Rebuild the content id -> widget_media index from a set of items, and return the entries.
+     * Called by requestOfflineCache AND on a cold start from the cached playlist: the slide frame
+     * asks as soon as it loads, which offline is long before the worker is ready to pin anything.
+     */
+    function indexSlideMedia(all) {
+      const out = [];
+      const next = new Map();
+      for (const it of all || []) {
+        if (!it || !Array.isArray(it.widget_media)) continue;
+        for (const m of it.widget_media) {
+          if (!m || !m.content_id || !m.filepath || m.remote_url) continue;
+          out.push(m);
+          next.set(m.content_id, m);
+        }
+      }
+      slideMediaIndex = next;
+      return out;
+    }
+    async function answerSlideMedia(win, ids) {
+      // A cold start: the frame can ask before the worker has claimed this page. Wait for it briefly.
+      if (!navigator.serviceWorker.controller) {
+        await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(r, 4000))]).catch(() => {});
+        if (!navigator.serviceWorker.controller) return;
+      }
+      const files = {};
+      let any = false;
+      for (const id of ids) {
+        const m = typeof id === 'string' && slideMediaIndex.get(id);
+        if (!m) continue;
+        try {
+          const r = await fetch(mediaUrl(m), { headers: { 'X-ST-Cache-Only': '1' }, credentials: 'omit' });
+          if (r.ok) { files[id] = await r.blob(); any = true; }
+        } catch (e) { /* not held: the slide keeps its network copy */ }
+      }
+      if (any) { try { win.postMessage({ type: 'st-slide-media-reply', files }, '*'); } catch (e) { /* frame gone */ } }
+    }
+
+    /*
      * Ask the service worker to hold this playlist's media for offline use.
      *
      * The worker stores whatever a playback fetch happens to complete, which on a healthy link is
@@ -1114,9 +1181,16 @@
         // exact scenario it exists for). A local (filepath) default is cached; a remote_url default
         // cannot be and simply will not show offline.
         const all = (items || []).concat(extraItems || [], defaultContent ? [defaultContent] : []);
-        const urls = all
+        /*
+         * A slide's own photos and clips (the server lists them as widget_media). Pinned like
+         * playlist media, so they are fetched and never pruned, and indexed by content id for the
+         * slide's request (answerSlideMedia below).
+         */
+        const slideMedia = indexSlideMedia(all);
+        const urls = all.concat(slideMedia)
           .filter((it) => it && it.filepath && !it.remote_url)
-          .map((it) => mediaUrl(it));
+          .map((it) => mediaUrl(it))
+          .filter((u, i, a) => a.indexOf(u) === i);
         // The site cache first: the worker must know where the LAN copy is before it starts fetching.
         postSiteCache(all);
         // `urls` is the COMPLETE set for this display, so the worker may treat anything else in
@@ -1140,6 +1214,16 @@
          * Fire-and-forget: the worker's rev-pinned branch stores whatever comes back, and a failure
          * here must never touch playback.
          */
+        /*
+         * And each SLIDE's page, for the same reason: its media is no use without the document that
+         * shows it. Fetched with the exact URL the iframe will load (routes/widgets.js marks a
+         * rev-pinned render immutable), so the frame's own request is a cache hit later.
+         */
+        for (const it of all) {
+          if (!it || it.widget_type !== 'slide' || !it.widget_id) continue;
+          fetch(`${config.serverUrl}/api/widgets/${it.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}&rev=${it.widget_rev||0}${it.transparent_bg ? '&transparent=1' : ''}`,
+            { credentials: 'omit' }).catch(() => {});
+        }
         for (const it of all) {
           if (!it || it.mime_type !== BUNDLE_MIME || !it.content_id) continue;
           fetch(`${config.serverUrl}/api/content/${it.content_id}/bundle?rev=${it.content_rev || 0}${it.transparent_bg ? '&transparent=1' : ''}`,
@@ -2906,6 +2990,16 @@
     // it is from its URL, so it takes the same path as one that read its id out of localStorage
     // rather than falling through to the pairing-code screen.
     if (config.serverUrl && (config.deviceId || config.enrolKey) && config.paired) {
+      /*
+       * ⚠️ A PAIRED SCREEN NEVER BOOTS INTO THE SETUP FORM. It used to be hidden only when a cached
+       * playlist was restored below, so a paired panel that came back with no restorable playlist
+       * (an LG "Play via URL" page reloaded by the browser mid-outage) sat on "Server URL / Connect"
+       * with "Connection failed: xhr poll error" under it: it looked unpaired, and it invited
+       * someone to re-pair a screen that only needed the network back. The socket retries forever on
+       * its own; the status card says so. The form comes back only when the server actually
+       * un-pairs this display (device:unpaired -> enterRepairMode, or a pairing code below).
+       */
+      document.getElementById('setupScreen').style.display = 'none';
       // Restore cached playlist immediately so content plays even if offline —
       // but ONLY if we also know the layout, else we'd guess fullscreen and flash
       // before the payload arrives. Key presence (not value) is the test: an absent
@@ -2918,6 +3012,7 @@
       if (cachedPlaylist.length > 0 && layoutKnown) {
         console.log('Restored cached playlist:', cachedPlaylist.length, 'items');
         playlist = cachedPlaylist;
+        try { indexSlideMedia(cachedPlaylist); } catch (e) { /* slide media offline only */ }
         layout = loadLayoutCache();
         document.getElementById('setupScreen').style.display = 'none';
         /*
@@ -3635,6 +3730,7 @@
         saveConfig(config);
         console.log('Registered:', data.device_id);
         flushOfflinePlays();   // #299: authenticated, so any offline backlog can be replayed
+        if (typeof maybeFetchAudioGuide === 'function') maybeFetchAudioGuide();  // visitor audio sync: learn this screen's /listen QR (if view access is on)
         // #473: interactive-page sessions and incidents queued while offline (or before this boot).
         kioskFlushInFlight = false;
         flushKioskSessions();
@@ -3656,6 +3752,7 @@
         }
 
         if (!config.paired) {
+          document.getElementById('setupScreen').style.display = 'flex';   // hidden at a paired boot
           // Show pairing code. Nothing of a display's screen share belongs on a pairing screen.
           clearShareForUnpaired();
           document.getElementById('urlForm').style.display = 'none';
@@ -6710,10 +6807,49 @@
       else { currentIndex = idx; showNothingScheduled(); }
     }
 
+    /* Visitor audio sync (on-screen QR). Show a "Scan for audio guide" QR while the current item has
+       audio_guide_enabled, pointing at THIS screen's /listen URL. The URL/QR comes from a device-
+       authenticated endpoint (view-only access must be on for a token to exist); fetched lazily,
+       cached, and retried at most once a minute while a guide item is on screen but no URL is known
+       yet, so turning view access on later is picked up without a reload. */
+    let audioGuideInfo = null;      // { listen_url, qr_svg } once known, else null
+    let audioGuideLastFetch = 0;
+    function maybeFetchAudioGuide() {
+      if (VIEWER || (typeof PREVIEW_MODE !== 'undefined' && PREVIEW_MODE)) return;  // real paired player only
+      if (!config.deviceId || !config.deviceToken) return;
+      const now = Date.now();
+      if (audioGuideInfo || (now - audioGuideLastFetch) < 60000) return;
+      audioGuideLastFetch = now;
+      fetch((config.serverUrl || window.location.origin) + '/api/device/audio-guide', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_id: config.deviceId, device_token: config.deviceToken }),
+      }).then((r) => (r.ok ? r.json() : null)).then((d) => {
+        audioGuideInfo = (d && d.enabled && d.qr_svg) ? d : null;
+        if (playlist && Number.isFinite(currentIndex)) updateAudioGuideQR(playlist[currentIndex]);
+      }).catch(() => {});
+    }
+    function updateAudioGuideQR(item) {
+      const el = document.getElementById('audioGuideQR');
+      if (!el) return;
+      const on = !!(item && item.audio_guide_enabled);
+      if (on && audioGuideInfo && audioGuideInfo.qr_svg) {
+        const holder = el.querySelector('.qr');
+        if (holder && holder.dataset.url !== audioGuideInfo.listen_url) {
+          holder.innerHTML = audioGuideInfo.qr_svg;
+          holder.dataset.url = audioGuideInfo.listen_url;
+        }
+        el.style.display = 'block';
+      } else {
+        el.style.display = 'none';
+        if (on && !audioGuideInfo) maybeFetchAudioGuide();   // a guide item but no URL yet: try to learn it
+      }
+    }
+
     function playCurrentItem() {
       if (typeof campaignActive === 'function' && campaignActive()) return;   // 3.0: the campaign engine owns the stage
       if (!playlist.length || !Number.isFinite(currentIndex)) {
         teardownCurrentMedia();
+        if (typeof updateAudioGuideQR === 'function') updateAudioGuideQR(null);   // nothing playing: no audio-guide QR
         // The bed survives an ADVANCE, not the playlist going away — otherwise a screen with
         // nothing to show would sit there playing music to an empty stage.
         stopSlideVo();
@@ -6728,6 +6864,9 @@
       hideStatus();
       const item = playlist[currentIndex];
       console.log('Playing:', item.filename, `(${currentIndex + 1}/${playlist.length})`);
+      // visitor audio sync: show the on-screen QR for a guide-enabled item. Guarded, and in a try: an
+      // overlay helper must never be able to stop playback.
+      try { if (typeof updateAudioGuideQR === 'function') updateAudioGuideQR(item); } catch (_) {}
       currentItemStartedAt = Date.now();
       // Slide audio, if this item carries any. Runs on every advance: the voiceover is replaced,
       // the bed is left playing when the next slide names the same track.
@@ -8452,6 +8591,47 @@
      * keep playing untouched, a changed zone re-renders in its own div, a zone left empty is
      * cleared. Without it every zone is built from scratch. Returns the new zone state.
      */
+    /*
+     * #790: a widget in a zone got a new revision (a data source behind a slide changed, or it was
+     * edited) while the zone shows it. The zone used to be cleared and the new frame loaded into the
+     * empty zone, so it went blank until the slide parsed, and a multi-item zone restarted at its
+     * first item. Build the new frame HIDDEN on top of the old one and swap on load, the way the
+     * fullscreen path (renderWidgetBuffered) already does; the zone's dwell timer is untouched.
+     *
+     * div.__stYtToken is bumped by every showZoneItem, so a frame still loading when the zone moves
+     * on (or is cleared) is dropped instead of revealed over the next item. On a load timeout the
+     * old slide stays up, as fullscreen does. Literals only (no shared constants): this function is
+     * extracted + eval'd in isolation by test/player-zone-widget-refresh.test.js.
+     */
+    function refreshZoneWidget(div, a) {
+      const token = div.__stYtToken;
+      if (div.__stWidgetSwap) { clearTimeout(div.__stWidgetSwap.timer); try { div.__stWidgetSwap.iframe.remove(); } catch (e) {} div.__stWidgetSwap = null; }
+      const iframe = document.createElement('iframe');
+      iframe.src = `${config.serverUrl}/api/widgets/${a.widget_id}/render?device=${encodeURIComponent(config.deviceId||'')}&rev=${a.widget_rev||0}${a.transparent_bg ? '&transparent=1' : ''}${a.widget_panel ? '#panel=' + encodeURIComponent(a.widget_panel) : ''}`;
+      iframe.setAttribute('sandbox', widgetSandboxAttr(a));
+      iframe.style.position = 'absolute'; iframe.style.left = '0'; iframe.style.top = '0';
+      iframe.style.visibility = 'hidden';
+      const swap = { iframe, timer: null };
+      const drop = () => {
+        if (div.__stWidgetSwap === swap) div.__stWidgetSwap = null;
+        clearTimeout(swap.timer);
+        try { iframe.remove(); } catch (e) {}
+      };
+      iframe.addEventListener('load', () => {
+        if (div.__stWidgetSwap !== swap) return;                       // superseded
+        if (div.__stYtToken !== token || iframe.parentNode !== div) { drop(); return; }   // the zone moved on
+        div.__stWidgetSwap = null;
+        clearTimeout(swap.timer);
+        Array.prototype.slice.call(div.children).forEach((c) => { if (c !== iframe) { try { c.remove(); } catch (e) {} } });
+        iframe.style.position = ''; iframe.style.left = ''; iframe.style.top = '';
+        iframe.style.visibility = 'visible';
+        div.__stItem = a;
+      });
+      div.appendChild(iframe);
+      swap.timer = setTimeout(drop, 8000);
+      div.__stWidgetSwap = swap;
+    }
+
     function renderZones(container, defaultItem, prev) {
       if (!prev) clearZoneTimers();
       // Group assignments by zone, ordered by sort_order so each zone rotates its
@@ -8523,6 +8703,24 @@
           next.zones[zone.id] = had;
           return;
         }
+        /*
+         * #790: the SAME items, only a widget revision moved (a data source refresh, a slide edit).
+         * Keep the zone's place in its rotation and its timer; re-render the widget on screen
+         * through a buffered swap, and let the next rotation pick up any other new revision.
+         */
+        const baseSig = zoneItemsSig(items.map((a) => Object.assign({}, a, { widget_rev: '' })));
+        if (had && had.baseSig === baseSig && had.div.__stIdx != null) {
+          const idx = had.div.__stIdx % had.items.length;
+          const shown = had.div.__stItem || had.items[idx];
+          had.items.splice(0, had.items.length, ...items);
+          next.zones[zone.id] = { sig, baseSig, div: had.div, items: had.items };
+          const now = had.items[idx];
+          if (now && now.widget_id && shown && shown.widget_id === now.widget_id
+              && (shown.widget_rev || 0) !== (now.widget_rev || 0)) {
+            refreshZoneWidget(had.div, now);
+          }
+          return;
+        }
 
         let div = had && had.div;
         if (!div) {
@@ -8531,7 +8729,7 @@
           div.style.cssText = `left:${zone.x_percent}%;top:${zone.y_percent}%;width:${zone.width_percent}%;height:${zone.height_percent}%;z-index:${zone.z_index || 0}`;
           container.appendChild(div);
         }
-        next.zones[zone.id] = { sig, div, items };
+        next.zones[zone.id] = { sig, baseSig, div, items };
         showZoneItem(zone, div, items, 0);   // clears the zone's own timer and content first
       });
       // A zone rendered before that now has nothing of its own is cleared.
@@ -8596,11 +8794,16 @@
       if (div.__stSkipGuard && !div.__stSkipAdvance) div.__stSkipGuard.ended(Date.now() - (div.__stShownAt || 0));
       div.__stSkipAdvance = false;
       div.__stShownAt = Date.now();
+      // #790: a buffered revision swap still loading belongs to what this zone showed before.
+      if (div.__stWidgetSwap) { clearTimeout(div.__stWidgetSwap.timer); div.__stWidgetSwap = null; }
+      div.__stIdx = null; div.__stItem = null;   // set again below once an item is chosen
       // #74/#75: skip items whose schedule excludes them now; idle the zone if none.
       const activeIdx = zoneNextActive(items, index, zone.id);
       if (activeIdx === -1) { showZoneEmpty(zone, div, items, timers); return; }
       index = activeIdx;
       const a = items[index % items.length];
+      div.__stIdx = index % items.length;   // #790: renderZones keeps this place on a revision-only change
+      div.__stItem = a;
       // 3.0 campaigns: a campaign zone records proof-of-play for each item it shows.
       if (div.__stOnShow) { try { div.__stOnShow(a); } catch (e) { /* never let logging stop a zone */ } }
       // Scheduled zones must cycle (even a lone active item) so windows re-evaluate

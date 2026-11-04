@@ -1,8 +1,120 @@
 # Changelog
 
-## Unreleased
+## 3.1.3
 
 ### Added
+
+- **Library folders, search and quick views for Widgets, Playlists and Schedules** (#796, #801).
+  The Content Library's sidebar now organises the other three: folders and subfolders with counts,
+  All / Recently added / Unused (widgets, playlists) and All / Recently added / Active now /
+  Upcoming / Expired (schedules), search, filters and sorting. Schedules get a **List** view next to
+  Day/Week/Month. Folders are organisation only: filing lives in two new tables
+  (`library_folders`, `library_folder_items`), so moving an item never writes the widget, playlist,
+  schedule or playlist item, and no screen reloads. Existing items start in All. Deleting a folder
+  moves what is inside up a level. Requested by @MashaWaleed.
+
+- **Content requests can carry a website link** (#792, #800). A request form can take a web
+  address as well as (or instead of) an image or video. Off on every form until an admin ticks
+  **Website links**, optionally limited to listed domains. The address is checked like a file
+  (http(s) only, no credentials, the remote-URL SSRF gate, quotas), becomes a webpage widget, and
+  goes through the same review queue, dated schedule block and release gate. Declining or
+  withdrawing deletes the widget. The reviewer opens the page in a new tab; it is never framed in
+  the dashboard. New column `content_requests.widget_id`. Requested by @demesiooliveira.
+
+- **Slides: a video element** (#794). A clip from the library placed and sized like a photo, with
+  the same fit and corner radius; muted, looping, autoplaying. At most two videos per slide,
+  background included (one hardware decoder each on a Pi or Android stick).
+
+- **Slides: photos and videos play offline on the web player** (#795). A slide's media was never in
+  any offline cache, so with the network gone the words stayed up over empty boxes. The playlist
+  now lists each slide's media, the web player pins it, and the slide frame asks its parent for
+  the files from cache. Widget render epoch 3, service worker v32. Android, native and Tizen follow
+  separately.
+
+- **Data sources: what a sync changed** (#790, #799). The card shows **Last changed** next to Last
+  sync, and **Sync now** says whether the data changed and which variables. A slide bound to a
+  source reloads only when the data changes; when one reloads on every sync, the response carries
+  something that moves on every call (a timestamp, a request id), and this names it. Reported by
+  @olchinga-de.
+
+### Fixed
+
+- **Web player: a data-source slide in a layout zone no longer blanks or restarts the zone** (#790,
+  #791). A new widget revision re-ran the zone: it emptied, went black until the slide parsed, and
+  a multi-item zone jumped back to its first item. The new slide is now built hidden over the old
+  one and swapped on load, keeping the rotation. Reported by @olchinga-de.
+
+- **Web player: a paired screen that boots offline shows "Connecting", not the setup form**
+  (#793). After a network drop and a browser reload, a paired screen with nothing cached came back
+  on "Server URL / Connect", inviting a re-pair. The form now returns only when the server
+  un-pairs the display. Reported by a customer evaluating ScreenTinker on LG panels.
+
+- **Screens no longer appear twice on the Displays page** (#788, #789). Two heartbeats in the same
+  second gave a screen two "latest" telemetry rows, and the duplicates pushed real screens off the
+  100-screen page. The latest row is now picked with a tie-break (lib/latest-row.js), in the
+  device list, the mesh projection and threshold alerts; 92 ms to 2 ms on a production copy.
+  Reported by @bold-media-group.
+
+- **Backups no longer use the host's sqlite3 tool on the live database.** `scripts/backup.sh`,
+  `scripts/upgrade.sh` and the instance updater now snapshot and check the database through the
+  server's own SQLite (new `scripts/db-tool.js`), and fall back to `sqlite3` only when node cannot
+  load the driver. The sqlite3 package on Ubuntu 24.04 (3.45.1) predates SQLite's fix for the
+  WAL-reset bug (3.51.3), which can corrupt a WAL database when a second process joins it while the
+  server writes and checkpoints. The hosted service's database was damaged twice in nine days, both
+  times during the nightly backup. `backup.sh` also verifies each snapshot and discards one that
+  fails, so a bad copy is never counted as a backup.
+
+- **LG webOS: the .ipk a panel downloads is the version it was promised.** `/webos/version.json`
+  reported this server's version for whatever `.ipk` happened to be found first, and an older copy
+  left in the data directory won that search. On the hosted service a 2.5.1 `ScreenTinker.ipk` was
+  published as 3.1.2, so every panel that self-updated downloaded a package older than the one it
+  ran and the install failed. The server now reads the app id and version out of each candidate
+  file, serves the newest one of the right id, and `version.json` says what is actually inside it
+  (`versions` carries each build's own version; the shell compares itself against its own entry).
+  A file carrying the other build's id is never served under this name.
+
+- **LG webOS: release .ipk packaged by LG's own tool, and checked before it ships.** Releases are
+  now packaged with `ares-package` (pinned in CI, not minified), so the archive is exactly what
+  LG's tooling writes. The script's own packager, for machines without the tool, now writes the
+  same shape (plain `ar` member names, LG's control field names, no `./` prefixes). Either way the
+  build unpacks and verifies its output - ids, versions, layout, stamps - and fails rather than
+  publishing a package that would not install.
+
+- **Web player: cold boot with the link up and the internet down comes up from cache.** The
+  shell's network-first fetch waited for the network to fail, which with the cable out is
+  immediate but with the WAN down behind a live router is the TV's TCP timeout - a minute or more
+  of black screen, or the browser's own "check network connection" page. The worker now gives the
+  network 8 s and then serves the cached shell when it has one (and still waits the network out
+  when it has nothing to fall back on). Shell cache bumped to v33.
+
+## 3.1.2
+
+### Added
+
+- **Visitor audio guide: narration on visitors' phones, in sync with the screen.** In a video's
+  edit dialog, add an audio track per language (optional `.vtt` captions) and turn on **Show audio
+  guide QR on screen**. Visitors scan the QR, pick a language and hear the narration in sync with the
+  video, with captions; joining mid-video catches up automatically. It is a web page, not an app, and
+  needs view-only access enabled on the screen. Phones must keep the page open with the screen on
+  (iOS pauses web audio when locked). Narration files stay on the server's local disk: they are not
+  moved to cloud storage and are not restored by an organization import. The view payload poll now
+  has its own rate-limit bucket and a lite mode, for venues with many phones behind one IP.
+
+- **Renewal reminders for comped / PO-billed accounts.** An account billed by invoice or PO has no
+  Stripe subscription, so nothing warned anyone its renewal was coming up. A platform admin can now
+  set a renewal date on such an account (`renewal_at`, via the "assign plan" API), and ScreenTinker
+  emails a reminder at 90, 60, 30 and 7 days before, to the account with every platform admin CC'd
+  (plus `RENEWAL_CC` if set). One reminder per band; moving the date re-arms the later ones; an
+  account that opted out of mail still reaches the admins. Hosted-only, and a no-op for any account
+  without a renewal date, so self-serve and trial accounts are unaffected. Email now supports CC.
+
+- **Slide shapes for LED strips and matrices, and an LED grid in the editor.** New shapes 8:1, 1:8,
+  16:1 and 1:16, plus **Custom** (any whole numbers from 1 to 99, such as 24:5). Turn on **LED grid**
+  next to the shape to draw the panel's LEDs over the canvas, so you can see which LEDs each line of
+  text lands on: type the size (for example 128 × 8), or pick one of your LED screens under **Match a
+  screen** to set both the grid and the shape from that panel. The grid is only a drawing aid; the
+  screen still renders at its own size. Tall shapes (1:4, 1:8, 1:16) now fit the editor's height
+  instead of running off the page.
 
 - **A feedback loop for hosted ScreenTinker.** Accounts are asked for a 1-5 rating and a comment at
   the moments that explain the funnel: their first screen paired, a week into a trial, a trial that
@@ -19,6 +131,25 @@
 
 ### Fixed
 
+- **LG webOS: the install page sent SI servers to the wrong file.** A panel in Local application
+  launch mode upgrades its one Local app (`com.lg.app.signage`) from the SI server address and refuses
+  any other package with "failed to upgrade IPK", but `/webos` and the LG guide said to point the SI
+  server at `ScreenTinker.ipk`. They now give the exact SI Server Settings for Local mode: Fully
+  Qualified Domain Name on, the address `https://<your-server>/webos/com.lg.app.signage.ipk` (the
+  plain http address redirects, which a panel may not follow), Auto Set off, Local Application
+  Upgrade from Remote. Reported from a real panel by a customer evaluating ScreenTinker.
+- **Changing your password now also closes the other browsers' open dashboards at once.** Since 3.0
+  a new password (and a reset, "Sign out everywhere else", or a 2FA or passkey change) ended every
+  other session on its next request, but an open dashboard tab makes no request: it kept receiving
+  live screen status and screenshots until it happened to reconnect. Those connections are now closed
+  the moment the sessions end, and the closed tab goes to the sign-in page. The tab you changed the
+  password in stays signed in and reconnects by itself.
+- **Android: Wi-Fi networks added from the dashboard survive a reboot** (#720, thanks @arminfauland).
+  Android numbers its saved networks afresh at every boot, and the player used that number as the
+  network's identity, so after a restart its networks could read as "set up on the screen by hand",
+  and a removal could hit a different network. Networks are now recognized by name and security. With
+  location switched off on Android 10 and newer, where Android hides the saved list even from a device
+  owner, the player changes and removes nothing until it can see the list again.
 - A playlist update no longer blanks every zone of a layout on Android, the web player and the
   Pi/Windows player. Any change re-rendered all of them, and a weather widget's data refresh
   changes it every few minutes, so a camera or video in another zone reconnected and the screen went
@@ -28,6 +159,36 @@
   its first real frame (up to 8 seconds) instead of switching to black after 1.5 seconds. On the web
   player a dwell edit takes effect at the zone's next item without restarting it; on Android, a new
   schedule, dwell, fit or mute on a zone item re-renders just that zone.
+
+- **Self-hosted: no more multi-second stalls on a large play history** (#776). When a screen
+  reconnected, repairing its plays left open by an outage read every later play that screen had ever
+  logged (16 seconds or more on a 35-million-row database, one screen after another during a
+  reconnect wave). It now looks up only the one play it needs, and counting open plays at boot no
+  longer scans the whole table. On a test database the repair went from 780 ms to under 1 ms, with
+  exactly the same rows closed.
+- **A screen sending heartbeats far too fast can no longer flood the server or the dashboard**
+  (#777). Old Android players (1.9.0) could send about 20 a second, and each one wrote to the
+  database and pushed an update to every open dashboard. A screen's heartbeat is still counted every
+  time, so it never shows as offline, but the database writes and dashboard updates now happen at
+  most once every 5 seconds per screen (`HEARTBEAT_MIN_INTERVAL_MS`, `0` turns it off). Normal
+  players send one every 15 seconds and are not affected. A screen that floods is named once a
+  minute in the server log; updating it from `/download` is the real fix.
+
+- **Pi/Windows player: no black flash between slides or web pages in a zone** (#780, reported by
+  @WirAGDD). The next page was shown as soon as it had loaded, before it had drawn anything, and the
+  previous one was removed in the same frame, so the zone showed black for a moment on every switch
+  between published slides. The player now waits for the page's first paint (its fonts and images,
+  then a drawn frame) and keeps the previous item underneath for a quarter second. Images were never
+  affected.
+
+### Contributors
+
+- @arminfauland: Wi-Fi networks on Android now survive a reboot and an unreadable saved list (#775).
+  1 of the 11 commits in this release.
+- @bold-media-group: diagnosed both self-hosted performance problems on a 250-screen install, with
+  measurements, a reproduction, and the query fix that shipped for #776 (#776, #777).
+- @WirAGDD: reported the native player's black flash between slides, with the comparison against
+  plain images that pinned down the cause (#780).
 
 ## 3.1.1
 

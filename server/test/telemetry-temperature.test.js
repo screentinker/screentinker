@@ -39,7 +39,10 @@ before(async () => {
   const logFd = fs.openSync(LOG, 'w');
   proc = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test' },
+    env: { ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test',
+      // Back-to-back heartbeats are the point of these tests (one reading each); the #777 floor would
+      // admit one per 5s. Rate limiting is tested in heartbeat-floor.test.js.
+      HEARTBEAT_MIN_INTERVAL_MS: '0' },
     stdio: ['ignore', logFd, logFd],
   });
   let up = false;

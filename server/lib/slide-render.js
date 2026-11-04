@@ -29,6 +29,8 @@
  */
 
 const MAX_ELEMENTS = 40;
+// Video decoders a slide may ask for, the background video included (see the 'video' render branch).
+const MAX_SLIDE_VIDEOS = 2;
 const MAX_FIELD_CHARS = 2000;
 const MAX_FIELDS = 60;
 
@@ -97,6 +99,9 @@ const KINDS = Object.freeze({
   body:      { text: true,  glyphs: true,  live: null,        config: false },
   stat:      { text: true,  glyphs: true,  live: null,        config: false },
   image:     { text: false, glyphs: false, live: null,        config: false },
+  // A muted, looping clip placed like a photo. `config: true` keeps it away from the AI generator:
+  // it cannot pick a video any more than it can pick a URL (routes/ai.js already drops 'image').
+  video:     { text: false, glyphs: false, live: null,        config: true  },
   rule:      { text: false, glyphs: false, live: null,        config: false },
   box:       { text: false, glyphs: false, live: null,        config: false },
   // The payload is a FIELD, so the URL behind a QR can be changed later without rebuilding the
@@ -272,6 +277,9 @@ function kindConfig(kind, src) {
     case 'image':
       // Not marked `config` in KINDS: it has a sensible default, so the AI generator can still be
       // offered image elements without having to reason about it.
+      return { fit: pick(IMAGE_FITS, src.fit, 'cover') };
+    case 'video':
+      // Same fit vocabulary as a photo. Always muted and looping: see the render branch.
       return { fit: pick(IMAGE_FITS, src.fit, 'cover') };
     case 'lettering':
       // ⚠️ Always contained, and not settable. Cropping a word is not a styling choice: it removes
@@ -629,6 +637,60 @@ function qrSvg(text, ec, darkIn, lightIn) {
  * script never runs, the CSS below is the old full-box stage and the slide renders as it did
  * before — degraded, never blank.
  */
+/*
+ * OFFLINE MEDIA: a slide's photos and clips from the player's own cache.
+ *
+ * A slide is mounted in an iframe sandboxed to allow-scripts, an opaque origin, and Chrome neither
+ * lets the web player's service worker answer that frame's requests nor lets the frame load a blob:
+ * URL the player made (both driven in Chrome; see test/slide-media-offline.test.js). What does work
+ * is the player handing the frame the bytes over postMessage and the frame making its OWN blob URL.
+ *
+ * So each cacheable reference carries data-st-cid, and this asks the parent for those ids once. The
+ * player (player/index.html answerSlideMedia) replies only with what its cache already holds, and
+ * only a reference that has not loaded from the network yet is swapped: online nothing changes (a
+ * loaded photo is left alone), offline the cached copy fills in. Top-level (Android, the native
+ * player: they serve the same URLs from their own caches) and on a host that never answers, the
+ * page behaves exactly as before. ES5 throughout: old Android WebViews render slides too.
+ */
+function cidAttr(url, contentId) {
+  return url && contentId && String(url).indexOf('/uploads/content/') === 0 ? ` data-st-cid="${escapeHtml(contentId)}"` : '';
+}
+const MEDIA_SCRIPT = `<script>
+(function () {
+  if (window.parent === window || !window.postMessage) return;
+  var els = document.querySelectorAll('[data-st-cid]'); if (!els.length) return;
+  function loaded(el) {
+    if (el.tagName === 'IMG') return el.complete && el.naturalWidth > 0;
+    if (el.tagName === 'VIDEO') return el.readyState >= 2;
+    var m = /url\\(["']?([^"')]+)/.exec(el.style.backgroundImage || ''); if (!m) return false;
+    var probe = new Image(); probe.src = m[1]; return probe.complete && probe.naturalWidth > 0;
+  }
+  window.addEventListener('message', function (ev) {
+    var d = ev.data;
+    if (!d || d.type !== 'st-slide-media-reply' || ev.source !== window.parent || !d.files) return;
+    for (var j = 0; j < els.length; j++) {
+      var el = els[j], b = d.files[el.getAttribute('data-st-cid')];
+      if (!b || loaded(el)) continue;
+      var u; try { u = URL.createObjectURL(b); } catch (e) { continue; }
+      if (el.tagName === 'IMG' || el.tagName === 'VIDEO') {
+        el.src = u;
+        if (el.tagName === 'VIDEO' && el.play) { try { var p = el.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+      } else el.style.backgroundImage = 'url("' + u + '")';
+    }
+  });
+  /* Asked again for anything still missing: offline, the player may not have its cache index or its
+     worker ready when this frame first loads. Stops once everything is up. */
+  var tries = 0;
+  (function ask() {
+    var missing = [];
+    for (var k = 0; k < els.length; k++) if (!loaded(els[k])) { var id = els[k].getAttribute('data-st-cid'); if (missing.indexOf(id) < 0) missing.push(id); }
+    if (!missing.length) return;
+    try { window.parent.postMessage({ type: 'st-slide-media', ids: missing }, '*'); } catch (e) {}
+    if (++tries < 4) setTimeout(ask, tries * 1500);
+  })();
+})();
+</script>`;
+
 const FIT_SCRIPT = `<script>
 (function () {
   var AW = __AW__, AH = __AH__, FILL = __FILL__;
@@ -842,6 +904,8 @@ function renderSlideHtml(rawConfig, opts = {}) {
     return `'${f.css_family}', ${generic}`;
   };
 
+  // Decoders left for element videos once a background video has taken its one.
+  let videoBudget = MAX_SLIDE_VIDEOS - (slide.backgroundVideoContentId ? 1 : 0);
   const body = slide.elements.map((e) => {
     const s = e.style;
     const css = [
@@ -881,9 +945,33 @@ function renderSlideHtml(rawConfig, opts = {}) {
       // as it did — a layout change nobody asked for is a worse bug than a missing option.
       const fitCls = e.cfg.fit === 'contain' ? ' class="fit"' : '';
       const inner = url
-        ? `<img${fitCls} src="${escapeHtml(url)}" alt="">`
+        ? `<img${fitCls}${cidAttr(url, e.contentId)} src="${escapeHtml(url)}" alt="">`
         // A slide whose photo is missing says so, quietly, rather than leaving a hole an operator
         // has to guess at. It is deliberately unobtrusive: on a wall this is better than a red box.
+        : `<div class="ph"></div>`;
+      return `<div class="e" style="${css.filter(Boolean).join(';')}">${inner}</div>`;
+    }
+
+    if (e.kind === 'video') {
+      css.push('overflow:hidden');
+      /*
+       * ⚠️ MUTED, LOOPING, AND AT MOST MAX_SLIDE_VIDEOS PER SLIDE (the background video counts).
+       *
+       * Muted because a muted clip is the only kind every engine autoplays without a gesture: zone
+       * iframes carry no allow="autoplay", and Tizen's widget iframe neither. Capped because each
+       * <video> is a hardware decoder on a Pi or an Android stick, and a slide that asks for four
+       * gets some of them black, differently on every model. Past the cap the element is the same
+       * quiet placeholder a missing photo gets, so the layout still reads.
+       *
+       * hwz="off" for the reason the background video has it (see bgLayers below): BrightSign draws
+       * a hardware video on a plane BEHIND the page, and a clip with a caption on top of it would
+       * lose the caption. Every other engine ignores the attribute.
+       */
+      const url = videoBudget > 0 ? resolveImage(e.contentId) : null;
+      if (url) videoBudget -= 1;
+      const fitCls = e.cfg.fit === 'contain' ? ' class="fit"' : '';
+      const inner = url
+        ? `<video${fitCls}${cidAttr(url, e.contentId)} autoplay muted loop playsinline hwz="off" src="${escapeHtml(url)}"></video>`
         : `<div class="ph"></div>`;
       return `<div class="e" style="${css.filter(Boolean).join(';')}">${inner}</div>`;
     }
@@ -898,7 +986,7 @@ function renderSlideHtml(rawConfig, opts = {}) {
        */
       const words = escapeHtml(fields[e.slot] || '');
       const inner = url
-        ? `<img class="fit" src="${escapeHtml(url)}" alt="${words}">`
+        ? `<img class="fit"${cidAttr(url, e.contentId)} src="${escapeHtml(url)}" alt="${words}">`
         : `<div class="ph"></div>`;
       return `<div class="e" style="${css.filter(Boolean).join(';')}">${inner}</div>`;
     }
@@ -1018,10 +1106,10 @@ function renderSlideHtml(rawConfig, opts = {}) {
    * entirely on players that currently work. Every other platform ignores an unknown attribute.
    */
   const bgLayers = (bgVideoUrl
-    ? `<video class="bg" autoplay muted loop playsinline hwz="off"`
+    ? `<video class="bg"${cidAttr(bgVideoUrl, slide.backgroundVideoContentId)} autoplay muted loop playsinline hwz="off"`
       + `${bgUrl ? ` poster="${escapeHtml(bgUrl)}"` : ''}`
       + ` src="${escapeHtml(bgVideoUrl)}"></video>`
-    : bgUrl ? `<div class="bg" style="background-image:url(${escapeHtml(cssUrl(bgUrl))})"></div>` : '')
+    : bgUrl ? `<div class="bg"${cidAttr(bgUrl, slide.backgroundContentId)} style="background-image:url(${escapeHtml(cssUrl(bgUrl))})"></div>` : '')
     + ((bgUrl || bgVideoUrl) && slide.backgroundDim > 0
       ? `<div class="scrim" style="background:rgba(0,0,0,${slide.backgroundDim})"></div>` : '');
 
@@ -1076,6 +1164,8 @@ function renderSlideHtml(rawConfig, opts = {}) {
   .e img { width:100%; height:100%; object-fit:cover; display:block; }
   /* A cut-out must fit inside its box, not be cropped to fill it. See IMAGE_FITS. */
   .e img.fit { object-fit:contain; }
+  .e video { width:100%; height:100%; object-fit:cover; display:block; }
+  .e video.fit { object-fit:contain; }
   .ph { width:100%; height:100%; background:rgba(255,255,255,.06);
         border:1px dashed rgba(255,255,255,.18); box-sizing:border-box; }
   @keyframes st-fade    { from { opacity:0 } to { opacity:var(--st-o,1) } }
@@ -1089,13 +1179,14 @@ function renderSlideHtml(rawConfig, opts = {}) {
 <body><div class="stage">
     ${bgLayers}
     ${body}
-</div>${fitScript}${slide.elements.some((e) => KINDS[e.kind].live) ? LIVE_SCRIPT : ''}</body></html>`;
+</div>${fitScript}${slide.elements.some((e) => KINDS[e.kind].live) ? LIVE_SCRIPT : ''}${
+  /data-st-cid=/.test(body) || /data-st-cid=/.test(bgLayers) ? MEDIA_SCRIPT : ''}</body></html>`;
 }
 
 module.exports = {
   ANIMATIONS, EASINGS, KINDS,
   CLOCK_FORMATS, DATE_FORMATS, QR_EC, IMAGE_FITS,
-  MAX_ELEMENTS, MAX_FIELD_CHARS, MAX_FIELDS,
+  MAX_ELEMENTS, MAX_FIELD_CHARS, MAX_FIELDS, MAX_SLIDE_VIDEOS,
   normalizeSlide, settleTime, renderSlideHtml, interpolateDataSources,
   // Exported for tests: the QR matrix and the constant script are the two pieces whose properties
   // have to be asserted directly rather than inferred from a rendered document.
