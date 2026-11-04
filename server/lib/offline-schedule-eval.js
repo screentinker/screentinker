@@ -35,7 +35,7 @@ function parse(rrule) {
     if (key === 'BYDAY') rule.byDay = value.split(',').map((d) => days[d]).filter((d) => d !== undefined);
     if (key === 'INTERVAL') rule.interval = parseInt(value, 10);
   }
-  return rule.freq ? rule : null;
+  return Object.keys(rule).length ? rule : null;
 }
 function anchorFor(local, startHM, endHM) {
   const nowHM = localStamp(local).slice(11);
@@ -66,6 +66,13 @@ function isActiveAt(schedule, local) {
   if (!schedule.recurrence) return now >= startStamp && now <= endStamp;
   const rule = parse(schedule.recurrence), start = dateParts(startStamp);
   if (!rule || !start) return now >= startStamp && now <= endStamp;
+  if (!['DAILY', 'WEEKLY', 'MONTHLY'].includes(rule.freq)) {
+    const date = now.slice(0, 10), nowHM = now.slice(11);
+    if (date < startStamp.slice(0, 10)) return false;
+    if (schedule.recurrence_end && date > String(schedule.recurrence_end).slice(0, 10)) return false;
+    if (rule.byDay && !rule.byDay.includes(local.dow)) return false;
+    return nowHM >= startStamp.slice(11) && nowHM <= endStamp.slice(11);
+  }
   const anchor = anchorFor(local, startStamp.slice(11), endStamp.slice(11));
   if (!anchor) return false;
   const date = localStamp(anchor).slice(0, 10);

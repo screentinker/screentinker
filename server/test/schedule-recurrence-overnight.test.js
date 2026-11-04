@@ -52,4 +52,9 @@ test('recurrence intervals are honoured by the offline evaluator', () => {
   assert.equal(active(everyOtherWeek, '2026-11-09T23:30:00Z'), false);
 });
 
+test('unknown recurrence rules retain the live scheduler fallback', () => {
+  const unknown = { ...daily, start_time: '2026-11-01T09:00:00', end_time: '2026-11-01T10:00:00', recurrence: 'FREQ=YEARLY' };
+  assert.equal(active(unknown, '2026-11-02T10:00:00Z'), true, 'legacy fallback remains daily-like and end-inclusive');
+});
+
 test.after(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
