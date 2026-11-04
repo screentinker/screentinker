@@ -3181,7 +3181,9 @@ module.exports = function setupDeviceSocket(io) {
                 // 60-second sweep overwrites it. Do this before flushing too: a queued
                 // playlist marker is rebuilt at flush time and must see the reconciled rows.
                 // noPush avoids a duplicate socket update.
-                require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
+                if (capsLib.supports(existing, 'offline.schedule_plan')) {
+                  require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
+                }
                 // Flush any commands/playlist-updates queued while this device was offline.
                 commandQueue.flushQueue(deviceNs, existing.device_id, buildPlaylistPayload);
                 // Send playlist
@@ -3228,7 +3230,9 @@ module.exports = function setupDeviceSocket(io) {
                   emitToDeviceWorkspace(dashboardNs, existing.device_id, 'dashboard:device-status', { device_id: existing.device_id, status: 'online', liveness: heartbeat.livenessFor(existing.device_id) });
                   // This branch is normally unpaired, but may retain a schedule after an
                   // interrupted claim. Make its first payload deterministic as well.
-                  require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
+                  if (capsLib.supports(existing, 'offline.schedule_plan')) {
+                    require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
+                  }
                   // Flush any commands/playlist-updates queued while this device was offline.
                   commandQueue.flushQueue(deviceNs, existing.device_id, buildPlaylistPayload);
                   // Send playlist
@@ -3410,7 +3414,9 @@ module.exports = function setupDeviceSocket(io) {
           // flushQueue rebuilds its pending marker on demand, so its position matters.
           // This prevents an offline Samsung from briefly activating its stale base playlist
           // while it waits for the normal one-minute scheduler sweep.
-          require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: device_id, noPush: true });
+          if (capsLib.supports(device, 'offline.schedule_plan')) {
+            require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: device_id, noPush: true });
+          }
           // Flush any commands/playlist-updates queued while this device was offline.
           commandQueue.flushQueue(deviceNs, device_id, buildPlaylistPayload);
           // #720: the screen's managed Wi-Fi list, every connect (a change made while it was offline
