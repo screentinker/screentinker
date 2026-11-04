@@ -52,6 +52,27 @@ export async function render(app) {
 
 // ─── inbox ───────────────────────────────────────────────────────────────────────────────────
 
+/*
+ * #792: a website request. The page is NOT framed here (the dashboard's CSP frames only itself, and
+ * a stranger's page has no business running inside the dashboard): the reviewer opens it in a new
+ * tab, with no referrer and no opener, and sees the host spelled out so a look-alike stands out.
+ */
+function webTile(size) {
+  return `<div aria-hidden="true" style="${size};display:flex;align-items:center;justify-content:center;border-radius:4px;background:var(--bg-secondary);flex:none;color:var(--text-muted)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg></div>`;
+}
+function websiteBlock(w) {
+  let host = '';
+  try { host = new URL(w.url).hostname; } catch { host = ''; }
+  const safe = /^https?:\/\//i.test(w.url || '') ? w.url : '';
+  return `<div style="margin:12px 0;padding:12px;border:1px solid var(--border);border-radius:8px">
+      <div style="font-size:12px;color:var(--text-muted)">${esc(t('creq.website'))}</div>
+      <div style="font-size:15px;font-weight:600;margin:2px 0">${esc(host)}</div>
+      <div style="font-size:12px;word-break:break-all;color:var(--text-muted)">${esc(w.url || '')}</div>
+      ${safe ? `<a class="btn btn-secondary btn-sm" style="margin-top:8px" href="${esc(safe)}" target="_blank" rel="noopener noreferrer">${esc(t('creq.open_website'))}</a>` : ''}
+      <p style="font-size:12px;color:var(--text-muted);margin:8px 0 0">${esc(t('creq.website_review_hint'))}</p>
+    </div>`;
+}
+
 async function renderInbox(body) {
   body.innerHTML = `
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
@@ -70,7 +91,7 @@ async function renderInbox(body) {
     catch (e) { list.innerHTML = `<div class="corp-notice corp-notice-danger" style="margin:12px">${esc(e.message)}</div>`; return; }
     list.innerHTML = rows.map((r) => `
       <div data-id="${esc(r.id)}" style="display:flex;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;${selected === r.id ? 'background:var(--bg-secondary)' : ''}">
-        <img data-auth-src="/api/content/${esc(r.content_id)}/thumbnail" alt="" style="width:64px;height:40px;object-fit:cover;border-radius:4px;background:var(--bg-secondary);flex:none">
+        ${r.widget_id ? webTile('width:64px;height:40px') : `<img data-auth-src="/api/content/${esc(r.content_id)}/thumbnail" alt="" style="width:64px;height:40px;object-fit:cover;border-radius:4px;background:var(--bg-secondary);flex:none">`}
         <div style="min-width:0;flex:1">
           <div style="display:flex;justify-content:space-between;gap:8px"><strong style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.title)}</strong><span class="pill" style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--bg-secondary)">${esc(t('creq.status.' + r.status))}</span></div>
           <div style="font-size:12px;color:var(--text-muted)">${esc(t('creq.from', { name: r.requester_name, email: r.requester_email }))}</div>
@@ -94,8 +115,8 @@ async function renderInbox(body) {
       <h3 style="margin:0">${esc(r.title)} <span style="font-size:12px;color:var(--text-muted)">${esc(r.ref)}</span></h3>
       <div style="font-size:13px;margin:6px 0">${esc(t('creq.from', { name: r.requester_name, email: r.requester_email }))} · <span style="color:var(--text-muted)">${esc(t(verified))}</span></div>
       <div style="font-size:13px;color:var(--text-muted)">${esc(t('creq.sent', { when: when(r.created_at), form: r.form_title || '' }))}</div>
-      <div style="margin:12px 0"><img data-auth-src="/api/content/${esc(c.id || '')}/thumbnail" alt="" style="max-width:100%;max-height:240px;border-radius:8px;background:#000"></div>
-      <div style="font-size:12px;color:var(--text-muted)">${esc(c.mime_type || '')}${c.width ? ` · ${esc(String(c.width))}×${esc(String(c.height))}` : ''}${c.duration_sec ? ` · ${esc(String(Math.round(c.duration_sec)))}s` : ''}</div>
+      ${r.website ? websiteBlock(r.website) : `<div style="margin:12px 0"><img data-auth-src="/api/content/${esc(c.id || '')}/thumbnail" alt="" style="max-width:100%;max-height:240px;border-radius:8px;background:#000"></div>
+      <div style="font-size:12px;color:var(--text-muted)">${esc(c.mime_type || '')}${c.width ? ` · ${esc(String(c.width))}×${esc(String(c.height))}` : ''}${c.duration_sec ? ` · ${esc(String(Math.round(c.duration_sec)))}s` : ''}</div>`}
       <dl style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px;margin:12px 0">
         <dt style="color:var(--text-muted)">${esc(t('creq.dates'))}</dt><dd style="margin:0">${esc(day(r.start_date))} → ${esc(day(r.end_date))}</dd>
         ${r.audience ? `<dt style="color:var(--text-muted)">${esc(t('creq.audience'))}</dt><dd style="margin:0">${esc(r.audience)}</dd>` : ''}
@@ -288,7 +309,10 @@ function editForm(body, f, opts) {
     <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px">
       <label><input type="checkbox" data-kind="image" ${(r.kinds || []).includes('image') ? 'checked' : ''}> ${esc(t('creq.kind.image'))}</label>
       <label><input type="checkbox" data-kind="video" ${(r.kinds || []).includes('video') ? 'checked' : ''}> ${esc(t('creq.kind.video'))}</label>
+      <label><input type="checkbox" data-kind="web" ${(r.kinds || []).includes('web') ? 'checked' : ''}> ${esc(t('creq.kind.web'))}</label>
     </div>
+    <p style="font-size:12px;color:var(--text-muted);margin:6px 0">${esc(t('creq.form.web_help'))}</p>
+    <label class="form-label">${esc(t('creq.form.web_domains'))}</label><input class="input" id="cfWebDomains" placeholder="campus.edu, events.campus.edu" value="${esc((r.web_domains || []).join(', '))}">
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-top:8px;font-size:13px">
       <label>${esc(t('creq.form.max_mb'))}<input class="input" type="number" id="cfMaxMb" min="1" max="${opts.max_mb}" value="${esc(String(r.max_mb || 50))}"></label>
       <label>${esc(t('creq.form.min_width'))}<input class="input" type="number" id="cfMinW" min="0" value="${esc(String(r.min_width || 0))}"></label>
@@ -334,6 +358,7 @@ function editForm(body, f, opts) {
       file_rules: {
         kinds: [...body.querySelectorAll('[data-kind]:checked')].map((x) => x.dataset.kind),
         max_mb: num('#cfMaxMb'), min_width: num('#cfMinW'), min_height: num('#cfMinH'), aspect: body.querySelector('#cfAspect').value || null, max_video_sec: num('#cfMaxVid'),
+        web_domains: body.querySelector('#cfWebDomains').value,
       },
       lead_days: num('#cfLead'), max_window_days: num('#cfWindow'), item_duration_sec: num('#cfDuration'), daily_quota: num('#cfQuota'),
       folder_id: body.querySelector('#cfFolder').value || null,

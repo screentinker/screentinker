@@ -224,7 +224,7 @@ const REFS = {
   cloud_folder_items: { content_id: 'content', remote_id: 'external' },
   cloud_folder_removed: { content_id: 'content', folder_id: 'cloud_folders' },
   canva_links: { content_id: 'content', design_id: 'external' },
-  content_requests: { form_id: 'request_forms', content_id: 'content', submission_id: 'submissions' },
+  content_requests: { form_id: 'request_forms', content_id: 'content', widget_id: 'widgets', submission_id: 'submissions' },
   request_forms: { folder_id: 'content_folders' },
   playlists: { default_zone_id: 'layout_zones' },
   playlist_items: { experiment_id: 'experiments' },

@@ -89,6 +89,17 @@ const KIND_MIMES = {
 };
 const kindOf = (mime) => Object.keys(KIND_MIMES).find((k) => KIND_MIMES[k].includes(mime)) || null;
 
+/*
+ * #792: a WEBSITE is the third kind a form may take, and it is never on by default: a form that takes
+ * one lets a stranger propose any page for the screens, so the admin turns it on per form, and may
+ * limit it to listed domains. It carries no bytes. It becomes a webpage widget (lib/content-requests
+ * submitWebRequest), which every player already renders, in the same sandboxed iframe a webpage
+ * widget an editor made would use. Like any request, it reaches a screen only through Approve.
+ */
+const WEB_KIND = 'web';
+const REQUEST_KINDS = [...Object.keys(KIND_MIMES), WEB_KIND];
+const MAX_URL = 2048;
+
 // ─── text hygiene ────────────────────────────────────────────────────────────────────────────
 
 /*
@@ -316,8 +327,12 @@ function normalizeForm(workspaceId, input, existing = null) {
   }
   if (!existing || has('file_rules')) {
     const r = (b.file_rules && typeof b.file_rules === 'object') ? b.file_rules : {};
-    const kinds = (Array.isArray(r.kinds) ? r.kinds : ['image', 'video']).filter((k) => KIND_MIMES[k]);
-    if (!kinds.length) throw new RequestError('Allow at least one kind of file (image or video)', 400, 'kinds_required');
+    const kinds = (Array.isArray(r.kinds) ? r.kinds : ['image', 'video']).filter((k) => REQUEST_KINDS.includes(k));
+    if (!kinds.length) throw new RequestError('Allow at least one kind (image, video or website)', 400, 'kinds_required');
+    const webDomains = (Array.isArray(r.web_domains) ? r.web_domains : domainList(r.web_domains))
+      .map((d) => String(d).trim().toLowerCase().replace(/^\*?\./, '')).filter(Boolean);
+    if (webDomains.length > 20) throw new RequestError('At most 20 website domains');
+    for (const d of webDomains) if (!DOMAIN_RE.test(d) || d.length > 253) throw new RequestError(`"${d}" is not a domain`, 400, 'bad_domain');
     const maxMbCeiling = Math.max(1, Math.floor(config.maxFileSize / 1048576));
     let aspect = null;
     if (r.aspect) {
@@ -332,6 +347,7 @@ function normalizeForm(workspaceId, input, existing = null) {
       min_height: int(r.min_height, 0, 0, 16384),
       aspect,
       max_video_sec: int(r.max_video_sec, 0, 0, 3600),
+      web_domains: [...new Set(webDomains)],
     });
   }
   if (!existing || has('lead_days')) out.lead_days = int(b.lead_days, 0, 0, 365);
@@ -428,7 +444,7 @@ function publicForm(form) {
     // Friendly names ONLY. Playlist, screen and group ids never leave the server on this path.
     targets: form.targets.map((t) => ({ id: t.id, label: t.label })),
     fields: form.fields,
-    file_rules: { kinds: r.kinds || [], max_mb: r.max_mb, min_width: r.min_width || 0, min_height: r.min_height || 0, aspect: r.aspect || null, max_video_sec: r.max_video_sec || 0 },
+    file_rules: { kinds: r.kinds || [], max_mb: r.max_mb, min_width: r.min_width || 0, min_height: r.min_height || 0, aspect: r.aspect || null, max_video_sec: r.max_video_sec || 0, web_domains: r.web_domains || [] },
     lead_days: form.lead_days,
     max_window_days: form.max_window_days,
     earliest_start: isoDay(todayUtc() + form.lead_days * DAY),
@@ -743,6 +759,10 @@ function validateRequestBody(form, body) {
 async function submitRequest(form, ticket, body, { ip, origin } = {}) {
   assertOpen(form);
   const v = validateRequestBody(form, body);
+  if (body && body.url !== undefined && body.url !== null && body.url !== '') {
+    if (body.upload_id) throw new RequestError('Send a file or a website, not both', 400, 'file_and_url');
+    return submitWebRequest(form, ticket, v, body.url, { ip, origin });
+  }
   const session = getUpload(form, ticket, body && body.upload_id);
   if (!session) throw new RequestError('Upload the file first', 400, 'no_upload');
   if (!uploadSession.isComplete(session)) {
@@ -782,37 +802,110 @@ async function submitRequest(form, ticket, body, { ip, origin } = {}) {
     const ext = path.extname(content.filepath || '') || '';
     db.prepare('UPDATE content SET filename = ?, expires_at = ? WHERE id = ?').run(`${v.title}${ext}`, expiryFor(v.end_date), content.id);
 
-    const id = crypto.randomUUID();
-    const ref = newRef();
-    const statusToken = token(32);
-    const label = `${ticket.name || ticket.email} <${ticket.email}>`;
-    db.prepare(`INSERT INTO content_requests (id, ref, form_id, workspace_id, status_token_hash, requester_name, requester_email, verified_via, title, audience, notes,
-                  start_date, end_date, targets, content_id, status, ip_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
-      .run(id, ref, form.id, form.workspace_id, sha256(statusToken), ticket.name || ticket.email, ticket.email, ticket.verified_via, v.title, v.audience, v.notes,
-        v.start_date, v.end_date, JSON.stringify(v.targets), content.id, ip ? ipHash(ip) : null);
-    const actor = { userId: null, kind: 'content_request', label };
-    try { revisions.recordCurrent(db, 'content', content.id, { actor, summary: `Request ${ref}` }); } catch (_) { /* history must not fail a request */ }
-    const sub = approvals.submit(db, {
-      type: 'content', id: content.id, workspaceId: form.workspace_id, actor, ip, requestId: id,
-      note: `Request ${ref} from ${label}: ${v.start_date} to ${v.end_date} on ${v.targets.map((t) => t.label).join(', ')}`,
-    });
-    db.prepare('UPDATE content_requests SET submission_id = ? WHERE id = ?').run(sub.id, id);
-    audit('request:submitted', { workspaceId: form.workspace_id, ip, details: { request_id: id, ref, form_id: form.id, content_id: content.id, submission_id: sub.id, verified_via: ticket.verified_via } });
-
-    const statusUrl = `${linkOrigin(origin)}/r/status#${statusToken}`;
-    notifyReviewers(form, { ref, title: v.title, label, origin });
-    // An address nobody verified gets no "we received it" mail: otherwise this form could be used to
-    // send mail to anyone. Decisions are mailed (a human pressed a button), received-receipts are not.
-    if (ticket.verified_via !== 'none') {
-      mail(ticket.email, `Request ${ref} received: ${v.title}`,
-        `Thanks, we have your request "${v.title}" (${ref}).\n\nSomeone will review it before it goes on the screens. Follow it here:\n${statusUrl}\n`);
-    }
-    return { ref, status_token: statusToken, status_path: `/r/status#${statusToken}`, status: 'pending' };
+    return recordRequest(form, ticket, v, { type: 'content', id: content.id }, { ip, origin });
   } finally {
     const n = (inflight.get(form.id) || 1) - 1;
     if (n > 0) inflight.set(form.id, n); else inflight.delete(form.id);
   }
+}
+
+/*
+ * The request row, its submission in the review queue, the audit line and the mails: the same for a
+ * file (resource = the content row) and a website (resource = the webpage widget).
+ */
+function recordRequest(form, ticket, v, resource, { ip, origin } = {}) {
+  const id = crypto.randomUUID();
+  const ref = newRef();
+  const statusToken = token(32);
+  const label = `${ticket.name || ticket.email} <${ticket.email}>`;
+  const isWidget = resource.type === 'widget';
+  db.prepare(`INSERT INTO content_requests (id, ref, form_id, workspace_id, status_token_hash, requester_name, requester_email, verified_via, title, audience, notes,
+                start_date, end_date, targets, content_id, widget_id, status, ip_hash)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
+    .run(id, ref, form.id, form.workspace_id, sha256(statusToken), ticket.name || ticket.email, ticket.email, ticket.verified_via, v.title, v.audience, v.notes,
+      v.start_date, v.end_date, JSON.stringify(v.targets), isWidget ? null : resource.id, isWidget ? resource.id : null, ip ? ipHash(ip) : null);
+  const actor = { userId: null, kind: 'content_request', label };
+  try { revisions.recordCurrent(db, resource.type, resource.id, { actor, summary: `Request ${ref}` }); } catch (_) { /* history must not fail a request */ }
+  const sub = approvals.submit(db, {
+    type: resource.type, id: resource.id, workspaceId: form.workspace_id, actor, ip, requestId: id,
+    note: `Request ${ref} from ${label}: ${v.start_date} to ${v.end_date} on ${v.targets.map((t) => t.label).join(', ')}${resource.url ? ` (website ${resource.url})` : ''}`,
+  });
+  db.prepare('UPDATE content_requests SET submission_id = ? WHERE id = ?').run(sub.id, id);
+  audit('request:submitted', { workspaceId: form.workspace_id, ip, details: { request_id: id, ref, form_id: form.id, [isWidget ? 'widget_id' : 'content_id']: resource.id, ...(resource.url ? { url: resource.url } : {}), submission_id: sub.id, verified_via: ticket.verified_via } });
+
+  const statusUrl = `${linkOrigin(origin)}/r/status#${statusToken}`;
+  notifyReviewers(form, { ref, title: v.title, label, origin });
+  // An address nobody verified gets no "we received it" mail: otherwise this form could be used to
+  // send mail to anyone. Decisions are mailed (a human pressed a button), received-receipts are not.
+  if (ticket.verified_via !== 'none') {
+    mail(ticket.email, `Request ${ref} received: ${v.title}`,
+      `Thanks, we have your request "${v.title}" (${ref}).\n\nSomeone will review it before it goes on the screens. Follow it here:\n${statusUrl}\n`);
+  }
+  return { ref, status_token: statusToken, status_path: `/r/status#${statusToken}`, status: 'pending' };
+}
+
+/*
+ * #792. The website a requester typed, checked as strictly as a file is: http(s) only, no
+ * credentials in it, no private or internal host (lib/remote-url's SSRF gate, the one every
+ * server-reachable remote URL passes), and on a form that lists website domains, a host that is one
+ * of them or under one. Returns the normalised URL.
+ */
+function validateWebUrl(form, raw) {
+  if (typeof raw !== 'string') throw new RequestError('Enter the website address', 400, 'bad_url');
+  const s = raw.trim();
+  if (!s) throw new RequestError('Enter the website address', 400, 'bad_url');
+  if (s.length > MAX_URL) throw new RequestError('That address is too long', 400, 'bad_url');
+  let u;
+  try { u = new URL(s); } catch { throw new RequestError('That is not a website address. It should start with https://', 400, 'bad_url'); }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new RequestError('The address must start with https:// or http://', 400, 'bad_url');
+  if (u.username || u.password) throw new RequestError('The address must not contain a user name or password', 400, 'bad_url');
+  const guard = require('./remote-url').validateRemoteUrl(u.href);
+  if (guard) throw new RequestError('That address is not allowed here', 400, 'url_not_allowed');
+  const host = u.hostname.toLowerCase().replace(/\.$/, '');
+  if (!host.includes('.') && !host.includes(':')) throw new RequestError('That address is not allowed here', 400, 'url_not_allowed');
+  const domains = (form.file_rules && form.file_rules.web_domains) || [];
+  if (domains.length && !domains.some((d) => host === d || host.endsWith('.' + d))) {
+    throw new RequestError(`This form only takes websites on ${domains.join(', ')}`, 400, 'url_domain_not_allowed', { domains });
+  }
+  return u.href;
+}
+
+/*
+ * A website request becomes a webpage widget, in the form's workspace, owned by whoever owns the
+ * form's storage (no requester has an account). The widget is in the library from now on, the way a
+ * file request's content row is, but nothing puts it on a screen: widgets are never picked up by
+ * smart playlists, and only publishRequest (after Approve) adds it to the targets. A refused or
+ * withdrawn request deletes it again (dropWebWidget).
+ */
+async function submitWebRequest(form, ticket, v, rawUrl, { ip, origin } = {}) {
+  if (!((form.file_rules && form.file_rules.kinds) || []).includes(WEB_KIND)) {
+    throw new RequestError('This form does not take websites', 415, 'type_not_allowed');
+  }
+  const url = validateWebUrl(form, rawUrl);
+  assertQuota(form, { email: ticket.email, ip });
+  const widgetId = crypto.randomUUID();
+  db.prepare("INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config) VALUES (?, ?, ?, 'webpage', ?, ?)")
+    .run(widgetId, ownerOf(form), form.workspace_id, v.title, JSON.stringify({ url, zoom: 100, refresh_interval: 0 }));
+  try {
+    return recordRequest(form, ticket, v, { type: 'widget', id: widgetId, url }, { ip, origin });
+  } catch (e) {
+    try { db.prepare('DELETE FROM widgets WHERE id = ?').run(widgetId); } catch (_) { /* best effort */ }
+    throw e;
+  }
+}
+
+/* A website request that will never go live leaves no widget behind, unless somebody used it since. */
+function dropWebWidget(widgetId) {
+  if (!widgetId) return;
+  const used = db.prepare('SELECT 1 FROM playlist_items WHERE widget_id = ? LIMIT 1').get(widgetId);
+  if (!used) db.prepare('DELETE FROM widgets WHERE id = ?').run(widgetId);
+}
+
+function webUrlOf(widgetId) {
+  if (!widgetId) return null;
+  const w = db.prepare('SELECT config FROM widgets WHERE id = ?').get(widgetId);
+  const c = w ? parseJson(w.config, {}) : {};
+  return c && typeof c.url === 'string' ? c.url : null;
 }
 
 /*
@@ -866,10 +959,10 @@ function listRequests(workspaceId, { status = 'pending', formId = null } = {}) {
   if (status && status !== 'all') { clauses.push('r.status = ?'); params.push(status); }
   if (formId) { clauses.push('r.form_id = ?'); params.push(formId); }
   return db.prepare(`SELECT r.id, r.ref, r.form_id, f.title AS form_title, r.requester_name, r.requester_email, r.verified_via, r.title, r.start_date, r.end_date,
-                            r.targets, r.content_id, r.submission_id, r.status, r.reason, r.created_at, r.decided_at, c.mime_type, c.thumbnail_path
+                            r.targets, r.content_id, r.widget_id, r.submission_id, r.status, r.reason, r.created_at, r.decided_at, c.mime_type, c.thumbnail_path
                        FROM content_requests r LEFT JOIN request_forms f ON f.id = r.form_id LEFT JOIN content c ON c.id = r.content_id
                       WHERE ${clauses.join(' AND ')} ORDER BY r.created_at DESC LIMIT 200`).all(...params)
-    .map((r) => ({ ...r, targets: parseJson(r.targets, []) }));
+    .map((r) => ({ ...r, targets: parseJson(r.targets, []), kind: r.widget_id ? WEB_KIND : 'file', url: r.widget_id ? webUrlOf(r.widget_id) : null }));
 }
 
 /** Everything a reviewer needs on one screen, including where it would land and how many screens. */
@@ -883,6 +976,8 @@ function requestDetail(reqRow, req) {
     form_title: (db.prepare('SELECT title FROM request_forms WHERE id = ?').get(reqRow.form_id) || {}).title || null,
     status_token_hash: undefined,
     content,
+    kind: reqRow.widget_id ? WEB_KIND : 'file',
+    website: reqRow.widget_id ? { widget_id: reqRow.widget_id, url: webUrlOf(reqRow.widget_id) } : null,
     submission: sub ? { id: sub.id, status: sub.status, version: sub.version, comment: sub.comment, reviewer_email: sub.reviewer_email } : null,
     targets: reqRow.targets.map((t) => {
       const pl = db.prepare('SELECT name FROM playlists WHERE id = ? AND workspace_id = ?').get(t.playlist_id, reqRow.workspace_id);
@@ -926,8 +1021,11 @@ async function approveRequest(req, id, { comment, version } = {}) {
   const r = getRequest(id, req.workspaceId);
   if (!r) throw new RequestError('Request not found', 404, 'not_found');
   if (r.status !== 'pending') throw new RequestError(`This request is ${r.status}`, 409, 'not_pending');
-  const content = db.prepare('SELECT id, is_active, expires_at FROM content WHERE id = ?').get(r.content_id);
-  if (!content) throw new RequestError('The requested file is gone from the library', 409, 'content_gone');
+  if (r.widget_id) {
+    if (!db.prepare('SELECT 1 FROM widgets WHERE id = ?').get(r.widget_id)) throw new RequestError('The requested website is gone from the widgets', 409, 'content_gone');
+  } else if (!db.prepare('SELECT 1 FROM content WHERE id = ?').get(r.content_id)) {
+    throw new RequestError('The requested file is gone from the library', 409, 'content_gone');
+  }
   // Who may decide is answered before anything about the targets is said.
   const writer = require('./permissions').canWrite(req);
   const sub = approvals.getSubmission(db, r.submission_id);
@@ -955,18 +1053,21 @@ async function publishRequest(req, id, { origin } = {}) {
   if (r.status !== 'approved' && r.status !== 'published') throw new RequestError(`This request is ${r.status}; only an approved request can be published`, 409, 'not_approved');
   const sub = approvals.getSubmission(db, r.submission_id);
   if (!sub || (sub.status !== 'approved' && sub.status !== 'published')) throw new RequestError('This request has no approval on record', 409, 'not_approved');
-  const content = db.prepare('SELECT * FROM content WHERE id = ?').get(r.content_id);
-  if (!content) throw new RequestError('The requested file is gone from the library', 409, 'content_gone');
+  // What goes on the screens: the content row a file became, or the webpage widget a website became.
+  const resource = r.widget_id ? { type: 'widget', id: r.widget_id } : { type: 'content', id: r.content_id };
+  const content = resource.type === 'content' ? db.prepare('SELECT * FROM content WHERE id = ?').get(r.content_id) : null;
+  if (resource.type === 'content' && !content) throw new RequestError('The requested file is gone from the library', 409, 'content_gone');
+  if (resource.type === 'widget' && !db.prepare('SELECT 1 FROM widgets WHERE id = ?').get(r.widget_id)) throw new RequestError('The requested website is gone from the widgets', 409, 'content_gone');
   const actor = actorOf(req);
   const writer = require('./permissions').canWrite(req);
   // The content's own release: with approval on this finds the approved submission and re-checks the
   // reviewer's standing and the bytes; with approval off it is direct. Closed only after a target
   // went live (afterRelease below).
-  const contentGate = sub.status === 'approved' ? policy.assertReleasable(db, { workspaceId: r.workspace_id, type: 'content', id: r.content_id }) : null;
+  const contentGate = sub.status === 'approved' ? policy.assertReleasable(db, { workspaceId: r.workspace_id, type: resource.type, id: resource.id }) : null;
   const results = { ...(r.publish_result || {}) };
   const pending = r.targets.filter((t) => !(results[t.id] && results[t.id].ok));
   const form = db.prepare('SELECT item_duration_sec FROM request_forms WHERE id = ?').get(r.form_id);
-  const dwell = String(content.mime_type || '').startsWith('video/')
+  const dwell = content && String(content.mime_type || '').startsWith('video/')
     ? require('./item-duration').resolveItemDuration(undefined, content)
     : (form ? form.item_duration_sec : 10);
   const label = `${r.requester_name} <${r.requester_email}>`;
@@ -974,7 +1075,7 @@ async function publishRequest(req, id, { origin } = {}) {
   // The file was ingested switched off (submitRequest). It goes on now, before the releases below,
   // which drop inactive content from the snapshot; if no target goes live it goes back off, so an
   // approved request that reached no screen is not picked up by a smart playlist either.
-  const activated = content.is_active === 0;
+  const activated = !!content && content.is_active === 0;
   if (activated) db.prepare('UPDATE content SET is_active = 1 WHERE id = ?').run(content.id);
 
   for (const t of pending) {
@@ -988,8 +1089,9 @@ async function publishRequest(req, id, { origin } = {}) {
       require('./corporate/guard').assertPlaylistWritable(req, { id: t.playlist_id }, 'items');
       itemId = db.transaction(() => {
         const order = db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 AS n FROM playlist_items WHERE playlist_id = ?').get(t.playlist_id).n;
-        const iid = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, zone_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?)')
-          .run(t.playlist_id, r.content_id, require('./playlist-layout').zoneForNewItem(db, t.playlist_id), order, dwell).lastInsertRowid;
+        const iid = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, zone_id, sort_order, duration_sec) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(t.playlist_id, resource.type === 'content' ? resource.id : null, resource.type === 'widget' ? resource.id : null,
+            require('./playlist-layout').zoneForNewItem(db, t.playlist_id), order, dwell).lastInsertRowid;
         db.prepare("INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order) VALUES (?, ?, '0,1,2,3,4,5,6', '00:00', '24:00', ?, ?, 0)")
           .run(crypto.randomUUID(), iid, r.start_date, r.end_date);
         db.prepare("UPDATE playlists SET status = 'draft', updated_at = strftime('%s','now') WHERE id = ?").run(t.playlist_id);
@@ -1027,7 +1129,7 @@ async function publishRequest(req, id, { origin } = {}) {
   if (activated && !anyOk) db.prepare('UPDATE content SET is_active = 0 WHERE id = ?').run(content.id);
   // Smart playlists whose rules match it pick it up now, and not before.
   if (activated && anyOk) { try { require('./smart-playlist').notifyContentChanged(r.workspace_id); } catch (_) { /* best effort */ } }
-  if (anyOk && contentGate) policy.afterRelease(db, { type: 'content', id: r.content_id, gate: contentGate, actor, summary: `Published (request ${r.ref})` });
+  if (anyOk && contentGate) policy.afterRelease(db, { type: resource.type, id: resource.id, gate: contentGate, actor, summary: `Published (request ${r.ref})` });
   if (anyOk && sub.status === 'approved' && !contentGate.submission) {
     // Approval off: the gate is direct, so close the request's own submission here.
     db.prepare("UPDATE submissions SET status = 'published', published_at = ?, published_by = ?, updated_at = ?, version = version + 1 WHERE id = ? AND status = 'approved'")
@@ -1054,7 +1156,9 @@ function rejectRequest(req, id, { reason, version } = {}) {
   const now = nowSec();
   db.prepare("UPDATE content_requests SET status = 'rejected', reason = ?, decided_by = ?, decided_at = ?, updated_at = ? WHERE id = ?").run(why, req.user.id, now, now, r.id);
   // The file is not in any playlist; switching it off keeps it out of pickers and smart playlists.
-  db.prepare('UPDATE content SET is_active = 0, expires_at = ? WHERE id = ?').run(now, r.content_id);
+  // A website's widget is simply removed.
+  if (r.content_id) db.prepare('UPDATE content SET is_active = 0, expires_at = ? WHERE id = ?').run(now, r.content_id);
+  if (r.widget_id) dropWebWidget(r.widget_id);
   audit('request:rejected', { userId: req.user.id, workspaceId: r.workspace_id, ip: req.ip, details: { request_id: r.id, ref: r.ref, reason: why } });
   mail(r.requester_email, `Not approved: ${r.title} (${r.ref})`,
     `Your request "${r.title}" (${r.ref}) was not approved.\n\nReason: ${why}\n`);
@@ -1067,6 +1171,7 @@ function cancelRequest(r, { by = null, ip = null } = {}) {
   db.prepare("UPDATE content_requests SET status = 'cancelled', updated_at = ? WHERE id = ? AND status = 'pending'").run(now, r.id);
   db.prepare("UPDATE submissions SET status = 'withdrawn', updated_at = ?, version = version + 1 WHERE id = ? AND status IN ('submitted','changes_requested','approved')").run(now, r.submission_id);
   if (r.content_id) db.prepare('UPDATE content SET is_active = 0, expires_at = ? WHERE id = ?').run(now, r.content_id);
+  if (r.widget_id) dropWebWidget(r.widget_id);
   audit('request:cancelled', { userId: by, workspaceId: r.workspace_id, ip, details: { request_id: r.id, ref: r.ref } });
 }
 
@@ -1094,7 +1199,7 @@ function publicStatus(r) {
 }
 
 module.exports = {
-  RequestError, LIMITS, KIND_MIMES,
+  RequestError, LIMITS, KIND_MIMES, WEB_KIND, validateWebUrl,
   plainText, normEmail, domainAllowed, parseDate,
   limited, isLockedOut, noteMiss, _resetLimits, ipHash,
   formByCode, getForm, listForms, createForm, updateForm, rotateCode, deleteForm, adminForm, publicForm, assertOpen, ssoProviderFor, emailConfigured,
