@@ -637,6 +637,60 @@ function qrSvg(text, ec, darkIn, lightIn) {
  * script never runs, the CSS below is the old full-box stage and the slide renders as it did
  * before — degraded, never blank.
  */
+/*
+ * OFFLINE MEDIA: a slide's photos and clips from the player's own cache.
+ *
+ * A slide is mounted in an iframe sandboxed to allow-scripts, an opaque origin, and Chrome neither
+ * lets the web player's service worker answer that frame's requests nor lets the frame load a blob:
+ * URL the player made (both driven in Chrome; see test/slide-media-offline.test.js). What does work
+ * is the player handing the frame the bytes over postMessage and the frame making its OWN blob URL.
+ *
+ * So each cacheable reference carries data-st-cid, and this asks the parent for those ids once. The
+ * player (player/index.html answerSlideMedia) replies only with what its cache already holds, and
+ * only a reference that has not loaded from the network yet is swapped: online nothing changes (a
+ * loaded photo is left alone), offline the cached copy fills in. Top-level (Android, the native
+ * player: they serve the same URLs from their own caches) and on a host that never answers, the
+ * page behaves exactly as before. ES5 throughout: old Android WebViews render slides too.
+ */
+function cidAttr(url, contentId) {
+  return url && contentId && String(url).indexOf('/uploads/content/') === 0 ? ` data-st-cid="${escapeHtml(contentId)}"` : '';
+}
+const MEDIA_SCRIPT = `<script>
+(function () {
+  if (window.parent === window || !window.postMessage) return;
+  var els = document.querySelectorAll('[data-st-cid]'); if (!els.length) return;
+  function loaded(el) {
+    if (el.tagName === 'IMG') return el.complete && el.naturalWidth > 0;
+    if (el.tagName === 'VIDEO') return el.readyState >= 2;
+    var m = /url\\(["']?([^"')]+)/.exec(el.style.backgroundImage || ''); if (!m) return false;
+    var probe = new Image(); probe.src = m[1]; return probe.complete && probe.naturalWidth > 0;
+  }
+  window.addEventListener('message', function (ev) {
+    var d = ev.data;
+    if (!d || d.type !== 'st-slide-media-reply' || ev.source !== window.parent || !d.files) return;
+    for (var j = 0; j < els.length; j++) {
+      var el = els[j], b = d.files[el.getAttribute('data-st-cid')];
+      if (!b || loaded(el)) continue;
+      var u; try { u = URL.createObjectURL(b); } catch (e) { continue; }
+      if (el.tagName === 'IMG' || el.tagName === 'VIDEO') {
+        el.src = u;
+        if (el.tagName === 'VIDEO' && el.play) { try { var p = el.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+      } else el.style.backgroundImage = 'url("' + u + '")';
+    }
+  });
+  /* Asked again for anything still missing: offline, the player may not have its cache index or its
+     worker ready when this frame first loads. Stops once everything is up. */
+  var tries = 0;
+  (function ask() {
+    var missing = [];
+    for (var k = 0; k < els.length; k++) if (!loaded(els[k])) { var id = els[k].getAttribute('data-st-cid'); if (missing.indexOf(id) < 0) missing.push(id); }
+    if (!missing.length) return;
+    try { window.parent.postMessage({ type: 'st-slide-media', ids: missing }, '*'); } catch (e) {}
+    if (++tries < 4) setTimeout(ask, tries * 1500);
+  })();
+})();
+</script>`;
+
 const FIT_SCRIPT = `<script>
 (function () {
   var AW = __AW__, AH = __AH__, FILL = __FILL__;
@@ -891,7 +945,7 @@ function renderSlideHtml(rawConfig, opts = {}) {
       // as it did — a layout change nobody asked for is a worse bug than a missing option.
       const fitCls = e.cfg.fit === 'contain' ? ' class="fit"' : '';
       const inner = url
-        ? `<img${fitCls} src="${escapeHtml(url)}" alt="">`
+        ? `<img${fitCls}${cidAttr(url, e.contentId)} src="${escapeHtml(url)}" alt="">`
         // A slide whose photo is missing says so, quietly, rather than leaving a hole an operator
         // has to guess at. It is deliberately unobtrusive: on a wall this is better than a red box.
         : `<div class="ph"></div>`;
@@ -917,7 +971,7 @@ function renderSlideHtml(rawConfig, opts = {}) {
       if (url) videoBudget -= 1;
       const fitCls = e.cfg.fit === 'contain' ? ' class="fit"' : '';
       const inner = url
-        ? `<video${fitCls} autoplay muted loop playsinline hwz="off" src="${escapeHtml(url)}"></video>`
+        ? `<video${fitCls}${cidAttr(url, e.contentId)} autoplay muted loop playsinline hwz="off" src="${escapeHtml(url)}"></video>`
         : `<div class="ph"></div>`;
       return `<div class="e" style="${css.filter(Boolean).join(';')}">${inner}</div>`;
     }
@@ -932,7 +986,7 @@ function renderSlideHtml(rawConfig, opts = {}) {
        */
       const words = escapeHtml(fields[e.slot] || '');
       const inner = url
-        ? `<img class="fit" src="${escapeHtml(url)}" alt="${words}">`
+        ? `<img class="fit"${cidAttr(url, e.contentId)} src="${escapeHtml(url)}" alt="${words}">`
         : `<div class="ph"></div>`;
       return `<div class="e" style="${css.filter(Boolean).join(';')}">${inner}</div>`;
     }
@@ -1052,10 +1106,10 @@ function renderSlideHtml(rawConfig, opts = {}) {
    * entirely on players that currently work. Every other platform ignores an unknown attribute.
    */
   const bgLayers = (bgVideoUrl
-    ? `<video class="bg" autoplay muted loop playsinline hwz="off"`
+    ? `<video class="bg"${cidAttr(bgVideoUrl, slide.backgroundVideoContentId)} autoplay muted loop playsinline hwz="off"`
       + `${bgUrl ? ` poster="${escapeHtml(bgUrl)}"` : ''}`
       + ` src="${escapeHtml(bgVideoUrl)}"></video>`
-    : bgUrl ? `<div class="bg" style="background-image:url(${escapeHtml(cssUrl(bgUrl))})"></div>` : '')
+    : bgUrl ? `<div class="bg"${cidAttr(bgUrl, slide.backgroundContentId)} style="background-image:url(${escapeHtml(cssUrl(bgUrl))})"></div>` : '')
     + ((bgUrl || bgVideoUrl) && slide.backgroundDim > 0
       ? `<div class="scrim" style="background:rgba(0,0,0,${slide.backgroundDim})"></div>` : '');
 
@@ -1125,7 +1179,8 @@ function renderSlideHtml(rawConfig, opts = {}) {
 <body><div class="stage">
     ${bgLayers}
     ${body}
-</div>${fitScript}${slide.elements.some((e) => KINDS[e.kind].live) ? LIVE_SCRIPT : ''}</body></html>`;
+</div>${fitScript}${slide.elements.some((e) => KINDS[e.kind].live) ? LIVE_SCRIPT : ''}${
+  /data-st-cid=/.test(body) || /data-st-cid=/.test(bgLayers) ? MEDIA_SCRIPT : ''}</body></html>`;
 }
 
 module.exports = {

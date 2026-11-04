@@ -575,6 +575,13 @@ function refreshWidgetRevs(assignments, deviceId = null) {
         if (wl.followsScreen(facts.widget_type, cfg)) rev = Number(rev) + wl.revSalt(facts.widget_type, cfg, wl.screenPlace(db, deviceId, facts.workspace_id));
       }
       a.widget_rev = rev;
+      /*
+       * The photos and clips a slide shows (lib/slide-media.js), so a player can hold them offline
+       * the way it holds playlist media. Live, like the rev: an edit that swaps a photo changes what
+       * must be cached without a re-publish. Only for slides; anything else carries none.
+       */
+      if (facts.widget_type === 'slide') a.widget_media = require('../lib/slide-media').slideMediaFor(db, facts.config, facts.workspace_id);
+      else if (a.widget_media) delete a.widget_media;
       // A cloud document is framed same-origin too: Google's embed breaks in an opaque origin, and its
       // render document runs no script at all (lib/cloud-docs.js, enforced by its CSP).
       a.widget_allow_same_origin = Number(facts.same_origin || 0) === 1 || facts.widget_type === 'cloud-doc';
