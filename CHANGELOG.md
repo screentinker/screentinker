@@ -1,5 +1,32 @@
 # Changelog
 
+## 3.1.3
+
+### Fixed
+
+- **LG webOS: the .ipk a panel downloads is the version it was promised.** `/webos/version.json`
+  reported this server's version for whatever `.ipk` happened to be found first, and an older copy
+  left in the data directory won that search. On the hosted service a 2.5.1 `ScreenTinker.ipk` was
+  published as 3.1.2, so every panel that self-updated downloaded a package older than the one it
+  ran and the install failed. The server now reads the app id and version out of each candidate
+  file, serves the newest one of the right id, and `version.json` says what is actually inside it
+  (`versions` carries each build's own version; the shell compares itself against its own entry).
+  A file carrying the other build's id is never served under this name.
+
+- **LG webOS: release .ipk packaged by LG's own tool, and checked before it ships.** Releases are
+  now packaged with `ares-package` (pinned in CI, not minified), so the archive is exactly what
+  LG's tooling writes. The script's own packager, for machines without the tool, now writes the
+  same shape (plain `ar` member names, LG's control field names, no `./` prefixes). Either way the
+  build unpacks and verifies its output - ids, versions, layout, stamps - and fails rather than
+  publishing a package that would not install.
+
+- **Web player: cold boot with the link up and the internet down comes up from cache.** The
+  shell's network-first fetch waited for the network to fail, which with the cable out is
+  immediate but with the WAN down behind a live router is the TV's TCP timeout - a minute or more
+  of black screen, or the browser's own "check network connection" page. The worker now gives the
+  network 8 s and then serves the cached shell when it has one (and still waits the network out
+  when it has nothing to fall back on). Shell cache bumped to v33.
+
 ## 3.1.2
 
 ### Added

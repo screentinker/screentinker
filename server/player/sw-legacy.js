@@ -18,7 +18,7 @@ var __async = (__this, __arguments, generator) => {
     step((generator = generator.apply(__this, __arguments)).next());
   });
 };
-const CACHE_NAME = "rd-player-v32";
+const CACHE_NAME = "rd-player-v33";
 const CONTENT_CACHE = "rd-content-v1";
 const SITE_CACHE_STORE = "rd-site-cache-v1";
 const SITE_CACHE_KEY = "/__st_site_cache__";
@@ -60,23 +60,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   if (url.pathname.startsWith("/player") || url.pathname === "/socket.io/socket.io.js") {
-    event.respondWith(
-      fetch(event.request).then((response) => {
-        if (response.ok && response.type !== "opaque") {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        }
-        return response;
-      }).catch(
-        () => caches.match(event.request, { ignoreSearch: true }).then(
-          (cached) => cached || new Response("Offline", {
-            status: 503,
-            statusText: "Service Unavailable",
-            headers: { "Content-Type": "text/plain" }
-          })
-        )
-      )
-    );
+    event.respondWith(shellNetworkFirst(event.request));
     return;
   }
   if (POLICY && POLICY.isCacheableContent(url, event.request.method)) {
@@ -84,6 +68,46 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 });
+const SHELL_NETWORK_MS = 8e3;
+function shellNetworkFirst(request) {
+  return __async(this, null, function* () {
+    const fromCache = () => caches.match(request, { ignoreSearch: true });
+    const fromNetwork = fetch(request).then((response) => {
+      if (response.ok && response.type !== "opaque") {
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(request, clone)).catch(() => {
+        });
+      }
+      return response;
+    });
+    let timer = null;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), SHELL_NETWORK_MS);
+    });
+    try {
+      const winner = yield Promise.race([fromNetwork.then((r) => r, () => "failed"), timeout]);
+      if (winner !== "timeout" && winner !== "failed") return winner;
+      const cached = yield fromCache();
+      if (cached) return cached;
+      if (winner === "timeout") {
+        try {
+          return yield fromNetwork;
+        } catch (e) {
+        }
+      }
+    } catch (e) {
+    } finally {
+      if (timer) clearTimeout(timer);
+      fromNetwork.catch(() => {
+      });
+    }
+    return new Response("Offline", {
+      status: 503,
+      statusText: "Service Unavailable",
+      headers: { "Content-Type": "text/plain" }
+    });
+  });
+}
 const prefetching = /* @__PURE__ */ new Set();
 let prefetchChain = Promise.resolve();
 self.addEventListener("message", (event) => {

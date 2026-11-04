@@ -190,12 +190,15 @@
         if (!j || !j.version || !j.available) return;
         // A server that predates `files` only publishes ScreenTinker.ipk.
         if (j.files ? !j.files[IPK_FILE] : IPK_FILE !== 'ScreenTinker.ipk') return;
-        if (!newer(j.version, APP_VERSION_FALLBACK)) return;
+        // The version of OUR file, where the server says it (3.1.3+); the top-level version
+        // describes ScreenTinker.ipk on older servers, and the two builds can differ.
+        var published = (j.versions && j.versions[IPK_FILE]) || j.version;
+        if (!newer(published, APP_VERSION_FALLBACK)) return;
         var tried = '';
         try { tried = localStorage.getItem(KEY_UPDATE_TRIED) || ''; } catch (e) {}
-        if (tried === j.version) return;               // one attempt per published version
-        try { localStorage.setItem(KEY_UPDATE_TRIED, j.version); } catch (e) {}
-        log('update available: ' + j.version + ' (running ' + APP_VERSION_FALLBACK + ')');
+        if (tried === published) return;               // one attempt per published version
+        try { localStorage.setItem(KEY_UPDATE_TRIED, published); } catch (e) {}
+        log('update available: ' + published + ' (running ' + APP_VERSION_FALLBACK + ')');
         STWebOS.run('update', { url: serverUrl + '/webos/' + IPK_FILE })
           .then(function () { log('update installed'); }, function (e) { log('update failed: ' + (e && e.message)); });
       })
