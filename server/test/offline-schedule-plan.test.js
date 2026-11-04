@@ -61,8 +61,8 @@ test('an incomplete accelerated picker is rejected instead of silently changing 
   );
 });
 
-test('offline plan uses the same overnight recurrence anchor as the live scheduler', () => {
-  const { pickActiveScheduleAt } = require('../services/scheduler');
+test('offline plan resolves an overnight recurrence without changing the live scheduler contract', () => {
+  const { pickActiveScheduleAt } = require('../lib/offline-schedule-eval');
   const schedule = {
     id: 'overnight', playlist_id: 'night', layout_id: null,
     recurrence: 'FREQ=DAILY', start_time: '2026-11-01T23:00:00', end_time: '2026-11-02T01:00:00',

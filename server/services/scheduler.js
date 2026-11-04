@@ -115,11 +115,6 @@ function pickActiveSchedule(schedules, now, tz) {
   return schedules.find(s => isScheduleActiveNow(s, now, tz));
 }
 
-/** The same precedence decision when a timeline walker already resolved local wall-clock parts. */
-function pickActiveScheduleAt(schedules, localParts) {
-  return schedules.find(s => isScheduleActiveAt(s, localParts));
-}
-
 // #74/#75 Part B: device-level schedules are evaluated in the DEVICE's effective
 // timezone, not the server's. We reuse the canonical UTC->local conversion
 // (_localParts from schedule-eval.js) - no second conversion path. start_time/end_time
@@ -214,67 +209,6 @@ function localStamp(parts) {
   return `${parts.y}-${p2(parts.mo)}-${p2(parts.day)}T${p2(hh)}:${p2(mm)}`;
 }
 
-// Recurring schedules are anchored to the local calendar day on which an
-// occurrence starts. That distinction matters for 23:00–01:00: at 00:30 the
-// active occurrence belongs to yesterday's rule/day-of-week, not today's.
-// Work on UTC date-only values so this remains independent of the host zone.
-function localDateOrdinal(parts) {
-  return Math.floor(Date.UTC(parts.y, parts.mo - 1, parts.day) / 86400000);
-}
-
-function shiftLocalDate(parts, days) {
-  const d = new Date(Date.UTC(parts.y, parts.mo - 1, parts.day + days));
-  return {
-    y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1, day: d.getUTCDate(),
-    dow: d.getUTCDay(), min: parts.min,
-  };
-}
-
-function dateParts(stamp) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(stamp || ''));
-  if (!m) return null;
-  const y = Number(m[1]), mo = Number(m[2]), day = Number(m[3]);
-  if (!y || mo < 1 || mo > 12 || day < 1 || day > 31) return null;
-  const d = new Date(Date.UTC(y, mo - 1, day));
-  if (d.getUTCFullYear() !== y || d.getUTCMonth() !== mo - 1 || d.getUTCDate() !== day) return null;
-  return { y, mo, day, dow: d.getUTCDay(), min: 0 };
-}
-
-function recurringAnchor(schedule, local, startHM, endHM) {
-  const nowHM = localStamp(local).slice(11);
-  const crossesMidnight = endHM <= startHM;
-  if (!crossesMidnight) {
-    if (nowHM < startHM || nowHM >= endHM) return null;
-    return local;
-  }
-  // A zero-length recurring interval is invalid rather than a 24-hour rule.
-  if (startHM === endHM) return null;
-  if (nowHM >= startHM) return local;
-  if (nowHM < endHM) return shiftLocalDate(local, -1);
-  return null;
-}
-
-function recurrenceFiresOn(rule, anchor, start) {
-  const interval = Math.max(1, Number(rule.interval) || 1);
-  const anchorDay = localDateOrdinal(anchor);
-  const startDay = localDateOrdinal(start);
-  if (anchorDay < startDay) return false;
-  if (rule.freq === 'DAILY') return (anchorDay - startDay) % interval === 0;
-  if (rule.freq === 'WEEKLY') {
-    const wantedDays = rule.byDay && rule.byDay.length ? rule.byDay : [start.dow];
-    if (!wantedDays.includes(anchor.dow)) return false;
-    const anchorWeek = anchorDay - anchor.dow;
-    const startWeek = startDay - start.dow;
-    return Math.floor((anchorWeek - startWeek) / 7) % interval === 0;
-  }
-  if (rule.freq === 'MONTHLY') {
-    if (anchor.day !== start.day) return false;
-    const months = (anchor.y - start.y) * 12 + (anchor.mo - start.mo);
-    return months >= 0 && months % interval === 0;
-  }
-  return true;
-}
-
 function isScheduleActiveNow(schedule, now, tz) {
   return isScheduleActiveAt(schedule, _localParts(now, tz));
 }
@@ -289,9 +223,6 @@ function isScheduleActiveAt(schedule, L) {
   const startStamp = String(schedule.start_time).slice(0, 16);
   const endStamp = String(schedule.end_time).slice(0, 16);
 
-  // Keep the long-standing inclusive end for one-off schedules and stored
-  // invalid legacy rules. Existing all-day schedules commonly end at 23:59;
-  // changing this branch would silently remove their final minute fleet-wide.
   if (!schedule.recurrence) {
     return nowStamp >= startStamp && nowStamp <= endStamp;
   }
@@ -299,25 +230,31 @@ function isScheduleActiveAt(schedule, L) {
   const rule = parseSimpleRRule(schedule.recurrence);
   if (!rule) return nowStamp >= startStamp && nowStamp <= endStamp;
 
-  const start = dateParts(startStamp);
-  if (!start) return false;
-  const startHM = startStamp.slice(11), endHM = endStamp.slice(11);
-  const anchor = recurringAnchor(schedule, L, startHM, endHM);
-  if (!anchor) return false;
-  const anchorStamp = localStamp(anchor);
-
   // The DATE window. A recurring schedule was previously compared on weekday and HH:MM alone, with
   // the date component dropped entirely — so it was live before its start date and, more visibly,
   // carried on forever after its end date. A campaign set to finish on the 1st was still switching
   // screens weeks later, while the calendar (which does read recurrence_end) showed it as stopped.
   // The end date is offered on the form; it has to mean something.
-  const anchorDate = anchorStamp.slice(0, 10);
-  if (anchorDate < startStamp.slice(0, 10)) return false;               // has not begun yet
+  const nowDate = nowStamp.slice(0, 10);
+  if (nowDate < startStamp.slice(0, 10)) return false;                  // has not begun yet
   if (schedule.recurrence_end) {
     // Inclusive: an end date of the 5th means the 5th still runs, to its normal end time.
-    if (anchorDate > String(schedule.recurrence_end).slice(0, 10)) return false;
+    if (nowDate > String(schedule.recurrence_end).slice(0, 10)) return false;
   }
-  return recurrenceFiresOn(rule, anchor, start);
+
+  // Day-of-week in the device's local zone.
+  if (rule.byDay && !rule.byDay.includes(L.dow)) return false;
+
+  // Day-of-month, for FREQ=MONTHLY. This function never branched on FREQ, so a monthly rule had
+  // no filter at all and played EVERY day, while the calendar (routes/schedules.js expandSchedule,
+  // which does check the day-of-month) drew it once a month. The dashboard now offers Monthly, so
+  // the two have to agree; this is the same comparison the calendar makes. BYDAY-less on purpose:
+  // an nth-weekday form ("1MO") is dropped by both parsers and is not offered anywhere.
+  if (rule.freq === 'MONTHLY' && L.day !== Number(startStamp.slice(8, 10))) return false;
+
+  // Time-of-day window in the device's local zone (HH:MM string compare).
+  const nowHM = nowStamp.slice(11), startHM = startStamp.slice(11), endHM = endStamp.slice(11);
+  return nowHM >= startHM && nowHM <= endHM;
 }
 
 function parseSimpleRRule(rrule) {
@@ -353,5 +290,4 @@ module.exports.isScheduleActiveAt = isScheduleActiveAt;
 module.exports.schedulesForDevice = schedulesForDevice;
 module.exports.scheduleClockTz = scheduleClockTz;
 module.exports.pickActiveSchedule = pickActiveSchedule;
-module.exports.pickActiveScheduleAt = pickActiveScheduleAt;
 module.exports.parseSimpleRRule = parseSimpleRRule;

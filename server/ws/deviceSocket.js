@@ -1261,7 +1261,7 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
         const plan = planBuilder.build({
           schedules,
           timezone: zone,
-          pickAt: scheduler.pickActiveScheduleAt,
+          pickAt: require('../lib/offline-schedule-eval').pickActiveScheduleAt,
           clock: makeClock(zone),
         });
         const states = {};
