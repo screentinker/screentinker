@@ -63,13 +63,8 @@ const TPL_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>body{b
       localStorage.removeItem('st_active_schedule');
       return allowed;
     });
-    /* ⚠️ 2026-11-03: the previous assertion demanded the OPPOSITE (an expired legacy
-     * st_active_schedule must block online playback), which codified the build-time
-     * scheduleAllows plan gate — the gate that wedged the DB48E on "Nothing scheduled
-     * right now" after every schedule window (HARDWARE-RESULTS.md). The corrected
-     * contract: online playback is decided by the per-item gate from the server
-     * payload; legacy stale schedule state only governs the OFFLINE tick, whose
-     * no-plan branch stops disconnected playback (nativeOfflinePlanTick). */
+    // Online playback follows the server payload. Persisted schedule state is
+    // consulted only by the disconnected offline-plan tick.
     assert.equal(itemGateWinsOnline, true, 'online item gate decides playback; stale legacy schedule state only governs the offline tick');
     const result = await page.evaluate(() => ({ ready: window.__STNative.ready, videoUrl: window.__testVideoUrl, visibility: document.getElementById('NativePlayer').style.visibility }));
     assert.equal(result.ready, true);
