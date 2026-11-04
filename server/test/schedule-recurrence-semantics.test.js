@@ -16,9 +16,10 @@ test('one-off windows retain the established inclusive final minute', () => {
   assert.equal(active(once, '2026-11-01T10:00:00Z'), true);
 });
 
-test('known recurring windows are half-open at the final minute', () => {
+test('known recurring windows preserve the established inclusive final minute', () => {
   assert.equal(active(base, '2026-11-02T09:59:00Z'), true);
-  assert.equal(active(base, '2026-11-02T10:00:00Z'), false);
+  assert.equal(active(base, '2026-11-02T10:00:00Z'), true);
+  assert.equal(active(base, '2026-11-02T10:01:00Z'), false);
 });
 
 test('overnight daily and weekly occurrences remain anchored to their start day', () => {
@@ -49,7 +50,7 @@ test('weekly without BYDAY uses the start weekday', () => {
 test('timezone and DST conversion still occur before recurrence evaluation', () => {
   const sunday = { ...base, start_time: '2026-03-01T01:00:00', end_time: '2026-03-01T03:00:00', recurrence: 'FREQ=WEEKLY;BYDAY=SU' };
   assert.equal(active(sunday, '2026-03-08T06:30:00Z', 'America/New_York'), true);
-  assert.equal(active(sunday, '2026-03-08T07:00:00Z', 'America/New_York'), false);
+  assert.equal(active(sunday, '2026-03-08T07:00:00Z', 'America/New_York'), true);
 });
 
 test('unknown recurrence kinds retain the legacy daily-like inclusive fallback', () => {

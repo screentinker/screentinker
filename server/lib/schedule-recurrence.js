@@ -22,10 +22,10 @@ function startDate(value) {
 }
 function occurrenceAnchor(local, startHM, endHM) {
   const nowHM = stamp(local).slice(11);
-  if (endHM > startHM) return nowHM >= startHM && nowHM < endHM ? local : false;
+  if (endHM > startHM) return nowHM >= startHM && nowHM <= endHM ? local : false;
   if (endHM === startHM) return false;
   if (nowHM >= startHM) return local;
-  return nowHM < endHM ? shift(local, -1) : false;
+  return nowHM <= endHM ? shift(local, -1) : false;
 }
 function fires(rule, anchor, first) {
   const interval = Math.max(1, Number(rule.interval) || 1);
