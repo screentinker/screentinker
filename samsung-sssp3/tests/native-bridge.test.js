@@ -5,8 +5,8 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 const code = fs.readFileSync(path.join(__dirname, '../app/native-bridge.js'), 'utf8');
-function environment() {
-  const files = {}, downloads = [], scheduled = [], opened = [], plugins = [];
+function environment(xhrBytesMap) {
+  const files = {}, downloads = [], scheduled = [], opened = [], plugins = [], xhrBodies = xhrBytesMap || {};
   function FileSystem() {}
   FileSystem.prototype.createCommonDir = function () {};
   FileSystem.prototype.openCommonFile = function (name, mode) { opened.push(name); if (name.indexOf('screentinker_media/') === 0) name = '/mtd_down/common/' + name; if (mode !== 'w' && !Object.prototype.hasOwnProperty.call(files, name)) throw Error('missing'); return { name, readAll() { return files[name]; }, writeAll(value) { files[name] = value; } }; };
@@ -17,11 +17,43 @@ function environment() {
   const storage = {};
   const window = { __STNative: { base: 'http://example.test' }, STOfflinePlan: { dependencies(plan) { const out = []; for (const s of (plan && plan.states) || []) { const payload = s && s.payload || {}; for (const item of (payload.assignments || [])) out.push(item); if (payload.default_content) out.push(payload.default_content); } return out; } }, localStorage: { getItem(key) { return Object.prototype.hasOwnProperty.call(storage, key) ? storage[key] : null; }, setItem(key, value) { storage[key] = String(value); } } };
   const body = { appendChild(p) { p.parentNode = body; }, removeChild(p) { p.parentNode = null; } };
-  const ctx = { window, FileSystem, document: { getElementById: (id) => id === 'NativePlayer' ? player : id === 'NativeDownloader' ? downloader : id === 'playerContainer' ? container : null, createElement: tag => { if (tag !== 'object') return { style: {} }; const p = { style: {}, calls: [], setAttribute() {}, Open() {}, Close() {}, Execute(...args) { this.calls.push(args); return 1; } }; plugins.push(p); return p; }, body }, setTimeout: (fn, ms) => { scheduled.push({ fn, ms }); return scheduled.length; }, clearTimeout: () => {} };
+  // XHR stub mirrors the panel's same-origin fetch: bodies only for preset URLs.
+  const ctx = { window, FileSystem, XMLHttpRequest: function () { const r = this; r.open = function (method, url) { r._url = url; }; r.overrideMimeType = function () {}; r.abort = function () {}; r.send = function () { const present = Object.prototype.hasOwnProperty.call(xhrBodies, r._url); r.readyState = 4; r.status = present ? 200 : 404; r.responseText = present ? String(xhrBodies[r._url]) : ''; if (r.onreadystatechange) r.onreadystatechange(); }; }, document: { getElementById: (id) => id === 'NativePlayer' ? player : id === 'NativeDownloader' ? downloader : id === 'playerContainer' ? container : null, createElement: tag => { if (tag !== 'object') return { style: {} }; const p = { style: {}, calls: [], setAttribute() {}, Open() {}, Close() {}, Execute(...args) { this.calls.push(args); return 1; } }; plugins.push(p); return p; }, body }, setTimeout: (fn, ms) => { scheduled.push({ fn, ms }); return scheduled.length; }, clearTimeout: () => {} };
   vm.runInNewContext(code, ctx); window.__STNative.init();
   return { b: window.__STNative, done: window.STNativeDownloadComplete, files, downloads, scheduled, player, opened, plugins, downloader, storage };
 }
 const image = { content_id: 'one', filepath: 'a.png', mime_type: 'image/png', content_rev: 1 };
+test('a small playlist image is cached by the panel itself, verified write, no Samsung downloader round trip', () => {
+  const e = environment({ 'http://example.test/uploads/content/a.png?rev=1': '%PNG%DATA' }), activated = [];
+  const item = { ...image, file_size: 9 }, payload = { assignments: [item] };
+  e.b.accept(payload, p => activated.push(p));
+  assert.equal(e.downloads.length, 0, 'small images bypass the 2012 SEF downloader');
+  assert.deepEqual(activated, [payload]);
+  assert.equal(e.files[e.b._test.path(item)], '%PNG%DATA', 'the verified direct write landed on the cache path');
+  assert.match(e.b.mediaUrl(item, 'remote'), /^file:\/\//);
+});
+test('a refused direct fetch falls back to the Samsung downloader with unchanged behavior', () => {
+  const e = environment(), activated = [], payload = { assignments: [{ ...image, file_size: 9 }] };
+  e.b.accept(payload, p => activated.push(p));
+  assert.match(e.downloads[0].url, /uploads\/content\/a\.png\?rev=1$/, 'fallback keeps the downloader contract');
+  e.files[e.downloads[0].destination] = true; e.done('1000?1');
+  assert.deepEqual(activated, [payload]);
+});
+test('a DB48E bogus completion is healed by a direct verified write when the source is fetchable', () => {
+  const e = environment({ 'http://example.test/uploads/content/a.png?rev=1': '%PNG%FIX' }), activated = [], payload = { assignments: [image] };
+  e.b.accept(payload, p => activated.push(p));
+  assert.equal(e.downloads.length, 1);
+  e.done('1000?9');
+  assert.deepEqual(activated, [payload], 'healed without another downloader round');
+  assert.equal(e.files[e.b._test.path(image)], '%PNG%FIX');
+  assert.equal(e.downloads.length, 1, 'no further downloader work was queued');
+});
+test('remote-URL media is outside the cache gate and passes straight through', () => {
+  const e = environment(), activated = [], payload = { assignments: [{ ...image, remote_url: 'https://cdn.test/a.png' }] };
+  e.b.accept(payload, p => activated.push(p));
+  assert.equal(e.downloads.length, 0, 'unsupported (remote) items never queue a download');
+  assert.deepEqual(activated, [payload]);
+});
 test('only activates the playlist after the complete local file is present', () => {
   const e = environment(), activated = [], payload = { assignments: [image, image] };
   e.b.accept(payload, p => activated.push(p));

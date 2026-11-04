@@ -7,6 +7,14 @@
   var statePrefix = '/mtd_down/common/screentinker/state-', bootEventPath = '/mtd_down/common/screentinker/boot-event.json', reportTimes = {}, captureSequence = 0, heldFrame = null;
   var currentBuild = parseInt('__ST_BUILD__', 10) || 0;
   var videoBackgrounds = null;
+  /* Direct media cache (2026-11-04, builds 1300+): the 2012 SEF downloader was
+   * proven against plain static servers, but this CMS answers /uploads/content
+   * through a proxy layer that can redirect or stream — beyond the downloader,
+   * which reports completion while nothing lands (the "download completed, but
+   * the local file was not found" DB48E failure). Small media now rides the
+   * panel's own XHR + verified write instead, the exact machinery the template
+   * widget cache already proved on this hardware. Cap protects 2012 Maple RAM. */
+  var SELF_MEDIA_MAX_BYTES = 4 * 1024 * 1024, lastDownResult = '';
   // Bump when the server's legacy widget envelope changes. Widget revision
   // tracks author content, not renderer compatibility, so it cannot invalidate
   // an old srcdoc-based file already cached on an SSSP3 panel.
@@ -113,15 +121,44 @@
     } catch (ignore) {}
     if (downloadedForUpdate) { payload.__nativeMediaChanged = true; status('Media cached. Starting playback...'); } downloadedForUpdate = false; callback(payload);
   }
+  function queueDownload(entry) {
+    try {
+      lastDownResult = String(downloader.StartDownFile(source(entry.item), path(entry.item)));
+      timer = setTimeout(function () { bridge.error = 'Download timed out; waiting for Samsung downloader.'; status(bridge.error); reportPlaylist(bridge.error); try { if (downloader.CancelDownload) downloader.CancelDownload(); } catch (ignore) {} }, 120000);
+    } catch (e) { fail(String(e)); }
+  }
+  function selfFetchable(item) {
+    return !!item && !item.widget_id && !item.remote_url
+      && /^image\//.test(String(item.mime_type || '').toLowerCase())
+      && Number(item.file_size) > 0 && Number(item.file_size) <= SELF_MEDIA_MAX_BYTES;
+  }
+  function directFetch(entry) {
+    lastDownResult = 'direct';
+    stXhr(source(entry.item), true, function (bytes) {
+      if (current !== entry) return; /* a newer accept() replaced this job */
+      if (!bytes.length || !writeCommonFile(path(entry.item), String(bytes))) {
+        reportPlaylist('Direct cache not possible (' + (!bytes.length ? 'empty response' : 'write verification failed') + '); using Samsung downloader for ' + (entry.item.filename || entry.item.filepath || 'media'));
+        queueDownload(entry);
+        return;
+      }
+      index[key(entry.item)] = path(entry.item); downloadedForUpdate = true;
+      try { bridge.persistStorage(); } catch (ignore) {}
+      reportPlaylist('Media cached directly (' + String(bytes).length + ' B verified write): ' + (entry.item.filename || entry.item.filepath || 'media'));
+      status('Media cached.');
+      current = null; next();
+    }, function (why) {
+      if (current !== entry) return;
+      reportPlaylist('Direct cache not possible (' + why + '); using Samsung downloader for ' + (entry.item.filename || entry.item.filepath || 'media'));
+      queueDownload(entry);
+    });
+  }
   function next() {
     if (current) return;
     if (!queue.length) { if (selfBusy()) return; finish(); return; }
     current = queue.shift();
     status('Downloading: ' + (current.item.filename || current.item.filepath || 'media'));
-    try {
-      downloader.StartDownFile(source(current.item), path(current.item));
-      timer = setTimeout(function () { bridge.error = 'Download timed out; waiting for Samsung downloader.'; status(bridge.error); reportPlaylist(bridge.error); try { if (downloader.CancelDownload) downloader.CancelDownload(); } catch (ignore) {} }, 120000);
-    } catch (e) { fail(String(e)); }
+    if (selfFetchable(current.item)) { directFetch(current); return; }
+    queueDownload(current);
   }
   function fail(reason) {
     var failed = current;
@@ -140,7 +177,25 @@
     /* The DB48E completes with 1000?9 as well as 1000?1.  Keep ?0 as a
      * failure; existence below remains the final file gate. */
     if (fields[0] !== '1000' || (fields[1] !== '1' && fields[1] !== '9')) return fail('download failed: ' + String(result));
-    if (!exists(path(done.item))) return fail('download completed, but the local file was not found: ' + path(done.item));
+    if (!exists(path(done.item))) {
+      /* Gate stays final, but before failing, probe the source with the panel's
+       * own browser engine (template-cache proven) and heal the item locally
+       * when the bytes are direct-cache sized. This turns the firmware's lying
+       * completion into a working cache instead of another dead boot. */
+      stXhr(source(done.item), true, function (bytes) {
+        if (current !== done) return;
+        if (bytes.length && bytes.length <= SELF_MEDIA_MAX_BYTES && writeCommonFile(path(done.item), String(bytes))) {
+          index[key(done.item)] = path(done.item); downloadedForUpdate = true; current = null;
+          try { bridge.persistStorage(); } catch (ignore) {}
+          reportPlaylist('Media healed by direct cache after Samsung completion without file (' + String(bytes).length + ' B verified write)');
+          return next();
+        }
+        fail('download completed, but the local file was not found: ' + path(done.item) + ' (downloader call=' + lastDownResult + ', direct heal refused: ' + (bytes.length > SELF_MEDIA_MAX_BYTES ? bytes.length + ' B exceeds the 4 MB direct-cache cap' : 'verify read-back mismatch') + ')');
+      }, function (why) {
+        fail('download completed, but the local file was not found: ' + path(done.item) + ' (downloader call=' + lastDownResult + ', source probe: ' + why + ')');
+      });
+      return;
+    }
     index[key(done.item)] = path(done.item); downloadedForUpdate = true; current = null; bridge.persistStorage(); next();
   };
   function readStateSlot(slot) {
