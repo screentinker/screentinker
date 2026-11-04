@@ -173,3 +173,18 @@ test('an open-ended series always gets a tail, and a moved day is honoured', asy
   assert.equal(plan.create[0].start_time, '2026-09-18T09:00:00', 'the single lands on the day it was dragged to');
   assert.equal(plan.create[1].recurrence_end, null, 'the tail stays open-ended');
 });
+
+// #796: the schedule library's status views. By date window, in the viewer's clock.
+test('scheduleTimeStatus: one-offs by their window, repeats by first day and repeat-until (inclusive)', async () => {
+  const now = new Date(2026, 8, 9, 12, 0);   // Wed 9 Sep 2026, noon local
+  const S = C.scheduleTimeStatus;
+  assert.equal(S({ start_time: '2026-09-09T09:00:00', end_time: '2026-09-09T17:00:00' }, now), 'active');
+  assert.equal(S({ start_time: '2026-09-09T13:00:00', end_time: '2026-09-09T17:00:00' }, now), 'upcoming');
+  assert.equal(S({ start_time: '2026-09-08T09:00:00', end_time: '2026-09-08T17:00:00' }, now), 'expired');
+  const rep = { start_time: '2026-09-01T09:00:00', end_time: '2026-09-01T10:00:00', recurrence: 'FREQ=WEEKLY;BYDAY=MO' };
+  assert.equal(S(rep, now), 'active', 'a repeat with no end is in effect even off its own day and hour');
+  assert.equal(S({ ...rep, recurrence_end: '2026-09-09' }, now), 'active', 'the until date is inclusive');
+  assert.equal(S({ ...rep, recurrence_end: '2026-09-08' }, now), 'expired');
+  assert.equal(S({ ...rep, start_time: '2026-09-10T09:00:00', end_time: '2026-09-10T10:00:00' }, now), 'upcoming');
+  assert.equal(S({ ...rep, start_time: '2026-09-09T15:00:00', end_time: '2026-09-09T16:00:00' }, now), 'active', 'its first day has begun');
+});

@@ -249,3 +249,28 @@ export function planOccurrenceEdit(ev, occurrenceDate, edited) {
   if (tail) return { update: { start_time: tail.start_time, end_time: tail.end_time }, create: [single], delete: false };
   return { update: null, create: [single], delete: true };
 }
+
+// ------------------------------------------------------------------ #796 library status
+
+/*
+ * #796: where a schedule stands in time, for the schedule library's views and filters. By its DATE
+ * WINDOW, in the viewer's clock (the calendar draws on the same clock): a one-off is active between
+ * its start and end; a repeating schedule is active from its first day until its repeat-until date
+ * (inclusive), whether or not this very minute is one of its occurrences. Disabled is separate.
+ */
+export function scheduleTimeStatus(s, now = new Date()) {
+  const start = new Date(s.start_time);
+  if (s.recurrence) {
+    if (s.recurrence_end) {
+      const [y, m, d] = String(s.recurrence_end).slice(0, 10).split('-').map(Number);
+      const until = new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999);
+      if (!Number.isNaN(until.getTime()) && until < now) return 'expired';
+    }
+    const firstDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    return firstDay > now ? 'upcoming' : 'active';
+  }
+  const end = new Date(s.end_time);
+  if (end < now) return 'expired';
+  if (start > now) return 'upcoming';
+  return 'active';
+}

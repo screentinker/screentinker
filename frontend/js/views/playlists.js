@@ -12,6 +12,7 @@ import { openSlotDialog } from '../components/corporate-slot-dialog.js';
 import { confirmAccessibility } from '../components/accessibility.js';
 import { layoutPickerHtml, mountLayoutPicker, zoneSelectHtml, bindZoneSelects } from '../components/playlist-layout.js';
 import { layoutThumbHtml, layoutItemSummary, campaignZoneOptions, campaignZoneSelectHtml, campaignBannerHtml, openLayoutItemDialog } from '../components/campaign-editor.js';
+import { mountResourceLibrary } from '../components/library/resource-library.js';
 
 // #769: the per-item fit badge reuses the bulk Fit menu's labels.
 const FIT_BADGE_KEYS = { contain: 'playlist.bulk.fit_contain', cover: 'playlist.bulk.fit_cover', fill: 'playlist.bulk.fit_fill' };
@@ -127,6 +128,7 @@ export function render(container) {
 export function cleanup() {
   currentPlaylistId = null;
   corpEditor = null;
+  if (library) { library.destroy(); library = null; }
 }
 
 // Deliberately default-ON (commit aca1558): per-device "<Device> playlist" rows and every
@@ -143,6 +145,8 @@ try {
 let cachedPlaylists = null;
 // 3.0: the layout the open playlist is drawn in (explicit or derived), for the per-item zone picker.
 let currentLayout = null;
+// #796: the playlist library frame on the list page (components/library/resource-library.js).
+let library = null;
 
 async function renderList(container) {
   container.innerHTML = `
@@ -161,10 +165,9 @@ async function renderList(container) {
     </div>
     <!-- Same reason as the Content Library: the step that sent you here has to still be here. -->
     <div id="gettingStarted"></div>
-    <div id="playlistGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px">
-      <div style="color:var(--text-muted);padding:40px;text-align:center">${t('common.loading')}</div>
-    </div>
+    <div id="playlistLibrary"></div>
   `;
+  mountLibrary(document.getElementById('playlistLibrary'));
 
   document.getElementById('createPlaylistBtn').addEventListener('click', () => showCreateModal());
   document.getElementById('showAutoToggle').addEventListener('change', (e) => {
@@ -195,7 +198,7 @@ async function loadPlaylists() {
     cachedPlaylists = await api.getPlaylists();
     renderPlaylistGrid(cachedPlaylists);
   } catch (err) {
-    const grid = document.getElementById('playlistGrid');
+    const grid = document.getElementById('playlistLibrary');
     if (grid) grid.innerHTML = `<div style="grid-column:1/-1;color:var(--text-muted);padding:40px;text-align:center">${t('playlist.load_failed', { error: esc(err.message) })}</div>`;
   }
 
@@ -203,35 +206,78 @@ async function loadPlaylists() {
   gettingStarted.refresh().catch(() => {});
 }
 
-function renderPlaylistGrid(playlists) {
-  const grid = document.getElementById('playlistGrid');
-  if (!grid) return;
-
-  if (!playlists.length) {
-    grid.innerHTML = `
-      <div style="grid-column:1/-1;text-align:center;padding:60px 20px;color:var(--text-muted)">
+/*
+ * #796: the playlist library. Folders are organisational only: filing a playlist never touches the
+ * playlist row (its items, publish state and snapshot) or anything assigned to it, so no screen
+ * notices. `usage` counts what references a playlist: screens (inherited ones included), groups,
+ * walls, schedules, playlists that nest it, and head office slots.
+ */
+function mountLibrary(host) {
+  if (library) library.destroy();
+  const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
+  library = mountResourceLibrary(host, {
+    kind: 'playlist',
+    idPrefix: 'plib',
+    allLabel: t('playlist.lib.all'),
+    searchLabel: t('playlist.lib.search_label'),
+    searchPlaceholder: t('playlist.lib.search_placeholder'),
+    searchText: (p) => p.description || '',
+    views: [
+      { id: 'recent', icon: 'recent', label: t('library.nav.recent'), test: (p, c) => Number(p.created_at || 0) * 1000 >= c.now - c.recentDays * 86400000 },
+      { id: 'unused', icon: 'unused', label: t('playlist.lib.unused'), test: (p, c) => !c.usage[p.id] },
+    ],
+    viewNote: (c) => t('playlist.lib.views_note', { days: c.recentDays }),
+    filters: [
+      { id: 'usage', label: t('library.filter.usage_label'), allText: t('library.filter.usage_all'),
+        options: [['used', t('library.filter.used')], ['unused', t('library.usage.unused')]],
+        test: (p, v, c) => (v === 'used' ? !!c.usage[p.id] : !c.usage[p.id]) },
+      { id: 'screens', label: t('playlist.lib.filter_screens'), allText: t('playlist.lib.screens_all'),
+        options: [['on', t('playlist.lib.screens_on')], ['off', t('playlist.lib.screens_off')]],
+        test: (p, v) => (v === 'on' ? Number(p.display_count) > 0 : !Number(p.display_count)) },
+      { id: 'status', label: t('playlist.lib.filter_status'), allText: t('playlist.lib.status_all'),
+        options: [['published', t('playlist.lib.status_published')], ['draft', t('playlist.tag_draft')]],
+        test: (p, v) => (v === 'draft' ? p.status === 'draft' : p.status !== 'draft') },
+      { id: 'kind', label: t('playlist.lib.filter_kind'), allText: t('playlist.lib.kind_all'),
+        options: [['manual', t('playlist.lib.kind_manual')], ['smart', t('smart.badge')], ['auto', t('playlist.tag_auto')]],
+        test: (p, v) => (v === 'smart' ? !!p.smart_rules : v === 'auto' ? !!p.is_auto_generated : !p.smart_rules && !p.is_auto_generated) },
+    ],
+    sorts: [
+      ['name', t('content.sort_name'), byName],
+      ['name_desc', t('library.sort.name_desc'), (a, b) => byName(b, a)],
+      ['date_desc', t('content.sort_newest'), (a, b) => (b.created_at || 0) - (a.created_at || 0)],
+      ['date_asc', t('content.sort_oldest'), (a, b) => (a.created_at || 0) - (b.created_at || 0)],
+      ['modified', t('rlib.sort.modified'), (a, b) => (b.updated_at || 0) - (a.updated_at || 0)],
+      ['screens', t('playlist.lib.sort_screens'), (a, b) => (Number(b.display_count) || 0) - (Number(a.display_count) || 0)],
+      ['items', t('playlist.lib.sort_items'), (a, b) => (Number(b.item_count) || 0) - (Number(a.item_count) || 0)],
+    ],
+    defaultSort: 'name',
+    emptyHtml: () => (cachedPlaylists && cachedPlaylists.length
+      ? `<div style="text-align:center;padding:40px;color:var(--text-muted)">${t('playlist.all_auto_generated')}</div>`
+      : `
+      <div style="text-align:center;padding:60px 20px;color:var(--text-muted)">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin:0 auto 16px;display:block;opacity:0.4">
           <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
           <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
         </svg>
         <h3 style="margin-bottom:8px;color:var(--text-primary)">${t('playlist.empty_title')}</h3>
         <p>${t('playlist.empty_desc')}</p>
-      </div>
-    `;
-    return;
-  }
+      </div>`),
+    renderItems: (box, list, h) => drawPlaylistCards(box, list, h),
+  });
+}
 
-  const filtered = showAutoGenerated ? playlists : playlists.filter(p => !p.is_auto_generated);
-  if (!filtered.length) {
-    grid.innerHTML = `
-      <div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--text-muted)">
-        ${playlists.length ? t('playlist.all_auto_generated') : ''}
-      </div>
-    `;
-    return;
-  }
+function renderPlaylistGrid(playlists) {
+  if (!library) return;
+  library.setItems(showAutoGenerated ? playlists : playlists.filter(p => !p.is_auto_generated));
+  library.reloadFolders();
+}
 
+function drawPlaylistCards(box, filtered, h) {
+  box.innerHTML = '<div id="playlistGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px"></div>';
+  const grid = document.getElementById('playlistGrid');
     grid.innerHTML = filtered.map(p => `
+      <div class="rl-item rl-pad${h.isSelected(p) ? ' is-selected' : ''}" ${h.dragAttrs(p)} style="border-radius:var(--radius-lg)">
+      ${h.selectBox(p)}
       <a href="#/playlists/${esc(p.id)}" class="playlist-card" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;text-decoration:none;color:inherit;display:block;transition:border-color 0.15s;cursor:pointer">
         <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px">
           <div style="display:flex;align-items:center;gap:8px">
@@ -259,7 +305,9 @@ function renderPlaylistGrid(playlists) {
                 store must not delete it thinking nothing needs it (critique R13). */ ''}
           ${!p.display_count && p.paused_count ? `<span title="${esc(t('corp.tip.paused'))}" style="color:var(--warning)">${esc(tn('corp.badge.paused', p.paused_count))}</span>` : ''}
         </div>
+        ${h.folderLine(p) ? `<div style="margin-top:8px">${h.folderLine(p)}</div>` : ''}
       </a>
+      </div>
     `).join('');
 }
 
@@ -307,6 +355,7 @@ function showCreateModal(prefill = {}) {
         onCancel: () => showCreateModal({ name, desc, smart: true }),
         onSave: async (rules) => {
           const pl = await api.createPlaylist(name, desc, rules);
+          if (library && pl && pl.id) await library.fileNew(pl.id);   // #796: into the open folder
           showToast(t('playlist.toast.created'));
           window.location.hash = `#/playlists/${pl.id}`;
         },
@@ -315,6 +364,7 @@ function showCreateModal(prefill = {}) {
     }
     try {
       const pl = await api.createPlaylist(name, desc);
+      if (library && pl && pl.id) await library.fileNew(pl.id);   // #796: into the open folder
       modal.remove();
       showToast(t('playlist.toast.created'));
       window.location.hash = `#/playlists/${pl.id}`;
