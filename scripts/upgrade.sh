@@ -150,8 +150,20 @@ confirm() { # question
 # the version probe below was the first thing to run it, inside an assignment under `set -e`, with
 # its stderr discarded: the script ended straight after "==> Backing up db" with no message at all,
 # and the self-hoster who hit it reasonably reported the upgrade as "stops after the backup".
+#
+# 2026-11-04: the backup is now taken through the server's own SQLite (scripts/db-tool.js) whenever
+# node can load it, so the sqlite3 tool is only needed on a host where that fails. db-tool.js says
+# why: the host's sqlite3 can predate SQLite's WAL-reset fix and corrupt a live WAL database.
+DB_TOOL="$APP_DIR/scripts/db-tool.js"
+db_tool_ok() {
+  command -v node >/dev/null 2>&1 && [ -f "$DB_TOOL" ] \
+    && node -e 'new (require(process.argv[1]).Database)(":memory:").close()' "$APP_DIR/server/db/sqlite-driver.js" >/dev/null 2>&1
+}
+USE_DB_TOOL=0
+if [ -f "$DB" ] && db_tool_ok; then USE_DB_TOOL=1; fi
+
 STEP="checking for the sqlite3 tool"
-if [ -f "$DB" ] && ! command -v sqlite3 >/dev/null 2>&1; then
+if [ -f "$DB" ] && [ "$USE_DB_TOOL" != 1 ] && ! command -v sqlite3 >/dev/null 2>&1; then
   echo "==> The sqlite3 command-line tool is not installed, and the database backup needs it."
   if command -v apt-get >/dev/null 2>&1 && confirm "    Install the sqlite3 package now?"; then
     apt_get install -y -qq sqlite3 >/dev/null || true
@@ -197,7 +209,10 @@ if [ -f "$DB" ]; then
   # the actual error. A check that cannot tell "this is broken" from "I could not do it" sends you
   # to the wrong place with confidence.
   SQLITE_VER="$(sqlite3 --version 2>/dev/null | cut -d' ' -f1 || true)"
-  if [ -n "$SQLITE_VER" ] && [ "$(printf '%s\n3.27.0\n' "$SQLITE_VER" | sort -V | head -1)" = "3.27.0" ]; then
+  if [ "$USE_DB_TOOL" = 1 ]; then
+    # VACUUM INTO through the server's own SQLite; any failure is real: let it abort and show why.
+    node "$DB_TOOL" snapshot "$DB" "$BK" >/dev/null
+  elif [ -n "$SQLITE_VER" ] && [ "$(printf '%s\n3.27.0\n' "$SQLITE_VER" | sort -V | head -1)" = "3.27.0" ]; then
     sqlite3 "$DB" "VACUUM INTO '$BK'"   # any failure here is real: let it abort and show why
   else
     echo "    sqlite3 ${SQLITE_VER:-unknown} predates VACUUM INTO (3.27, 2019); using .backup,"
@@ -207,7 +222,11 @@ if [ -f "$DB" ]; then
 
   # ⚠️ THE COPY IS COMPACTED, so it is SMALLER than the source — 1405 MB -> 1004 MB on that run.
   # That is a complete database, not a truncated one. Judge it with integrity_check, never by size.
-  INTEG="$(sqlite3 "$BK" 'PRAGMA integrity_check' 2>/dev/null | head -1)"
+  if [ "$USE_DB_TOOL" = 1 ]; then
+    INTEG="$(node "$DB_TOOL" check "$BK" integrity 2>/dev/null | head -1 || true)"
+  else
+    INTEG="$(sqlite3 "$BK" 'PRAGMA integrity_check' 2>/dev/null | head -1)"
+  fi
   if [ "$INTEG" != "ok" ]; then
     echo "ERROR: the backup failed its integrity check (${INTEG:-no answer})." >&2
     echo "       Refusing to upgrade: an unverified backup is not a way back." >&2

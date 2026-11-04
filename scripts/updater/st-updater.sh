@@ -170,14 +170,28 @@ git_backup() {
     set_status failed "No database at $DB. Set DB in the updater env to the live database."
     return 1
   fi
-  command -v sqlite3 >/dev/null 2>&1 || { set_status failed "sqlite3 is not installed on the host (needed for the backup)."; return 1; }
+  # Through the server's own SQLite when node can load it (scripts/db-tool.js says why: the host's
+  # sqlite3 can predate SQLite's WAL-reset fix and corrupt a live WAL database). The sqlite3 tool is
+  # the fallback for a checkout that predates db-tool.js or a host where the driver will not load.
+  _dbtool="$APP_DIR/scripts/db-tool.js"
+  _use_tool=0
+  if command -v node >/dev/null 2>&1 && [ -f "$_dbtool" ] \
+     && node -e 'new (require(process.argv[1]).Database)(":memory:").close()' "$APP_DIR/server/db/sqlite-driver.js" >/dev/null 2>&1; then
+    _use_tool=1
+  fi
+  [ "$_use_tool" = 1 ] || command -v sqlite3 >/dev/null 2>&1 || { set_status failed "sqlite3 is not installed on the host (needed for the backup)."; return 1; }
   mkdir -p "$BACKUP_DIR" || { set_status failed "Cannot create $BACKUP_DIR"; return 1; }
   JOB_BACKUP="$BACKUP_DIR/remote_display-pre-v$JOB_TARGET-$(date +%Y%m%d-%H%M%S).db"
   set_status backup "Backing up the database to $JOB_BACKUP"
   rm -f "$JOB_BACKUP"
   # VACUUM INTO, not .backup: it converges on a busy WAL database (see scripts/upgrade.sh).
-  run_logged sqlite3 "$DB" "VACUUM INTO '$JOB_BACKUP'" || { set_status failed "Database backup failed - nothing was changed."; return 1; }
-  _integ="$(sqlite3 "$JOB_BACKUP" 'PRAGMA integrity_check' 2>/dev/null | head -1)"
+  if [ "$_use_tool" = 1 ]; then
+    run_logged node "$_dbtool" snapshot "$DB" "$JOB_BACKUP" || { set_status failed "Database backup failed - nothing was changed."; return 1; }
+    _integ="$(node "$_dbtool" check "$JOB_BACKUP" integrity 2>/dev/null | head -1)"
+  else
+    run_logged sqlite3 "$DB" "VACUUM INTO '$JOB_BACKUP'" || { set_status failed "Database backup failed - nothing was changed."; return 1; }
+    _integ="$(sqlite3 "$JOB_BACKUP" 'PRAGMA integrity_check' 2>/dev/null | head -1)"
+  fi
   [ "$_integ" = ok ] || { set_status failed "Backup failed its integrity check (${_integ:-no answer}) - nothing was changed."; return 1; }
 }
 
