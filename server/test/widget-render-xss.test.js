@@ -210,6 +210,14 @@ test('SSSP3 webpages inline same-workspace ScreenTinker widgets instead of using
 });
 
 
+test('weather snapshot data remains data when a provider returns a script terminator', () => {
+  const payload = { current_condition: [{ temp_C: '27', weatherDesc: [{ value: '</script><script>globalThis.pwned=1</script>' }] }] };
+  const literal = widgetsRouter.scriptJson(payload);
+  assert.doesNotMatch(literal, /<\/script><script>globalThis\.pwned/, 'provider text cannot end the renderer script');
+  assert.match(literal, /\\u003c\/script>/, 'the dangerous character is escaped in the JavaScript literal');
+  assert.doesNotMatch(literal, /[\u2028\u2029]/, 'line separators are escaped too');
+});
+
 test('SSSP3 weather snapshots share a bounded server cache instead of fetching once per panel render', async () => {
   const originalFetch = global.fetch;
   let calls = 0;
