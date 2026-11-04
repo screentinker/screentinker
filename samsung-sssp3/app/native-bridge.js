@@ -797,6 +797,21 @@
     }
     for (i = 0; i < queued.length; i++) sendReport(queued[i].kind, queued[i].message, queued[i].deviceId, true);
   };
+  /* localStorage alone is not the durable source on this player: restoreStorage
+     * rehydrates it from the common filesystem at boot.  An ownership change
+     * therefore has to clear both stores, including future schedule decisions. */
+  bridge.clearOwnedState = function () {
+    var stale, name, slot;
+    for (stale in index) if (Object.prototype.hasOwnProperty.call(index, stale)) {
+      name = index[stale];
+      try { fs.deleteCommonFile(String(name).replace(/^\/mtd_down\/common\//, '')); } catch (ignore) {}
+    }
+    index = {};
+    for (slot = 0; slot < 2; slot++) {
+      try { fs.deleteCommonFile((statePrefix + slot + '.json').replace(/^\/mtd_down\/common\//, '')); } catch (ignore2) {}
+    }
+    try { fs.deleteCommonFile(bootEventPath.replace(/^\/mtd_down\/common\//, '')); } catch (ignore3) {}
+  };
   bridge.stopVideo = function () { var player = document.getElementById('NativePlayer'), session = gaplessSession, stage = document.getElementById('playerContainer'); gaplessGeneration++; closeGapless(session, 'teardown'); videoGeneration++; clearTimeout(videoTimer); bridge.activeRect = null; if (videoBackgrounds && stage && stage.style && document.body && document.documentElement) { stage.style.background = videoBackgrounds[0]; document.body.style.background = videoBackgrounds[1]; document.documentElement.style.background = videoBackgrounds[2]; videoBackgrounds = null; } if (!player) return; if (videoActive) { videoActive = false; try { player.Stop(); } catch (ignore2) {} } player.style.visibility = 'hidden'; };
   bridge._test = { key: key, path: path, source: source, bootEventPath: bootEventPath, pendingReports: function () { return pendingReports.slice(); } };
 })(window);
