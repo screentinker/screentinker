@@ -2,6 +2,9 @@
   "private": true,
   "name": "screentinker-sssp3-build",
   "version": "0.1.0",
+  "scripts": {
+    "build": "./build-sssp3.sh"
+  },
   "devDependencies": {
     "@babel/core": "7.29.7",
     "@babel/preset-env": "7.28.5",

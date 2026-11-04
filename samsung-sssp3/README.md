@@ -47,7 +47,7 @@ downgrades `<ver>`). The package build owns `<ver>` through `release.json`. When
 Build locally:
 
 ```console
-$ cd samsung-sssp3 && npm install && ./build-sssp3.sh
+$ cd samsung-sssp3 && npm install && npm run build
 ```
 
 Only build-time devDependencies in this directory are needed; nothing is
