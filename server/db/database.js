@@ -5292,6 +5292,51 @@ migrationStep('#720 device Wi-Fi networks', () => {
   try { db.prepare('ALTER TABLE devices ADD COLUMN wifi_mode TEXT').run(); console.log('[migrate] devices.wifi_mode added'); } catch (_) { /* present */ }
 });
 
+migrationStep('#796 library folders for widgets, playlists and schedules', () => {
+  /*
+   * #796: the Content Library's folders, for widgets, playlists and schedules (routes/library-folders.js).
+   *
+   * ⚠️ ORGANISATIONAL ONLY, BY CONSTRUCTION. Where an item is filed lives in library_folder_items,
+   * never in a column of widgets / playlists / schedules. So filing something cannot touch a row a
+   * player depends on: widgets.updated_at is the widget's revision on the screen, a playlist row
+   * carries its publish state and snapshot, and the schedules table is rebuilt by older migrations
+   * from its column list. None of those rows changes when an item moves. No row = the root.
+   *
+   * One table for the three kinds (a `kind` column), not three tables and not content_folders:
+   * content_folders has a dozen readers (smart-playlist folder rules, agency upload folders, request
+   * forms, cloud sync, migrations) that would all need a kind filter, while these three kinds share
+   * one router and one set of rules. Tenancy: workspace_id NOT NULL on both tables; every read and
+   * write in the router checks it against the caller's workspace.
+   */
+  const had = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'library_folder_items'").get();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS library_folders (
+      id           TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      kind         TEXT NOT NULL CHECK (kind IN ('widget','playlist','schedule')),
+      parent_id    TEXT REFERENCES library_folders(id),
+      name         TEXT NOT NULL,
+      created_by   TEXT,
+      created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_library_folders_ws ON library_folders (workspace_id, kind, parent_id);
+    CREATE TABLE IF NOT EXISTS library_folder_items (
+      kind         TEXT NOT NULL CHECK (kind IN ('widget','playlist','schedule')),
+      item_id      TEXT NOT NULL,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      -- CASCADE drops only the filing row, never the item. The router re-files a deleted folder's
+      -- items into its parent first, so this only matters to a purge that bypasses it.
+      folder_id    TEXT NOT NULL REFERENCES library_folders(id) ON DELETE CASCADE,
+      filed_at     INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      PRIMARY KEY (kind, item_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_library_folder_items_folder ON library_folder_items (folder_id);
+    CREATE INDEX IF NOT EXISTS idx_library_folder_items_ws ON library_folder_items (workspace_id, kind);
+  `);
+  if (!had) console.log('[migrate] library_folders + library_folder_items created (#796)');
+});
+
 /*
  * Corporate (head office) playlists: every table and column of the feature, applied here because
  * organizations only exists once the multi-tenancy phase above has run. Idempotent; see

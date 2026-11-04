@@ -669,6 +669,7 @@ router.delete('/:id', (req, res) => {
   if (!widget) return;
   if (corpMediaRefused(req, res, widget)) return;
   db.prepare('DELETE FROM widgets WHERE id = ?').run(req.params.id);
+  require('../lib/library-folders').forget(db, 'widget', req.params.id);   // #796: where it was filed
   res.json({ success: true });
 });
 

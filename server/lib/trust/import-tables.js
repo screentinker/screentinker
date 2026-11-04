@@ -34,6 +34,8 @@ const RESTORED = {
   // content
   content: {},
   content_folders: {},
+  library_folders: {},
+  library_folder_items: {},
   custom_fonts: {},
   custom_shaders: {},
   brand_kits: {},
@@ -226,6 +228,8 @@ const REFS = {
   canva_links: { content_id: 'content', design_id: 'external' },
   content_requests: { form_id: 'request_forms', content_id: 'content', submission_id: 'submissions' },
   request_forms: { folder_id: 'content_folders' },
+  // #796: item_id names a widget, playlist or schedule depending on `kind` (folder ids are declared FKs).
+  library_folder_items: { item_id: '*' },
   playlists: { default_zone_id: 'layout_zones' },
   playlist_items: { experiment_id: 'experiments' },
   corporate_mandates: { target_id: '*' },
