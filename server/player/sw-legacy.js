@@ -18,7 +18,7 @@ var __async = (__this, __arguments, generator) => {
     step((generator = generator.apply(__this, __arguments)).next());
   });
 };
-const CACHE_NAME = "rd-player-v32";
+const CACHE_NAME = "rd-player-v33";
 const CONTENT_CACHE = "rd-content-v1";
 const SITE_CACHE_STORE = "rd-site-cache-v1";
 const SITE_CACHE_KEY = "/__st_site_cache__";
@@ -407,6 +407,7 @@ function handleContent(request) {
       const served = respondFromBlob(cached, range);
       if (served) return served;
     }
+    if (request.headers.get("x-st-cache-only")) return new Response(null, { status: 504, statusText: "Not cached" });
     yield loadSiteCache();
     const siteEntry = siteEntryFor(request.url);
     if (siteEntry && siteEntry.size <= SITE_INLINE_MAX_BYTES) {

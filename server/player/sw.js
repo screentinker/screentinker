@@ -31,10 +31,12 @@
 // v31: chunked downloads are no longer joined into a second copy (twice the quota, which an LG webOS
 // panel did not have), cached media is served by Blob.slice, and the page can ask how offline-ready
 // it is (st-cache-status). Bumped so warm players take the new shell.
-// v32: the shell's network-first fetch gives up on a silent network after 8s and serves the cached
+// v32: slides ask the player for their photos and clips from this cache (index.html answerSlideMedia),
+// with X-ST-Cache-Only so a miss is a quick 504 instead of a download into the page's memory.
+// v33: the shell's network-first fetch gives up on a silent network after 8s and serves the cached
 // shell, so a panel that boots with its link up and its WAN down comes up from cache instead of
 // sitting dark through the TV's TCP timeout. Bumped so warm players take the new worker.
-const CACHE_NAME = 'rd-player-v32';
+const CACHE_NAME = 'rd-player-v33';
 // Content lives in its own cache so the shell can be re-versioned (the activate handler deletes
 // every cache that is not CACHE_NAME) WITHOUT throwing away megabytes of media that are still
 // perfectly valid. Rolling the shell used to mean a player re-downloaded its entire playlist.
@@ -564,6 +566,12 @@ async function handleContent(request) {
     // Unsatisfiable against the cached copy: fall through to the network rather than inventing a
     // 416 that might be wrong if the cached copy is somehow stale.
   }
+  /*
+   * A slide asking for its media (index.html answerSlideMedia) wants what is HELD, nothing else: a
+   * miss fetched from the network would pull a whole video into the page's memory just to hand it
+   * to a frame that is already streaming it. Answer the miss at once.
+   */
+  if (request.headers.get('x-st-cache-only')) return new Response(null, { status: 504, statusText: 'Not cached' });
 
   // 3.0: a miss the site's LAN cache can fill. Bounded to what is quick to pull across a LAN in one
   // go; a bigger asset streams from the origin this time while the prefetch fills it from the box.

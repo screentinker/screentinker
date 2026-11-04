@@ -173,7 +173,7 @@ test('an image renders a reference, never the bytes', () => {
     template: { elements: [{ slot: 'photo', kind: 'image', box: { x: 0, y: 0, w: 50, h: 50 },
       content_id: 'c-1' }] }, fields: {},
   }, { resolveImage: (id) => (id === 'c-1' ? '/uploads/content/abc.jpg' : null) });
-  assert.match(html, /<img src="\/uploads\/content\/abc\.jpg"/);
+  assert.match(html, /<img(?: data-st-cid="c-1")? src="\/uploads\/content\/abc\.jpg"/);
   assert.ok(!html.includes('base64'), 'a slide must never inline image bytes');
 });
 
@@ -228,7 +228,7 @@ test('a background photo renders under the elements, from a content reference', 
     fields: { h: 'Over a photo' },
   }, { resolveImage: (id) => (id === 'c1' ? '/uploads/content/sky.jpg' : null) });
 
-  assert.match(html, /<div class="bg" style="background-image:url\(\/uploads\/content\/sky\.jpg\)">/);
+  assert.match(html, /<div class="bg"(?: data-st-cid="c1")? style="background-image:url\(\/uploads\/content\/sky\.jpg\)">/);
   // Order matters: the photo must be emitted BEFORE the elements or it paints over the words.
   assert.ok(html.indexOf('class="bg"') < html.indexOf('Over a photo'), 'the photo is painted over the text');
   assert.match(html, /background-size:cover/);

@@ -15,5 +15,6 @@
  *
  *   1  12-hour clocks showed 12 o'clock as "00" in 24-hour locales (lib/hour-cycle.js)
  *   2  clocks shrink to fit their zone instead of wrapping; slide widgets can fill their zone
+ *   3  slides mark their photos and clips (data-st-cid) and ask the web player for cached copies
  */
-module.exports = 2;
+module.exports = 3;

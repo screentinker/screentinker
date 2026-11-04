@@ -25,7 +25,7 @@
   immediate but with the WAN down behind a live router is the TV's TCP timeout - a minute or more
   of black screen, or the browser's own "check network connection" page. The worker now gives the
   network 8 s and then serves the cached shell when it has one (and still waits the network out
-  when it has nothing to fall back on). Shell cache bumped to v32.
+  when it has nothing to fall back on). Shell cache bumped to v33.
 
 ## 3.1.2
 

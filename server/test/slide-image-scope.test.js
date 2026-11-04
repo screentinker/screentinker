@@ -69,7 +69,7 @@ const render = async (id) => (await fetch(`${base}/api/widgets/${id}/render`)).t
 test('a slide shows a photo from its own workspace', async () => {
   seedSlide('w-own', 'ws-a', 'c-ours');
   const html = await render('w-own');
-  assert.match(html, /<img src="\/uploads\/content\/ours\.jpg"/);
+  assert.match(html, /<img(?: data-st-cid="c-ours")? src="\/uploads\/content\/ours\.jpg"/);
   assert.match(html, /Kenosha North/);
 });
 
