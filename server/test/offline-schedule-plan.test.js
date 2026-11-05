@@ -157,3 +157,25 @@ test('a device without offline.schedule_plan receives a byte-identical normal pa
     io.close();
   }
 });
+
+test('capable devices receive a normal gap state, while a corporate mandate explicitly clears plans', () => {
+  const f = fixture.build(db);
+  const io = new Server(http.createServer());
+  setupDeviceSocket(io);
+  const enablePlan = (id) => {
+    const caps = JSON.parse(db.prepare('SELECT capabilities FROM devices WHERE id = ?').get(id).capabilities || '[]');
+    db.prepare('UPDATE devices SET capabilities = ? WHERE id = ?').run(JSON.stringify([...caps, 'offline.schedule_plan']), id);
+  };
+  try {
+    enablePlan(f.devices.own);
+    const own = setupDeviceSocket.buildPlaylistPayloadUnchecked(f.devices.own);
+    assert.ok(own.offline_plan && Array.isArray(own.offline_plan.states));
+    assert.ok(own.offline_plan.states.some((state) => state.schedule_id === null), 'a schedule gap carries the ordinary unscheduled payload');
+
+    enablePlan(f.devices.mandated);
+    const mandated = setupDeviceSocket.buildPlaylistPayloadUnchecked(f.devices.mandated);
+    assert.equal(mandated.offline_plan, null, 'a mandate clears any stale offline schedule plan');
+  } finally {
+    io.close();
+  }
+});
