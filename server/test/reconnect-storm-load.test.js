@@ -47,10 +47,6 @@ before(async () => {
       ...process.env, DATA_DIR, SELF_HOSTED: 'true', PORT: String(PORT), NODE_ENV: 'test',
       HEARTBEAT_TIMEOUT: '1500', HEARTBEAT_INTERVAL: '500',
       STATUS_LOG_FLUSH_MS: '300',
-      // The assertion below measures this churn window. A 1s sampler can
-      // otherwise report the preceding test's flush/migration window when the
-      // reconnect burst completes in tens of milliseconds.
-      LAG_SAMPLE_INTERVAL_MS: '25', LAG_RESOLUTION_MS: '5',
       RECONNECT_HARD_CEILING: '8', RECONNECT_WINDOW_MS: '5000', RECONNECT_BASE_MAX: '3',
     },
     stdio: ['ignore', logFd, logFd],
