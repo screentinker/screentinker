@@ -1267,9 +1267,15 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
         if (normal.source === 'corporate') {
           assembled.offline_plan = null;
         } else {
-          const plan = planBuilder.build({
-          schedules,
-          timezone: zone,
+          const planKey = JSON.stringify({
+            device: deviceId, zone,
+            normal: { playlist_id: normal.playlist_id, source: normal.source, layout_id: normal.layout_id },
+            schedules: schedules.map((s) => [s.id, s.playlist_id, s.layout_id, s.start_time, s.end_time, s.recurrence, s.recurrence_end, s.priority, s.enabled]),
+          });
+          const plan = planBuilder.buildCached({
+            key: planKey,
+            schedules,
+            timezone: zone,
           // This is the live scheduler verdict used by evaluateSchedules and
           // device-simulate, including its inclusive end-minute and malformed
           // recurrence compatibility behavior.
@@ -1294,7 +1300,15 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
             }),
             };
           }
-          assembled.offline_plan = { ...plan, states: Object.values(states) };
+          const stateRows = Object.values(states);
+          // A plan is an offline recovery mechanism, never permission to turn
+          // one payload push into an unbounded socket/database response.
+          if (stateRows.length > 128 || Buffer.byteLength(JSON.stringify({ ...plan, states: stateRows })) > 2 * 1024 * 1024) {
+            console.warn(`[scheduler] offline plan for ${deviceId} exceeds bounded state/size limits`);
+            assembled.offline_plan = null;
+          } else {
+            assembled.offline_plan = { ...plan, states: stateRows };
+          }
         }
       } else {
         // This is the only successful path that explicitly removes a saved

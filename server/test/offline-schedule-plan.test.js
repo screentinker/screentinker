@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { build } = require('../lib/offline-schedule-plan');
+const { build, buildCached, clearCache } = require('../lib/offline-schedule-plan');
 const { makeClock } = require('../lib/local-clock');
 
 const H = 60 * 60 * 1000;
@@ -61,6 +61,21 @@ test('an incomplete accelerated picker is rejected instead of silently changing 
     () => build({ schedules: [], pickAt() {}, now: at(0), horizonMs: H }),
     /requires pick, or pickAt with a clock/,
   );
+});
+
+test('an unchanged device plan is cached across reconnect payloads and clipped at now', () => {
+  clearCache();
+  let calls = 0;
+  const options = {
+    key: 'device-a/revision-1', schedules: [{ id: 'a', playlist_id: 'p', start: 9 * 60, end: 10 * 60 }], timezone: 'UTC', horizonMs: 2 * H,
+    pick(rows, now) { calls++; return pick(rows, now); },
+  };
+  const first = buildCached({ ...options, now: at(9, 30) });
+  const afterFirst = calls;
+  const second = buildCached({ ...options, now: at(9, 45) });
+  assert.equal(calls, afterFirst, 'the second payload reuses the hour-aligned timeline');
+  assert.equal(second.intervals[0].start_utc_ms, at(9, 45), 'the cached source is clipped, never replayed from the hour');
+  assert.equal(first.intervals[0].schedule_id, second.intervals[0].schedule_id);
 });
 
 test('offline plan uses the live scheduler recurrence verdict, including its inclusive end minute', () => {

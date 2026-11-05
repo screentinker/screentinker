@@ -9,6 +9,8 @@
 const MINUTE_MS = 60 * 1000;
 const DEFAULT_HORIZON_MS = 14 * 24 * 60 * MINUTE_MS;
 const MAX_INTERVALS = 1024;
+const CACHE_LIMIT = 128;
+const cache = new Map();
 
 function nextMinute(ms) {
   return Math.floor(ms / MINUTE_MS + 1) * MINUTE_MS;
@@ -73,4 +75,29 @@ function build({ schedules, timezone, now = Date.now(), horizonMs = DEFAULT_HORI
   };
 }
 
-module.exports = { MINUTE_MS, DEFAULT_HORIZON_MS, MAX_INTERVALS, build };
+/*
+ * Reconnects and publish fan-out can ask for a plan repeatedly while its
+ * schedule inputs are unchanged. Cache an hour-aligned source timeline and
+ * clip it to the current instant. The cache never changes a schedule verdict:
+ * callers include every resolver/schedule revision in `key`, and the first
+ * interval is clipped rather than replayed from the hour boundary.
+ */
+function buildCached({ key, now = Date.now(), ...options }) {
+  const hour = Math.floor(Number(now) / (60 * MINUTE_MS)) * 60 * MINUTE_MS;
+  const cacheKey = `${String(key)}|${hour}`;
+  let source = cache.get(cacheKey);
+  if (!source) {
+    source = build({ ...options, now: hour, horizonMs: (Number(options.horizonMs) || DEFAULT_HORIZON_MS) + (60 * MINUTE_MS) });
+    cache.set(cacheKey, source);
+    if (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value);
+  }
+  const start = Number(now);
+  const intervals = source.intervals.filter((i) => i.end_utc_ms > start).map((i) => ({
+    ...i, start_utc_ms: Math.max(start, i.start_utc_ms),
+  }));
+  return { ...source, generated_at_utc_ms: start, valid_until_utc_ms: intervals.length ? intervals[intervals.length - 1].end_utc_ms : start, intervals };
+}
+
+function clearCache() { cache.clear(); }
+
+module.exports = { MINUTE_MS, DEFAULT_HORIZON_MS, MAX_INTERVALS, build, buildCached, clearCache };
