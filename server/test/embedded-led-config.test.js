@@ -48,7 +48,7 @@ test('the header carries every setting, the frame size, and a rev that moves onl
   const kv = parseHeader(a);
   assert.equal(kv.v, '1');
   assert.match(kv.rev, /^[0-9a-f]{8}$/);
-  assert.equal(kv.b, '180');
+  assert.equal(kv.b, '255');
   assert.equal(kv.o, 'GRB');
   assert.equal(kv.w, '64');
   assert.equal(kv.h, '8');
@@ -81,7 +81,7 @@ test('an LED screen gets X-ST-Led-Config on its render answer; an e-paper panel 
   const kv = parseHeader(r1.headers.get('x-st-led-config'));
   assert.equal(kv.w, '64');
   assert.equal(kv.h, '8');
-  assert.equal(kv.b, '180', 'defaults until the operator changes something');
+  assert.equal(kv.b, '255', 'defaults until the operator changes something');
   const r2 = await poll(base, epd);
   assert.equal(r2.headers.get('x-st-led-config'), null);
 });
@@ -120,7 +120,7 @@ test('dashboard API: read, partial update, validation, reset of the learned limi
   let r = await api(base, 'GET', p.id);
   assert.equal(r.status, 200);
   assert.equal(r.body.supported, true);
-  assert.equal(r.body.config.brightness, 180);
+  assert.equal(r.body.config.brightness, 255);
   r = await api(base, 'PUT', p.id, { brightness: 40, power_limit_ma: 2500 });
   assert.equal(r.status, 200);
   assert.equal(r.body.config.brightness, 40);

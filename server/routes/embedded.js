@@ -1414,8 +1414,14 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
   // and never to a dashboard preview, which shows the still frame as before.
   const animCap = isPreview ? null : animation.animationCapability(req.headers, profile);
   // Two sources: an animated GIF, or a slide with motion (its entrance animations, captured).
+  // ⚠️ A slide's key carries a hash of the config it is RENDERED from (the published snapshot). The
+  // edit rev in the key is the LIVE widget's, so an edit before a republish used to render the old
+  // snapshot under the new rev, and the republish then hit that stale entry.
   const animKey = (animCap && (slideHasMotion(item) || (!(item && (item.widget_id || item.widget_type)) && animation.isGifSource(content))))
-    ? animation.capabilityKey(animCap) : null;
+    ? animation.capabilityKey(animCap) + (slideHasMotion(item)
+      ? ':' + require('crypto').createHash('sha256').update(String(typeof item.widget_config === 'string' ? item.widget_config : JSON.stringify(item.widget_config || {}))).digest('hex').slice(0, 12)
+      : '')
+    : null;
 
   let key = cacheKey(
     device.id,

@@ -45,11 +45,12 @@ const ORIGINS = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
 const LAYOUT_FIELDS = ['color_order', 'wiring', 'axis', 'origin'];
 const RESET_REASONS = ['poweron', 'brownout', 'panic', 'watchdog', 'software', 'deepsleep', 'external', 'unknown'];
 
-// Brightness 180 was the firmware's built-in default; keep it as the default ceiling so a panel's
-// look does not change when this ships. The power limit default is the Seeed LED driver board's
-// rated 5 V output (3 A), the most common way these are wired.
+// Full brightness by default: the power limiter (power_limit_ma) is what keeps a wall inside its
+// supply, dimming only the frames that would draw too much, so there is no reason to hold every
+// frame back. (The firmware used to default to 180 to protect the supply; that was the only guard.)
+// The power limit default is the Seeed LED driver board's rated 5 V output (3 A).
 const DEFAULTS = Object.freeze({
-  brightness: 180,
+  brightness: 255,
   color_order: 'GRB',
   wiring: 'serpentine',
   axis: 'horizontal',
