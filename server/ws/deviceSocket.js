@@ -53,6 +53,25 @@ const playerTermination = require('../lib/mesh/player-termination'); // scale-ou
 // last_heartbeat is older than heartbeatTimeout get marked offline by the
 // next checker sweep within heartbeatInterval).
 const pendingOfflines = new Map();
+// Nested offline states are deterministic for resolver inputs plus a schedule
+// revision. Keep a bounded per-device cache so reconnect bursts do not rebuild
+// every future playlist/layout payload. Content revisions live in resolverInputs
+// and therefore naturally invalidate this key.
+const offlineNestedStateCache = new Map();
+const OFFLINE_NESTED_STATE_CACHE_LIMIT = 1024;
+function offlineStatePayload(payload) {
+  const allowed = ['assignments', 'layout', 'orientation', 'background_color', 'playback_order', 'default_content'];
+  const out = {};
+  for (const key of allowed) if (Object.prototype.hasOwnProperty.call(payload, key)) out[key] = payload[key];
+  return out;
+}
+function cachedOfflineState(key, build) {
+  if (offlineNestedStateCache.has(key)) return offlineNestedStateCache.get(key);
+  const value = build();
+  offlineNestedStateCache.set(key, value);
+  if (offlineNestedStateCache.size > OFFLINE_NESTED_STATE_CACHE_LIMIT) offlineNestedStateCache.delete(offlineNestedStateCache.keys().next().value);
+  return value;
+}
 const OFFLINE_DEBOUNCE_MS = 5000;
 
 // #146: socket ids we force-disconnected via evictPriorSocket because a NEWER socket
@@ -1289,32 +1308,41 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
           pickAt: (rows, local) => rows.find((schedule) => scheduler.isScheduleActiveAt(schedule, local)) || null,
           clock: makeClock(zone),
           });
-          const states = {};
+          const requestedStates = new Map();
           for (const interval of plan.intervals) {
-          const schedule = interval.schedule_id ? schedules.find((s) => s.id === interval.schedule_id) : null;
-          const stateKey = schedule ? `schedule:${schedule.id}` : 'default';
-          if (states[stateKey]) continue;
-          const resolved = simulator.resolveFromInputs(inputs, schedule
-            ? { playlist_id: schedule.playlist_id || null, layout_id: schedule.layout_id || null }
-            : { playlist_id: null, layout_id: null });
-            states[stateKey] = {
-            schedule_id: schedule ? schedule.id : null,
-            playlist_id: resolved.playlist_id || null,
-            layout_id: resolved.layout_id || null,
-            payload: buildPlaylistPayloadUnchecked(deviceId, {
-              resolved: { ...resolved, scheduled_layout_id: schedule ? schedule.layout_id || null : null },
-              offlinePlan: false,
-            }),
-            };
+            const schedule = interval.schedule_id ? schedules.find((s) => s.id === interval.schedule_id) : null;
+            const stateKey = schedule ? `schedule:${schedule.id}` : 'default';
+            if (!requestedStates.has(stateKey)) requestedStates.set(stateKey, schedule);
           }
-          const stateRows = Object.values(states);
           // A plan is an offline recovery mechanism, never permission to turn
           // one payload push into an unbounded socket/database response.
-          if (stateRows.length > 128 || Buffer.byteLength(JSON.stringify({ ...plan, states: stateRows })) > 2 * 1024 * 1024) {
+          if (requestedStates.size > 128) {
             console.warn(`[scheduler] offline plan for ${deviceId} exceeds bounded state/size limits`);
             assembled.offline_plan = null;
           } else {
-            assembled.offline_plan = { ...plan, states: stateRows };
+            const inputRevision = crypto.createHash('sha256').update(JSON.stringify(inputs)).digest('hex');
+            const stateRows = [];
+            for (const [stateKey, schedule] of requestedStates) {
+              const cacheKey = `${planKey}|${inputRevision}|${stateKey}`;
+              stateRows.push(cachedOfflineState(cacheKey, () => {
+                const resolved = simulator.resolveFromInputs(inputs, schedule
+                  ? { playlist_id: schedule.playlist_id || null, layout_id: schedule.layout_id || null }
+                  : { playlist_id: null, layout_id: null });
+                return {
+                  schedule_id: schedule ? schedule.id : null,
+                  playlist_id: resolved.playlist_id || null,
+                  layout_id: resolved.layout_id || null,
+                  payload: offlineStatePayload(buildPlaylistPayloadUnchecked(deviceId, {
+                    resolved: { ...resolved, scheduled_layout_id: schedule ? schedule.layout_id || null : null },
+                    offlinePlan: false,
+                  })),
+                };
+              }));
+            }
+            if (Buffer.byteLength(JSON.stringify({ ...plan, states: stateRows })) > 2 * 1024 * 1024) {
+              console.warn(`[scheduler] offline plan for ${deviceId} exceeds bounded size limit`);
+              assembled.offline_plan = null;
+            } else assembled.offline_plan = { ...plan, states: stateRows };
           }
         }
       } else {
