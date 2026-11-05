@@ -35,7 +35,7 @@ test('offline schedule plan coalesces unchanged minutes and never carries conten
 });
 
 test('14-day planning uses pre-resolved local parts instead of the blocking Date/Intl picker', () => {
-  const schedules = [{ id: 'daily', playlist_id: 'p', start: 9 * 60, end: 17 * 60 }];
+  const schedules = [{ id: 'daily', playlist_id: 'p', start: 9 * 60, end: 17 * 60, start_time: '2026-10-25T09:00:00', end_time: '2026-10-25T17:00:00' }];
   let fastCalls = 0;
   const plan = build({
     schedules,
@@ -50,7 +50,7 @@ test('14-day planning uses pre-resolved local parts instead of the blocking Date
       return rows.find((s) => local.min >= s.start && local.min < s.end) || null;
     },
   });
-  assert.ok(fastCalls > 20_000, 'the full minute-granular horizon was evaluated');
+  assert.ok(fastCalls < 100, 'only schedule transition candidates are evaluated, not every horizon minute');
   assert.ok(plan.intervals.some((x) => x.schedule_id === 'daily'));
   assert.ok(plan.intervals.some((x) => x.schedule_id === null));
   assert.equal(plan.valid_until_utc_ms - plan.generated_at_utc_ms, 14 * 24 * H);

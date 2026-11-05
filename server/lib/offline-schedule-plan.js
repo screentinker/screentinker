@@ -21,6 +21,54 @@ function stateKey(schedule) {
   return String(schedule.id || '') + '|' + String(schedule.playlist_id || '') + '|' + String(schedule.layout_id || '');
 }
 
+function hmMinute(stamp) {
+  const m = /T(\d{2}):(\d{2})/.exec(String(stamp || ''));
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+function sameLocal(parts, y, mo, day, min) {
+  return parts && parts.y === y && parts.mo === mo && parts.day === day && parts.min === min;
+}
+
+// `makeClock` exposes offsetAt(), letting us turn a local schedule edge back
+// into one or two UTC instants without walking every minute. A repeated DST
+// hour intentionally yields both candidates; a skipped local minute yields
+// none, matching what the live UTC->local scheduler can observe.
+function utcCandidatesForLocal(clock, y, mo, day, min) {
+  if (!clock || typeof clock.offsetAt !== 'function') return [];
+  const naive = Date.UTC(y, mo - 1, day, Math.floor(min / 60), min % 60);
+  const candidates = new Set();
+  for (const delta of [-12, -3, 0, 3, 12]) {
+    const probe = naive + delta * 60 * MINUTE_MS;
+    const candidate = naive - clock.offsetAt(probe);
+    if (sameLocal(clock(candidate), y, mo, day, min)) candidates.add(candidate);
+  }
+  return [...candidates];
+}
+
+function transitionCandidates(schedules, clock, start, end) {
+  const first = clock(start);
+  if (!first) return [];
+  const edges = new Set([0]);
+  for (const schedule of schedules) {
+    const a = hmMinute(schedule.start_time), b = hmMinute(schedule.end_time);
+    if (a !== null) edges.add(a);
+    if (b !== null) edges.add((b + 1) % 1440); // live end minute is inclusive
+  }
+  const out = new Set([start, end]);
+  // Horizon is capped at 14 days, so this is bounded by days × schedule edges,
+  // not by 20,160 minute evaluations.
+  for (let i = 0; i <= 15; i++) {
+    const d = new Date(Date.UTC(first.y, first.mo - 1, first.day + i));
+    for (const min of edges) {
+      for (const candidate of utcCandidatesForLocal(clock, d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), min)) {
+        if (candidate > start && candidate < end) out.add(candidate);
+      }
+    }
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
 /**
  * Produce half-open UTC intervals [start_utc_ms, end_utc_ms).
  *
@@ -45,7 +93,10 @@ function build({ schedules, timezone, now = Date.now(), horizonMs = DEFAULT_HORI
   let current = select(cursor) || null;
   let key = stateKey(current);
 
-  for (let boundary = nextMinute(cursor); boundary < end; boundary += MINUTE_MS) {
+  const boundaries = useLocalParts ? transitionCandidates(candidates, clock, start, end)
+    : (() => { const out = []; for (let boundary = nextMinute(cursor); boundary < end; boundary += MINUTE_MS) out.push(boundary); return out; })();
+  for (const boundary of boundaries) {
+    if (boundary <= start || boundary >= end) continue;
     const next = select(boundary) || null;
     const nextKey = stateKey(next);
     if (nextKey !== key) {
