@@ -6,6 +6,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { spawnSync } = require('node:child_process');
+const hasFfmpeg = !spawnSync('ffmpeg', ['-version']).error && !spawnSync('ffprobe', ['-version']).error;
 
 process.env.DATA_DIR = path.join(os.tmpdir(), 'st-sssp3-fit-source-' + crypto.randomBytes(4).toString('hex'));
 process.env.NODE_ENV = 'test';
@@ -34,6 +36,28 @@ test('ffmpeg accepts only the expected local media container family', () => {
   assert.deepEqual(image.slice(image.indexOf('-f'), image.indexOf('-f') + 2), ['-f', 'image2']);
   assert.doesNotMatch(image.join(' '), /format=yuv420p/);
   assert.match(ffmpegArgs('/tmp/input.jpg', '/tmp/output.jpg', { source_file: 'input.jpg', output_ext: '.jpg', fit: 'contain', width: 640, height: 360 }).join(' '), /-q:v 2/);
+});
+
+test('a transparent WebP rendition retains an alpha-capable pixel format', { skip: !hasFfmpeg }, () => {
+  // Run the actual generated command: checking an argument list alone cannot
+  // prove that an encoder did not silently flatten alpha.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'st-webp-alpha-'));
+  const source = path.join(dir, 'source.png');
+  const output = path.join(dir, 'output.webp');
+  try {
+    // Construct pixels with both opaque and fully-transparent columns.  The
+    // colour source's "@alpha" spelling is not sufficient here: some ffmpeg
+    // versions emit an RGBA frame whose alpha plane is nevertheless opaque.
+    let result = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'nullsrc=s=4x4', '-vf', "format=rgba,geq=r='255':g='0':b='0':a='if(lt(X,2),255,0)'", '-frames:v', '1', source], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    result = spawnSync('ffmpeg', ffmpegArgs(source, output, { source_file: 'source.png', output_ext: '.webp', fit: 'contain', width: 8, height: 8 }), { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    result = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=pix_fmt', '-of', 'default=nw=1', output], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /pix_fmt=yuva/, 'transparent WebP must not be encoded as opaque yuv420p');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 test('the public uploads mount cannot create renditions', () => {
   const source = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');

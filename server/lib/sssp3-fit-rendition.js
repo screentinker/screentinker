@@ -233,8 +233,12 @@ function ffmpegArgs(src, tmp, row) {
   // PNG and WebP may carry alpha; forcing yuv420p destroys it before either
   // encoder sees the frame. Video output remains explicitly yuv420p for SSSP3.
   const imageFilter = (row.output_ext === '.png' || row.output_ext === '.webp') ? vf(row.fit, row.width, row.height).replace(',format=yuv420p', '') : vf(row.fit, row.width, row.height);
+  // Do not leave alpha selection to the encoder default: libwebp otherwise
+  // commonly chooses opaque yuv420p even when the decoded source is RGBA.
+  const imagePixelFormat = row.output_ext === '.webp' ? ['-pix_fmt', 'yuva420p']
+    : (row.output_ext === '.png' ? ['-pix_fmt', 'rgba'] : []);
   const quality = (row.output_ext === '.jpg' || row.output_ext === '.jpeg') ? ['-q:v', '2'] : [];
-  return common.concat(['-frames:v', '1', '-vf', imageFilter, ...quality, tmp]);
+  return common.concat(['-frames:v', '1', '-vf', imageFilter, ...imagePixelFormat, ...quality, tmp]);
 }
 
 function encode(job) {
