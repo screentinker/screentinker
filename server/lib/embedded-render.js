@@ -775,7 +775,7 @@ async function captureAnimationFrames(html, profile, { fps = 10, maxMs = SLIDE_C
       // Tiny LED canvases (a matrix is often 8 or 16 px tall): at 5-7 px per glyph, anti-aliased
       // letters run into each other, so open up the tracking; and a text that comes to rest half a
       // pixel off splits its 1 px stems into two dim columns, so thicken the strokes a little.
-      const ledTracking = profile.height <= 32 ? '<style>.stage, .stage * { letter-spacing: 0.12em !important; -webkit-text-stroke: 0.2px currentColor; }</style>' : '';
+      const ledTracking = profile.height <= 32 ? '<style>.stage, .stage * { letter-spacing: 0.12em !important; text-indent: 0.12em; -webkit-text-stroke: 0.2px currentColor; }</style>' : '';
       if (/<head[^>]*>/i.test(finalHtml)) finalHtml = finalHtml.replace(/(<head[^>]*>)/i, `$1\n<base href="${baseUrl}/">${ledTracking}`);
       else finalHtml = `<!DOCTYPE html><html><head><base href="${baseUrl}/"></head><body>${finalHtml}</body></html>`;
       await page.setContent(finalHtml, { waitUntil: 'load', timeout: 8000 });
