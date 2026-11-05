@@ -58,6 +58,8 @@ export default {
   // LED screen settings (components/led-settings.js)
   'led.section_title': "Réglages LED",
   'led.section_tip': "Luminosité, alimentation et câblage de cet écran LED. Il applique les changements à sa prochaine actualisation.",
+  'led.size': "Taille (LED)",
+  'led.size_hint': "Colonnes × rangées de tout le mur, tous les panneaux ensemble ({max} LED au maximum). L'écran l'applique à sa prochaine actualisation.",
   'led.brightness': "Luminosité",
   'led.power_limit': "Limite de courant (A)",
   'led.power_limit_hint': "Ce que l'alimentation des LED peut fournir. Les images lumineuses sont atténuées juste assez pour rester en dessous. 0 = aucune limite.",

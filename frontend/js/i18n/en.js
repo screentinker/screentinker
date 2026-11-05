@@ -272,6 +272,8 @@ export default {
   // LED screen settings (components/led-settings.js)
   'led.section_title': "LED settings",
   'led.section_tip': "Brightness, power and wiring of this LED screen. It picks changes up on its next refresh.",
+  'led.size': "Size (LEDs)",
+  'led.size_hint': "Columns × rows of the whole wall, all panels together (at most {max} LEDs). The screen picks it up on its next refresh.",
   'led.brightness': "Brightness",
   'led.power_limit': "Power limit (A)",
   'led.power_limit_hint': "What the LED power supply can deliver. Bright frames are dimmed just enough to stay under it. 0 = no limit.",

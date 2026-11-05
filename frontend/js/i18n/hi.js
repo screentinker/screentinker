@@ -80,6 +80,8 @@ export default {
   // LED screen settings (components/led-settings.js)
   'led.section_title': "LED सेटिंग्स",
   'led.section_tip': "इस LED स्क्रीन की चमक, बिजली और वायरिंग। बदलाव अगली रीफ़्रेश पर लागू होते हैं।",
+  'led.size': "आकार (LED)",
+  'led.size_hint': "पूरी दीवार के कॉलम × पंक्तियाँ, सभी पैनल मिलाकर (अधिकतम {max} LED)। स्क्रीन अगली रीफ़्रेश पर इसे लागू करेगी।",
   'led.brightness': "चमक",
   'led.power_limit': "करंट सीमा (A)",
   'led.power_limit_hint': "LED पावर सप्लाई जितना दे सकती है। चमकीले फ़्रेम बस इतने धीमे किए जाते हैं कि सीमा से नीचे रहें। 0 = कोई सीमा नहीं।",

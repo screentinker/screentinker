@@ -52,6 +52,15 @@ export function mountLedSettings(host, device) {
     const dis = editable ? '' : 'disabled';
     host.innerHTML = `
       <div style="display:grid;grid-template-columns:150px 1fr;gap:10px 14px;align-items:center;font-size:13px;max-width:520px">
+        <label for="ledWidth">${t('led.size')}</label>
+        <div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="number" id="ledWidth" class="input" min="1" max="${s.size_limits.max_side}" step="1" value="${s.size.width || ''}" ${dis} style="width:6em;background:var(--bg-input)">
+            <span>×</span>
+            <input type="number" id="ledHeight" class="input" min="1" max="${s.size_limits.max_side}" step="1" value="${s.size.height || ''}" ${dis} style="width:6em;background:var(--bg-input)">
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t('led.size_hint', { max: s.size_limits.max_pixels })}</div>
+        </div>
         <label for="ledBrightness">${t('led.brightness')}</label>
         <div style="display:flex;gap:8px;align-items:center">
           <input type="range" id="ledBrightness" min="0" max="255" value="${c.brightness}" ${dis} style="flex:1">
@@ -103,6 +112,9 @@ export function mountLedSettings(host, device) {
         power_limit_ma: Number.isFinite(limitA) ? Math.round(limitA * 1000) : s.config.power_limit_ma,
         auto_protect: host.querySelector('#ledAutoProtect').checked,
       };
+      const wv = Number(host.querySelector('#ledWidth').value);
+      const hv = Number(host.querySelector('#ledHeight').value);
+      if (wv !== s.size.width || hv !== s.size.height) { body.width = wv; body.height = hv; }
       // Colour order and wiring go only when changed here (or already set here): until then the
       // wall keeps what it was set up with locally, which is what these fields show.
       const layoutSet = new Set(s.layout_set || []);

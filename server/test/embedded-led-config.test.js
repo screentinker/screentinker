@@ -168,3 +168,21 @@ test('wiring and colour order are not sent until an operator sets them, so a wal
   assert.equal(kv.ax, undefined, 'the axis is still the wall\'s own');
   assert.equal(kv.b, '50');
 });
+
+test('dashboard API: the matrix size is set here, stored in the screen profile, and sent to the wall', async () => {
+  const base = await h.ready();
+  const p = await h.mkPanel(LED_PROFILE, { w: 64, h: 8 });
+  let r = await api(base, 'GET', p.id);
+  assert.deepEqual(r.body.size, { width: 64, height: 8 });
+  r = await api(base, 'PUT', p.id, { width: 32, height: 8 });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.size, { width: 32, height: 8 });
+  const row = h.db.prepare('SELECT screen_profile, screen_width, screen_height FROM devices WHERE id = ?').get(p.id);
+  assert.equal(JSON.parse(row.screen_profile).width, 32);
+  assert.equal(row.screen_width, 32);
+  const res = await poll(base, p);
+  assert.equal(res.headers.get('x-st-screen-width'), '32');
+  assert.equal(parseHeader(res.headers.get('x-st-led-config')).w, '32');
+  assert.equal((await api(base, 'PUT', p.id, { width: 0 })).status, 400);
+  assert.equal((await api(base, 'PUT', p.id, { width: 512, height: 512 })).status, 400, 'over the LED pixel cap');
+});

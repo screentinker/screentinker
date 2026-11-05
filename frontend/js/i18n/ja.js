@@ -65,6 +65,8 @@ export default {
   // LED screen settings (components/led-settings.js)
   'led.section_title': "LED 設定",
   'led.section_tip': "この LED スクリーンの明るさ、電源、配線。変更は次回の更新時に反映されます。",
+  'led.size': "サイズ (LED)",
+  'led.size_hint': "全パネルを合わせた壁全体の列 × 行 (最大 {max} 個の LED)。次回の更新時に反映されます。",
   'led.brightness': "明るさ",
   'led.power_limit': "電流上限 (A)",
   'led.power_limit_hint': "LED 電源が供給できる電流です。明るいフレームは上限を超えない程度にだけ暗くします。0 = 上限なし。",

@@ -162,7 +162,8 @@ function parseState(raw) {
     learned_limit_ma: intIn(kv.lpl, 0, POWER_LIMIT_MAX_MA),
     brownouts: intIn(kv.bo, 0, 1e6),
     frame_estimate_ma: intIn(kv.est, 0, 1e6),
-    reset_reason: oneOf(kv.rr, RESET_REASONS),
+    // Named reasons, or the raw ESP-IDF number the firmware sends for any other ("rst21").
+    reset_reason: oneOf(kv.rr, RESET_REASONS) || (/^rst\d{1,3}$/.test(kv.rr || '') ? kv.rr : null),
     color_order: oneOf(kv.o, COLOR_ORDERS),
     wiring: oneOf(kv.wir, WIRINGS),
     axis: oneOf(kv.ax, AXES),

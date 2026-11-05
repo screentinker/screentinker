@@ -59,6 +59,8 @@ export default {
   // LED screen settings (components/led-settings.js)
   'led.section_title': "LED-Einstellungen",
   'led.section_tip': "Helligkeit, Stromversorgung und Verkabelung dieses LED-Bildschirms. Änderungen werden bei der nächsten Aktualisierung übernommen.",
+  'led.size': "Größe (LEDs)",
+  'led.size_hint': "Spalten × Zeilen der ganzen Wand, alle Panels zusammen (höchstens {max} LEDs). Der Bildschirm übernimmt sie bei der nächsten Aktualisierung.",
   'led.brightness': "Helligkeit",
   'led.power_limit': "Stromgrenze (A)",
   'led.power_limit_hint': "Was das LED-Netzteil liefern kann. Helle Bilder werden gerade so weit gedimmt, dass sie darunter bleiben. 0 = keine Grenze.",

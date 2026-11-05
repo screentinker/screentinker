@@ -275,6 +275,8 @@ export default {
   // LED screen settings (components/led-settings.js)
   'led.section_title': "Definições de LED",
   'led.section_tip': "Brilho, alimentação e cablagem deste ecrã LED. Aplica as alterações na próxima atualização.",
+  'led.size': "Tamanho (LED)",
+  'led.size_hint': "Colunas × linhas de toda a parede, todos os painéis juntos (no máximo {max} LED). O ecrã aplica-o na próxima atualização.",
   'led.brightness': "Brilho",
   'led.power_limit': "Limite de corrente (A)",
   'led.power_limit_hint': "O que a fonte dos LED consegue fornecer. Os quadros brilhantes são atenuados apenas o suficiente para ficar abaixo. 0 = sem limite.",

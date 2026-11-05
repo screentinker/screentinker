@@ -267,6 +267,8 @@ export default {
   // LED screen settings (components/led-settings.js)
   'led.section_title': "LED-indstillinger",
   'led.section_tip': "Lysstyrke, strøm og ledningsføring for denne LED-skærm. Ændringer slår igennem ved næste opdatering.",
+  'led.size': "Størrelse (LED'er)",
+  'led.size_hint': "Kolonner × rækker for hele væggen, alle paneler samlet (højst {max} LED'er). Skærmen bruger den ved næste opdatering.",
   'led.brightness': "Lysstyrke",
   'led.power_limit': "Strømgrænse (A)",
   'led.power_limit_hint': "Hvad LED-strømforsyningen kan levere. Lyse billeder dæmpes lige nok til at holde sig under. 0 = ingen grænse.",

@@ -70,6 +70,8 @@ export default {
   // LED screen settings (components/led-settings.js)
   'led.section_title': "LED 设置",
   'led.section_tip': "此 LED 屏幕的亮度、电源和布线。更改会在下次刷新时生效。",
+  'led.size': "尺寸 (LED)",
+  'led.size_hint': "整面墙（所有面板合计）的列 × 行（最多 {max} 个 LED）。屏幕会在下次刷新时应用。",
   'led.brightness': "亮度",
   'led.power_limit': "电流上限 (A)",
   'led.power_limit_hint': "LED 电源能提供的电流。较亮的画面只会被调暗到刚好不超过上限。0 = 不限制。",

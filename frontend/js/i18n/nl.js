@@ -65,6 +65,8 @@ export default {
   // LED screen settings (components/led-settings.js)
   'led.section_title': "LED-instellingen",
   'led.section_tip': "Helderheid, voeding en bedrading van dit LED-scherm. Wijzigingen worden bij de volgende verversing toegepast.",
+  'led.size': "Grootte (LED's)",
+  'led.size_hint': "Kolommen × rijen van de hele wand, alle panelen samen (maximaal {max} LED's). Het scherm past dit bij de volgende verversing toe.",
   'led.brightness': "Helderheid",
   'led.power_limit': "Stroomlimiet (A)",
   'led.power_limit_hint': "Wat de LED-voeding kan leveren. Heldere beelden worden net genoeg gedimd om eronder te blijven. 0 = geen limiet.",
