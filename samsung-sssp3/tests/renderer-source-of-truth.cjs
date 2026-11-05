@@ -50,10 +50,13 @@ assert.match(renderer, /function enterRepairMode\(message\)[\s\S]*clearOwnedStat
 assert.match(renderer, /nativeOfflinePlanTick\(\)[\s\S]*config\.paired/, 'offline schedule execution requires a valid pairing');
 assert.equal((renderer.match(/\bvar offlinePlayOpen = null\b/g) || []).length, 1,
   'the upstream offline proof-of-play state must not be shadowed by the old native preamble');
-for (const helper of ['unpair-gate', 'play-order', 'offline-play-queue', 'trigger-resolve', 'media-mute', 'orientation-style', 'wall-geometry', 'player-media-health']) {
+for (const helper of ['schedule-eval', 'unpair-gate', 'play-order', 'offline-play-queue', 'trigger-resolve', 'media-mute', 'orientation-style', 'wall-geometry', 'player-media-health']) {
   assert.ok(fs.existsSync(path.join(output, helper + '.js')), 'source-derived helper is packaged: ' + helper);
   assert.equal(fs.existsSync(path.join(root, 'app', helper + '.js')), false, 'no frozen native helper snapshot remains: ' + helper);
 }
+const scheduleEval = fs.readFileSync(path.join(output, 'schedule-eval.js'), 'utf8');
+assert.match(scheduleEval, /setTimezoneTable/, 'generated evaluator exposes the validated Orsay timezone-table adapter');
+assert.match(scheduleEval, /isItemActiveNow/, 'generated evaluator retains canonical schedule behavior');
 const unpair = fs.readFileSync(path.join(output, 'unpair-gate.js'), 'utf8');
 assert.match(unpair, /function storageKeys\(suffix, linkSuffix\)/, 'generated unpair gate keeps the current link namespace contract');
 fs.rmSync(output, { recursive: true, force: true });

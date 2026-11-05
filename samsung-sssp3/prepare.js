@@ -234,16 +234,37 @@ acorn.parse(generated, { ecmaVersion: 5 });
 fs.writeFileSync(path.join(output, 'renderer-main.js'), generated);
 replaceDocumentOnce(scripts[1].raw, '<script src="native-bridge.js"></script><script>window.__ST_NATIVE_BUILD = "' + build + '"; try { if (window.Common && Common.API && Common.API.Widget) new Common.API.Widget().sendReadyEvent(); } catch (e) { window.__STNative.launcherError = String(e); } try { window.__STNative.init(); window.__STNative.restoreStorage(); window.__STNative.ready = true; } catch (e) { window.__STNative.error = String(e); }</script><script src="renderer-main.js"></script>', 'main renderer replacement');
 fs.writeFileSync(path.join(output, 'index.html'), html);
-function compileBrowserScript(src, dest) {
-  const code = fs.readFileSync(src, 'utf8').split('__ST_BUILD__').join(build);
+function compileBrowserCode(code, dest) {
+  code = code.split('__ST_BUILD__').join(build);
   const compiled = babel.transformSync(code, { presets: [[preset, { targets: { ie: '11' }, modules: false }]], comments: false, sourceType: 'script' }).code;
   acorn.parse(compiled, { ecmaVersion: 5 });
   fs.writeFileSync(dest, compiled);
+}
+function compileBrowserScript(src, dest) { compileBrowserCode(fs.readFileSync(src, 'utf8'), dest); }
+function replaceCodeOnce(code, needle, replacement, label) {
+  const count = code.split(needle).length - 1;
+  if (count !== 1) throw Error('Schedule evaluator adapter hook missing or ambiguous: ' + label);
+  return code.replace(needle, replacement);
+}
+function compileScheduleEvalForOrsay(src, dest) {
+  /* The evaluator is canonical server source.  This small, validated adapter
+   * supplies the persisted timezone table only because legacy Orsay lacks a
+   * reliable Intl timezone database while offline. */
+  let code = fs.readFileSync(src, 'utf8');
+  code = replaceCodeOnce(code,
+    "var STAMP_RE = /^\\d{4}-\\d{2}-\\d{2}T([01]\\d|2[0-3]):[0-5]\\d$/;",
+    "var STAMP_RE = /^\\d{4}-\\d{2}-\\d{2}T([01]\\d|2[0-3]):[0-5]\\d$/;\n  var timezoneTable = null;", 'timezone table declaration');
+  code = replaceCodeOnce(code,
+    "if (!ianaTz) {\n      return { y: d.getFullYear(), mo: d.getMonth() + 1, day: d.getDate(), dow: d.getDay(), min: d.getHours() * 60 + d.getMinutes() };\n    }",
+    "if (!ianaTz) {\n      return { y: d.getFullYear(), mo: d.getMonth() + 1, day: d.getDate(), dow: d.getDay(), min: d.getHours() * 60 + d.getMinutes() };\n    }\n    if (ianaTz === 'UTC' || ianaTz === 'Etc/UTC' || ianaTz === 'Etc/GMT') return { y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1, day: d.getUTCDate(), dow: d.getUTCDay(), min: d.getUTCHours() * 60 + d.getUTCMinutes() };\n    if (timezoneTable && timezoneTable.zone === ianaTz && timezoneTable.spans && timezoneTable.spans.length) {\n      var spans = timezoneTable.spans, offset = spans[0].offset_min, n;\n      for (n = 1; n < spans.length && d.getTime() >= spans[n].from_ms; n++) offset = spans[n].offset_min;\n      var local = new Date(d.getTime() + offset * 60000);\n      return { y: local.getUTCFullYear(), mo: local.getUTCMonth() + 1, day: local.getUTCDate(), dow: local.getUTCDay(), min: local.getUTCHours() * 60 + local.getUTCMinutes() };\n    }", 'timezone table local-parts adapter');
+  code = replaceCodeOnce(code, 'return {\n    isItemActiveNow:', 'return {\n    setTimezoneTable: function (table) { timezoneTable = table; },\n    isItemActiveNow:', 'timezone table export');
+  compileBrowserCode(code, dest);
 }
 /* These helpers execute in the native renderer too.  They must be compiled
  * from the canonical implementation, never copied snapshots: the package had
  * already drifted from UnpairGate.storageKeys(suffix, linkSuffix). */
 const sourceDerivedHelpers = {
+  'schedule-eval.js': path.join(__dirname, '..', 'server', 'lib', 'schedule-eval.js'),
   'unpair-gate.js': path.join(__dirname, '..', 'server', 'lib', 'unpair-gate.js'),
   'play-order.js': path.join(__dirname, '..', 'server', 'lib', 'play-order.js'),
   'offline-play-queue.js': path.join(__dirname, '..', 'server', 'lib', 'offline-play-queue.js'),
@@ -262,7 +283,8 @@ for (const name of fs.readdirSync(app)) {
 }
 for (const [name, src] of Object.entries(sourceDerivedHelpers)) {
   if (!fs.statSync(src).isFile()) throw Error('Required upstream native helper missing: ' + src);
-  compileBrowserScript(src, path.join(output, name));
+  if (name === 'schedule-eval.js') compileScheduleEvalForOrsay(src, path.join(output, name));
+  else compileBrowserScript(src, path.join(output, name));
 }
 /* These are the same browser dependencies referenced by the current upstream
  * legacy renderer.  Keep their source locations explicit: a missing or renamed
