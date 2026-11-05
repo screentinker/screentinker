@@ -63,19 +63,19 @@ test('an incomplete accelerated picker is rejected instead of silently changing 
   );
 });
 
-test('offline plan resolves overnight recurrence independently of live scheduler migration', () => {
-  const { pickActiveScheduleAt } = require('../lib/offline-schedule-eval');
+test('offline plan uses the live scheduler recurrence verdict, including its inclusive end minute', () => {
+  const { isScheduleActiveAt } = require('../services/scheduler');
   const schedule = {
-    id: 'overnight', playlist_id: 'night', layout_id: null,
-    recurrence: 'FREQ=DAILY', start_time: '2026-11-01T23:00:00', end_time: '2026-11-02T01:00:00',
+    id: 'daily', playlist_id: 'day', layout_id: null,
+    recurrence: 'FREQ=DAILY', start_time: '2026-11-02T00:00:00', end_time: '2026-11-02T01:00:00',
   };
   const plan = build({
     schedules: [schedule], timezone: 'UTC', now: Date.parse('2026-11-02T00:30:00Z'), horizonMs: 2 * H,
-    pickAt: pickActiveScheduleAt, clock: makeClock('UTC'),
+    pickAt: (rows, local) => rows.find((row) => isScheduleActiveAt(row, local)) || null, clock: makeClock('UTC'),
   });
   assert.deepEqual(plan.intervals.map((x) => [new Date(x.start_utc_ms).toISOString(), new Date(x.end_utc_ms).toISOString(), x.schedule_id]), [
-    ['2026-11-02T00:30:00.000Z', '2026-11-02T01:00:00.000Z', 'overnight'],
-    ['2026-11-02T01:00:00.000Z', '2026-11-02T02:30:00.000Z', null],
+    ['2026-11-02T00:30:00.000Z', '2026-11-02T01:01:00.000Z', 'daily'],
+    ['2026-11-02T01:01:00.000Z', '2026-11-02T02:30:00.000Z', null],
   ]);
 });
 
@@ -100,4 +100,6 @@ test('only the explicit offline-plan capability gates the payload contract', () 
     'a future plan must be sent before its first schedule becomes active');
   assert.match(source, /overrideNow \|\| hookNow\) \{\s*assembled\.offline_plan = null;/,
     'an override explicitly clears a previously persisted plan');
+  assert.match(source, /scheduler\.isScheduleActiveAt\(schedule, local\)/,
+    'the plan uses the live scheduler evaluator rather than a second recurrence implementation');
 });

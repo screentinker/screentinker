@@ -1256,37 +1256,46 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
       const zone = scheduler.scheduleClockTz(row) || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
       const schedules = scheduler.schedulesForDevice(row);
       if (schedules.length) {
-        const plan = planBuilder.build({
+        // The preview simulator mirrors the resolver view for hypothetical
+        // schedule columns. Reuse it here so layout-only schedules, inherited
+        // playlists, and wall members follow the live resolver exactly.
+        const simulator = require('../lib/device-simulate');
+        const inputs = simulator.resolverInputs(db, deviceId);
+        const normal = simulator.resolveFromInputs(inputs, { playlist_id: null, layout_id: null });
+        // A corporate mandate outranks schedules in the live resolver. Do not
+        // leave a previously cached schedule plan able to supersede it offline.
+        if (normal.source === 'corporate') {
+          assembled.offline_plan = null;
+        } else {
+          const plan = planBuilder.build({
           schedules,
           timezone: zone,
-          pickAt: require('../lib/offline-schedule-eval').pickActiveScheduleAt,
+          // This is the live scheduler verdict used by evaluateSchedules and
+          // device-simulate, including its inclusive end-minute and malformed
+          // recurrence compatibility behavior.
+          pickAt: (rows, local) => rows.find((schedule) => scheduler.isScheduleActiveAt(schedule, local)) || null,
           clock: makeClock(zone),
-        });
-        const states = {};
-        for (const interval of plan.intervals) {
-          if (!interval.schedule_id || states[interval.schedule_id]) continue;
-          const schedule = schedules.find((s) => s.id === interval.schedule_id);
-          if (!schedule) continue;
-          // A schedule without an explicit layout still inherits the published
-          // layout of its playlist, then the device layout. The live resolver
-          // does this through device_resolved_playlist; an offline-plan state
-          // must carry the same resolved layout instead of replacing it with
-          // null and collapsing all zone items into one fullscreen sequence.
-          const schedulePlaylist = schedule.playlist_id
-            ? db.prepare('SELECT published_layout_id FROM playlists WHERE id = ?').get(schedule.playlist_id)
-            : null;
-          const stateLayoutId = schedule.layout_id || schedulePlaylist?.published_layout_id || row.layout_id || null;
-          states[interval.schedule_id] = {
-            schedule_id: schedule.id,
-            playlist_id: schedule.playlist_id || null,
-            layout_id: stateLayoutId,
+          });
+          const states = {};
+          for (const interval of plan.intervals) {
+          const schedule = interval.schedule_id ? schedules.find((s) => s.id === interval.schedule_id) : null;
+          const stateKey = schedule ? `schedule:${schedule.id}` : 'default';
+          if (states[stateKey]) continue;
+          const resolved = simulator.resolveFromInputs(inputs, schedule
+            ? { playlist_id: schedule.playlist_id || null, layout_id: schedule.layout_id || null }
+            : { playlist_id: null, layout_id: null });
+            states[stateKey] = {
+            schedule_id: schedule ? schedule.id : null,
+            playlist_id: resolved.playlist_id || null,
+            layout_id: resolved.layout_id || null,
             payload: buildPlaylistPayloadUnchecked(deviceId, {
-              resolved: { playlist_id: schedule.playlist_id || null, source: 'schedule', layout_id: stateLayoutId },
+              resolved: { ...resolved, scheduled_layout_id: schedule ? schedule.layout_id || null : null },
               offlinePlan: false,
             }),
-          };
+            };
+          }
+          assembled.offline_plan = { ...plan, states: Object.values(states) };
         }
-        assembled.offline_plan = { ...plan, states: Object.values(states) };
       } else {
         // This is the only successful path that explicitly removes a saved
         // plan.  Do not clear the panel's last verified plan merely because a
