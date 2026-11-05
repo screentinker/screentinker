@@ -12,6 +12,7 @@ process.env.JWT_SECRET = 'test-secret-widget-xss';
 
 const db = new Database(':memory:');
 db.exec(`CREATE TABLE widgets (id TEXT PRIMARY KEY, widget_type TEXT, config TEXT, workspace_id TEXT);`);
+db.exec(`CREATE TABLE rooms (id TEXT PRIMARY KEY, workspace_id TEXT, name TEXT, timezone TEXT);`);
 const dbModulePath = require.resolve('../db/database');
 require.cache[dbModulePath] = { id: dbModulePath, filename: dbModulePath, loaded: true, exports: { db } };
 
@@ -207,6 +208,25 @@ test('SSSP3 webpages inline same-workspace ScreenTinker widgets instead of using
   assert.match(html, /Linked directory/);
   assert.match(html, /Ada/);
   assert.doesNotMatch(html, /<iframe/);
+});
+
+test('SSSP3 linked room displays use the scoped live room state, never a made-up AVAILABLE snapshot', async () => {
+  db.prepare('INSERT INTO rooms (id, workspace_id, name, timezone) VALUES (?,?,?,?)').run('room-1', 'ws1', 'Board room', 'UTC');
+  const roomWidget = '33333333-3333-4333-8333-333333333333';
+  const roomWrapper = '44444444-4444-4444-8444-444444444444';
+  seed(roomWidget, 'room-display', { room_id: 'room-1' });
+  seed(roomWrapper, 'webpage', { url: `${base}/api/widgets/${roomWidget}/render` });
+  const service = require('../lib/rooms/service');
+  const original = service.panelState;
+  service.panelState = async (room) => ({ room, server_now: Date.UTC(2026, 0, 1, 10, 0), events: [{ start: Date.UTC(2026, 0, 1, 9, 0), end: Date.UTC(2026, 0, 1, 11, 0), title: 'Occupied' }] });
+  try {
+    const html = await render(roomWrapper, '?compat=sssp1228');
+    assert.match(html, /BUSY/);
+    assert.match(html, /Occupied/);
+    assert.doesNotMatch(html, /No more meetings today/);
+  } finally {
+    service.panelState = original;
+  }
 });
 
 

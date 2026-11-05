@@ -139,6 +139,18 @@ test('legacy engines that ignore time formatting options still honor seconds and
   assert.equal(elements.time.textContent, expected.replace(/\u202f/g, ' '));
 });
 
+test('legacy clock executes its configured locale and date format', async () => {
+  const instant = Date.UTC(2026, 2, 8, 12, 5, 0);
+  const html = await renderOf({ timezone: 'UTC', format: '24h', locale: 'ar', date_format: 'medium', show_seconds: false }, true);
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  class OldDate extends Date { constructor(...args) { super(...(args.length ? args : [instant])); } }
+  const box = () => ({ left: 0, right: 100, top: 0, bottom: 50 });
+  const elements = { time: { textContent: '', style: {}, getBoundingClientRect: box }, date: { textContent: '', style: {}, getBoundingClientRect: box } };
+  vm.runInNewContext(script, { Date: OldDate, document: { documentElement: { clientWidth: 1920, clientHeight: 1080 }, getElementById: id => elements[id] }, window: { innerWidth: 1920, innerHeight: 1080, addEventListener() {} }, setInterval() {} });
+  assert.equal(elements.date.textContent, '8 مارس 2026');
+  assert.match(html, /legacyDate\(local, 'ar', "medium"\)/, 'the rendered update passes saved settings safely');
+});
+
 test('legacy clock code is emitted only for the explicit SSSP3 compatibility mode', async () => {
   const normal = await renderOf({ timezone: 'Africa/Cairo', format: '12h' });
   const legacy = await renderOf({ timezone: 'Africa/Cairo', format: '12h' }, true);

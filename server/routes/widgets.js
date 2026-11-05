@@ -831,7 +831,16 @@ function renderLegacyLinkedWidget(linked, opts) {
     const feed = config.feed_id && db.prepare('SELECT * FROM cap_feeds WHERE id = ? AND workspace_id = ?').get(config.feed_id, widget.workspace_id);
     return require('../lib/cap/card').renderCard(feed ? require('../lib/cap/feeds').liveAlerts(db, feed) : [], { title: feed ? feed.name : 'Emergency alert' });
   }
-  if (widget.widget_type === 'room-display') return renderLegacyRoomDisplay(config, null);
+  if (widget.widget_type === 'room-display') {
+    // A static legacy snapshot must be truthful.  Rendering with null state
+    // labels every room AVAILABLE, so use the same workspace-scoped room and
+    // panel-state path as the direct room-display renderer.
+    const room = config.room_id && db.prepare('SELECT * FROM rooms WHERE id = ? AND workspace_id = ?').get(String(config.room_id), widget.workspace_id);
+    const rooms = require('../lib/rooms/service');
+    return (room ? rooms.panelState(room) : Promise.resolve(null))
+      .catch(() => null)
+      .then((initial) => renderLegacyRoomDisplay(config, initial));
+  }
   return renderWidgetHtml(widget.widget_type, config, common);
 }
 
@@ -1096,7 +1105,7 @@ router.get('/:id/render', (req, res) => {
       if (linked.widget.widget_type === 'rss') {
         return legacyRssSnapshot(linked.config).then((snapshot) => res.send(renderLegacyRSS(linked.config, snapshot)));
       }
-      return res.send(renderLegacyLinkedWidget(linked, renderOpts));
+      return Promise.resolve(renderLegacyLinkedWidget(linked, renderOpts)).then((html) => res.send(html));
     }
   }
   if (widget.widget_type === 'weather' && req.query.compat === 'sssp1228') {
@@ -1350,7 +1359,7 @@ function update() {
   var suffix = ${c.format !== '24h'} ? (h < 12 ? ' AM' : ' PM') : '';
   if (${c.format !== '24h'}) h = h % 12 || 12;
   document.getElementById('time').textContent = pad(h) + ':' + pad(local.getUTCMinutes()) + ${c.show_seconds === false ? "''" : "':' + pad(local.getUTCSeconds())"} + suffix;
-  ${c.show_date !== false ? "document.getElementById('date').textContent = local.toUTCString().replace(/ \\d{2}:\\d{2}:\\d{2} GMT$/, '');" : ''}
+  ${c.show_date !== false ? `document.getElementById('date').textContent = legacyDate(local, ${safeLocale(c.locale)}, ${JSON.stringify(['short', 'medium', 'long'].includes(c.date_format) ? c.date_format : 'long')});` : ''}
 }` : `
 function update() {
   const opts = fixHourCycle(${safeLocale(c.locale)}, { hour12: ${c.format !== '24h'}, timeZone: '${safeTimezone(c.timezone)}', hour:'2-digit', minute:'2-digit'${c.show_seconds === false ? '' : ", second:'2-digit'"} });
