@@ -185,7 +185,7 @@ test('crispForLed snaps anti-aliased fringe off and glyph pixels to full strengt
     0, 115, 128, 255,     // a cyan stem at half strength -> full cyan
     255, 138, 0, 255,     // already full orange -> unchanged
   ]);
-  render.crispForLed(px);
+  render.crispForLed(px, 3);
   assert.deepEqual([...px.subarray(0, 3)], [0, 0, 0]);
   assert.deepEqual([...px.subarray(4, 7)], [0, 229, 255]);
   assert.deepEqual([...px.subarray(8, 11)], [255, 138, 0]);

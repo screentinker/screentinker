@@ -724,14 +724,35 @@ function slideHasMotion(item) {
  */
 /*
  * Tiny LED canvases: text a few pixels tall is mostly anti-aliased edge, which on LEDs reads as a
- * smear of dim dots between letters. Snap every pixel to off or to full strength at its own hue
- * (the 40% cut keeps glyph stems and drops the fringe). Only for <=32 px tall captures.
+ * smear of dim dots between letters. Each pixel is compared with the brightest pixel near it (5x5):
+ * the fringe (under 45% of that) goes off, and glyph pixels are evened out to that local level at
+ * their own hue. RELATIVE, not a fixed cut: a letter mid-fade is dim all over and must keep its whole
+ * shape (a fixed cut broke fading letters into random fragments). Only for <=32 px tall captures.
  */
-function crispForLed(rgba) {
-  for (let i = 0; i < rgba.length; i += 4) {
-    const m = Math.max(rgba[i], rgba[i + 1], rgba[i + 2]);
-    if (m < 100) { rgba[i] = rgba[i + 1] = rgba[i + 2] = 0; continue; }
-    const k = 255 / m;
+function crispForLed(rgba, width) {
+  const n = rgba.length / 4;
+  const w = width || n;
+  const h = n / w;
+  const m = new Uint8Array(n);
+  for (let p = 0; p < n; p++) m[p] = Math.max(rgba[p * 4], rgba[p * 4 + 1], rgba[p * 4 + 2]);
+  const local = new Uint8Array(n);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let best = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        const yy = y + dy; if (yy < 0 || yy >= h) continue;
+        for (let dx = -2; dx <= 2; dx++) {
+          const xx = x + dx; if (xx < 0 || xx >= w) continue;
+          const v = m[yy * w + xx]; if (v > best) best = v;
+        }
+      }
+      local[y * w + x] = best;
+    }
+  }
+  for (let p = 0; p < n; p++) {
+    const i = p * 4, v = m[p], lm = local[p];
+    if (lm < 16 || v < lm * 0.45) { rgba[i] = rgba[i + 1] = rgba[i + 2] = 0; continue; }
+    const k = lm / v;
     rgba[i] = Math.min(255, Math.round(rgba[i] * k));
     rgba[i + 1] = Math.min(255, Math.round(rgba[i + 1] * k));
     rgba[i + 2] = Math.min(255, Math.round(rgba[i + 2] * k));
@@ -782,7 +803,7 @@ async function captureAnimationFrames(html, profile, { fps = 10, maxMs = SLIDE_C
         }), times[i]);
         const png = await page.screenshot({ type: 'png' });
         const img = await Jimp.fromBuffer(Buffer.from(png));
-        if (profile.height <= 32) crispForLed(img.bitmap.data);
+        if (profile.height <= 32) crispForLed(img.bitmap.data, img.bitmap.width);
         const next = i + 1 < times.length ? times[i + 1] : times[i] + 1000;
         frames.push({ rgba: img.bitmap.data, delayMs: Math.max(1, next - times[i]) });
       }
