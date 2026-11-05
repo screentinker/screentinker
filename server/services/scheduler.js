@@ -19,7 +19,7 @@ function startScheduler(socketIo) {
 
 // ioOverride lets a test drive one evaluation without startScheduler's 60s setInterval, which keeps
 // the process alive and turns the test run into a hang rather than a failure.
-function evaluateSchedules(ioOverride, nowOverride, { skipReboots = false, deviceId = null, noPush = false } = {}) {
+function evaluateSchedules(ioOverride, nowOverride, { skipReboots = false, deviceId = null, noPush = false, refreshOfflinePlan = false } = {}) {
   const deviceNs = (ioOverride || io)?.of('/device');
   if (!deviceNs) return;
 
@@ -68,7 +68,9 @@ function evaluateSchedules(ioOverride, nowOverride, { skipReboots = false, devic
         .run(wantPlaylist, wantLayout, device.id);
     }
 
-    if (changed && !noPush) pushPlaylistToDevice(device.id, deviceNs);
+    if ((changed || (refreshOfflinePlan && playerCapabilities.supports(device, 'offline.schedule_plan'))) && !noPush) {
+      pushPlaylistToDevice(device.id, deviceNs);
+    }
   }
 }
 
