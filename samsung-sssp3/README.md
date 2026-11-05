@@ -51,6 +51,11 @@ downgrades `<ver>`). The package build owns `<ver>` through `release.json`. When
   capability contract, platform string).
 - `release.json` — package identity + integer version.
 
+`release.json` currently names the reproducible source candidate **1303**. It
+is not the deployed hardware artifact. The separate DB48E validation archive
+was release **1305**; it remains operational evidence only and must never be
+overwritten or inferred to be byte-equivalent to a newly built 1303 package.
+
 Build locally:
 
 ```console
