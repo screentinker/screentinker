@@ -32,10 +32,15 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: samsung-sssp3/package-lock.json
-      - name: Install Chromium for required browser smoke tests
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq chromium
+      # On current Ubuntu runners apt's `chromium` package is a Snap launcher.
+      # It can stay alive without exposing DevTools, making Puppeteer time out
+      # before any browser assertion runs.  The hosted runner already provides
+      # a conventional Chrome binary; require that binary explicitly instead.
+      - name: Locate Chrome for required browser smoke tests
+        run: |
+          command -v google-chrome >/dev/null
       - name: Build deterministic legacy SSSP3 package
-        run: npm ci --prefix server && npm ci --prefix samsung-sssp3 && ST_ORSAY_BASE_URL=http://example.test CHROME_PATH=/usr/bin/chromium npm run build --prefix samsung-sssp3
+        run: npm ci --prefix server && npm ci --prefix samsung-sssp3 && ST_ORSAY_BASE_URL=http://example.test CHROME_PATH="$(command -v google-chrome)" npm run build --prefix samsung-sssp3
 
   test:
     name: Unit tests (node --test, Node ${{ matrix.node }})

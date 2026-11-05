@@ -4,7 +4,7 @@ const path = require('path');
 const puppeteer = require('puppeteer-core');
 
 (async () => {
-  const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox', '--allow-file-access-from-files'] });
+  const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage', '--allow-file-access-from-files'] });
   try {
     const page = await browser.newPage();
     await page.evaluateOnNewDocument(() => {

@@ -8,7 +8,7 @@ const assert = require('assert/strict');
  * the decode path (browser responseText, never readAll bytes) is proven intact. */
 const TPL_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>body{background:#fff;margin:0}</style></head><body><img src="/uploads/content/clinic%20logo.png"><h1>عيادة إكرام</h1></body></html>';
 (async () => {
-  const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox', '--allow-file-access-from-files'] });
+  const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage', '--allow-file-access-from-files'] });
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 1920, height: 1080 });
