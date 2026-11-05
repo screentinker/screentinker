@@ -94,6 +94,20 @@ test('offline plan uses the live scheduler recurrence verdict, including its inc
   ]);
 });
 
+test('plan intervals agree with the live scheduler at every minute across a DST change', () => {
+  const { isScheduleActiveAt } = require('../services/scheduler');
+  const clock = makeClock('America/New_York');
+  const schedule = { id: 'breakfast', playlist_id: 'p', recurrence: 'FREQ=DAILY', start_time: '2026-03-01T07:00:00', end_time: '2026-03-01T08:00:00' };
+  const start = Date.parse('2026-03-07T00:00:00Z');
+  const plan = build({ schedules: [schedule], timezone: 'America/New_York', now: start, horizonMs: 3 * 24 * H,
+    clock, pickAt: (rows, local) => rows.find((row) => isScheduleActiveAt(row, local)) || null });
+  for (let ms = start; ms < start + 3 * 24 * H; ms += 60 * 1000) {
+    const expected = isScheduleActiveAt(schedule, clock(ms)) ? 'breakfast' : null;
+    const actual = plan.intervals.find((interval) => interval.start_utc_ms <= ms && ms < interval.end_utc_ms).schedule_id;
+    assert.equal(actual, expected, new Date(ms).toISOString());
+  }
+});
+
 test('a truncated plan expires at its last emitted interval', () => {
   const { MAX_INTERVALS, MINUTE_MS } = require('../lib/offline-schedule-plan');
   const plan = build({
