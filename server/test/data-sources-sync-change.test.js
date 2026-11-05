@@ -64,17 +64,52 @@ for (const id of ['ds-obj', 'ds-tbl']) {
   });
 }
 
-test('a changed response names the variables that changed, and moves the revision', async () => {
+test('a changed response names the variables that changed; a field the slide shows moves the revision', async () => {
   BODY = JSON.stringify({ status: 'open', temp: 21 });
   await svc.syncDataSource('ds-obj', true);
   const r0 = rev('w-ds-obj');
   await new Promise((r) => setTimeout(r, 1100));
-  BODY = JSON.stringify({ status: 'open', temp: 21, request_id: 'abc123' });
+  BODY = JSON.stringify({ status: 'closed', temp: 21 });
   const out = await svc.syncDataSource('ds-obj', true);
   assert.equal(out.changed, true);
-  assert.ok(out.changed_keys.includes('request_id'), out.changed_keys.join(','));
-  assert.ok(!out.changed_keys.includes('status') && !out.changed_keys.includes('temp'));
+  assert.ok(out.changed_keys.includes('status'), out.changed_keys.join(','));
+  assert.equal(out.slides_updated, 1);
   assert.ok(rev('w-ds-obj') > r0, 'a real change reaches the screen');
+});
+
+test('#790: a field no slide shows (a per-call timestamp) changes the data but reloads nothing', async () => {
+  BODY = JSON.stringify({ status: 'open', temp: 21, state_as_of: 'T1' });
+  await svc.syncDataSource('ds-obj', true);
+  const r0 = rev('w-ds-obj');
+  await new Promise((r) => setTimeout(r, 1100));
+  for (const stamp of ['T2', 'T3']) {
+    BODY = JSON.stringify({ status: 'open', temp: 21, state_as_of: stamp });
+    const out = await svc.syncDataSource('ds-obj', true);
+    assert.equal(out.changed, true, 'the cache still takes the new data');
+    assert.ok(out.changed_keys.includes('state_as_of'), 'and Sync now still names the field');
+    assert.ok(!out.changed_keys.includes('status'));
+    assert.equal(out.slides_updated, 0);
+  }
+  assert.equal(rev('w-ds-obj'), r0, 'the slide only shows status, so it keeps its revision');
+  const cached = JSON.parse(db.prepare("SELECT cached_data FROM data_sources WHERE id = 'ds-obj'").get().cached_data);
+  assert.equal(cached.state_as_of, 'T3');
+});
+
+test('showsChange: tag keys, whole-source bindings and the fall-backs', () => {
+  const cfg = (o) => JSON.stringify(o);
+  const tags = cfg({ fields: { a: '{{ds:menu.price}} and {{ds:menu.Name}}', b: '{{ds:menu-b.stamp}}' } });
+  assert.equal(svc.showsChange(tags, 'menu', ['stamp']), false, 'menu-b.stamp is another source');
+  assert.equal(svc.showsChange(tags, 'menu', ['price']), true);
+  assert.equal(svc.showsChange(tags, 'menu', ['name']), false, 'keys are case-sensitive, like the resolver');
+  assert.equal(svc.showsChange(tags, 'menu', ['Name']), true);
+  assert.equal(svc.showsChange(cfg({ t: '{{DS:MENU.price}}' }), 'menu', ['price']), true, 'slug matched case-insensitively');
+  assert.equal(svc.showsChange(tags, 'other', ['price']), false, 'not bound at all');
+  // Everything we cannot read field by field moves on any change.
+  assert.equal(svc.showsChange(tags, 'menu', null), true, 'first fill / delete / rename');
+  const capped = Array.from({ length: 10 }, (_, i) => 'k' + i);
+  assert.equal(svc.showsChange(tags, 'menu', capped), true, 'the changed list was cut short');
+  assert.equal(svc.showsChange(cfg({ ds_refs: [{ slug: 'menu' }] }), 'menu', ['stamp']), true, 'whole-source binding');
+  assert.equal(svc.showsChange(cfg({ t: '{{ds:menu.{{param:x}}}}' }), 'menu', ['stamp']), true, 'a tag we cannot parse');
 });
 
 test('changedKeys: added, removed and modified keys; capped; tolerant of a bad cache', () => {

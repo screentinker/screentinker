@@ -253,6 +253,8 @@ function syncResultMessage(r) {
   if (!r || r.changed !== true) return t('data_sources.synced_unchanged');
   const keys = Array.isArray(r.changed_keys) ? r.changed_keys : [];
   if (!keys.length) return t('data_sources.synced_changed');
+  // Only slides that SHOW a changed field reload; a change in an unused field moves nothing.
+  if (r.slides_updated === 0) return t('data_sources.synced_changed_keys_unused', { keys: keys.join(', ') });
   return t('data_sources.synced_changed_keys', { keys: keys.join(', ') });
 }
 

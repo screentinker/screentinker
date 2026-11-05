@@ -5459,6 +5459,7 @@ export default {
   'data_sources.synced_unchanged': "Sincronizado. Sin cambios, las pantallas no se recargaron.",
   'data_sources.synced_changed': "Sincronizado. Los datos cambiaron, las pantallas que los muestran se recargarán.",
   'data_sources.synced_changed_keys': "Sincronizado. Cambió: {keys}. Las pantallas que los muestran se recargarán.",
+  'data_sources.synced_changed_keys_unused': "Sincronizado. Cambió: {keys}. Ninguna diapositiva muestra estos campos, así que ninguna pantalla se recarga.",
   'data_sources.created_ok': 'Fuente de datos creada y sincronizada',
   'data_sources.failed_load': 'No se pudieron cargar las fuentes de datos',
   'data_sources.deleted_ok': 'Fuente de datos eliminada',

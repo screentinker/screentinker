@@ -246,6 +246,7 @@ export default {
   'data_sources.synced_unchanged': "Synchronisiert. Keine Änderung, Bildschirme wurden nicht neu geladen.",
   'data_sources.synced_changed': "Synchronisiert. Daten geändert, Bildschirme mit diesen Daten laden neu.",
   'data_sources.synced_changed_keys': "Synchronisiert. Geändert: {keys}. Bildschirme mit diesen Daten laden neu.",
+  'data_sources.synced_changed_keys_unused': "Synchronisiert. Geändert: {keys}. Keine Folie zeigt diese Felder, daher lädt kein Bildschirm neu.",
   'data_sources.created_ok': 'Datenquelle erstellt und synchronisiert',
   'data_sources.failed_load': 'Fehler beim Laden der Datenquellen',
   'data_sources.deleted_ok': 'Datenquelle gelöscht',
