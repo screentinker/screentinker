@@ -5318,6 +5318,14 @@ migrationStep('platform traffic ledger', () => {
   `);
 });
 
+migrationStep('LED screen remote settings', () => {
+  // lib/embedded-led-config.js. led_config: what the operator set (JSON, NULL = defaults).
+  // led_state: what the firmware last reported (effective power limit, learned limit, brownouts).
+  try { db.prepare('ALTER TABLE devices ADD COLUMN led_config TEXT').run(); console.log('[migrate] devices.led_config added'); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE devices ADD COLUMN led_state TEXT').run(); } catch (_) { /* present */ }
+  try { db.prepare('ALTER TABLE devices ADD COLUMN led_state_at INTEGER').run(); } catch (_) { /* present */ }
+});
+
 migrationStep('#796 library folders for widgets, playlists and schedules', () => {
   /*
    * #796: the Content Library's folders, for widgets, playlists and schedules (routes/library-folders.js).

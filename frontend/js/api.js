@@ -410,6 +410,8 @@ export const api = {
    * write-only: it is sent on create/update and never comes back — rows carry has_password.
    */
   deviceWifi: (deviceId) => request(`/device-wifi/${deviceId}`),
+  deviceLed: (deviceId) => request(`/device-led/${deviceId}`),
+  updateDeviceLed: (deviceId, body) => request(`/device-led/${deviceId}`, { method: 'PUT', body: JSON.stringify(body ?? {}) }),
   addDeviceWifiNetwork: (deviceId, body) => request(`/device-wifi/${deviceId}/networks`,
     { method: 'POST', body: JSON.stringify(body ?? {}) }),
   updateDeviceWifiNetwork: (deviceId, id, body) => request(`/device-wifi/${deviceId}/networks/${id}`,
