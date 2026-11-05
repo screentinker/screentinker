@@ -725,7 +725,7 @@ function slideHasMotion(item) {
 /*
  * Tiny LED canvases: text a few pixels tall is mostly anti-aliased edge, which on LEDs reads as a
  * smear of dim dots between letters. Each pixel is compared with the brightest pixel near it (5x5):
- * the fringe (under 45% of that) goes off, and glyph pixels are evened out to that local level at
+ * the fringe (under 38% of that; about the old fixed cut of 100 on full-bright text) goes off, and glyph pixels are evened out to that local level at
  * their own hue. RELATIVE, not a fixed cut: a letter mid-fade is dim all over and must keep its whole
  * shape (a fixed cut broke fading letters into random fragments). Only for <=32 px tall captures.
  */
@@ -751,7 +751,7 @@ function crispForLed(rgba, width) {
   }
   for (let p = 0; p < n; p++) {
     const i = p * 4, v = m[p], lm = local[p];
-    if (lm < 16 || v < lm * 0.45) { rgba[i] = rgba[i + 1] = rgba[i + 2] = 0; continue; }
+    if (lm < 16 || v < lm * 0.38) { rgba[i] = rgba[i + 1] = rgba[i + 2] = 0; continue; }
     const k = lm / v;
     rgba[i] = Math.min(255, Math.round(rgba[i] * k));
     rgba[i + 1] = Math.min(255, Math.round(rgba[i + 1] * k));
@@ -773,8 +773,9 @@ async function captureAnimationFrames(html, profile, { fps = 10, maxMs = SLIDE_C
       await page.setViewport({ width: profile.width, height: profile.height });
       let finalHtml = html;
       // Tiny LED canvases (a matrix is often 8 or 16 px tall): at 5-7 px per glyph, anti-aliased
-      // letters run into each other, so open up the tracking. Big screens are untouched.
-      const ledTracking = profile.height <= 32 ? '<style>.stage, .stage * { letter-spacing: 0.12em !important; }</style>' : '';
+      // letters run into each other, so open up the tracking; and a text that comes to rest half a
+      // pixel off splits its 1 px stems into two dim columns, so thicken the strokes a little.
+      const ledTracking = profile.height <= 32 ? '<style>.stage, .stage * { letter-spacing: 0.12em !important; -webkit-text-stroke: 0.2px currentColor; }</style>' : '';
       if (/<head[^>]*>/i.test(finalHtml)) finalHtml = finalHtml.replace(/(<head[^>]*>)/i, `$1\n<base href="${baseUrl}/">${ledTracking}`);
       else finalHtml = `<!DOCTYPE html><html><head><base href="${baseUrl}/"></head><body>${finalHtml}</body></html>`;
       await page.setContent(finalHtml, { waitUntil: 'load', timeout: 8000 });
