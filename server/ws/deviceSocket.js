@@ -2692,6 +2692,7 @@ module.exports = function setupDeviceSocket(io) {
         playerTermination.rememberVerdict(db, edge, out.device_id, playerTermination.tokenHash(out.device_token));
         viaEdge = edge;
         currentDeviceId = out.device_id;
+        socket.data.trafficDeviceId = out.device_id;   // lib/traffic-ledger.js books this socket's bytes to it
         authenticated = true;
         heartbeat.registerConnection(out.device_id, socket.id);
         socket.join(out.device_id);
@@ -2738,6 +2739,7 @@ module.exports = function setupDeviceSocket(io) {
       }
       viaEdge = edge;
       currentDeviceId = device_id;
+      socket.data.trafficDeviceId = device_id;
       authenticated = true;
       if (pendingOfflines.has(device_id)) { clearTimeout(pendingOfflines.get(device_id)); pendingOfflines.delete(device_id); }
       evictPriorSocket(device_id, socket.id);
@@ -3280,6 +3282,7 @@ module.exports = function setupDeviceSocket(io) {
           }
 
           currentDeviceId = device_id;
+          socket.data.trafficDeviceId = device_id;
           authenticated = true;
           // Cancel any pending offline timer - device is back in the grace window
           if (pendingOfflines.has(device_id)) {

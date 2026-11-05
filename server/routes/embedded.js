@@ -258,6 +258,9 @@ function resolveDevice(req, res) {
     res.status(403).json({ error: 'Device belongs to a different workspace' });
     return null;
   }
+  // API-token path: the device is only known here, so tell lib/traffic-ledger.js whose bytes these are.
+  res.locals.trafficDeviceId = device.id;
+  res.locals.trafficWorkspaceId = device.workspace_id;
   return device;
 }
 

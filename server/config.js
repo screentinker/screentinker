@@ -83,6 +83,9 @@ module.exports = {
 
   port: process.env.PORT || 3001,
   accessLogEnabled: process.env.ACCESS_LOG === 'true',
+  // Platform Traffic page: the host's monthly transfer allowance in GB (outbound), 0 = none shown.
+  // Many VPS plans include one (e.g. 20000 for 20 TB); the page shows month-to-date against it.
+  trafficMonthlyQuotaGb: Math.max(0, Number(process.env.TRAFFIC_MONTHLY_QUOTA_GB) || 0),
   httpsPort: process.env.HTTPS_PORT || 3443,
   dataDir: DATA_DIR,
   dbPath: process.env.DB_PATH || path.join(DATA_DIR, 'db', 'remote_display.db'),

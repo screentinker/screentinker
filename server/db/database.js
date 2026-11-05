@@ -5292,6 +5292,32 @@ migrationStep('#720 device Wi-Fi networks', () => {
   try { db.prepare('ALTER TABLE devices ADD COLUMN wifi_mode TEXT').run(); console.log('[migrate] devices.wifi_mode added'); } catch (_) { /* present */ }
 });
 
+migrationStep('platform traffic ledger', () => {
+  // lib/traffic-ledger.js: bandwidth this server serves (attributed) and the NIC's own counters.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS traffic_hourly (
+      hour INTEGER NOT NULL, node TEXT NOT NULL, category TEXT NOT NULL, workspace_id TEXT NOT NULL DEFAULT '',
+      requests INTEGER NOT NULL DEFAULT 0, bytes_in INTEGER NOT NULL DEFAULT 0, bytes_out INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (hour, node, category, workspace_id)
+    );
+    CREATE TABLE IF NOT EXISTS traffic_daily (
+      day TEXT NOT NULL, node TEXT NOT NULL, category TEXT NOT NULL, workspace_id TEXT NOT NULL DEFAULT '',
+      requests INTEGER NOT NULL DEFAULT 0, bytes_in INTEGER NOT NULL DEFAULT 0, bytes_out INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (day, node, category, workspace_id)
+    );
+    CREATE TABLE IF NOT EXISTS traffic_device_daily (
+      day TEXT NOT NULL, node TEXT NOT NULL, device_id TEXT NOT NULL, workspace_id TEXT NOT NULL DEFAULT '',
+      requests INTEGER NOT NULL DEFAULT 0, bytes_in INTEGER NOT NULL DEFAULT 0, bytes_out INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (day, node, device_id)
+    );
+    CREATE TABLE IF NOT EXISTS host_traffic_hourly (
+      hour INTEGER NOT NULL, node TEXT NOT NULL, iface TEXT NOT NULL,
+      rx_bytes INTEGER NOT NULL DEFAULT 0, tx_bytes INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (hour, node, iface)
+    );
+  `);
+});
+
 migrationStep('#796 library folders for widgets, playlists and schedules', () => {
   /*
    * #796: the Content Library's folders, for widgets, playlists and schedules (routes/library-folders.js).
