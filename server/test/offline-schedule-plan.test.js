@@ -214,3 +214,29 @@ test('a same-ID published playlist change invalidates cached future nested state
     io.close();
   }
 });
+
+test('a content replacement invalidates a cached future nested state without a playlist republish', () => {
+  const f = fixture.build(db);
+  const io = new Server(http.createServer());
+  setupDeviceSocket(io);
+  try {
+    const caps = JSON.parse(db.prepare('SELECT capabilities FROM devices WHERE id = ?').get(f.devices.own).capabilities || '[]');
+    db.prepare('UPDATE devices SET capabilities = ? WHERE id = ?').run(JSON.stringify([...caps, 'offline.schedule_plan']), f.devices.own);
+    const before = setupDeviceSocket.buildPlaylistPayloadUnchecked(f.devices.own);
+    const original = before.offline_plan.states.find((state) => state.schedule_id === f.schedules.breakfast);
+    const oldItem = original.payload.assignments.find((item) => item.content_id === f.content['b.mp4']);
+    assert.ok(oldItem);
+
+    // Replacement keeps the content and playlist ids stable.  A future plan must
+    // nevertheless be rebuilt with the new player URL/revision.
+    db.prepare("UPDATE content SET filepath = ?, updated_at = COALESCE(updated_at, 0) + 1 WHERE id = ?")
+      .run('/uploads/replaced-b.mp4', f.content['b.mp4']);
+    const after = setupDeviceSocket.buildPlaylistPayloadUnchecked(f.devices.own);
+    const refreshed = after.offline_plan.states.find((state) => state.schedule_id === f.schedules.breakfast);
+    const newItem = refreshed.payload.assignments.find((item) => item.content_id === f.content['b.mp4']);
+    assert.ok(newItem);
+    assert.notEqual(newItem.filepath, oldItem.filepath, 'replacement must not reuse a stale nested state');
+  } finally {
+    io.close();
+  }
+});
