@@ -194,3 +194,23 @@ test('capable devices receive a normal gap state, while a corporate mandate expl
     io.close();
   }
 });
+
+test('a same-ID published playlist change invalidates cached future nested state', () => {
+  const f = fixture.build(db);
+  const io = new Server(http.createServer());
+  setupDeviceSocket(io);
+  try {
+    const caps = JSON.parse(db.prepare('SELECT capabilities FROM devices WHERE id = ?').get(f.devices.own).capabilities || '[]');
+    db.prepare('UPDATE devices SET capabilities = ? WHERE id = ?').run(JSON.stringify([...caps, 'offline.schedule_plan']), f.devices.own);
+    const before = setupDeviceSocket.buildPlaylistPayloadUnchecked(f.devices.own);
+    const breakfast = before.offline_plan.states.find((state) => state.schedule_id === f.schedules.breakfast);
+    assert.ok(breakfast && breakfast.payload.assignments.length);
+    const replacement = [{ content_id: f.content['b.mp4'], filename: 'b.mp4', mime_type: 'video/mp4', filepath: `/uploads/${f.content['b.mp4']}.bin`, duration_sec: 17, sort_order: 0, zone_id: null }];
+    db.prepare('UPDATE playlists SET published_snapshot = ? WHERE id = ?').run(JSON.stringify(replacement), f.playlists.Breakfast);
+    const after = setupDeviceSocket.buildPlaylistPayloadUnchecked(f.devices.own);
+    const refreshed = after.offline_plan.states.find((state) => state.schedule_id === f.schedules.breakfast);
+    assert.deepEqual(refreshed.payload.assignments.map((item) => item.content_id), [f.content['b.mp4']], 'a same-ID publish must rebuild future offline state');
+  } finally {
+    io.close();
+  }
+});

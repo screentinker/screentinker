@@ -59,6 +59,8 @@ const pendingOfflines = new Map();
 // and therefore naturally invalidate this key.
 const offlineNestedStateCache = new Map();
 const OFFLINE_NESTED_STATE_CACHE_LIMIT = 1024;
+const OFFLINE_NESTED_STATE_CACHE_BYTES = 8 * 1024 * 1024;
+let offlineNestedStateCacheBytes = 0;
 function offlineStatePayload(payload) {
   const allowed = ['assignments', 'layout', 'orientation', 'background_color', 'playback_order', 'default_content'];
   const out = {};
@@ -66,11 +68,37 @@ function offlineStatePayload(payload) {
   return out;
 }
 function cachedOfflineState(key, build) {
-  if (offlineNestedStateCache.has(key)) return offlineNestedStateCache.get(key);
+  if (offlineNestedStateCache.has(key)) {
+    const hit = offlineNestedStateCache.get(key);
+    offlineNestedStateCache.delete(key);
+    offlineNestedStateCache.set(key, hit);
+    return hit.value;
+  }
   const value = build();
-  offlineNestedStateCache.set(key, value);
-  if (offlineNestedStateCache.size > OFFLINE_NESTED_STATE_CACHE_LIMIT) offlineNestedStateCache.delete(offlineNestedStateCache.keys().next().value);
+  const bytes = Buffer.byteLength(JSON.stringify(value));
+  if (bytes > OFFLINE_NESTED_STATE_CACHE_BYTES) return value;
+  while (offlineNestedStateCache.size >= OFFLINE_NESTED_STATE_CACHE_LIMIT || offlineNestedStateCacheBytes + bytes > OFFLINE_NESTED_STATE_CACHE_BYTES) {
+    const oldest = offlineNestedStateCache.keys().next().value;
+    if (oldest === undefined) break;
+    offlineNestedStateCacheBytes -= offlineNestedStateCache.get(oldest).bytes;
+    offlineNestedStateCache.delete(oldest);
+  }
+  offlineNestedStateCache.set(key, { value, bytes });
+  offlineNestedStateCacheBytes += bytes;
   return value;
+}
+function offlineStateRevision(workspaceId) {
+  /* Published playlist snapshots are the authoritative item order/configuration;
+   * content/widget/layout rows cover media replacement and linked resources.
+   * Hashing this compact metadata invalidates future-state cache entries before
+   * they can serve an old payload after a same-ID publish. */
+  const parts = [];
+  const rows = (sql) => { try { return db.prepare(sql).all(workspaceId); } catch (_) { return []; } };
+  parts.push(rows('SELECT id,updated_at,published_snapshot,published_playback_order FROM playlists WHERE workspace_id = ? ORDER BY id'));
+  parts.push(rows('SELECT id,updated_at,filepath,mime_type FROM content WHERE workspace_id = ? ORDER BY id'));
+  parts.push(rows('SELECT id,updated_at,widget_type,config FROM widgets WHERE workspace_id = ? ORDER BY id'));
+  parts.push(rows('SELECT l.id,l.updated_at,z.id AS zone_id,z.x_percent,z.y_percent,z.width_percent,z.height_percent,z.z_index,z.fit_mode FROM layouts l LEFT JOIN layout_zones z ON z.layout_id = l.id WHERE l.workspace_id = ? ORDER BY l.id,z.id'));
+  return crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 }
 const OFFLINE_DEBOUNCE_MS = 5000;
 
@@ -1321,9 +1349,10 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
             assembled.offline_plan = null;
           } else {
             const inputRevision = crypto.createHash('sha256').update(JSON.stringify(inputs)).digest('hex');
+            const publicationRevision = offlineStateRevision(row.workspace_id);
             const stateRows = [];
             for (const [stateKey, schedule] of requestedStates) {
-              const cacheKey = `${planKey}|${inputRevision}|${stateKey}`;
+              const cacheKey = `${planKey}|${inputRevision}|${publicationRevision}|${stateKey}`;
               stateRows.push(cachedOfflineState(cacheKey, () => {
                 const resolved = simulator.resolveFromInputs(inputs, schedule
                   ? { playlist_id: schedule.playlist_id || null, layout_id: schedule.layout_id || null }
