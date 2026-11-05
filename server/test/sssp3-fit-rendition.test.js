@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 
 process.env.DATA_DIR = path.join(os.tmpdir(), 'st-sssp3-fit-source-' + crypto.randomBytes(4).toString('hex'));
 process.env.NODE_ENV = 'test';
-const { vf, canvasFor } = require('../lib/sssp3-fit-rendition');
+const { vf, canvasFor, ffmpegArgs } = require('../lib/sssp3-fit-rendition');
 
 test('vf encodes contain as pad, cover as crop, fill as stretch', () => {
   assert.match(vf('contain', 1920, 1080), /force_original_aspect_ratio=decrease/);
@@ -21,6 +21,14 @@ test('vf encodes contain as pad, cover as crop, fill as stretch', () => {
 test('portrait output swaps a landscape panel into its logical canvas', () => {
   assert.deepEqual(canvasFor({ screen_width: 1920, screen_height: 1080, orientation: 'portrait' }), { width: 1080, height: 1920 });
   assert.deepEqual(canvasFor({ screen_width: 1920, screen_height: 1080, orientation: 'landscape' }), { width: 1920, height: 1080 });
+});
+test('ffmpeg accepts only the expected local media container family', () => {
+  const video = ffmpegArgs('/tmp/input.mp4', '/tmp/output.mp4', { source_file: 'input.mp4', output_ext: '.mp4', fit: 'contain', width: 640, height: 360 });
+  const image = ffmpegArgs('/tmp/input.png', '/tmp/output.png', { source_file: 'input.png', output_ext: '.png', fit: 'contain', width: 640, height: 360 });
+  assert.deepEqual(video.slice(video.indexOf('-f'), video.indexOf('-f') + 2), ['-f', 'mov']);
+  assert.deepEqual(image.slice(image.indexOf('-f'), image.indexOf('-f') + 2), ['-f', 'image2']);
+  assert.doesNotMatch(image.join(' '), /format=yuv420p/);
+  assert.match(ffmpegArgs('/tmp/input.jpg', '/tmp/output.jpg', { source_file: 'input.jpg', output_ext: '.jpg', fit: 'contain', width: 640, height: 360 }).join(' '), /-q:v 2/);
 });
 test('the public uploads mount cannot create renditions', () => {
   const source = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');

@@ -32,6 +32,7 @@ let timer = null;
 let started = false;
 let testEncode = null;
 let testCacheBytes = null;
+let testWorkspaceCacheBytes = null;
 let pushFn = null;
 let tools = null;
 let lastWorkspaceServed = null;
@@ -202,7 +203,12 @@ function resolveReady(contentId, id) {
 }
 
 function ffmpegArgs(src, tmp, row) {
-  const common = ['-hide_banner', '-nostdin', '-y', '-loglevel', 'error', '-protocol_whitelist', 'file,pipe', '-threads', '1', '-i', src];
+  // Inputs are materialised, validated local files. Restrict ffmpeg to the
+  // small accepted container families so an upload is never parsed as a
+  // concat/HLS manifest that can reference secondary network resources.
+  const ext = path.extname(String(row.source_file || src)).toLowerCase();
+  const inputFormat = VIDEO_EXTENSIONS.has(ext) ? 'mov' : 'image2';
+  const common = ['-hide_banner', '-nostdin', '-y', '-loglevel', 'error', '-protocol_whitelist', 'file,pipe', '-threads', '1', '-f', inputFormat, '-i', src];
   if (row.output_ext === '.mp4') return common.concat([
     '-an', '-vf', vf(row.fit, row.width, row.height), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21',
     '-profile:v', 'baseline', '-level', '3.1', '-pix_fmt', 'yuv420p', '-map_metadata', '-1',
@@ -236,6 +242,10 @@ function cacheLimit() {
   return Number.isSafeInteger(configured) && configured > 0 ? configured : DEFAULT_CACHE_BYTES;
 }
 
+function workspaceCacheLimit() {
+  return testWorkspaceCacheBytes == null ? MAX_CACHE_BYTES_PER_WORKSPACE : testWorkspaceCacheBytes;
+}
+
 function makeRoom(bytes, protectedId, workspaceId) {
   let total = Number(db.prepare("SELECT coalesce(sum(file_size),0) AS n FROM sssp3_fit_renditions WHERE status = 'ready'").get().n || 0);
   if (bytes > cacheLimit()) return false;
@@ -245,7 +255,7 @@ function makeRoom(bytes, protectedId, workspaceId) {
   const rows = db.prepare("SELECT * FROM sssp3_fit_renditions WHERE status = 'ready' AND id != ? ORDER BY CASE WHEN workspace_id = ? THEN 0 ELSE 1 END,last_used_at ASC,created_at ASC").all(protectedId, workspaceId);
   let workspaceTotal = Number(db.prepare("SELECT coalesce(sum(file_size),0) AS n FROM sssp3_fit_renditions WHERE status = 'ready' AND workspace_id = ?").get(workspaceId).n || 0);
   for (const row of rows) {
-    const requiresWorkspaceRoom = row.workspace_id === workspaceId && workspaceTotal + bytes > Math.min(MAX_CACHE_BYTES_PER_WORKSPACE, cacheLimit());
+    const requiresWorkspaceRoom = row.workspace_id === workspaceId && workspaceTotal + bytes > Math.min(workspaceCacheLimit(), cacheLimit());
     if (total + bytes <= cacheLimit() && !requiresWorkspaceRoom) break;
     removeFile(row.filepath);
     db.prepare("UPDATE sssp3_fit_renditions SET status = 'evicted',filepath = NULL,file_size = NULL,updated_at = strftime('%s','now') WHERE id = ?").run(row.id);
@@ -294,6 +304,10 @@ async function processRow(row) {
   }
 }
 
+function permanentlyInvalid(error) {
+  return /(?:replaced or deleted|missing or unsafe|empty file|unsafe|invalid geometry|unsupported)/i.test(String(error && error.message || error));
+}
+
 async function tick() {
   const settings = videoVariants.getSettings();
   if (!settings.enabled) return;
@@ -332,6 +346,11 @@ async function tick() {
     const job = processRow(row).catch((error) => {
       db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',filepath = NULL,file_size = NULL,error = ?,updated_at = strftime('%s','now') WHERE id = ?")
         .run(String(error && error.message || error).slice(0, 500), row.id);
+      // A deleted or invalid source cannot recover through retries. Exhaust its
+      // budget so ordinary payload refreshes never turn it into a worker storm.
+      if (permanentlyInvalid(error)) {
+        db.prepare('UPDATE sssp3_fit_renditions SET attempts = ? WHERE id = ?').run(MAX_RENDITION_ATTEMPTS, row.id);
+      }
     }).finally(() => {
       running.delete(row.id);
       jobs.delete(job);
@@ -401,6 +420,7 @@ function resetForTest(options = {}) {
   activeWorkDirs = new Set();
   testEncode = options.encodeFn || null;
   testCacheBytes = options.cacheBytes == null ? null : options.cacheBytes;
+  testWorkspaceCacheBytes = options.workspaceCacheBytes == null ? null : options.workspaceCacheBytes;
   pushFn = null;
   tools = options.ffmpeg === undefined ? null : { ffmpeg: !!options.ffmpeg };
   lastWorkspaceServed = null;
@@ -408,6 +428,6 @@ function resetForTest(options = {}) {
 
 module.exports = {
   CAPABILITY, MAX_VARIANTS_PER_CONTENT, MAX_CONCURRENT_RENDITIONS, MAX_PENDING_RENDITIONS, MAX_PENDING_RENDITIONS_PER_WORKSPACE, MAX_RENDITION_ATTEMPTS, MAX_CACHE_BYTES_PER_WORKSPACE, FILE_RE,
-  vf, canvasFor, stampItems, resolveReady, removeFor, sweepOrphans, start, tick, stats,
+  vf, canvasFor, ffmpegArgs, stampItems, resolveReady, removeFor, sweepOrphans, start, tick, stats,
   _drain: drain, _resetForTest: resetForTest,
 };
