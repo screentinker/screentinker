@@ -31,6 +31,7 @@ let started = false;
 let testEncode = null;
 let testCacheBytes = null;
 let pushFn = null;
+let tools = null;
 
 function evenPx(value) {
   const n = Math.floor(Number(value) || 0);
@@ -272,10 +273,28 @@ async function processRow(row) {
 }
 
 async function tick() {
+  const settings = videoVariants.getSettings();
+  if (!settings.enabled) return;
+  if (!videoVariants.inWindow(videoVariants.parseWindow(settings.window) || null, new Date())) { schedule(5 * 60 * 1000); return; }
+  if (!tools || tools.ffmpeg !== true) {
+    const available = testEncode ? { ffmpeg: true } : await require('./media-tools').mediaToolStatus();
+    if (available.conclusive !== false || available.ffmpeg) tools = { ffmpeg: !!available.ffmpeg };
+    if (!available.ffmpeg) { schedule(10 * 60 * 1000); return; }
+  }
+  if (!testEncode) {
+    const cpu = videoVariants.cpuGate(settings);
+    if (cpu !== true) { schedule(cpu); return; }
+  }
   const room = MAX_CONCURRENT_RENDITIONS - running.size;
   if (room <= 0) return;
   const rows = db.prepare("SELECT * FROM sssp3_fit_renditions WHERE status = 'queued' ORDER BY last_used_at DESC,created_at ASC LIMIT ?").all(room);
   for (const row of rows) {
+    const source = db.prepare('SELECT duration_sec FROM content WHERE id = ? AND workspace_id = ?').get(row.content_id, row.workspace_id);
+    if (!source) { db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',error = 'source deleted' WHERE id = ?").run(row.id); continue; }
+    if (!videoVariants.withinAllowance(row.workspace_id, Number(source.duration_sec) || 0, settings, new Date())) {
+      db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',error = 'monthly encoding allowance reached' WHERE id = ? AND status = 'queued'").run(row.id);
+      continue;
+    }
     db.prepare("UPDATE sssp3_fit_renditions SET status = 'running',attempts = attempts + 1,updated_at = strftime('%s','now') WHERE id = ? AND status = 'queued'").run(row.id);
     const job = processRow(row).catch((error) => {
       db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',filepath = NULL,file_size = NULL,error = ?,updated_at = strftime('%s','now') WHERE id = ?")
@@ -350,6 +369,7 @@ function resetForTest(options = {}) {
   testEncode = options.encodeFn || null;
   testCacheBytes = options.cacheBytes == null ? null : options.cacheBytes;
   pushFn = null;
+  tools = options.ffmpeg === undefined ? null : { ffmpeg: !!options.ffmpeg };
 }
 
 module.exports = {
