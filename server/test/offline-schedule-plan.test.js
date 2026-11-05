@@ -4,8 +4,17 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
+const crypto = require('node:crypto');
+const http = require('node:http');
+const { Server } = require('socket.io');
+process.env.DATA_DIR = path.join(os.tmpdir(), 'st-offline-plan-' + crypto.randomBytes(4).toString('hex'));
+process.env.NODE_ENV = 'test';
 const { build, buildCached, clearCache } = require('../lib/offline-schedule-plan');
 const { makeClock } = require('../lib/local-clock');
+const { db } = require('../db/database');
+const fixture = require('./helpers/simulate-fixture');
+const setupDeviceSocket = require('../ws/deviceSocket');
 
 const H = 60 * 60 * 1000;
 const at = (hour, minute = 0) => Date.UTC(2026, 0, 1, hour, minute);
@@ -131,4 +140,20 @@ test('only the explicit offline-plan capability gates the payload contract', () 
     'an override explicitly clears a previously persisted plan');
   assert.match(source, /scheduler\.isScheduleActiveAt\(schedule, local\)/,
     'the plan uses the live scheduler evaluator rather than a second recurrence implementation');
+});
+
+test('a device without offline.schedule_plan receives a byte-identical normal payload', () => {
+  const f = fixture.build(db);
+  const io = new Server(http.createServer());
+  setupDeviceSocket(io);
+  try {
+    const current = JSON.parse(db.prepare('SELECT capabilities FROM devices WHERE id = ?').get(f.devices.own).capabilities);
+    db.prepare('UPDATE devices SET capabilities = ? WHERE id = ?').run(JSON.stringify([...current, 'clock.tz_table']), f.devices.own);
+    const before = JSON.parse(JSON.stringify(setupDeviceSocket.buildPlaylistPayloadUnchecked(f.devices.own)));
+    const after = JSON.parse(JSON.stringify(setupDeviceSocket.buildPlaylistPayloadUnchecked(f.devices.own)));
+    assert.deepEqual(after, before, 'timezone support alone must not opt a player into offline plans');
+    assert.equal(Object.hasOwn(after, 'offline_plan'), false);
+  } finally {
+    io.close();
+  }
 });
