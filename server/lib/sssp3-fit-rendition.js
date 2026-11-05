@@ -19,6 +19,8 @@ const MAX_CONCURRENT_RENDITIONS = 1;
 const MAX_PENDING_RENDITIONS = 256;
 const MAX_PENDING_RENDITIONS_PER_WORKSPACE = 32;
 const MAX_RENDITION_ATTEMPTS = 3;
+const EVICTION_RETRY_COOLDOWN_SEC = 10 * 60;
+const IMAGE_ENCODING_COST_SEC = 5;
 const DEFAULT_CACHE_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_CACHE_BYTES_PER_WORKSPACE = 512 * 1024 * 1024;
 const FILE_RE = /^ssf_([a-f0-9]{32})(\.(?:mp4|jpg|jpeg|png|webp))$/;
@@ -123,7 +125,13 @@ function approve(content, spec) {
       const retryAfter = Number(row.updated_at || 0) + (60 * (2 ** Math.max(0, Number(row.attempts) - 1)));
       if (Math.floor(Date.now() / 1000) >= retryAfter) {
         db.prepare("UPDATE sssp3_fit_renditions SET status = 'queued',error = NULL,updated_at = strftime('%s','now') WHERE id = ? AND status = 'failed'").run(id);
+        schedule(0);
       }
+    }
+    if (row.status === 'evicted' && Number(row.updated_at || 0) + EVICTION_RETRY_COOLDOWN_SEC <= Math.floor(Date.now() / 1000)
+      && Number(db.prepare("SELECT coalesce(sum(file_size),0) AS n FROM sssp3_fit_renditions WHERE status = 'ready'").get().n || 0) < cacheLimit()) {
+      db.prepare("UPDATE sssp3_fit_renditions SET status = 'queued',error = NULL,updated_at = strftime('%s','now') WHERE id = ? AND status = 'evicted'").run(id);
+      schedule(0);
     }
     db.prepare("UPDATE sssp3_fit_renditions SET last_used_at = strftime('%s','now') WHERE id = ?").run(id);
     // Eviction is terminal for this source revision. A frequently delivered
@@ -136,8 +144,9 @@ function approve(content, spec) {
   // oldest-first before a new geometry is admitted.
   let count = db.prepare('SELECT count(*) AS n FROM sssp3_fit_renditions WHERE content_id = ?').get(content.id).n;
   if (count >= MAX_VARIANTS_PER_CONTENT) {
-    const stale = db.prepare("SELECT id FROM sssp3_fit_renditions WHERE content_id = ? AND status IN ('failed','evicted') ORDER BY updated_at ASC").all(content.id);
+    const stale = db.prepare("SELECT id,filepath FROM sssp3_fit_renditions WHERE content_id = ? AND status IN ('failed','evicted','ready') ORDER BY CASE WHEN status = 'ready' THEN 1 ELSE 0 END,last_used_at ASC,updated_at ASC").all(content.id);
     for (const old of stale) {
+      removeFile(old.filepath);
       db.prepare('DELETE FROM sssp3_fit_renditions WHERE id = ?').run(old.id);
       count--;
       if (count < MAX_VARIANTS_PER_CONTENT) break;
@@ -299,8 +308,8 @@ async function processRow(row) {
       .run(path.basename(destination), size, row.id, row.source_file);
     if (!committed.changes) removeFile(path.basename(destination));
     else {
-      const current = db.prepare('SELECT duration_sec FROM content WHERE id = ?').get(row.content_id);
-      videoVariants.chargeUsage(row.workspace_id, Number(current && current.duration_sec) || 0, new Date());
+      const current = db.prepare('SELECT duration_sec,mime_type FROM content WHERE id = ?').get(row.content_id);
+      videoVariants.chargeUsage(row.workspace_id, Number(current && current.duration_sec) || (/^image\//.test(String(current && current.mime_type || '')) ? IMAGE_ENCODING_COST_SEC : 0), new Date());
     }
   } finally {
     try { fs.rmSync(workDir, { recursive: true, force: true }); } catch (_) {}
@@ -341,10 +350,11 @@ async function tickOnce() {
     lastWorkspaceServed = row.workspace_id;
   }
   for (const row of rows) {
-    const source = db.prepare('SELECT duration_sec FROM content WHERE id = ? AND workspace_id = ?').get(row.content_id, row.workspace_id);
+    const source = db.prepare('SELECT duration_sec,mime_type FROM content WHERE id = ? AND workspace_id = ?').get(row.content_id, row.workspace_id);
     if (!source) { db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',error = 'source deleted' WHERE id = ?").run(row.id); continue; }
-    if (!videoVariants.withinAllowance(row.workspace_id, Number(source.duration_sec) || 0, settings, new Date())) {
-      db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',error = 'monthly encoding allowance reached' WHERE id = ? AND status = 'queued'").run(row.id);
+    const cost = Number(source.duration_sec) || (/^image\//.test(String(source.mime_type || '')) ? IMAGE_ENCODING_COST_SEC : 0);
+    if (!videoVariants.withinAllowance(row.workspace_id, cost, settings, new Date())) {
+      db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',attempts = ?,error = 'monthly encoding allowance reached',updated_at = strftime('%s','now') WHERE id = ? AND status = 'queued'").run(MAX_RENDITION_ATTEMPTS, row.id);
       continue;
     }
     const claim = db.prepare("UPDATE sssp3_fit_renditions SET status = 'running',attempts = attempts + 1,updated_at = strftime('%s','now') WHERE id = ? AND status = 'queued'").run(row.id);
