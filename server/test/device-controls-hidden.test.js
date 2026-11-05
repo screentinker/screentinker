@@ -94,6 +94,9 @@ function render(device, telemetry) {
     // Mirrors isRokuDevice() in device-detail.js (and the 'roku' arm of platformFamily()).
     isRokuDevice: (d) => !!d && (d.client_type === 'roku' || /^roku($|\/)/.test(String(d.platform || '').toLowerCase())),
     isEmbeddedDevice: (d) => !!d && (d.client_type === 'embedded' || String(d.platform || '').toLowerCase().includes('embedded')),
+    // Mirrors isLedScreen() in components/led-settings.js (the LED settings card).
+    isLedScreen: (d) => !!d && d.client_type === 'embedded'
+      && (typeof d.screen_profile === 'string' ? d.screen_profile : JSON.stringify(d.screen_profile || '')).includes('seeed-xiao-led'),
     isNativeDevice: (d) => !!d && (d.client_type === 'pi' || d.client_type === 'win' || d.client_type === 'mac'
       || /^(linux|windows|macos)\//.test(String(d.platform || '').toLowerCase())),
     // Mirrors isWebDevice() in device-detail.js: the 'web' fallback of platformFamily() (the browser

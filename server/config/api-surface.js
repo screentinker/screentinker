@@ -106,6 +106,9 @@ const JWT_ONLY_ROUTERS = [
   { path: '/api/device-wifi', mod: './routes/device-wifi',  tenancy: true },
   // #796 folders for the widget, playlist and schedule libraries (routes/library-folders.js). A
   // dashboard organising surface: JWT only for now, so the token door's reviewed set is unchanged.
+  // LED screen settings (routes/device-led.js): brightness, wiring, power limit. Dashboard only (JWT),
+  // like the Wi-Fi networks above.
+  { path: '/api/device-led',  mod: './routes/device-led',   tenancy: true },
   { path: '/api/library-folders', mod: './routes/library-folders', tenancy: true },
   { path: '/api/provision',   mod: './routes/provisioning', tenancy: true },
   { path: '/api/teams',       mod: './routes/teams',        tenancy: true },

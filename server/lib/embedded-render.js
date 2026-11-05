@@ -223,6 +223,13 @@ function parseColorToRgba(hexOrInt, fallback = 0x000000FF) {
 function fitImageOntoCanvas(img, width, height, fitMode, bgColorHex) {
   const bgRgba = parseColorToRgba(safeHexColor(bgColorHex, '#000000'), 0x000000FF);
   const canvas = new Jimp({ width, height, color: bgRgba });
+  // Already the target size: no resize at all. Jimp resamples even a same-size resize, which smears
+  // single pixels and drops edge ones, and that is exactly the case that matters on an LED matrix
+  // (pixel art authored at the matrix's own size is meant to land 1:1 on the LEDs).
+  if (img.bitmap.width === width && img.bitmap.height === height) {
+    canvas.composite(img, 0, 0);
+    return canvas;
+  }
   if (fitMode === 'cover') {
     img.cover({ w: width, h: height });
   } else if (fitMode === 'fill') {
@@ -670,6 +677,145 @@ async function renderPlayerFrame(source, profile, options = {}) {
   }
 }
 
+/* The widget's HTML exactly as the still path renders it, with its own workspace's resolvers. */
+function widgetHtmlFor(item, content, profile, type, config) {
+  const { renderWidgetHtml, imageResolverFor, dataResolverFor, widgetIframeSandboxForWorkspace } = require('../routes/widgets');
+  const { fontResolverFor } = require('../routes/fonts');
+  const { db } = require('../db/database');
+
+  let wsId;
+  if (item.widget_id) {
+    wsId = item.widget_workspace_id !== undefined ? item.widget_workspace_id : null;
+    if (wsId == null) {
+      try {
+        const w = db.prepare('SELECT workspace_id FROM widgets WHERE id = ?').get(item.widget_id);
+        wsId = w ? w.workspace_id : null;
+      } catch (_) {}
+    }
+  } else {
+    wsId = item.workspace_id || content?.workspace_id || profile?.workspace_id;
+  }
+
+  return renderWidgetHtml(type, config, {
+    iframeSandbox: widgetIframeSandboxForWorkspace ? widgetIframeSandboxForWorkspace(wsId) : 'allow-scripts',
+    resolveImage: imageResolverFor ? imageResolverFor({ workspace_id: wsId }) : undefined,
+    resolveFont: fontResolverFor ? fontResolverFor({ workspace_id: wsId }) : undefined,
+    resolveData: typeof dataResolverFor === 'function' ? dataResolverFor(wsId) : undefined,
+    workspaceId: wsId,
+  });
+}
+
+function widgetConfigOf(item) {
+  if (typeof item?.widget_config === 'string') { try { return JSON.parse(item.widget_config) || {}; } catch (_) { return {}; } }
+  return (item && typeof item.widget_config === 'object' && item.widget_config) || {};
+}
+
+/** Does this slide move? (an element with a motion block: lib/slide-render.js ANIMATIONS) */
+function slideHasMotion(item) {
+  if (!item || item.widget_type !== 'slide') return false;
+  return /"motion"\s*:\s*\{/.test(typeof item.widget_config === 'string' ? item.widget_config : JSON.stringify(item.widget_config || {}));
+}
+
+/*
+ * Capture a page's CSS animations as frames. Unlike the still path, animations are left ON but
+ * every one is paused and stepped through time with the Web Animations API (currentTime), so the
+ * capture is exact and does not depend on how fast this server screenshots. Returns null when the
+ * page has no finite animation. At most `maxMs` of motion, at `fps`.
+ */
+/*
+ * Tiny LED canvases: text a few pixels tall is mostly anti-aliased edge, which on LEDs reads as a
+ * smear of dim dots between letters. Each pixel is compared with the brightest pixel near it (5x5):
+ * the fringe (under 38% of that; about the old fixed cut of 100 on full-bright text) goes off, and glyph pixels are evened out to that local level at
+ * their own hue. RELATIVE, not a fixed cut: a letter mid-fade is dim all over and must keep its whole
+ * shape (a fixed cut broke fading letters into random fragments). Only for <=32 px tall captures.
+ */
+function crispForLed(rgba, width) {
+  const n = rgba.length / 4;
+  const w = width || n;
+  const h = n / w;
+  const m = new Uint8Array(n);
+  for (let p = 0; p < n; p++) m[p] = Math.max(rgba[p * 4], rgba[p * 4 + 1], rgba[p * 4 + 2]);
+  const local = new Uint8Array(n);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let best = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        const yy = y + dy; if (yy < 0 || yy >= h) continue;
+        for (let dx = -2; dx <= 2; dx++) {
+          const xx = x + dx; if (xx < 0 || xx >= w) continue;
+          const v = m[yy * w + xx]; if (v > best) best = v;
+        }
+      }
+      local[y * w + x] = best;
+    }
+  }
+  for (let p = 0; p < n; p++) {
+    const i = p * 4, v = m[p], lm = local[p];
+    if (lm < 16 || v < lm * 0.38) { rgba[i] = rgba[i + 1] = rgba[i + 2] = 0; continue; }
+    const k = lm / v;
+    rgba[i] = Math.min(255, Math.round(rgba[i] * k));
+    rgba[i + 1] = Math.min(255, Math.round(rgba[i + 1] * k));
+    rgba[i + 2] = Math.min(255, Math.round(rgba[i + 2] * k));
+  }
+}
+
+const SLIDE_CAPTURE_MAX_MS = 8000;
+const SLIDE_CAPTURE_MAX_FPS = 15;   // each frame is a screenshot; more is not worth the CPU
+async function captureAnimationFrames(html, profile, { fps = 10, maxMs = SLIDE_CAPTURE_MAX_MS, signal } = {}) {
+  await acquirePageSlot(signal);
+  let page = null;
+  try {
+    return await withTimeout((async () => {
+      const browser = await getBrowser();
+      page = await browser.newPage();
+      const baseUrl = localBaseUrl();
+      await guardRasterRequests(page, new URL(baseUrl).origin);   // tenant HTML: same SSRF rule as stills
+      await page.setViewport({ width: profile.width, height: profile.height });
+      let finalHtml = html;
+      // Tiny LED canvases (a matrix is often 8 or 16 px tall): at 5-7 px per glyph, anti-aliased
+      // letters run into each other, so open up the tracking; and a text that comes to rest half a
+      // pixel off splits its 1 px stems into two dim columns, so thicken the strokes a little.
+      const ledTracking = profile.height <= 32 ? '<style>.stage, .stage * { letter-spacing: 0.12em !important; text-indent: 0.12em; -webkit-text-stroke: 0.2px currentColor; }</style>' : '';
+      if (/<head[^>]*>/i.test(finalHtml)) finalHtml = finalHtml.replace(/(<head[^>]*>)/i, `$1\n<base href="${baseUrl}/">${ledTracking}`);
+      else finalHtml = `<!DOCTYPE html><html><head><base href="${baseUrl}/"></head><body>${finalHtml}</body></html>`;
+      await page.setContent(finalHtml, { waitUntil: 'load', timeout: 8000 });
+      const endMs = await page.evaluate(async (cap) => {
+        try { await document.fonts.ready; } catch (_) {}
+        const anims = document.getAnimations();
+        let end = 0;
+        for (const a of anims) {
+          a.pause();
+          const t = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming().endTime : 0;
+          if (Number.isFinite(t) && t > end) end = t;
+        }
+        return Math.min(cap, end);
+      }, maxMs);
+      if (!endMs || endMs <= 0) return null;
+      const step = 1000 / Math.max(1, Math.min(SLIDE_CAPTURE_MAX_FPS, fps));
+      const times = [];
+      for (let t = 0; t < endMs; t += step) times.push(t);
+      times.push(endMs);
+      const frames = [];
+      for (let i = 0; i < times.length; i++) {
+        if (signal?.aborted) throw Object.assign(new Error('Render request aborted'), { code: 'ABORTED' });
+        await page.evaluate((t) => new Promise((resolve) => {
+          for (const a of document.getAnimations()) a.currentTime = t;
+          requestAnimationFrame(() => requestAnimationFrame(resolve));
+        }), times[i]);
+        const png = await page.screenshot({ type: 'png' });
+        const img = await Jimp.fromBuffer(Buffer.from(png));
+        if (profile.height <= 32) crispForLed(img.bitmap.data, img.bitmap.width);
+        const next = i + 1 < times.length ? times[i + 1] : times[i] + 1000;
+        frames.push({ rgba: img.bitmap.data, delayMs: Math.max(1, next - times[i]) });
+      }
+      return { width: profile.width, height: profile.height, loops: 1, frames };   // play once, hold the end
+    })(), 30000, 'Animation capture exceeded 30s');
+  } finally {
+    if (page) { try { await page.close(); } catch (_) {} }
+    releasePageSlot();
+  }
+}
+
 async function render(item, content, screenProfile, options = {}) {
   const profile = {
     width: safeDimension(screenProfile?.width, 800),
@@ -691,30 +837,7 @@ async function render(item, content, screenProfile, options = {}) {
     }
 
     try {
-      const { renderWidgetHtml, imageResolverFor, dataResolverFor, widgetIframeSandboxForWorkspace } = require('../routes/widgets');
-      const { fontResolverFor } = require('../routes/fonts');
-      const { db } = require('../db/database');
-
-      let wsId;
-      if (item.widget_id) {
-        wsId = item.widget_workspace_id !== undefined ? item.widget_workspace_id : null;
-        if (wsId == null) {
-          try {
-            const w = db.prepare('SELECT workspace_id FROM widgets WHERE id = ?').get(item.widget_id);
-            wsId = w ? w.workspace_id : null;
-          } catch (_) {}
-        }
-      } else {
-        wsId = item.workspace_id || content?.workspace_id || profile?.workspace_id;
-      }
-
-      const html = renderWidgetHtml(type, config, {
-        iframeSandbox: widgetIframeSandboxForWorkspace ? widgetIframeSandboxForWorkspace(wsId) : 'allow-scripts',
-        resolveImage: imageResolverFor ? imageResolverFor({ workspace_id: wsId }) : undefined,
-        resolveFont: fontResolverFor ? fontResolverFor({ workspace_id: wsId }) : undefined,
-        resolveData: typeof dataResolverFor === 'function' ? dataResolverFor(wsId) : undefined,
-        workspaceId: wsId,
-      });
+      const html = widgetHtmlFor(item, content, profile, type, config);
       const png = await renderWidgetOrHtml(html, profile, type, options);
       return { png };
     } catch (e) {
@@ -1059,8 +1182,60 @@ async function renderLayout(layout, zoneEntries, screenProfile, options = {}) {
   }
 }
 
+/*
+ * An animated GIF for a device that can play one (lib/embedded-animation.js), or null to fall back
+ * to the ordinary still frame. Only image content: widgets, web pages and layouts stay stills. The
+ * bytes come from the same places a still image does (safe local path / storage backend, or the
+ * SSRF-guarded remote fetch), so this adds no new way to reach a file or a host.
+ */
+async function renderAnimation(item, content, screenProfile, cap, options = {}) {
+  const anim = require('./embedded-animation');
+  if (!cap) return null;
+  const profile = {
+    ...screenProfile,
+    width: safeDimension(screenProfile?.width, 800),
+    height: safeDimension(screenProfile?.height, 480),
+    rotation: [0, 90, 180, 270].includes(Number(screenProfile?.rotation)) ? Number(screenProfile.rotation) : 0,
+  };
+  // A slide with motion: capture its entrance animations, played once and held on the final layout.
+  if (slideHasMotion(item)) {
+    if (!isBrowserAvailable()) return null;
+    const html = widgetHtmlFor(item, content, profile, 'slide', widgetConfigOf(item));
+    const captured = await captureAnimationFrames(html, profile, { fps: Math.min(cap.maxFps, SLIDE_CAPTURE_MAX_FPS), signal: options.signal });
+    if (!captured) return null;
+    // Rendered at the screen's own size, so the fit is 1:1 (fitImageOntoCanvas skips the resize).
+    return anim.buildFromFrames(captured, profile, cap, { fitMode: 'fill', backgroundColor: '#000000' }, fitImageOntoCanvas);
+  }
+  if (!content || (item && (item.widget_id || item.widget_type)) || !anim.isGifSource(content)) return null;
+  let bytes;
+  if (content.remote_url) {
+    try {
+      const response = await guardedRequest(content.remote_url, {
+        responseType: 'buffer',
+        maxBytes: REMOTE_IMAGE_MAX_BYTES,
+        timeoutMs: 15000,
+        headers: { 'user-agent': 'ScreenTinker-EmbeddedRenderer/1.0' },
+      });
+      bytes = response.buffer;
+    } catch (_) { return null; }   // the still path reports fetch errors; this one just steps aside
+  } else if (content.filepath) {
+    const safe = await localImageFile(content, content.filepath);
+    bytes = fs.readFileSync(safe);
+  }
+  if (!bytes || bytes.length < 6 || bytes.subarray(0, 3).toString('ascii') !== 'GIF') return null;
+  const fitOpts = {
+    fitMode: safeFitMode((item && item.fit_mode) || options.fitMode, options.defaultFitMode || 'cover'),
+    backgroundColor: options.backgroundColor || options.device?.background_color,
+  };
+  return anim.buildAnimation(bytes, profile, cap, fitOpts, fitImageOntoCanvas);
+}
+
 module.exports = {
   render,
+  renderAnimation,
+  slideHasMotion,
+  crispForLed,
+  captureAnimationFrames,
   renderRemotePage,
   renderPlayerFrame,
   renderLayout,
