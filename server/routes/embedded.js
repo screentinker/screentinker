@@ -45,6 +45,7 @@ const { parseProfile, listPresets, getPreset, frameDimensions, frameOrientation 
 const { cacheKey, toETag, isNotModified, get: cacheGet, set: cacheSet } = require('../lib/embedded-cache');
 const { render, renderAnimation, renderLayout, isLayoutImageOnly, isBrowserAvailable, looksLikeImage, safeFitMode } = require('../lib/embedded-render');
 const animation = require('../lib/embedded-animation');
+const ledConfig = require('../lib/embedded-led-config');
 const { postprocess }       = require('../lib/embedded-postprocess');
 const pairLockout           = require('../lib/pair-lockout');
 const { sixDigitCode }      = require('../lib/numeric-code');
@@ -1169,6 +1170,15 @@ router.get('/render', resolveAuth, async (req, res) => {
   }
 
   const isPreview = req.query.preview === '1';
+
+  // LED screens: the operator's settings ride every answer (200, 304, cached, animated, layout,
+  // scheduled-off), and what the firmware reports back is stored. lib/embedded-led-config.js.
+  if (!isPreview && ledConfig.isLedDevice(device, profile)) {
+    const dims = frameDimensions(profile);
+    res.set('X-ST-Led-Config', ledConfig.header(ledConfig.read(device), dims.width, dims.height));
+    try { ledConfig.recordState(db, device, req.headers['x-st-led-state']); } catch (e) { console.warn(`[embedded] led state for ${device.id}: ${e.message}`); }
+  }
+
   const pendingCmdObj = !isPreview ? resolvePendingCommand(device.id, device, req) : null;
   const pendingCmd = pendingCmdObj ? pendingCmdObj.commandStr : null;
   const renderOpts = { pendingCmd, pendingCmdObj };

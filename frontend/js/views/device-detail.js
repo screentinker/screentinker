@@ -14,6 +14,7 @@ import * as gettingStarted from '../components/getting-started.js';
 import { LiveViewer, whenVisible } from '../lib/webrtc-viewer.js';
 import { renderPowerScheduleEditor, readPowerScheduleEditor, presetWindows, problemMessage } from '../components/power-schedule-editor.js';
 import { mountWifiNetworks } from '../components/wifi-networks.js';
+import { mountLedSettings, isLedScreen } from '../components/led-settings.js';
 import * as cui from '../components/corporate-ui.js';
 import { openDeviceMoveDialog } from '../components/device-move-dialog.js';
 import { setupViewAccess } from '../components/view-access-card.js';
@@ -207,6 +208,7 @@ let playbackHandler = null;
 let logHandler = null;
 let shellHandler = null;
 let wifiDispose = null;   // #720 Wi-Fi section listener
+let ledDispose = null;
 // Interactive terminal (system.pty): the live xterm.js instance, its session and its socket listeners,
 // kept at module scope so leaving the page (cleanup()) can close the session on the device.
 let ptyState = null;
@@ -1809,6 +1811,12 @@ async function loadDevice(deviceId, activeTab = null) {
           <h4 style="margin:0 0 8px">${t('wifi.section_title')} <span class="help-tip" data-tip="${t('wifi.section_title_tip')}">?</span></h4>
           <div id="wifiHost" style="font-size:13px;color:var(--text-muted)">…</div>
         </div>` : ''}
+        ${isLedScreen(device) ? `
+        <!-- LED screen settings. Filled by mountLedSettings() (components/led-settings.js). -->
+        <div id="ledSection" style="margin-bottom:22px">
+          <h4 style="margin:0 0 8px">${t('led.section_title')} <span class="help-tip" data-tip="${t('led.section_tip')}">?</span></h4>
+          <div id="ledHost" style="font-size:13px;color:var(--text-muted)">…</div>
+        </div>` : ''}
         ${!isEmbeddedDevice(device) ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">${t('device.sysctl.subtitle')}</div>` : ''}
         <div style="display:grid;grid-template-columns:130px 1fr;gap:14px 14px;align-items:center;font-size:13px;max-width:480px">
           ${can('audio.volume') ? `
@@ -3345,6 +3353,10 @@ function setupActions(device) {
   const wifiHost = document.getElementById('wifiHost');
   if (wifiDispose) { wifiDispose(); wifiDispose = null; }   // a reload of the page re-runs this
   if (wifiHost) wifiDispose = mountWifiNetworks(wifiHost, device);
+  // LED screens: brightness, power limit, wiring (components/led-settings.js).
+  const ledHost = document.getElementById('ledHost');
+  if (ledDispose) { ledDispose(); ledDispose = null; }
+  if (ledHost) ledDispose = mountLedSettings(ledHost, device);
 
   const blockBtn = document.getElementById('blockDeviceBtn');
   blockBtn?.addEventListener('click', async () => {
