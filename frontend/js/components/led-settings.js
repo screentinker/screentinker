@@ -98,15 +98,19 @@ export function mountLedSettings(host, device) {
     b?.addEventListener('input', () => { host.querySelector('#ledBrightnessVal').textContent = b.value; });
     host.querySelector('#ledSave')?.addEventListener('click', () => {
       const limitA = Number(host.querySelector('#ledPowerLimit').value);
-      save({
+      const body = {
         brightness: Number(b.value),
         power_limit_ma: Number.isFinite(limitA) ? Math.round(limitA * 1000) : s.config.power_limit_ma,
         auto_protect: host.querySelector('#ledAutoProtect').checked,
-        color_order: host.querySelector('#ledColorOrder').value,
-        wiring: host.querySelector('#ledWiring').value,
-        axis: host.querySelector('#ledAxis').value,
-        origin: host.querySelector('#ledOrigin').value,
-      });
+      };
+      // Colour order and wiring go only when changed here (or already set here): until then the
+      // wall keeps what it was set up with locally, which is what these fields show.
+      const layoutSet = new Set(s.layout_set || []);
+      for (const [key, id] of [['color_order', '#ledColorOrder'], ['wiring', '#ledWiring'], ['axis', '#ledAxis'], ['origin', '#ledOrigin']]) {
+        const v = host.querySelector(id).value;
+        if (layoutSet.has(key) || v !== s.config[key]) body[key] = v;
+      }
+      save(body);
     });
     host.querySelector('#ledResetLearned')?.addEventListener('click', () => save({ reset_learned: true }));
   }

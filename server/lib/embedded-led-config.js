@@ -23,10 +23,16 @@
  *   lr    "learned limit reset": bumped from the dashboard to make the firmware forget what it
  *         learned (after the operator fixes the supply).
  *
+ * ⚠️ o / wir / ax / org are sent ONLY once an operator has set them here. A wall already wired up
+ * with the web installer keeps its own local values until someone changes them in ScreenTinker;
+ * sending the defaults would silently re-map every existing wall the day it updates. The firmware
+ * reports its local values back, and the device page shows those until they are set here.
+ *
  * The firmware reports back on each render request:
  *
  *   X-ST-Led-State: rev=<applied rev>;b=<brightness>;pl=<effective mA>;lpl=<learned mA, 0 = none>;
- *                   bo=<brownouts seen>;est=<last frame estimate mA>;rr=<last reset reason>
+ *                   bo=<brownouts seen>;est=<last frame estimate mA>;rr=<last reset reason>;
+ *                   o=<colour order>;wir=..;ax=..;org=..   (what the LEDs are actually using)
  */
 
 const crypto = require('crypto');
@@ -35,6 +41,8 @@ const COLOR_ORDERS = ['GRB', 'RGB', 'BRG', 'RBG', 'GBR', 'BGR'];
 const WIRINGS = ['serpentine', 'progressive'];
 const AXES = ['horizontal', 'vertical'];
 const ORIGINS = ['top_left', 'top_right', 'bottom_left', 'bottom_right'];
+// Fields that re-map the wall: sent only when an operator set them (see the header comment).
+const LAYOUT_FIELDS = ['color_order', 'wiring', 'axis', 'origin'];
 const RESET_REASONS = ['poweron', 'brownout', 'panic', 'watchdog', 'software', 'deepsleep', 'external', 'unknown'];
 
 // Brightness 180 was the firmware's built-in default; keep it as the default ceiling so a panel's
@@ -70,13 +78,23 @@ function isLedDevice(device, profile) {
   return raw.includes('seeed-xiao-led');
 }
 
+function stored(device) {
+  let raw = {};
+  try { raw = device && device.led_config ? JSON.parse(device.led_config) : {}; } catch (_) { raw = {}; }
+  return raw && typeof raw === 'object' ? raw : {};
+}
+
+/** Which layout fields (colour order, wiring, axis, origin) an operator has set for this device. */
+function explicitLayout(device) {
+  const raw = stored(device);
+  return LAYOUT_FIELDS.filter((k) => raw[k] !== undefined);
+}
+
 /** The stored config with defaults filled in. Never throws: a bad row reads as the defaults. */
 function read(device) {
-  let stored = {};
-  try { stored = device && device.led_config ? JSON.parse(device.led_config) : {}; } catch (_) { stored = {}; }
-  if (!stored || typeof stored !== 'object') stored = {};
+  const stored_ = stored(device);
   const out = { ...DEFAULTS };
-  for (const k of Object.keys(DEFAULTS)) if (stored[k] !== undefined) out[k] = stored[k];
+  for (const k of Object.keys(DEFAULTS)) if (stored_[k] !== undefined) out[k] = stored_[k];
   return normalise(out).value;
 }
 
@@ -108,14 +126,22 @@ function normalise(input, base = DEFAULTS) {
   return { value };
 }
 
-/** The X-ST-Led-Config header for this device and frame size. */
-function header(config, width, height) {
+/**
+ * The X-ST-Led-Config header for this device and frame size. `layout` names the layout fields an
+ * operator set (explicitLayout); the others are left out so the wall keeps its own.
+ */
+function header(config, width, height, layout = LAYOUT_FIELDS) {
   const c = normalise(config).value || { ...DEFAULTS };
+  const has = (k) => layout.includes(k);
   const body = [
-    `b=${c.brightness}`, `o=${c.color_order}`, `wir=${c.wiring}`, `ax=${c.axis}`, `org=${c.origin}`,
+    `b=${c.brightness}`,
+    has('color_order') ? `o=${c.color_order}` : null,
+    has('wiring') ? `wir=${c.wiring}` : null,
+    has('axis') ? `ax=${c.axis}` : null,
+    has('origin') ? `org=${c.origin}` : null,
     `w=${intIn(width, 1, 65535) || 0}`, `h=${intIn(height, 1, 65535) || 0}`,
     `pl=${c.power_limit_ma}`, `auto=${c.auto_protect ? 1 : 0}`, `lr=${c.learned_reset}`,
-  ].join(';');
+  ].filter(Boolean).join(';');
   const rev = crypto.createHash('sha256').update(body).digest('hex').slice(0, 8);
   return `v=1;rev=${rev};${body}`;
 }
@@ -136,6 +162,10 @@ function parseState(raw) {
     brownouts: intIn(kv.bo, 0, 1e6),
     frame_estimate_ma: intIn(kv.est, 0, 1e6),
     reset_reason: oneOf(kv.rr, RESET_REASONS),
+    color_order: oneOf(kv.o, COLOR_ORDERS),
+    wiring: oneOf(kv.wir, WIRINGS),
+    axis: oneOf(kv.ax, AXES),
+    origin: oneOf(kv.org, ORIGINS),
   };
   return Object.values(out).some((v) => v !== null) ? out : null;
 }
@@ -162,6 +192,6 @@ function readState(device) {
 }
 
 module.exports = {
-  DEFAULTS, COLOR_ORDERS, WIRINGS, AXES, ORIGINS, POWER_LIMIT_MAX_MA,
-  isLedDevice, read, normalise, header, parseState, recordState, readState,
+  DEFAULTS, COLOR_ORDERS, WIRINGS, AXES, ORIGINS, LAYOUT_FIELDS, POWER_LIMIT_MAX_MA,
+  isLedDevice, read, explicitLayout, normalise, header, parseState, recordState, readState,
 };

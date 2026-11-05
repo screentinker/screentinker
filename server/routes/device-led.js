@@ -41,15 +41,21 @@ function deviceForWrite(req, res) {
 }
 
 function view(device) {
+  const config = led.read(device);
+  const state = led.readState(device);
+  // Layout fields nobody set here show what the wall reports it is using (they are not sent to it).
+  const explicit = led.explicitLayout(device);
+  for (const k of led.LAYOUT_FIELDS) if (!explicit.includes(k) && state && state[k]) config[k] = state[k];
   return {
     supported: led.isLedDevice(device, null),
-    config: led.read(device),
+    config,
+    layout_set: explicit,
     defaults: led.DEFAULTS,
     options: {
       color_order: led.COLOR_ORDERS, wiring: led.WIRINGS, axis: led.AXES, origin: led.ORIGINS,
       power_limit_max_ma: led.POWER_LIMIT_MAX_MA,
     },
-    state: led.readState(device),
+    state,
     state_at: device.led_state_at || null,
   };
 }
@@ -66,12 +72,17 @@ router.put('/:deviceId', (req, res) => {
   if (!led.isLedDevice(device, null)) return res.status(400).json({ error: 'LED settings apply to addressable-LED screens only' });
   const body = { ...(req.body || {}) };
   const current = led.read(device);
+  // Only layout fields that were already set here, or that this request sets, are stored, so
+  // saving brightness from the device page does not start overriding the wall's own wiring.
+  const keepLayout = new Set([...led.explicitLayout(device), ...led.LAYOUT_FIELDS.filter((k) => body[k] !== undefined)]);
   if (body.reset_learned === true) body.learned_reset = (current.learned_reset + 1) & 0xffff;
   delete body.reset_learned;
   const r = led.normalise(body, current);
   if (r.error) return res.status(400).json({ error: r.error, field: r.field });
-  db.prepare('UPDATE devices SET led_config = ? WHERE id = ?').run(JSON.stringify(r.value), device.id);
-  res.json(view({ ...device, led_config: JSON.stringify(r.value) }));
+  const toStore = { ...r.value };
+  for (const k of led.LAYOUT_FIELDS) if (!keepLayout.has(k)) delete toStore[k];
+  db.prepare('UPDATE devices SET led_config = ? WHERE id = ?').run(JSON.stringify(toStore), device.id);
+  res.json(view({ ...device, led_config: JSON.stringify(toStore) }));
 });
 
 module.exports = router;

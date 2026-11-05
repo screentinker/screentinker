@@ -62,7 +62,8 @@ test('the header carries every setting, the frame size, and a rev that moves onl
 test('parseState takes what the firmware reports and ignores junk', () => {
   const s = led.parseState('rev=0a1b2c3d;b=40;pl=2550;lpl=2550;bo=2;est=1800;rr=brownout');
   assert.deepEqual(s, { rev: '0a1b2c3d', brightness: 40, effective_limit_ma: 2550, learned_limit_ma: 2550,
-    brownouts: 2, frame_estimate_ma: 1800, reset_reason: 'brownout' });
+    brownouts: 2, frame_estimate_ma: 1800, reset_reason: 'brownout',
+    color_order: null, wiring: null, axis: null, origin: null });
   assert.equal(led.parseState(''), null);
   assert.equal(led.parseState('garbage'), null);
   assert.equal(led.parseState('x'.repeat(600)), null);
@@ -141,4 +142,29 @@ test('dashboard API refuses a non-LED screen and an unknown one', async () => {
   const r = await api(base, 'PUT', epd.id, { brightness: 10 });
   assert.equal(r.status, 400);
   assert.equal((await api(base, 'GET', 'nope')).status, 404);
+});
+
+test('wiring and colour order are not sent until an operator sets them, so a wall keeps its own', async () => {
+  const base = await h.ready();
+  const p = await h.mkPanel(LED_PROFILE, { w: 64, h: 8 });
+  const has = async (k) => k in parseHeader((await poll(base, p)).headers.get('x-st-led-config'));
+  assert.equal(await has('wir'), false);
+  assert.equal(await has('o'), false);
+  // The wall reports its local layout; the device page shows it.
+  await poll(base, p, { 'X-ST-Led-State': 'rev=0a1b2c3d;b=180;pl=3000;o=RGB;wir=progressive;ax=vertical;org=bottom_left' });
+  let r = await api(base, 'GET', p.id);
+  assert.equal(r.body.config.wiring, 'progressive');
+  assert.equal(r.body.config.axis, 'vertical');
+  assert.deepEqual(r.body.layout_set, []);
+  // Saving brightness does not start overriding the wiring.
+  r = await api(base, 'PUT', p.id, { brightness: 50 });
+  assert.deepEqual(r.body.layout_set, []);
+  assert.equal(await has('wir'), false);
+  // Setting the wiring does.
+  r = await api(base, 'PUT', p.id, { wiring: 'serpentine' });
+  assert.deepEqual(r.body.layout_set, ['wiring']);
+  const kv = parseHeader((await poll(base, p)).headers.get('x-st-led-config'));
+  assert.equal(kv.wir, 'serpentine');
+  assert.equal(kv.ax, undefined, 'the axis is still the wall\'s own');
+  assert.equal(kv.b, '50');
 });

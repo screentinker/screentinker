@@ -1175,7 +1175,7 @@ router.get('/render', resolveAuth, async (req, res) => {
   // scheduled-off), and what the firmware reports back is stored. lib/embedded-led-config.js.
   if (!isPreview && ledConfig.isLedDevice(device, profile)) {
     const dims = frameDimensions(profile);
-    res.set('X-ST-Led-Config', ledConfig.header(ledConfig.read(device), dims.width, dims.height));
+    res.set('X-ST-Led-Config', ledConfig.header(ledConfig.read(device), dims.width, dims.height, ledConfig.explicitLayout(device)));
     try { ledConfig.recordState(db, device, req.headers['x-st-led-state']); } catch (e) { console.warn(`[embedded] led state for ${device.id}: ${e.message}`); }
   }
 
