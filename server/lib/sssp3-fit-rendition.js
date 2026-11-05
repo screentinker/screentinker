@@ -119,8 +119,8 @@ function approve(content, spec) {
   let row = db.prepare('SELECT * FROM sssp3_fit_renditions WHERE id = ?').get(id);
   if (row) {
     // A transient storage/ffmpeg failure may recover, but ordinary payload
-    // refreshes must not create a retry storm. Retry at most three times with
-    // 1m, 2m, then 4m backoff; evictions remain terminal for this revision.
+    // refreshes must not create a retry storm. There are at most three processing
+    // attempts: the first two failures requeue after 1m and 2m; the third is terminal.
     if (row.status === 'failed' && row.attempts < MAX_RENDITION_ATTEMPTS) {
       const retryAfter = Number(row.updated_at || 0) + (60 * (2 ** Math.max(0, Number(row.attempts) - 1)));
       if (Math.floor(Date.now() / 1000) >= retryAfter) {
@@ -134,9 +134,9 @@ function approve(content, spec) {
       schedule(0);
     }
     db.prepare("UPDATE sssp3_fit_renditions SET last_used_at = strftime('%s','now') WHERE id = ?").run(id);
-    // Eviction is terminal for this source revision. A frequently delivered
-    // payload must fall back to the original media, never silently requeue
-    // ffmpeg and rebuild the cache in a permanent eviction/requeue loop.
+    // A frequently delivered payload must fall back to the original media during
+    // the eviction cooldown. Later demand may requeue only after the cooldown
+    // and when cache capacity exists, avoiding an eviction/requeue loop.
     return db.prepare('SELECT * FROM sssp3_fit_renditions WHERE id = ?').get(id);
   }
   // Terminal rows cannot permanently consume every geometry slot. Ready rows
