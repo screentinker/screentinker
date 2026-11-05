@@ -410,6 +410,8 @@ export const api = {
    * write-only: it is sent on create/update and never comes back — rows carry has_password.
    */
   deviceWifi: (deviceId) => request(`/device-wifi/${deviceId}`),
+  deviceLed: (deviceId) => request(`/device-led/${deviceId}`),
+  updateDeviceLed: (deviceId, body) => request(`/device-led/${deviceId}`, { method: 'PUT', body: JSON.stringify(body ?? {}) }),
   addDeviceWifiNetwork: (deviceId, body) => request(`/device-wifi/${deviceId}/networks`,
     { method: 'POST', body: JSON.stringify(body ?? {}) }),
   updateDeviceWifiNetwork: (deviceId, id, body) => request(`/device-wifi/${deviceId}/networks/${id}`,
@@ -990,6 +992,7 @@ export const api = {
   getPromotion: () => request('/subscription/promotion'),
   adminOverview: () => request('/admin/overview'),
   adminHost: () => request('/admin/host'),
+  adminTraffic: (days) => request(`/admin/traffic?days=${encodeURIComponent(days)}`),
   adminAttention: (item) => request(`/admin/overview/attention/${encodeURIComponent(item)}`),
   adminStaleAccounts: (days) => request(`/admin/cleanup/stale-accounts?days=${encodeURIComponent(days)}`),
   adminPurgeStale: (body) => request('/admin/cleanup/stale-accounts', { method: 'POST', body: JSON.stringify(body) }),

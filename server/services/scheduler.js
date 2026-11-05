@@ -236,6 +236,12 @@ function isScheduleActiveAt(schedule, L) {
   const rule = parseSimpleRRule(schedule.recurrence);
   if (!rule) return nowStamp >= startStamp && nowStamp <= endStamp;
 
+  // Known recurrence kinds use occurrence-anchored, half-open semantics. An
+  // unknown stored rule deliberately falls through to the legacy evaluator
+  // below rather than becoming a silent fleet-wide behavior change.
+  const corrected = require('../lib/schedule-recurrence').evaluateKnown(schedule, L, rule);
+  if (corrected !== null) return corrected;
+
   // The DATE window. A recurring schedule was previously compared on weekday and HH:MM alone, with
   // the date component dropped entirely — so it was live before its start date and, more visibly,
   // carried on forever after its end date. A campaign set to finish on the 1st was still switching

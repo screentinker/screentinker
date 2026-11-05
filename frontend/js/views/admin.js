@@ -173,6 +173,14 @@ ${section(t('admin.orgs.title'), t('admin.orgs.desc'), `
     html: () => section(t('platform.rollouts.title'), t('platform.rollouts.desc'), `<div id="rolloutsBody">${loading()}</div>`),
     load: () => loadRollouts(),
   },
+  traffic: {
+    tab: 'platform.tab.traffic', title: 'platform.traffic.title', subtitle: 'platform.traffic.subtitle',
+    actions: () => `<select id="trafficDays" class="input" style="width:auto">
+      ${[1, 7, 30, 90].map((d) => `<option value="${d}" ${d === 7 ? 'selected' : ''}>${esc(t('platform.traffic.range', { n: d }))}</option>`).join('')}
+    </select>`,
+    html: () => `<div id="platformTraffic">${loading()}</div>`,
+    load: () => { document.getElementById('trafficDays')?.addEventListener('change', loadTraffic); loadTraffic(); },
+  },
   system: {
     tab: 'platform.tab.system', title: 'platform.system.title', subtitle: 'platform.system.subtitle',
     html: () => `
@@ -369,6 +377,61 @@ function tvCard(v) {
         <span class="host-s">${esc(sub)}</span>
       </div>`;
 }
+/*
+ * Traffic (server/lib/traffic-ledger.js): what this server served, attributed, beside the network
+ * interface's own totals. Bars per hour (up to 7 days) or per day; the host line includes what never
+ * reaches the web server (live video, backups, updates).
+ */
+async function loadTraffic() {
+  const el = document.getElementById('platformTraffic');
+  if (!el) return;
+  const days = Number(document.getElementById('trafficDays')?.value || 7);
+  let r;
+  try { r = await api.adminTraffic(days); } catch (err) { el.innerHTML = `<p class="host-warn">${esc(err.message)}</p>`; return; }
+  if (!document.contains(el)) return;
+  const tot = r.totals || {};
+  const card = (k, v, s = '') => `<div class="host-card"><span class="host-k">${esc(k)}</span><span class="host-v">${esc(v)}</span>${s ? `<span class="host-s">${esc(s)}</span>` : ''}</div>`;
+  const gap = tot.host_tx > 0 ? Math.max(0, tot.host_tx - tot.attributed_out) : null;
+  const m = r.month || {};
+  const quota = m.quota_bytes > 0
+    ? `<div class="host-card"><span class="host-k">${esc(t('platform.traffic.month'))}</span>
+         <span class="host-v">${esc(t('platform.host.pct_used', { n: Math.round(m.quota_pct) }))}</span>${pctBar(m.quota_pct, 80)}
+         <span class="host-s">${esc(t('platform.traffic.month_of', { used: formatBytes(m.host_tx), quota: formatBytes(m.quota_bytes) }))}</span></div>`
+    : card(t('platform.traffic.month'), formatBytes(m.host_tx || m.attributed_out || 0), t('platform.traffic.no_quota'));
+  // Bars: attributed out (solid) with the host's out behind it (faint), same scale.
+  const hostBy = new Map((r.host_series || []).map((x) => [String(x.t), x.tx]));
+  const pts = (r.series || []).map((x) => ({ t: x.t, out: x.out || 0, host: hostBy.get(String(x.t)) || 0 }));
+  for (const [tKey, tx] of hostBy) if (!pts.some((p) => String(p.t) === tKey)) pts.push({ t: tKey, out: 0, host: tx });
+  pts.sort((a, b) => (String(a.t) < String(b.t) ? -1 : 1));
+  const max = Math.max(1, ...pts.map((p) => Math.max(p.out, p.host)));
+  const W = 720, H = 140, bw = pts.length ? W / pts.length : W;
+  const label = (p) => r.granularity === 'hour' ? new Date(Number(p.t) * 1000).toLocaleString() : String(p.t);
+  const chart = pts.length ? `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:140px;display:block" role="img" aria-label="${esc(t('platform.traffic.chart'))}">
+      ${pts.map((p, i) => `<g><title>${esc(label(p))}: ${esc(formatBytes(p.out))} / ${esc(formatBytes(p.host))}</title>
+        <rect x="${i * bw}" y="${H - (p.host / max) * H}" width="${Math.max(1, bw - 1)}" height="${(p.host / max) * H}" fill="var(--text-muted)" opacity=".25"/>
+        <rect x="${i * bw}" y="${H - (p.out / max) * H}" width="${Math.max(1, bw - 1)}" height="${(p.out / max) * H}" fill="var(--accent, #3b82f6)"/></g>`).join('')}
+    </svg>
+    <p style="font-size:12px;color:var(--text-muted)">${esc(t('platform.traffic.legend'))}</p>` : `<p style="color:var(--text-muted)">${esc(t('platform.traffic.empty'))}</p>`;
+  const table = (head, rows) => rows.length ? `<table class="corp-table"><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map((cells) => `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>` : `<p style="color:var(--text-muted)">—</p>`;
+  const share = (v) => tot.attributed_out > 0 ? `${Math.round((v / tot.attributed_out) * 100)}%` : '';
+  el.innerHTML = `
+    <div class="host-grid">
+      ${card(t('platform.traffic.served'), formatBytes(tot.attributed_out || 0), t('platform.traffic.requests', { n: (tot.requests || 0).toLocaleString() }))}
+      ${card(t('platform.traffic.host_out'), r.host_available ? formatBytes(tot.host_tx || 0) : '—', r.host_available ? t('platform.traffic.host_in', { n: formatBytes(tot.host_rx || 0) }) : t('platform.traffic.host_na'))}
+      ${card(t('platform.traffic.other'), gap == null ? '—' : formatBytes(gap), t('platform.traffic.other_hint'))}
+      ${quota}
+    </div>
+    ${section(esc(t('platform.traffic.over_time')), '', chart)}
+    ${section(esc(t('platform.traffic.by_category')), '', table([t('platform.traffic.col_category'), t('platform.traffic.col_out'), t('platform.traffic.col_share'), t('platform.traffic.col_requests')],
+      (r.by_category || []).map((c) => [esc(t(`platform.traffic.cat.${c.category}`)), esc(formatBytes(c.out || 0)), esc(share(c.out || 0)), esc((c.req || 0).toLocaleString())])))}
+    ${section(esc(t('platform.traffic.top_workspaces')), '', table([t('platform.traffic.col_workspace'), t('platform.traffic.col_org'), t('platform.traffic.col_out'), t('platform.traffic.col_share')],
+      (r.top_workspaces || []).map((w) => [esc(w.name || w.id), esc(w.org || ''), esc(formatBytes(w.out || 0)), esc(share(w.out || 0))])))}
+    ${section(esc(t('platform.traffic.top_screens')), esc(t('platform.traffic.top_screens_hint')), table([t('platform.traffic.col_screen'), t('platform.traffic.col_workspace'), t('platform.traffic.col_out')],
+      (r.top_devices || []).map((d) => [esc(d.name || d.id), esc(d.workspace || ''), esc(formatBytes(d.out || 0))])))}
+    ${r.nodes && r.nodes.length > 1 ? `<p style="font-size:12px;color:var(--text-muted)">${esc(t('platform.traffic.nodes', { n: r.nodes.length }))}</p>` : ''}`;
+}
+
 async function loadHost() {
   clearTimeout(hostTimer);
   const el = document.getElementById('platformHost');

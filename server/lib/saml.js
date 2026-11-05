@@ -12,8 +12,8 @@
  * ⚠️ WHAT IS REQUIRED OF A RESPONSE (node-saml does the XML work; these are our choices):
  *   - the ASSERTION is signed by the IdP certificate we were given (wantAssertionsSigned); a signed
  *     Response wrapping an unsigned assertion is not enough, which closes the classic wrapping hole
- *   - its Issuer is the IdP entityID we were given (issuerMatches, below: node-saml does not check
- *     it on login responses), its Audience is our SP entityID
+ *   - its Issuer is the IdP entityID we were given (issuerMatches, below: we do not hand the
+ *     issuer to node-saml, see there), its Audience is our SP entityID
  *   - it answers an AuthnRequest WE sent (InResponseTo, kept in saml_requests for 10 minutes so a
  *     scaled-out node can finish a login another began) — so IdP-initiated logins are refused
  *   - ...and that request was started by THIS browser: /start binds the request ID to it in a signed
@@ -190,7 +190,9 @@ function samlFor(provider, origin, extra = {}) {
     callbackUrl: acsUrlFor(origin, provider.slug),
     audience: spEntityIdFor(origin, provider.slug),
     idpCert: certs,
-    idpIssuer: provider.issuer,
+    // No idpIssuer: issuerMatches() below is the Issuer check. node-saml 5.2 started enforcing
+    // idpIssuer on login responses with an exact match, which refuses Entra ID's trailing '/'
+    // because rowToProvider stores the issuer without it. We do not use SAML logout.
     wantAssertionsSigned: true,
     wantAuthnResponseSigned: false,          // many IdPs sign only the assertion; that is what we require
     signatureAlgorithm: 'sha256',
@@ -210,9 +212,10 @@ function samlFor(provider, origin, extra = {}) {
 const newRequestId = () => `_${crypto.randomBytes(20).toString('hex')}`;
 
 /*
- * ⚠️ node-saml's `idpIssuer` is checked ONLY on LogoutRequest/LogoutResponse, never on a login
- * response, so the Issuer promise at the top of this file was not being kept by the library. This is
- * where it is kept. profile.issuer is the ASSERTION's Issuer (the signed one), not the Response's.
+ * ⚠️ The Issuer check lives HERE, not in node-saml. Before 5.2 its `idpIssuer` was checked only on
+ * LogoutRequest/LogoutResponse; 5.2 also checks login responses, but with an exact match that breaks
+ * Entra ID (see the SAML options above), so we do not pass `idpIssuer` at all. This is the check.
+ * profile.issuer is the ASSERTION's Issuer (the signed one), not the Response's.
  * Trailing slashes are stripped on both sides: rowToProvider strips the configured one, and Entra ID
  * entityIDs end in '/'.
  */
