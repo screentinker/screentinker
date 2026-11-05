@@ -57,6 +57,25 @@ test('only a capable device payload can approve a bounded rendition', () => {
   assert.equal(row.status, 'queued');
 });
 
+test('overlapping ticks claim a rendition once and cannot delete the winning output', async () => {
+  const item = content('fit-race-' + crypto.randomBytes(3).toString('hex'));
+  fit.stampItems([item], layout, device);
+  let started = 0;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  fit._resetForTest({ encodeFn: async ({ tmp }) => { started++; await gate; fs.writeFileSync(tmp, 'single-owner-output'); } });
+  const first = fit.tick();
+  const second = fit.tick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(started, 1, 'only one overlapping tick owns the queued row');
+  release();
+  await Promise.all([first, second]);
+  await fit._drain();
+  const row = db.prepare('SELECT * FROM sssp3_fit_renditions WHERE content_id = ?').get(item.content_id);
+  assert.equal(row.status, 'ready');
+  assert.ok(fit.resolveReady(item.content_id, row.id), 'the owner output remains present after a losing tick');
+});
+
 test('a payload cannot approve another workspace content row', () => {
   const item = content('fit-cross-' + crypto.randomBytes(3).toString('hex'), 'ws-b');
   fit.stampItems([item], layout, device);

@@ -22,6 +22,11 @@ test('portrait output swaps a landscape panel into its logical canvas', () => {
   assert.deepEqual(canvasFor({ screen_width: 1920, screen_height: 1080, orientation: 'portrait' }), { width: 1080, height: 1920 });
   assert.deepEqual(canvasFor({ screen_width: 1920, screen_height: 1080, orientation: 'landscape' }), { width: 1920, height: 1080 });
 });
+
+test('canvas scaling preserves aspect ratio under 4K safety limits', () => {
+  const canvas = canvasFor({ screen_width: 3840, screen_height: 2160, orientation: 'landscape' });
+  assert.deepEqual(canvas, { width: 1920, height: 1080 });
+});
 test('ffmpeg accepts only the expected local media container family', () => {
   const video = ffmpegArgs('/tmp/input.mp4', '/tmp/output.mp4', { source_file: 'input.mp4', output_ext: '.mp4', fit: 'contain', width: 640, height: 360 });
   const image = ffmpegArgs('/tmp/input.png', '/tmp/output.png', { source_file: 'input.png', output_ext: '.png', fit: 'contain', width: 640, height: 360 });

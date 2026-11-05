@@ -36,6 +36,7 @@ let testWorkspaceCacheBytes = null;
 let pushFn = null;
 let tools = null;
 let lastWorkspaceServed = null;
+let ticking = false;
 
 function evenPx(value) {
   const n = Math.floor(Number(value) || 0);
@@ -58,7 +59,10 @@ function canvasFor(device) {
   let height = Number(device && device.screen_height) || 1080;
   // A landscape panel rotated by the player has a portrait logical canvas.
   if (/^portrait/.test(String(device && device.orientation || '')) && width > height) [width, height] = [height, width];
-  return { width: Math.min(1920, evenPx(width)), height: Math.min(1920, evenPx(height)) };
+  /* Scale the canvas as one rectangle.  Independent clamps turn 4K 16:9 into
+   * a square and stamp every zone with the wrong geometry. */
+  const scale = Math.min(1, 1920 / width, 1920 / height, Math.sqrt((1920 * 1080) / (width * height)));
+  return { width: evenPx(width * scale), height: evenPx(height * scale) };
 }
 
 function realRegularFile(file, root) {
@@ -308,7 +312,7 @@ function permanentlyInvalid(error) {
   return /(?:replaced or deleted|missing or unsafe|empty file|unsafe|invalid geometry|unsupported)/i.test(String(error && error.message || error));
 }
 
-async function tick() {
+async function tickOnce() {
   const settings = videoVariants.getSettings();
   if (!settings.enabled) return;
   if (!videoVariants.inWindow(videoVariants.parseWindow(settings.window) || null, new Date())) { schedule(5 * 60 * 1000); return; }
@@ -317,13 +321,14 @@ async function tick() {
     if (available.conclusive !== false || available.ffmpeg) tools = { ffmpeg: !!available.ffmpeg };
     if (!available.ffmpeg) { schedule(10 * 60 * 1000); return; }
   }
+  const room = MAX_CONCURRENT_RENDITIONS - running.size;
+  if (room <= 0) return;
+  const candidates = db.prepare("SELECT * FROM sssp3_fit_renditions WHERE status = 'queued' ORDER BY created_at ASC,id ASC LIMIT 64").all();
+  if (!candidates.length) return;
   if (!testEncode) {
     const cpu = videoVariants.cpuGate(settings);
     if (cpu !== true) { schedule(cpu); return; }
   }
-  const room = MAX_CONCURRENT_RENDITIONS - running.size;
-  if (room <= 0) return;
-  const candidates = db.prepare("SELECT * FROM sssp3_fit_renditions WHERE status = 'queued' ORDER BY created_at ASC,id ASC LIMIT 64").all();
   // Round-robin at workspace boundaries. The per-workspace admission cap limits
   // burst size; this selection rule prevents one older tenant backlog starving
   // a later tenant indefinitely on the single-worker default.
@@ -342,9 +347,11 @@ async function tick() {
       db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',error = 'monthly encoding allowance reached' WHERE id = ? AND status = 'queued'").run(row.id);
       continue;
     }
-    db.prepare("UPDATE sssp3_fit_renditions SET status = 'running',attempts = attempts + 1,updated_at = strftime('%s','now') WHERE id = ? AND status = 'queued'").run(row.id);
+    const claim = db.prepare("UPDATE sssp3_fit_renditions SET status = 'running',attempts = attempts + 1,updated_at = strftime('%s','now') WHERE id = ? AND status = 'queued'").run(row.id);
+    /* Another timer or replica owns it. Never run or clean up its output. */
+    if (!claim.changes) continue;
     const job = processRow(row).catch((error) => {
-      db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',filepath = NULL,file_size = NULL,error = ?,updated_at = strftime('%s','now') WHERE id = ?")
+      db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',filepath = NULL,file_size = NULL,error = ?,updated_at = strftime('%s','now') WHERE id = ? AND status = 'running'")
         .run(String(error && error.message || error).slice(0, 500), row.id);
       // A deleted or invalid source cannot recover through retries. Exhaust its
       // budget so ordinary payload refreshes never turn it into a worker storm.
@@ -362,6 +369,13 @@ async function tick() {
     running.set(row.id, job);
     jobs.add(job);
   }
+}
+
+async function tick() {
+  if (ticking) return;
+  ticking = true;
+  try { return await tickOnce(); }
+  finally { ticking = false; }
 }
 
 function schedule(delay) {
