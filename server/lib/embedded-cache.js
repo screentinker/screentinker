@@ -68,6 +68,9 @@ function cacheKey(deviceId, itemId, itemUpdatedAt, profile, extra = {}) {
       parts.push(`bg:${normBg}`);
     }
   }
+  // Animation (lib/embedded-animation.js): appended only for a GIF sent to firmware that asked for
+  // motion, so every still frame keeps its exact old key and ETag.
+  if (extra && typeof extra.animation === 'string' && extra.animation) parts.push(extra.animation);
   const payload = JSON.stringify(parts);
   return crypto.createHash('sha256').update(payload).digest('hex');
 }

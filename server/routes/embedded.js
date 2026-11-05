@@ -43,7 +43,8 @@ const { resolveTenancy }    = require('../lib/tenancy');
 const { resolveDevicePlaylist, resolvedLayoutId, resolveDeviceContext } = require('../lib/resolve-device-playlist');
 const { parseProfile, listPresets, getPreset, frameDimensions, frameOrientation } = require('../lib/embedded-profiles');
 const { cacheKey, toETag, isNotModified, get: cacheGet, set: cacheSet } = require('../lib/embedded-cache');
-const { render, renderLayout, isLayoutImageOnly, isBrowserAvailable, looksLikeImage, safeFitMode } = require('../lib/embedded-render');
+const { render, renderAnimation, renderLayout, isLayoutImageOnly, isBrowserAvailable, looksLikeImage, safeFitMode } = require('../lib/embedded-render');
+const animation = require('../lib/embedded-animation');
 const { postprocess }       = require('../lib/embedded-postprocess');
 const pairLockout           = require('../lib/pair-lockout');
 const { sixDigitCode }      = require('../lib/numeric-code');
@@ -1399,12 +1400,18 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
     : (opts.zoneFitMode ? `_${safeFitMode(opts.zoneFitMode, 'cover')}` : '');
   const effectiveBg = opts.zoneBackgroundColor || device?.background_color;
 
+  // Animated GIFs go only to firmware that asked for them (X-ST-Animation, lib/embedded-animation.js),
+  // and never to a dashboard preview, which shows the still frame as before.
+  const animCap = isPreview ? null : animation.animationCapability(req.headers, profile);
+  const animKey = (animCap && !(item && (item.widget_id || item.widget_type)) && animation.isGifSource(content))
+    ? animation.capabilityKey(animCap) : null;
+
   let key = cacheKey(
     device.id,
     `${item.content_id || item.widget_id || item.id || 'item'}${fitSuffix}`,
     dynamicRev,
     profile,
-    { backgroundColor: effectiveBg }
+    { backgroundColor: effectiveBg, animation: animKey }
   );
 
   const currentRenderState = {
@@ -1455,8 +1462,37 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
     if (cached.hit) {
       markCommandDelivered(device.id, opts);
       recordRenderedFrame(device.id, currentRenderState);
-      res.set({ ...headers, 'Content-Type': detectContentType(profile) });
+      // An animation and a still can share an anim key (a still GIF, or one over budget), so the
+      // bytes say which this is.
+      res.set({ ...headers, 'Content-Type': animation.isAnimationBuffer(cached.buffer) ? animation.CONTENT_TYPE : detectContentType(profile) });
       return res.status(200).send(cached.buffer);
+    }
+  }
+
+  // ── Animation ───────────────────────────────────────────────────────────────
+  // Any failure or a null result (still GIF, over budget) falls through to the normal still render.
+  if (animKey) {
+    let anim = null;
+    try {
+      anim = await renderAnimation(item, content, profile, animCap, {
+        signal, device, backgroundColor: effectiveBg, fitMode: effectiveFitMode,
+      });
+    } catch (e) {
+      console.warn(`[embedded] animation for item ${itemIndex} failed, sending a still: ${e.message}`);
+    }
+    if (anim) {
+      try { cacheSet(key, anim.buffer); } catch { /* best-effort */ }
+      recordRenderedFrame(device.id, currentRenderState);
+      res.set({
+        ...headers,
+        'X-ST-Screen-Width': String(anim.width),
+        'X-ST-Screen-Height': String(anim.height),
+        'X-ST-Animation-Frames': String(anim.frames),
+        'X-ST-Animation-Loops': String(anim.loops),
+        'Content-Type': animation.CONTENT_TYPE,
+      });
+      markCommandDelivered(device.id, opts);
+      return res.status(200).send(anim.buffer);
     }
   }
 

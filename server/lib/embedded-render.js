@@ -223,6 +223,13 @@ function parseColorToRgba(hexOrInt, fallback = 0x000000FF) {
 function fitImageOntoCanvas(img, width, height, fitMode, bgColorHex) {
   const bgRgba = parseColorToRgba(safeHexColor(bgColorHex, '#000000'), 0x000000FF);
   const canvas = new Jimp({ width, height, color: bgRgba });
+  // Already the target size: no resize at all. Jimp resamples even a same-size resize, which smears
+  // single pixels and drops edge ones, and that is exactly the case that matters on an LED matrix
+  // (pixel art authored at the matrix's own size is meant to land 1:1 on the LEDs).
+  if (img.bitmap.width === width && img.bitmap.height === height) {
+    canvas.composite(img, 0, 0);
+    return canvas;
+  }
   if (fitMode === 'cover') {
     img.cover({ w: width, h: height });
   } else if (fitMode === 'fill') {
@@ -1059,8 +1066,47 @@ async function renderLayout(layout, zoneEntries, screenProfile, options = {}) {
   }
 }
 
+/*
+ * An animated GIF for a device that can play one (lib/embedded-animation.js), or null to fall back
+ * to the ordinary still frame. Only image content: widgets, web pages and layouts stay stills. The
+ * bytes come from the same places a still image does (safe local path / storage backend, or the
+ * SSRF-guarded remote fetch), so this adds no new way to reach a file or a host.
+ */
+async function renderAnimation(item, content, screenProfile, cap, options = {}) {
+  const anim = require('./embedded-animation');
+  if (!cap || !content || (item && (item.widget_id || item.widget_type)) || !anim.isGifSource(content)) return null;
+  const profile = {
+    ...screenProfile,
+    width: safeDimension(screenProfile?.width, 800),
+    height: safeDimension(screenProfile?.height, 480),
+    rotation: [0, 90, 180, 270].includes(Number(screenProfile?.rotation)) ? Number(screenProfile.rotation) : 0,
+  };
+  let bytes;
+  if (content.remote_url) {
+    try {
+      const response = await guardedRequest(content.remote_url, {
+        responseType: 'buffer',
+        maxBytes: REMOTE_IMAGE_MAX_BYTES,
+        timeoutMs: 15000,
+        headers: { 'user-agent': 'ScreenTinker-EmbeddedRenderer/1.0' },
+      });
+      bytes = response.buffer;
+    } catch (_) { return null; }   // the still path reports fetch errors; this one just steps aside
+  } else if (content.filepath) {
+    const safe = await localImageFile(content, content.filepath);
+    bytes = fs.readFileSync(safe);
+  }
+  if (!bytes || bytes.length < 6 || bytes.subarray(0, 3).toString('ascii') !== 'GIF') return null;
+  const fitOpts = {
+    fitMode: safeFitMode((item && item.fit_mode) || options.fitMode, options.defaultFitMode || 'cover'),
+    backgroundColor: options.backgroundColor || options.device?.background_color,
+  };
+  return anim.buildAnimation(bytes, profile, cap, fitOpts, fitImageOntoCanvas);
+}
+
 module.exports = {
   render,
+  renderAnimation,
   renderRemotePage,
   renderPlayerFrame,
   renderLayout,
