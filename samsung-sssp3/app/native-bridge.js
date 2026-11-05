@@ -46,7 +46,10 @@
       return bridge.base + '/api/widgets/' + encodeURIComponent(item.widget_id) + '/render?device=' + encodeURIComponent(cfg.deviceId || '') + '&rev=' + encodeURIComponent(item.widget_rev || 0) + '&compat=sssp1228';
     }
     if (item.remote_url) return item.remote_url;
-    if (item.sssp3_rendition_url) return bridge.base + item.sssp3_rendition_url;
+    /* A rendition is an optional optimization.  Queued, failed, and evicted
+       states deliberately carry no usable rendition; keep accepting the
+       payload and cache/play the authorized original instead. */
+    if (item.sssp3_rendition_state === 'ready' && item.sssp3_rendition_url) return bridge.base + item.sssp3_rendition_url;
     /* Keep the normal CMS content contract. The cache key carries the content
      * revision, so media URLs do not need a player-specific mirror or query. */
     return bridge.base + '/uploads/content/' + encodeURIComponent(item.filepath);
@@ -130,6 +133,13 @@
     /* Commit a plan only after every supported dependency is locally verified.
        A power loss during preparation therefore leaves the prior complete plan
        and never an interval pointing at a partial cache. */
+    if (Object.prototype.hasOwnProperty.call(applied, 'offline_plan') && planHasUnavailable(applied.offline_plan)) {
+      /* The current payload can still render its verified assignments, but a
+         future plan with a failed dependency is not a complete offline
+         promise.  Retain the prior durable plan and its cache references. */
+      applied = copyWithoutOfflinePlan(applied);
+      reportPlaylist('Future offline plan incomplete; retaining prior verified plan.');
+    }
     try {
       if (Object.prototype.hasOwnProperty.call(applied, 'offline_plan')) global.localStorage.setItem('st_offline_plan', JSON.stringify(applied.offline_plan || null));
       /* The renderer keeps an assigned playlist ahead of this image, but the
@@ -322,6 +332,17 @@
     if (future && future.length) for (i = 0; i < future.length; i++) items.push(future[i]);
     return items;
   }
+  function planHasUnavailable(plan) {
+    var items, i;
+    try { items = global.STOfflinePlan && global.STOfflinePlan.dependencies(plan); } catch (ignore) { items = null; }
+    for (i = 0; items && i < items.length; i++) if (unavailable[key(items[i])]) return true;
+    return false;
+  }
+  function copyWithoutOfflinePlan(payload) {
+    var copy = {}, prop;
+    for (prop in payload) if (Object.prototype.hasOwnProperty.call(payload, prop) && prop !== 'offline_plan') copy[prop] = payload[prop];
+    return copy;
+  }
   /* This is finite flash storage. Keep only entries required by the state being
      committed, including future offline-plan dependencies. A failed delete is
      harmless: it is retried on the next successful commit. */
@@ -351,8 +372,6 @@
     return 'file://' + path(item);
   };
   bridge.accept = function (payload, callback) {
-    var pendingRenditions = payloadItems(payload).filter(function (item) { return item && item.sssp3_rendition_state && item.sssp3_rendition_state !== 'ready'; });
-    if (pendingRenditions.length) { bridge.error = 'Media rendition is preparing; retaining previous playlist.'; status(bridge.error); reportPlaylist(bridge.error); return; }
     var missing, i, known = {}, wanted = {}, selfCount = 0;
     unavailable = {};
     missing = bridge.missing(payload);

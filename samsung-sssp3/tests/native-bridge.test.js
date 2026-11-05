@@ -159,6 +159,22 @@ test('zoned fill video downloads an intrinsic-size rendition of the same asset',
   assert.notEqual(e.b._test.path(video), e.b._test.path(original));
   assert.equal(e.b._test.source(original).includes('fill-1920x1080'), false);
 });
+test('non-ready optional renditions fall back to original media without blocking mixed-zone updates', () => {
+  for (const state of ['queued', 'failed', 'evicted']) {
+    const item = {
+      content_id: 'fallback-' + state, filepath: 'fallback-' + state + '.png', mime_type: 'image/png', content_rev: 1,
+      file_size: 1, zone_id: 'background', sssp3_rendition_state: state,
+      sssp3_rendition_url: '/api/content/fallback-' + state + '/sssp3-fit/' + 'a'.repeat(32)
+    };
+    const overlay = { content_id: 'overlay-' + state, remote_url: 'https://example.test/overlay.png', zone_id: 'overlay' };
+    const e = environment({ ['http://example.test/uploads/content/' + item.filepath]: 'x' });
+    const activated = [];
+    e.b.accept({ assignments: [item, overlay] }, p => activated.push(p));
+    assert.equal(activated.length, 1, state + ' rendition must not reject the playlist');
+    assert.match(e.b._test.source(item), /\/uploads\/content\//, state + ' rendition must use the original media URL');
+    assert.deepEqual(activated[0].assignments, [item, overlay]);
+  }
+});
 test('zoned contain video downloads a letterboxed zone-sized rendition', () => {
   const e = environment();
   const video = approved({ content_id: 'motion', filepath: 'sssp-motion-test.mp4', mime_type: 'video/mp4', content_rev: 3, zone_id: 'z-pip-1', fit_mode: 'contain' }, 'contain');
@@ -294,6 +310,26 @@ test('a failed current item cannot evict verified media needed by the durable fu
   e.files[e.downloads.at(-1).destination] = true; e.done('1000?1');
   for (let i = 2; i <= 4; i++) { e.done('500'); const retry = e.scheduled.filter(x => x.ms === i * 2000).at(-1); if (retry) retry.fn(); }
   assert.ok(e.files[e.b._test.path(future)], 'future-plan media survives a failed current update');
+});
+test('a failed future dependency preserves the previous durable offline plan', () => {
+  const e = environment(), activated = [];
+  const oldFuture = { content_id: 'old-future', filepath: 'old-future.jpg', mime_type: 'image/jpeg', content_rev: 1 };
+  const oldPlan = { states: [{ payload: { assignments: [oldFuture] } }] };
+  const current = { content_id: 'now', filepath: 'now.jpg', mime_type: 'image/jpeg', content_rev: 1 };
+  const failedFuture = { content_id: 'new-future', filepath: 'new-future.jpg', mime_type: 'image/jpeg', content_rev: 1 };
+  e.storage.st_offline_plan = JSON.stringify(oldPlan);
+  e.files[e.b._test.path(oldFuture)] = true;
+  e.b.accept({ assignments: [current], offline_plan: { states: [{ payload: { assignments: [failedFuture] } }] } }, p => activated.push(p));
+  e.files[e.downloads[0].destination] = true; e.done('1000?1');
+  for (let i = 0; i < 4; i++) {
+    e.done('500');
+    const retry = e.scheduled.filter(x => x.ms === (i + 1) * 2000).at(-1);
+    if (retry) retry.fn();
+  }
+  assert.equal(activated.length, 1, 'the verified current item still applies');
+  assert.equal(Object.hasOwn(activated[0], 'offline_plan'), false, 'the incomplete replacement plan is not handed to the renderer');
+  assert.equal(e.storage.st_offline_plan, JSON.stringify(oldPlan), 'the previously complete plan remains durable');
+  assert.ok(e.files[e.b._test.path(oldFuture)], 'the prior plan keeps its future media pinned');
 });
 test('clearOwnedState removes legacy credentials, cache journals, and offline state', () => {
   const e = environment();
