@@ -50,7 +50,18 @@ const TPL_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>body{b
     await page.evaluate(() => {
       window.handlePlaylistUpdate({ assignments: [{ content_id: 'test-video', filepath: 'test.mp4', mime_type: 'video/mp4', duration_sec: 10 }], layout: null });
     });
-    await page.waitForFunction(() => window.__testVideoStarted > 0, { timeout: 5000 });
+    try {
+      await page.waitForFunction(() => window.__testVideoStarted > 0, { timeout: 5000 });
+    } catch (error) {
+      const state = await page.evaluate(() => ({
+        native: window.__STNative && { ready: window.__STNative.ready, error: window.__STNative.error, bridgeError: window.__STNative.error },
+        starts: window.__testVideoStarted || 0,
+        downloads: window.__testDownloads || [],
+        status: document.getElementById('statusText') && document.getElementById('statusText').textContent,
+        diagnostic: document.getElementById('st-media-diagnostic') && document.getElementById('st-media-diagnostic').textContent,
+      }));
+      throw new Error('native video did not start: ' + JSON.stringify({ state, errors }) + '; ' + error.message);
+    }
     await page.waitForFunction(() => {
       const raw = localStorage.getItem('__mockfile:screentinker/boot-event.json');
       if (!raw) return false;
@@ -71,7 +82,7 @@ const TPL_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>body{b
     assert.match(result.videoUrl, /^file:\/\//);
     assert.equal(result.visibility, 'visible');
     await page.evaluate(() => window.handlePlaylistUpdate({ assignments: [{ widget_id: 'cloud-doc-unqualified', widget_type: 'cloud-doc', widget_rev: 1, duration_sec: 10 }], layout: null }));
-    await page.waitForFunction(() => document.getElementById('statusText').textContent.indexOf('Unsupported on Samsung DB48E: cloud-doc widget') !== -1, { timeout: 5000 });
+    await page.waitForFunction(() => document.getElementById('statusText').textContent.indexOf('Unsupported on Samsung SSSP3 display: cloud-doc widget') !== -1, { timeout: 5000 });
     assert.equal(await page.evaluate(() => document.getElementById('playerContainer').childElementCount), 0, 'an unqualified dynamic widget must not leave a blank iframe behind');
     await page.evaluate(() => window.handlePlaylistUpdate({ assignments: [{ content_id: 'test-video', filepath: 'test.mp4', mime_type: 'video/mp4', duration_sec: 10 }], layout: null }));
     await page.waitForFunction(() => window.__testVideoStarted > 1, { timeout: 5000 });
@@ -197,12 +208,19 @@ const TPL_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>body{b
     assert.notEqual(legacyFit.wrap, 'st-legacy-video-fit', 'the failed wrapper transform must not be reused');
     assert.equal(legacyFit.transform, '', 'do not retry CSS transform fill');
     assert.equal(legacyFit.nativeVisible, 'hidden', 'zoned fill must keep the native LFD plane hidden');
-    const beforeRevision = await page.evaluate(() => document.querySelector('#playerContainer .zone video').src);
+    const beforeRevision = await page.evaluate(() => {
+      window.__videoBeforeRevision = document.querySelector('#playerContainer .zone video');
+      return !!window.__videoBeforeRevision;
+    });
+    assert.equal(beforeRevision, true);
     await page.evaluate(() => window.handlePlaylistUpdate({
       assignments: [{ content_id: 'zone-video', content_rev: 2, filepath: 'zone.mp4', mime_type: 'video/mp4', duration_sec: 10, zone_id: 'right' }],
       layout: { id: 'split', zones: [ { id: 'left', x_percent: 0, y_percent: 0, width_percent: 50, height_percent: 100 }, { id: 'right', x_percent: 50, y_percent: 0, width_percent: 50, height_percent: 100 } ] }
     }));
-    await page.waitForFunction(old => { const v = document.querySelector('#playerContainer .zone video'); return v && v.src !== old; }, { timeout: 5000 }, beforeRevision);
+    await page.waitForFunction(() => {
+      const video = document.querySelector('#playerContainer .zone video');
+      return video && video !== window.__videoBeforeRevision;
+    }, { timeout: 5000 });
     assert.equal(await page.evaluate(() => window.__testVideoStarted), nativeStartsBeforeZones);
     const splitLayout = { id: 'split-images', zones: [
       { id: 'left', x_percent: 0, y_percent: 0, width_percent: 50, height_percent: 100 },
@@ -221,10 +239,11 @@ const TPL_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>body{b
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.equal(await page.evaluate(() => window.__zoneBefore === document.querySelector('#playerContainer .zone')), true, 'identical playlist must not restart zones');
     await page.evaluate(({ anchor, replacement, splitLayout }) => window.handlePlaylistUpdate({ assignments: [anchor, { ...replacement, duration_sec: 37 }], layout: splitLayout }), { anchor, replacement, splitLayout });
-    await page.waitForFunction(() => window.__zoneBefore !== document.querySelector('#playerContainer .zone'), { timeout: 5000 });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(await page.evaluate(() => window.__zoneBefore === document.querySelector('#playerContainer .zone')), true, 'a duration-only update must preserve the already-rendered zone surface');
     await page.evaluate(({ anchor, splitLayout }) => { window.__STNative.ready = false; window.handlePlaylistUpdate({ assignments: [anchor, { widget_id: 'text-widget', widget_type: 'text', widget_rev: 1, zone_id: 'right' }], layout: splitLayout }); }, { anchor, splitLayout });
     await page.waitForFunction(() => { const frame = document.querySelector('#playerContainer .zone iframe'); return frame && /^http:/.test(frame.src); }, { timeout: 5000 });
-    await page.evaluate(({ anchor, splitLayout }) => { window.__STNative.ready = true; window.handlePlaylistUpdate({ assignments: [anchor, { widget_id: 'text-widget', widget_type: 'text', widget_rev: 1, zone_id: 'right' }], layout: splitLayout }); }, { anchor, splitLayout });
+    await page.evaluate(({ anchor, splitLayout }) => { window.__STNative.ready = true; window.handlePlaylistUpdate({ assignments: [anchor, { widget_id: 'text-widget', widget_type: 'text', widget_rev: 2, zone_id: 'right' }], layout: splitLayout }); }, { anchor, splitLayout });
     await page.waitForFunction(() => { const frame = document.querySelector('#playerContainer .zone iframe'); return frame && /^file:\/\/\/mtd_down\/common\/screentinker_media\//.test(frame.src); }, { timeout: 5000 });
     await page.evaluate(() => window.stSetWidgetOffline(true));
     await page.waitForFunction(() => { const frame = document.querySelector('#playerContainer .zone iframe'); return frame && /^file:\/\/\/mtd_down\/common\/screentinker_media\//.test(frame.src); }, { timeout: 5000 });

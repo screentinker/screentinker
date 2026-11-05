@@ -7,7 +7,13 @@ const preset = require('@babel/preset-env');
 const acorn = require('acorn');
 const esbuild = require('esbuild');
 const app = path.join(__dirname, 'app');
-const output = path.join(__dirname, 'dist');
+// The renderer is deliberately read from the server tree.  Keeping a copied HTML
+// snapshot here made native builds silently miss player fixes until someone noticed
+// in production.  Native-only behaviour is applied below through validated hooks.
+const rendererSource = path.join(__dirname, '..', 'server', 'player', 'legacy.html');
+/* Tests use a private output directory so parallel test workers cannot delete
+ * one another's browser fixture. Production builds leave this unset. */
+const output = process.env.ST_ORSAY_OUTPUT ? path.resolve(process.env.ST_ORSAY_OUTPUT) : path.join(__dirname, 'dist');
 const release = JSON.parse(fs.readFileSync(path.join(__dirname, 'release.json'), 'utf8'));
 if (!Number.isSafeInteger(release.version) || release.version < 1) throw Error('release.json must contain a positive integer version');
 const build = String(release.version);
@@ -33,14 +39,50 @@ const sssp3Capabilities = [
 ];
 fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
-let html = fs.readFileSync(path.join(app, 'index.html'), 'utf8');
+let html = fs.readFileSync(rendererSource, 'utf8');
 function replaceDocumentOnce(needle, replacement, label) {
   const count = html.split(needle).length - 1;
   if (count !== 1) throw Error('Renderer document hook missing or ambiguous: ' + label);
   html = html.replace(needle, replacement);
 }
-replaceDocumentOnce('<script src="schedule-eval.js"></script>', '<script src="schedule-eval.js"></script><script src="offline-schedule.js"></script><script src="offline-plan.js"></script>', 'offline schedule scripts');
-replaceDocumentOnce('<title>ScreenTinker SSSP3 Native Player</title>', '<script src="native-diagnostics.js"></script><title>ScreenTinker SSSP3 Native Player</title>', 'native diagnostics script');
+const upstreamExternalScripts = [
+  '<script src="/player/debug-overlay.js" defer></script>',
+  '<script src="/player/st-bridge.js"></script>',
+  '<script src="/player/st-sync.js"></script>',
+  '<script src="/socket.io/socket.io.js"></script>',
+  '<script src="/player/schedule-eval.js"></script>',
+  '<script src="/player/play-order.js"></script>',
+  '<script src="/player/kiosk-logic.js"></script>',
+  '<script src="/player/kiosk-player.js"></script>',
+  '<script src="/player/bundle-skip.js"></script>',
+  '<script src="/player/unpair-gate.js"></script>',
+  '<script src="/player/offline-play-queue.js"></script>',
+  '<script src="/player/live-publish-legacy.js"></script>',
+  '<script src="/player/talk-legacy.js"></script>',
+  '<script src="/player/screen-share.js"></script>',
+  '<script src="/player/trigger-resolve.js"></script>',
+  '<script src="/player/media-mute.js"></script>',
+  '<script src="/player/orientation-style.js"></script>',
+  '<script src="/player/wall-geometry.js"></script>',
+  '<script src="/player/player-media-health.js"></script>',
+  '<script src="/player/transitions.js"></script>',
+];
+for (const tag of upstreamExternalScripts) replaceDocumentOnce(tag, '', 'upstream external script ' + tag);
+const nativeScriptTags = [
+  'polyfills.js', 'legacy-dom.js', 'legacy-web.js', 'native-prelude.js',
+  'socket.io.js', 'schedule-eval.js', 'offline-schedule.js', 'offline-plan.js',
+  'play-order.js', 'kiosk-logic.js', 'kiosk-player.js', 'bundle-skip.js',
+  'unpair-gate.js', 'offline-play-queue.js', 'live-publish-legacy.js',
+  'talk-legacy.js', 'screen-share.js', 'trigger-resolve.js', 'media-mute.js',
+  'orientation-style.js', 'wall-geometry.js', 'player-media-health.js',
+  'transitions-stub.js', 'native-diagnostics.js',
+].map(name => '<script src="' + name + '"></script>').join('');
+replaceDocumentOnce('<title>ScreenTinker Player</title>', nativeScriptTags + '<title>ScreenTinker SSSP3 Native Player</title>', 'native dependency prelude');
+/* legacy.html deliberately stays platform-neutral.  The native bridge, however,
+ * talks to these two Orsay plugin objects by id.  Keep them in the generator
+ * rather than in a copied renderer snapshot, and make their insertion fail if
+ * upstream changes the document body structure. */
+replaceDocumentOnce('<body>', '<body><object id="NativeDownloader" classid="clsid:SAMSUNG-INFOLINK-DOWNLOAD"></object><object id="NativePlayer" classid="clsid:SAMSUNG-INFOLINK-PLAYER" style="position:absolute;left:0;top:0;width:1px;height:1px;visibility:hidden;z-index:900"></object>', 'Samsung native plugin objects');
 replaceDocumentOnce('<div id="setupScreen">', '<div id="setupScreen"><p id="st-native-diagnostic" style="color:#ffcf63;font:24px Arial;position:absolute;top:30px;left:30px">BUILD ' + build + ' - LOADING</p>', 'native startup diagnostic');
 function inlineScripts(document) {
   const scripts = [];
@@ -90,22 +132,36 @@ replaceOnce('    const layoutKnown = localStorage.getItem(LAYOUT_CACHE_KEY) !== 
 replaceOnce('      layout = loadLayoutCache();', '      layout = nativeOfflineBoot && nativeOfflineBoot.state ? nativeOfflineBoot.state.payload.layout || null : loadLayoutCache();\n      window.__stCachedColdStart = true;');
 replaceOnce('    {\n      const tapOverlay = document.createElement("div");', '    if (window.__STNative && window.__STNative.ready) {\n      setTimeout(function () { if (!cachedPlaylist.length || !layoutKnown) { var message = document.getElementById("statusText"); if (message) message.removeAttribute("data-i18n"); showStatus("No cached content is available. Waiting for the server."); } connect(config.serverUrl); }, 0);\n    } else {\n      const tapOverlay = document.createElement("div");');
 replaceOnce('function mediaUrl(it) {\n  if (!it) return "";', 'function mediaUrl(it) {\n  if (!it) return "";\n  if (window.__STNative && window.__STNative.ready) { var local = window.__STNative.mediaUrl(it, null); if (local) return local; }');
-for (const name of ['item', 'a']) {
-  const needle = '.concat(' + name + '.widget_rev || 0);';
-  const expected = name === 'item' ? 2 : 1;
-  if (main.split(needle).length !== expected + 1) throw Error('Widget URL hooks missing or ambiguous');
-  main = main.split(needle).join('.concat(' + name + '.widget_rev || 0, window.__STNative && window.__STNative.ready ? "&compat=sssp1228" : "");');
+/* The upstream widget URL acquired transparent-background and panel-fragment
+ * parameters. Match the complete current construction (not just a short
+ * substring) so upstream drift stops the build instead of silently dropping
+ * native cache/offline wiring. */
+function patchWidgetIframes(base, item, expected) {
+  const basePattern = base === 'config.serverUrl' ? 'config\\.serverUrl' : 'serverUrl';
+  const itemPattern = item === 'item' ? 'item' : 'a';
+  const pattern = new RegExp(
+    'iframe\\.src = ""\\.concat\\(' + basePattern + ', "/api/widgets/"\\)\\.concat\\(' + itemPattern + '\\.widget_id, "/render\\?device="\\)\\.concat\\(encodeURIComponent\\(config\\.deviceId \\|\\| ""\\), "&rev="\\)\\.concat\\(' + itemPattern + '\\.widget_rev \\|\\| 0\\)\\.concat\\(' + itemPattern + '\\.transparent_bg \\? "&transparent=1" : ""\\)\\.concat\\(' + itemPattern + '\\.widget_panel \\? "#panel=" \\+ encodeURIComponent\\(' + itemPattern + '\\.widget_panel\\) : ""\\);',
+    'g'
+  );
+  const matches = main.match(pattern) || [];
+  if (matches.length !== expected) throw Error('Widget iframe hooks missing or ambiguous: ' + base + '/' + item + ' (expected ' + expected + ', got ' + matches.length + ')');
+  main = main.replace(pattern, function (statement) {
+    return statement + '\n      if (window.__STNative && window.__STNative.ready) { var stRemoteWidgetUrl = iframe.src; var stWidgetHash = stRemoteWidgetUrl.indexOf("#"); var stCompatWidgetUrl = (stWidgetHash < 0 ? stRemoteWidgetUrl : stRemoteWidgetUrl.slice(0, stWidgetHash)) + (stRemoteWidgetUrl.indexOf("?") < 0 ? "?" : "&") + "compat=sssp1228" + (stWidgetHash < 0 ? "" : stRemoteWidgetUrl.slice(stWidgetHash)); var stLocalWidgetUrl = window.__STNative.widgetUrl(' + item + ', stCompatWidgetUrl); iframe.setAttribute("data-st-widget-remote", stCompatWidgetUrl); iframe.setAttribute("data-st-widget-local", stLocalWidgetUrl); if (stLocalWidgetUrl !== stCompatWidgetUrl) iframe.src = stLocalWidgetUrl; iframe.onload = function () { if (window.__STNative && window.__STNative.frameReady) window.__STNative.frameReady(); }; }';
+  });
 }
-for (const [base, item] of [['config.serverUrl', 'item'], ['serverUrl', 'item'], ['config.serverUrl', 'a']]) {
-  const needle = 'iframe.src = "".concat(' + base + ', "/api/widgets/").concat(' + item + '.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(' + item + '.widget_rev || 0, window.__STNative && window.__STNative.ready ? "&compat=sssp1228" : "");';
-  replaceOnce(needle, needle + '\n      if (window.__STNative && window.__STNative.ready) { var stRemoteWidgetUrl = iframe.src, stLocalWidgetUrl = window.__STNative.widgetUrl(' + item + ', stRemoteWidgetUrl); iframe.setAttribute("data-st-widget-remote", stRemoteWidgetUrl); iframe.setAttribute("data-st-widget-local", stLocalWidgetUrl); if (stLocalWidgetUrl !== stRemoteWidgetUrl) iframe.src = stLocalWidgetUrl; iframe.onload = function () { if (window.__STNative && window.__STNative.frameReady) window.__STNative.frameReady(); }; }');
-}
+patchWidgetIframes('config.serverUrl', 'item', 1);
+patchWidgetIframes('serverUrl', 'item', 1);
+patchWidgetIframes('config.serverUrl', 'a', 3);
 replaceOnce('function handlePlaylistUpdate(data) {\n  var _a;', 'function handlePlaylistUpdate(data) {\n  var _a;\n  if (window.__STNative && window.__STNative.ready && !data.__nativeReady) { window.__STNative.accept(data, function (next) { next.__nativeReady = true; handlePlaylistUpdate(next); }); return; }');
-replaceOnce('function renderContent(item) {\n  var _a, _b;', 'function renderContent(item) {\n  var _a, _b;\n  if (window.__STNative && window.__STNative.ready && item && ((item.widget_id && !window.__STNative.canRender(item)) || (!item.widget_id && !item.remote_url && /^(?:image|video|audio)\\//.test(item.mime_type || "") && !window.__STNative.supports(item)))) { teardownCurrentMedia(); var unsupportedKind = item.widget_id ? ((item.widget_type || "unknown") + " widget") : (item.mime_type || "media"); showStatus("Unsupported on Samsung DB48E: " + unsupportedKind); window.__STNative.report("unsupported-media", String(unsupportedKind), config.deviceId); isPlaying = false; if (playlist && playlist.length > 1) scheduleAdvance(nextItem, 0); return; }');
+replaceOnce('function renderContent(item) {\n  var _a, _b;', 'function renderContent(item) {\n  var _a, _b;\n  if (window.__STNative && window.__STNative.ready && item && ((item.widget_id && !window.__STNative.canRender(item)) || (!item.widget_id && !item.remote_url && /^(?:image|video|audio)\\//.test(item.mime_type || "") && !window.__STNative.supports(item)))) { teardownCurrentMedia(); var unsupportedKind = item.widget_id ? ((item.widget_type || "unknown") + " widget") : (item.mime_type || "media"); showStatus("Unsupported on Samsung SSSP3 display: " + unsupportedKind); window.__STNative.report("unsupported-media", String(unsupportedKind), config.deviceId); isPlaying = false; if (playlist && playlist.length > 1) scheduleAdvance(nextItem, 0); return; }');
 replaceOnce('  socket.on("connect", () => {\n    console.log("Connected");', '  socket.on("connect", () => {\n    stSetWidgetOffline(false);\n    if (window.__STNative && window.__STNative.flushReports) window.__STNative.flushReports();\n    if (window.__STNative && window.__STNative.pollLauncherManifest) window.__STNative.pollLauncherManifest(function (err, info) { try { if (info && info.reachable && info.update) window.__STNative.report("launcher-update", JSON.stringify(info), config.deviceId); } catch (ignorePoll) {} });\n    console.log("Connected");');
 replaceOnce('  socket.on("disconnect", (reason) => {\n    console.log("Disconnected", reason || "");', '  socket.on("disconnect", (reason) => {\n    stSetWidgetOffline(true);\n    console.log("Disconnected", reason || "");');
 replaceOnce('  socket.on("connect_error", (err) => {\n    document.getElementById("setupStatus").textContent = "Connection failed: " + err.message;', '  socket.on("connect_error", (err) => {\n    stSetWidgetOffline(true);\n    document.getElementById("setupStatus").textContent = "Connection failed: " + err.message;');
 replaceOnce('const fingerprint = (items) => items.map((a) => "".concat(a.content_id || "", "|").concat(a.widget_id || "", "|")', 'const fingerprint = (items) => items.map((a) => "".concat(a.content_id || "", "|").concat(a.content_rev || "", "|").concat(a.widget_id || "", "|")');
+/* A replacement under the same content id is still a distinct native-cache
+ * revision. Include it in per-zone identity so a changed zone actually
+ * re-renders instead of retaining its old DOM/media surface forever. */
+replaceOnce('return items.map((a) => [\n    a.content_id || "",\n    a.widget_id || "",', 'return items.map((a) => [\n    a.content_id || "",\n    a.content_rev || "",\n    a.widget_id || "",');
 replaceOnce('  if (playlist.length > 0) savePlaylistCache(playlist);', '  savePlaylistCache(playlist);');
 replaceOnce('ScheduleEval.itemShouldPlay(item, Date.now(), playerTimezone)', 'ScheduleEval.itemShouldPlay(item, syncedNow(), playerTimezone)');
 /* Do not gate online playback on a cached plan: an uncovered interval is a valid
@@ -115,11 +171,11 @@ main += '\nfunction nativeOfflinePlanTick() { try { if (socket && socket.connect
 main += '\nsetTimeout(function () { try { var setup = document.getElementById("setupScreen"), overlay = document.getElementById("statusOverlay"), text = document.getElementById("statusText"); var boot = { setup: setup.style.display, status: overlay.style.display, message: text && text.textContent, playing: isPlaying, items: playlist.length, cached: !!window.__stCachedColdStart, cold_start: true }; if (window.__STNative.recordBootEvent) boot = window.__STNative.recordBootEvent(boot); if (config.deviceId) window.__STNative.report("boot", JSON.stringify(boot), config.deviceId); } catch (ignore) {} }, 1000);\n';
 replaceOnce('    localStorage.setItem("st_clock_offset", String(clockOffsetMs));', '    localStorage.setItem("st_clock_offset", String(clockOffsetMs));\n    if (window.__STNative && window.__STNative.ready && (window.__stSavedClockOffset == null || Math.abs(window.__stSavedClockOffset - clockOffsetMs) > 1000)) { window.__stSavedClockOffset = clockOffsetMs; window.__STNative.persistStorage(); }');
 replaceOnce('  text.textContent = msg;', '  text.removeAttribute("data-i18n");\n  text.textContent = msg;');
-replaceOnce('function showStatus(msg) {\n  const overlay = document.getElementById("statusOverlay");\n  if (!overlay) return;\n  overlay.style.display = "flex";', 'function showStatus(msg) {\n  const overlay = document.getElementById("statusOverlay");\n  if (!overlay) return;\n  overlay.style.display = "block";\n  overlay.style.textAlign = "center";\n  overlay.style.paddingTop = "20%";');
+replaceOnce('  overlay.style.display = "flex";\n  let text = document.getElementById("statusText");', '  overlay.style.display = "block";\n  overlay.style.textAlign = "center";\n  overlay.style.paddingTop = "20%";\n  let text = document.getElementById("statusText");');
 replaceOnce('  const oldFp = fingerprint(playlist);', '  const oldFp = fingerprint(playlist);\n  const zoneItemsChanged = !!(data.layout && data.layout.zones && data.layout.zones.length > 1 && JSON.stringify(newItems) !== JSON.stringify(playlist));');
 replaceOnce('  if (newFp === oldFp && playlist.length > 0 && !wallChanged && !layoutChanged) {', '  if (newFp === oldFp && playlist.length > 0 && !wallChanged && !layoutChanged && !zoneItemsChanged && !data.__nativeMediaChanged) {');
 replaceOnce('      if (newItem && newItem.widget_id && oldItem && (oldItem.widget_rev || 0) !== (newItem.widget_rev || 0)) {', '      if (newItem && oldItem && (data.__nativeMediaChanged || zoneItemsChanged || layoutChanged || wallChanged || newItem.content_rev !== oldItem.content_rev || newItem.filepath !== oldItem.filepath || newItem.mime_type !== oldItem.mime_type)) {\n        renderContent(newItem);\n      } else if (newItem && newItem.widget_id && oldItem && (oldItem.widget_rev || 0) !== (newItem.widget_rev || 0)) {');
-replaceOnce('  if (isPlaying && !scheduleDriven && !outgoingNeverAdvances) {', '  if (isPlaying && !scheduleDriven && !outgoingNeverAdvances && !(window.__STNative && window.__STNative.ready)) {');
+replaceOnce('  if (isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow) {', '  if (isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow && !(window.__STNative && window.__STNative.ready)) {');
 replaceOnce('    config.enrolKey = null;\n    const next = UnpairGate.urlWithoutEnrolKey(location.href);', '    config.enrolKey = null;\n    /* A native panel restores state from common storage after reload, so clear\n       that journal before leaving the current tenant. */\n    try { if (window.__STNative && window.__STNative.clearOwnedState) window.__STNative.clearOwnedState(); } catch (ignoreNativeWipe) {}\n    const next = UnpairGate.urlWithoutEnrolKey(location.href);');
 replaceOnce('  console.log("Playlist changed, updating");', '  const wasNativeGapless = !!(window.__STNative && window.__STNative.gaplessActive && window.__STNative.gaplessActive());\n  if (wasNativeGapless) { window.__STNative.stopVideo(); isPlaying = false; }\n  console.log("Playlist changed, updating");');
 replaceOnce('  const oldAnchorId = identityOf(oldPlaylist[oldAnchorIdx]);', '  const oldAnchorId = wasNativeGapless ? null : identityOf(oldPlaylist[oldAnchorIdx]);');
@@ -143,7 +199,7 @@ replaceOnce('function captureAndSend() {\n', 'function captureAndSend() {\n  if 
 replaceOnce('    console.log("Registered:", data.device_id);', '    console.log("Registered:", data.device_id);\n    if (window.__STNative && window.__STNative.flushReports) window.__STNative.flushReports();\n    if (window.__STNative && !window.__STNative.captureTestStarted) { window.__STNative.captureTestStarted = true; setTimeout(captureAndSend, 15000); }');
 replaceOnce('          cold_start: false\n        });\n      } catch (e) {\n      }\n      disconnectedAt = 0;\n      linkLostDuringGap = false;\n    }', '          cold_start: false\n        });\n      } catch (e) {\n      }\n      disconnectedAt = 0;\n      linkLostDuringGap = false;\n    } else if (config.deviceId && !window.__stColdStartReported) {\n      window.__stColdStartReported = true;\n      try {\n        socket.emit("device:connectivity-report", {\n          device_id: config.deviceId,\n          offline_ms: 0,\n          link_lost: false,\n          cold_start: true,\n          cached_items: playlist.length,\n          playing: !!isPlaying\n        });\n      } catch (ignoreCold) {}\n    }');
 replaceOnce('function mountImage(img, item) {', 'function mountImage(img, item) {\n  if (window.__STNative && img && img.complete && img.naturalWidth) window.__STNative.frameReady();');
-replaceOnce('if (window.PlayerMediaHealth && typeof PlayerMediaHealth.needsReattach === "function" && pendingVideoSeq !== renderSeq && PlayerMediaHealth.needsReattach(state)) {', 'if (!(window.__STNative && window.__STNative.ready && item && /^video\\/(?!youtube|hls)/.test(item.mime_type || "")) && window.PlayerMediaHealth && typeof PlayerMediaHealth.needsReattach === "function" && pendingVideoSeq !== renderSeq && PlayerMediaHealth.needsReattach(state)) {');
+replaceOnce('if (!(typeof kiosk !== "undefined" && kiosk && kiosk.isShowing()) && window.PlayerMediaHealth && typeof PlayerMediaHealth.needsReattach === "function" && pendingVideoSeq !== renderSeq && PlayerMediaHealth.needsReattach(state)) {', 'if (!(window.__STNative && window.__STNative.ready && item && /^video\\/(?!youtube|hls)/.test(item.mime_type || "")) && !(typeof kiosk !== "undefined" && kiosk && kiosk.isShowing()) && window.PlayerMediaHealth && typeof PlayerMediaHealth.needsReattach === "function" && pendingVideoSeq !== renderSeq && PlayerMediaHealth.needsReattach(state)) {');
 replaceOnce('function teardownCurrentMedia(keep) {\n  renderSeq++;', 'function teardownCurrentMedia(keep) {\n  if (window.__STNative && window.__STNative.ready) window.__STNative.stopVideo();\n  renderSeq++;');
 replaceOnce('function saveConfig(cfg) {\n  localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));', 'function saveConfig(cfg) {\n  localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));\n  if (window.__STNative && window.__STNative.ready) window.__STNative.persistStorage();');
 replaceOnce('localStorage.setItem(PLAYLIST_CACHE_KEY, JSON.stringify(items));', 'localStorage.setItem(PLAYLIST_CACHE_KEY, JSON.stringify(items));\n    if (window.__STNative && window.__STNative.ready) window.__STNative.persistStorage();');
@@ -168,24 +224,39 @@ main += '\nfunction nativeGaplessAdvance() { var old = playlist[currentIndex]; i
  * PiP.
  */
 replaceOnce('    div.appendChild(video);\n    try {\n      const p = video.play();', '    div.appendChild(video);\n    if (window.__STNative && window.__STNative.ready) stLegacyVideoFit(video, itemFit(a, zone));\n    try {\n      const p = video.play();');
-main = 'var offlinePlayOpen = null; function queueOfflinePlay(open, completed) { try { var q = new OfflinePlayQueue(); q.restore(localStorage.getItem("st_offline_plays")); q.add(OfflinePlayQueue.makePlay({client_event_id:OfflinePlayQueue.newId(),content_id:open.content_id,widget_id:open.widget_id,content_name:open.content_name,started_at:open.started_at,ended_at:Math.floor(Date.now()/1000),completed:completed})); localStorage.setItem("st_offline_plays",q.serialize()); } catch (ignore) {} }\n' + main;
+// legacy.html now owns offlinePlayOpen and queueOfflinePlay.  Do not prepend the
+// old native copy: duplicate lexical declarations make the generated renderer
+// unparseable and bypass the upstream queue's acknowledgement safeguards.
 const generated = babel.transformSync(main, { presets: [[preset, { targets: { ie: '11' }, modules: false }]], comments: false, sourceType: 'script' }).code;
 acorn.parse(generated, { ecmaVersion: 5 });
 fs.writeFileSync(path.join(output, 'renderer-main.js'), generated);
 replaceDocumentOnce(scripts[1].raw, '<script src="native-bridge.js"></script><script>window.__ST_NATIVE_BUILD = "' + build + '"; try { if (window.Common && Common.API && Common.API.Widget) new Common.API.Widget().sendReadyEvent(); } catch (e) { window.__STNative.launcherError = String(e); } try { window.__STNative.init(); window.__STNative.restoreStorage(); window.__STNative.ready = true; } catch (e) { window.__STNative.error = String(e); }</script><script src="renderer-main.js"></script>', 'main renderer replacement');
-replaceDocumentOnce('<script src="native-bridge.js"></script></body>', '</body>', 'unused native bridge tag removal');
-
-replaceDocumentOnce('<script src="native-prelude.js"></script>', '<script src="polyfills.js"></script><script src="legacy-dom.js"></script><script src="legacy-web.js"></script><script src="native-prelude.js"></script>', 'legacy compatibility prelude');
 fs.writeFileSync(path.join(output, 'index.html'), html);
+function compileBrowserScript(src, dest) {
+  const code = fs.readFileSync(src, 'utf8').split('__ST_BUILD__').join(build);
+  const compiled = babel.transformSync(code, { presets: [[preset, { targets: { ie: '11' }, modules: false }]], comments: false, sourceType: 'script' }).code;
+  acorn.parse(compiled, { ecmaVersion: 5 });
+  fs.writeFileSync(dest, compiled);
+}
 for (const name of fs.readdirSync(app)) {
   if (name === 'index.html' || name === 'renderer.html' || name === 'config.xml') continue;
   const src = path.join(app, name), dest = path.join(output, name);
   if (!fs.statSync(src).isFile()) continue;
   if (!name.endsWith('.js')) { fs.copyFileSync(src, dest); continue; }
-  const code = fs.readFileSync(src, 'utf8').split('__ST_BUILD__').join(build);
-  const compiled = babel.transformSync(code, { presets: [[preset, { targets: { ie: '11' }, modules: false }]], comments: false, sourceType: 'script' }).code;
-  acorn.parse(compiled, { ecmaVersion: 5 });
-  fs.writeFileSync(dest, compiled);
+  compileBrowserScript(src, dest);
+}
+/* These are the same browser dependencies referenced by the current upstream
+ * legacy renderer.  Keep their source locations explicit: a missing or renamed
+ * dependency fails this build instead of degrading an offline package at runtime. */
+const upstreamBrowserDependencies = {
+  'kiosk-logic.js': path.join(__dirname, '..', 'server', 'lib', 'kiosk-logic.js'),
+  'kiosk-player.js': path.join(__dirname, '..', 'server', 'player', 'kiosk-player.js'),
+  'bundle-skip.js': path.join(__dirname, '..', 'server', 'lib', 'bundle-skip.js'),
+  'screen-share.js': path.join(__dirname, '..', 'server', 'lib', 'screen-share-player.js'),
+};
+for (const [name, src] of Object.entries(upstreamBrowserDependencies)) {
+  if (!fs.statSync(src).isFile()) throw Error('Required upstream browser dependency missing: ' + src);
+  compileBrowserScript(src, path.join(output, name));
 }
 // Socket.IO is already a pinned build dependency of the server. Keep the exact
 // browser version used by this legacy package pinned here as well, then produce

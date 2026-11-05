@@ -25,12 +25,19 @@ downgrades `<ver>`). The package build owns `<ver>` through `release.json`. When
 
 ## Package layout
 
-- `app/` — player source. `index.html` is the audited legacy renderer snapshot
-  with native hooks elided; `prepare.js` re-injects the native bridge wiring
-  (offline plan, media, screenshots, timezone table) as literal code replacements
-  that fail loudly if upstream shifts under them. `native-bridge.js` is the
-  Samsung-plugin layer (SAMSUNG-INFOLINK-DOWNLOAD/PLAYER, FileSystem journal,
-  native gapless attempts, screenshot capture).
+- `server/player/legacy.html` — the sole renderer source. `prepare.js` reads it
+  directly, removes its server-hosted script tags, and re-injects the native
+  package dependencies plus the Samsung bridge wiring. Every document and
+  renderer hook is cardinality-checked, so an upstream structural change fails
+  the build instead of producing a partly-native package. There is deliberately
+  no `app/index.html` renderer snapshot to drift from the server player.
+- `app/` — Samsung-specific adapters only: the native plugin bridge, offline
+  schedule plan support, Orsay compatibility shims, and native diagnostics.
+  `native-bridge.js` owns the SAMSUNG-INFOLINK-DOWNLOAD/PLAYER integration,
+  FileSystem journal, native gapless attempts, and screenshot capture.
+- Current upstream browser dependencies that the renderer imports (kiosk,
+  bundle-skip, and screen-share) are copied from their canonical server sources
+  during the build, transpiled to ES5, and validated as package files.
 - `socket.io-client@4.8.3` is pinned in `package-lock.json`; `prepare.js`
   transpiles its browser distribution to ES5 and packages it locally. The
   generated vendor file is deliberately not tracked.
