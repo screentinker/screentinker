@@ -299,12 +299,15 @@
     downloader.OnComplete = 'STNativeDownloadComplete';
   };
   bridge.persistStorage = function () {
-    var keys = ['rd_web_player', 'rd_playlist_cache', 'rd_layout_cache', 'st_group_sync', 'st_install_id', 'st_schedule_timezone', 'st_schedule_timezone_table', 'st_clock_offset', 'st_active_schedule', 'st_offline_plan', 'st_default_content', 'st_native_gapless'], saved = {}, i;
+    var keys = ['rd_web_player', 'rd_playlist_cache', 'rd_layout_cache', 'st_group_sync', 'st_install_id', 'st_schedule_timezone', 'st_schedule_timezone_table', 'st_clock_offset', 'st_active_schedule', 'st_offline_plan', 'st_default_content', 'st_native_gapless', 'st_owner_revoked'], saved = {}, i;
     try { for (i = 0; i < keys.length; i++) saved[keys[i]] = global.localStorage.getItem(keys[i]); saved.__cacheIndex = index; return bridge.writeState(saved); } catch (ignore) { return false; }
   };
   bridge.restoreStorage = function () {
     var saved = bridge.readState(), key, file, previous, existing;
     if (!saved) {
+      // If common-filesystem deletion failed during remote revocation, never
+      // let the legacy credential file resurrect the previous owner.
+      try { if (global.localStorage.getItem('st_owner_revoked') === '1') return; } catch (ignoreRevoked) {}
       try {
         file = fs.openCommonFile('/mtd_down/common/screentinker/state.json', 'r');
         previous = JSON.parse(file.readAll()); fs.closeCommonFile(file);
@@ -835,6 +838,9 @@
      * therefore has to clear both stores, including future schedule decisions. */
   bridge.clearOwnedState = function () {
     var stale, name, slot, keys, i;
+    // Write this before best-effort filesystem deletion. It is deliberately
+    // retained so an interrupted wipe cannot re-pair from state.json at boot.
+    try { global.localStorage.setItem('st_owner_revoked', '1'); } catch (ignoreTombstone) {}
     for (stale in index) if (Object.prototype.hasOwnProperty.call(index, stale)) {
       name = index[stale];
       try { fs.deleteCommonFile(String(name).replace(/^\/mtd_down\/common\//, '')); } catch (ignore) {}
