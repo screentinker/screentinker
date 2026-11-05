@@ -46,8 +46,16 @@ const renderer = fs.readFileSync(path.join(output, 'renderer-main.js'), 'utf8');
 for (const hook of ['nativeOfflinePlanTick', 'stSetWidgetOffline', 'data-st-widget-local', 'Kiosk] emergency alert']) {
   assert.ok(renderer.includes(hook), 'current renderer and required native hook are both present: ' + hook);
 }
+assert.match(renderer, /function enterRepairMode\(message\)[\s\S]*clearOwnedState/, 'remote revocation repair mode clears native tenant state');
+assert.match(renderer, /nativeOfflinePlanTick\(\)[\s\S]*config\.paired/, 'offline schedule execution requires a valid pairing');
 assert.equal((renderer.match(/\bvar offlinePlayOpen = null\b/g) || []).length, 1,
   'the upstream offline proof-of-play state must not be shadowed by the old native preamble');
+for (const helper of ['unpair-gate', 'play-order', 'offline-play-queue', 'trigger-resolve', 'media-mute', 'orientation-style', 'wall-geometry', 'player-media-health']) {
+  assert.ok(fs.existsSync(path.join(output, helper + '.js')), 'source-derived helper is packaged: ' + helper);
+  assert.equal(fs.existsSync(path.join(root, 'app', helper + '.js')), false, 'no frozen native helper snapshot remains: ' + helper);
+}
+const unpair = fs.readFileSync(path.join(output, 'unpair-gate.js'), 'utf8');
+assert.match(unpair, /function storageKeys\(suffix, linkSuffix\)/, 'generated unpair gate keeps the current link namespace contract');
 fs.rmSync(output, { recursive: true, force: true });
 
 console.log('Native renderer source of truth is server/player/legacy.html.');

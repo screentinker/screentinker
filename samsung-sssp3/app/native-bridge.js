@@ -122,7 +122,6 @@
       bridge.error = 'All new media failed to cache; retaining previous playlist.';
       status(bridge.error); reportPlaylist(bridge.error); desired = null; apply = null; downloadedForUpdate = false; return;
     }
-    if (Object.keys(unavailable).length && Object.prototype.hasOwnProperty.call(applied, 'offline_plan')) delete applied.offline_plan;
     reportPlaylist('Applying playlist with ' + applied.assignments.length + ' verified items');
     /* A failed standby or sibling item is diagnostic information, not a reason
        to leave a permanent error banner over an independently valid zone. */
@@ -138,7 +137,16 @@
        * before the cache journal so a restart cannot observe a new index with
        * an old (or absent) default. */
       if (Object.prototype.hasOwnProperty.call(applied, 'default_content')) global.localStorage.setItem('st_default_content', JSON.stringify(applied.default_content || null));
-      bridge.evictUnused(applied);
+      /* A failed current item must not make a previously committed future plan
+       * disappear from cache retention.  The new plan is committed only when
+       * complete; until then the durable plan is the authority for future media. */
+      bridge.evictUnused(Object.prototype.hasOwnProperty.call(applied, 'offline_plan') ? applied : (function () {
+        var retained = {}, stored;
+        for (var retainedKey in applied) if (Object.prototype.hasOwnProperty.call(applied, retainedKey)) retained[retainedKey] = applied[retainedKey];
+        try { stored = JSON.parse(global.localStorage.getItem('st_offline_plan') || 'null'); } catch (ignorePlan) { stored = null; }
+        if (stored) retained.offline_plan = stored;
+        return retained;
+      })());
       bridge.persistStorage();
     } catch (ignore) {}
     if (downloadedForUpdate) { applied.__nativeMediaChanged = true; status('Media cached. Starting playback...'); } downloadedForUpdate = false; callback(applied);
@@ -804,7 +812,7 @@
      * rehydrates it from the common filesystem at boot.  An ownership change
      * therefore has to clear both stores, including future schedule decisions. */
   bridge.clearOwnedState = function () {
-    var stale, name, slot;
+    var stale, name, slot, keys, i;
     for (stale in index) if (Object.prototype.hasOwnProperty.call(index, stale)) {
       name = index[stale];
       try { fs.deleteCommonFile(String(name).replace(/^\/mtd_down\/common\//, '')); } catch (ignore) {}
@@ -814,6 +822,11 @@
       try { fs.deleteCommonFile((statePrefix + slot + '.json').replace(/^\/mtd_down\/common\//, '')); } catch (ignore2) {}
     }
     try { fs.deleteCommonFile(bootEventPath.replace(/^\/mtd_down\/common\//, '')); } catch (ignore3) {}
+    /* Pre-journal releases wrote credentials directly here.  Leaving it behind
+     * would re-pair a revoked panel during restoreStorage(). */
+    try { fs.deleteCommonFile('screentinker/state.json'); } catch (ignore4) {}
+    keys = ['rd_web_player', 'rd_playlist_cache', 'rd_layout_cache', 'st_group_sync', 'st_install_id', 'st_schedule_timezone', 'st_schedule_timezone_table', 'st_clock_offset', 'st_active_schedule', 'st_offline_plan', 'st_default_content', 'st_native_gapless'];
+    for (i = 0; i < keys.length; i++) try { global.localStorage.removeItem(keys[i]); } catch (ignore5) {}
   };
   bridge.stopVideo = function () { var player = document.getElementById('NativePlayer'), session = gaplessSession, stage = document.getElementById('playerContainer'); gaplessGeneration++; closeGapless(session, 'teardown'); videoGeneration++; clearTimeout(videoTimer); bridge.activeRect = null; if (videoBackgrounds && stage && stage.style && document.body && document.documentElement) { stage.style.background = videoBackgrounds[0]; document.body.style.background = videoBackgrounds[1]; document.documentElement.style.background = videoBackgrounds[2]; videoBackgrounds = null; } if (!player) return; if (videoActive) { videoActive = false; try { player.Stop(); } catch (ignore2) {} } player.style.visibility = 'hidden'; };
   bridge._test = { key: key, path: path, source: source, bootEventPath: bootEventPath, pendingReports: function () { return pendingReports.slice(); } };

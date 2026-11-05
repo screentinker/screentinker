@@ -46,6 +46,7 @@ const TPL_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>body{b
       if (u.indexOf('smoke-cms.test/uploads/content/') !== -1) return req.respond({ status: 200, contentType: 'image/png', headers: { 'Access-Control-Allow-Origin': '*' }, body: Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01, 0x02, 0x03]) });
       return /^https?:/.test(u) ? req.abort() : req.continue();
     });
+    await page.evaluateOnNewDocument(() => { if (location.protocol === 'file:') localStorage.setItem('rd_web_player', JSON.stringify({ serverUrl: 'http://smoke-cms.test', deviceId: 'smoke-device', deviceToken: 'smoke-token', paired: true })); });
     await page.goto('file://' + path.resolve(__dirname, '../dist/index.html'), { waitUntil: 'load', timeout: 20000 });
     await page.evaluate(() => {
       window.handlePlaylistUpdate({ assignments: [{ content_id: 'test-video', filepath: 'test.mp4', mime_type: 'video/mp4', duration_sec: 10 }], layout: null });
@@ -248,7 +249,7 @@ const TPL_HTML = '<!doctype html><html><head><meta charset="utf-8"><style>body{b
     await page.evaluate(() => window.stSetWidgetOffline(true));
     await page.waitForFunction(() => { const frame = document.querySelector('#playerContainer .zone iframe'); return frame && /^file:\/\/\/mtd_down\/common\/screentinker_media\//.test(frame.src); }, { timeout: 5000 });
     await page.evaluate(() => window.stSetWidgetOffline(false));
-    await page.waitForFunction(() => { const frame = document.querySelector('#playerContainer .zone iframe'); return frame && /^file:\/\/\/mtd_down\/common\/screentinker_media\//.test(frame.src); }, { timeout: 5000 });
+    await page.waitForFunction(() => { const frame = document.querySelector('#playerContainer .zone iframe'); return frame && /^http:/.test(frame.src); }, { timeout: 5000 });
     await page.evaluate(() => window.handlePlaylistUpdate({
       assignments: [
         { content_id: 'pip-video', filepath: 'pip.mp4', mime_type: 'video/mp4', duration_sec: 10, zone_id: 'background', fit_mode: 'fill', fill_fit: 'fill', fill_width: 1920, fill_height: 1080, sssp3_rendition_state: 'ready', sssp3_rendition_url: '/api/content/pip-video/sssp3-fit/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?rev=1' },

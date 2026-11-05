@@ -111,7 +111,8 @@ main = main.slice(0, capabilityStart)
   + main.slice(capabilityEnd);
 function replaceOnce(needle, replacement) {
   if (main.split(needle).length !== 2) throw Error('Renderer hook missing or ambiguous: ' + needle);
-  main = main.replace(needle, replacement);
+  /* A replacement function preserves literal $ characters in injected ES5. */
+  main = main.replace(needle, function () { return replacement; });
 }
 function replacePatternOnce(pattern, replacement, label) {
   const matches = main.match(pattern);
@@ -119,7 +120,7 @@ function replacePatternOnce(pattern, replacement, label) {
   main = main.replace(pattern, replacement);
 }
 replaceOnce('let config = getConfig();', 'let config = getConfig();\nif (!config.serverUrl || config.serverUrl === "null") config.serverUrl = window.__STNative.base;');
-replaceOnce('let socket = null;', 'let socket = null;\nfunction stSetWidgetOffline() { var frames = document.querySelectorAll("iframe[data-st-widget-remote]"); var i, f, target; for (i = 0; i < frames.length; i++) { f = frames[i]; target = f.getAttribute("data-st-widget-local") || f.getAttribute("data-st-widget-remote"); if (target && f.src !== target) f.src = target; } }');
+replaceOnce('let socket = null;', 'let socket = null;\nfunction stSetWidgetOffline(offline) { var frames = document.querySelectorAll("iframe[data-st-widget-remote]"); var i, f, target; for (i = 0; i < frames.length; i++) { f = frames[i]; target = offline ? (f.getAttribute("data-st-widget-local") || f.getAttribute("data-st-widget-remote")) : f.getAttribute("data-st-widget-remote"); if (target && f.src !== target) f.src = target; } }');
 replaceOnce('let defaultContent = null;', 'let defaultContent = (function () { try { var saved = JSON.parse(localStorage.getItem("st_default_content") || "null"); return saved && typeof saved === "object" ? saved : null; } catch (ignore) { return null; } })();');
 replaceOnce('    app_version: hostPackageVersion() || PLAYER_VERSION,', '    app_version: String(window.__ST_NATIVE_BUILD || hostPackageVersion() || PLAYER_VERSION),');
 replaceOnce('  data.client_version = PLAYER_VERSION;', '  data.client_version = String(window.__ST_NATIVE_BUILD || PLAYER_VERSION);');
@@ -127,6 +128,7 @@ replacePatternOnce(/data\.platform = ON_BRIGHTSIGN \?[^;]+browserPlatform\(\)[^;
 replaceOnce('let playerTimezone = null;', 'let playerTimezone = localStorage.getItem("st_schedule_timezone") || null;\ntry { ScheduleEval.setTimezoneTable(JSON.parse(localStorage.getItem("st_schedule_timezone_table") || "null")); } catch (ignore) {}');
 replaceOnce('  playerTimezone = data.timezone || null;', '  playerTimezone = data.timezone || null;\n  try { localStorage.setItem("st_schedule_timezone", playerTimezone || ""); localStorage.setItem("st_schedule_timezone_table", JSON.stringify(data.tz_table || null)); localStorage.setItem("st_active_schedule", JSON.stringify(data.offline_schedule || null)); ScheduleEval.setTimezoneTable(data.tz_table || null); if (window.__STNative.ready) window.__STNative.persistStorage(); } catch (ignore) {}');
 replaceOnce('    startAutoContinue(5);', '    setTimeout(function () { connectBtnFunc(); }, 0);');
+replaceOnce('  function enterRepairMode(message) {\n    clearShareForUnpaired();', '  function enterRepairMode(message) {\n    /* Server revocation/authentication rejection is an ownership boundary, not\n       a transient disconnect.  Clear the native journal before setup can run. */\n    try { if (window.__STNative && window.__STNative.clearOwnedState) window.__STNative.clearOwnedState(); } catch (ignoreNativeWipe) {}\n    clearShareForUnpaired();');
 replaceOnce('    const cachedPlaylist = loadPlaylistCache();', '    document.getElementById("setupScreen").style.display = "none";\n    var nativeOfflineBoot = null; try { nativeOfflineBoot = window.STOfflinePlan && STOfflinePlan.select(localStorage.getItem("st_offline_plan"), syncedNow()); } catch (ignore) {}\n    var __stBootPlaylist = nativeOfflineBoot && nativeOfflineBoot.valid ? (nativeOfflineBoot.state ? nativeOfflineBoot.state.payload.assignments || [] : []) : loadPlaylistCache();\n    /* legacy v1 schedule state governs the CACHED REPLAY decision only (offline);\n     * the connected item gate never consults it — see the removed scheduleAllows gate below */\n    const cachedPlaylist = (function () { try { return (__stBootPlaylist.length && window.STOfflineSchedule && !STOfflineSchedule.active(JSON.parse(localStorage.getItem("st_active_schedule") || "null"), syncedNow())) ? [] : __stBootPlaylist; } catch (ignoreCacheGate) { return __stBootPlaylist; } })();');
 replaceOnce('    const layoutKnown = localStorage.getItem(LAYOUT_CACHE_KEY) !== null;', '    const layoutKnown = !!(nativeOfflineBoot && nativeOfflineBoot.valid) || localStorage.getItem(LAYOUT_CACHE_KEY) !== null;');
 replaceOnce('      layout = loadLayoutCache();', '      layout = nativeOfflineBoot && nativeOfflineBoot.state ? nativeOfflineBoot.state.payload.layout || null : loadLayoutCache();\n      window.__stCachedColdStart = true;');
@@ -153,7 +155,7 @@ patchWidgetIframes('config.serverUrl', 'item', 1);
 patchWidgetIframes('serverUrl', 'item', 1);
 patchWidgetIframes('config.serverUrl', 'a', 3);
 replaceOnce('function handlePlaylistUpdate(data) {\n  var _a;', 'function handlePlaylistUpdate(data) {\n  var _a;\n  if (window.__STNative && window.__STNative.ready && !data.__nativeReady) { window.__STNative.accept(data, function (next) { next.__nativeReady = true; handlePlaylistUpdate(next); }); return; }');
-replaceOnce('function renderContent(item) {\n  var _a, _b;', 'function renderContent(item) {\n  var _a, _b;\n  if (window.__STNative && window.__STNative.ready && item && ((item.widget_id && !window.__STNative.canRender(item)) || (!item.widget_id && !item.remote_url && /^(?:image|video|audio)\\//.test(item.mime_type || "") && !window.__STNative.supports(item)))) { teardownCurrentMedia(); var unsupportedKind = item.widget_id ? ((item.widget_type || "unknown") + " widget") : (item.mime_type || "media"); showStatus("Unsupported on Samsung SSSP3 display: " + unsupportedKind); window.__STNative.report("unsupported-media", String(unsupportedKind), config.deviceId); isPlaying = false; if (playlist && playlist.length > 1) scheduleAdvance(nextItem, 0); return; }');
+replaceOnce('function renderContent(item) {\n  var _a, _b;', 'function renderContent(item) {\n  var _a, _b;\n  if (window.__STNative && window.__STNative.ready && item && ((item.widget_id && !window.__STNative.canRender(item)) || (!item.widget_id && !item.remote_url && /^(?:image|video|audio)\\//.test(item.mime_type || "") && !window.__STNative.supports(item)))) { teardownCurrentMedia(); var unsupportedKind = item.widget_id ? ((item.widget_type || "unknown") + " widget") : (item.mime_type || "media"); showStatus("Unsupported on Samsung SSSP3 display: " + unsupportedKind); window.__STNative.report("unsupported-media", String(unsupportedKind), config.deviceId); isPlaying = false; if (playlist && playlist.length > 1) scheduleAdvance(nextItem, 1000); return; }');
 replaceOnce('  socket.on("connect", () => {\n    console.log("Connected");', '  socket.on("connect", () => {\n    stSetWidgetOffline(false);\n    if (window.__STNative && window.__STNative.flushReports) window.__STNative.flushReports();\n    if (window.__STNative && window.__STNative.pollLauncherManifest) window.__STNative.pollLauncherManifest(function (err, info) { try { if (info && info.reachable && info.update) window.__STNative.report("launcher-update", JSON.stringify(info), config.deviceId); } catch (ignorePoll) {} });\n    console.log("Connected");');
 replaceOnce('  socket.on("disconnect", (reason) => {\n    console.log("Disconnected", reason || "");', '  socket.on("disconnect", (reason) => {\n    stSetWidgetOffline(true);\n    console.log("Disconnected", reason || "");');
 replaceOnce('  socket.on("connect_error", (err) => {\n    document.getElementById("setupStatus").textContent = "Connection failed: " + err.message;', '  socket.on("connect_error", (err) => {\n    stSetWidgetOffline(true);\n    document.getElementById("setupStatus").textContent = "Connection failed: " + err.message;');
@@ -167,7 +169,7 @@ replaceOnce('ScheduleEval.itemShouldPlay(item, Date.now(), playerTimezone)', 'Sc
 /* Do not gate online playback on a cached plan: an uncovered interval is a valid
  * idle state and the server payload remains authoritative while connected.
  * Offline transitions are handled exclusively by the disconnect-gated tick. */
-main += '\nfunction nativeOfflinePlanTick() { try { if (socket && socket.connected) { window.__stOfflinePlanInterval = null; return; } var result = window.STOfflinePlan && STOfflinePlan.select(localStorage.getItem("st_offline_plan"), syncedNow()); if (!result || !result.plan) { if (isPlaying && !STOfflineSchedule.active(JSON.parse(localStorage.getItem("st_active_schedule") || "null"), syncedNow())) showNothingScheduled(); return; } var sig = result.interval ? String(result.interval.start_utc_ms) + "|" + String(result.interval.schedule_id || "") : "none"; if (sig === window.__stOfflinePlanInterval) return; window.__stOfflinePlanInterval = sig; if (window.__STNative && window.__STNative.report) window.__STNative.report("offline-schedule", JSON.stringify({ event: "offline_schedule_selected", schedule_id: result.interval && result.interval.schedule_id || null, playlist_id: result.interval && result.interval.playlist_id || null, interval_start_utc_ms: result.interval && result.interval.start_utc_ms || null, interval_end_utc_ms: result.interval && result.interval.end_utc_ms || null, valid: !!result.valid, state_ready: !!result.state }), config.deviceId); if (!result.valid || !result.state) { playlist = []; isPlaying = false; teardownCurrentMedia(); showStatus(result.error || "No scheduled content is active."); return; } handlePlaylistUpdate(result.state.payload); } catch (ignore) {} }\nsetInterval(nativeOfflinePlanTick, 1000);\n';
+main += '\nfunction nativeOfflinePlanTick() { try { if (!config || !config.paired || !config.deviceId || !config.deviceToken) return; if (socket && socket.connected) { window.__stOfflinePlanInterval = null; return; } var result = window.STOfflinePlan && STOfflinePlan.select(localStorage.getItem("st_offline_plan"), syncedNow()); if (!result || !result.plan) { if (isPlaying && !STOfflineSchedule.active(JSON.parse(localStorage.getItem("st_active_schedule") || "null"), syncedNow())) showNothingScheduled(); return; } var sig = result.interval ? String(result.interval.start_utc_ms) + "|" + String(result.interval.schedule_id || "") : "none"; if (sig === window.__stOfflinePlanInterval) return; window.__stOfflinePlanInterval = sig; if (window.__STNative && window.__STNative.report) window.__STNative.report("offline-schedule", JSON.stringify({ event: "offline_schedule_selected", schedule_id: result.interval && result.interval.schedule_id || null, playlist_id: result.interval && result.interval.playlist_id || null, interval_start_utc_ms: result.interval && result.interval.start_utc_ms || null, interval_end_utc_ms: result.interval && result.interval.end_utc_ms || null, valid: !!result.valid, state_ready: !!result.state }), config.deviceId); if (!result.valid || !result.state) { playlist = []; isPlaying = false; teardownCurrentMedia(); showStatus(result.error || "No scheduled content is active."); return; } handlePlaylistUpdate(result.state.payload); } catch (ignore) {} }\nsetInterval(nativeOfflinePlanTick, 1000);\n';
 main += '\nsetTimeout(function () { try { var setup = document.getElementById("setupScreen"), overlay = document.getElementById("statusOverlay"), text = document.getElementById("statusText"); var boot = { setup: setup.style.display, status: overlay.style.display, message: text && text.textContent, playing: isPlaying, items: playlist.length, cached: !!window.__stCachedColdStart, cold_start: true }; if (window.__STNative.recordBootEvent) boot = window.__STNative.recordBootEvent(boot); if (config.deviceId) window.__STNative.report("boot", JSON.stringify(boot), config.deviceId); } catch (ignore) {} }, 1000);\n';
 replaceOnce('    localStorage.setItem("st_clock_offset", String(clockOffsetMs));', '    localStorage.setItem("st_clock_offset", String(clockOffsetMs));\n    if (window.__STNative && window.__STNative.ready && (window.__stSavedClockOffset == null || Math.abs(window.__stSavedClockOffset - clockOffsetMs) > 1000)) { window.__stSavedClockOffset = clockOffsetMs; window.__STNative.persistStorage(); }');
 replaceOnce('  text.textContent = msg;', '  text.removeAttribute("data-i18n");\n  text.textContent = msg;');
@@ -238,12 +240,29 @@ function compileBrowserScript(src, dest) {
   acorn.parse(compiled, { ecmaVersion: 5 });
   fs.writeFileSync(dest, compiled);
 }
+/* These helpers execute in the native renderer too.  They must be compiled
+ * from the canonical implementation, never copied snapshots: the package had
+ * already drifted from UnpairGate.storageKeys(suffix, linkSuffix). */
+const sourceDerivedHelpers = {
+  'unpair-gate.js': path.join(__dirname, '..', 'server', 'lib', 'unpair-gate.js'),
+  'play-order.js': path.join(__dirname, '..', 'server', 'lib', 'play-order.js'),
+  'offline-play-queue.js': path.join(__dirname, '..', 'server', 'lib', 'offline-play-queue.js'),
+  'trigger-resolve.js': path.join(__dirname, '..', 'server', 'lib', 'trigger-resolve.js'),
+  'media-mute.js': path.join(__dirname, '..', 'server', 'lib', 'media-mute.js'),
+  'orientation-style.js': path.join(__dirname, '..', 'server', 'lib', 'orientation-style.js'),
+  'wall-geometry.js': path.join(__dirname, '..', 'server', 'lib', 'wall-geometry.js'),
+  'player-media-health.js': path.join(__dirname, '..', 'server', 'lib', 'player-media-health.js'),
+};
 for (const name of fs.readdirSync(app)) {
   if (name === 'index.html' || name === 'renderer.html' || name === 'config.xml') continue;
   const src = path.join(app, name), dest = path.join(output, name);
-  if (!fs.statSync(src).isFile()) continue;
+  if (!fs.statSync(src).isFile() || sourceDerivedHelpers[name]) continue;
   if (!name.endsWith('.js')) { fs.copyFileSync(src, dest); continue; }
   compileBrowserScript(src, dest);
+}
+for (const [name, src] of Object.entries(sourceDerivedHelpers)) {
+  if (!fs.statSync(src).isFile()) throw Error('Required upstream native helper missing: ' + src);
+  compileBrowserScript(src, path.join(output, name));
 }
 /* These are the same browser dependencies referenced by the current upstream
  * legacy renderer.  Keep their source locations explicit: a missing or renamed
@@ -286,6 +305,7 @@ if (orsayBase) {
   let parsedBase;
   try { parsedBase = new URL(orsayBase); } catch (_) { throw new Error('ST_ORSAY_BASE_URL must be an absolute HTTP(S) URL'); }
   if (!['http:', 'https:'].includes(parsedBase.protocol)) throw new Error('ST_ORSAY_BASE_URL must use HTTP or HTTPS');
+  if (parsedBase.protocol === 'http:') console.warn('ST_ORSAY_BASE_URL uses plaintext HTTP; device tokens traverse the network without transport encryption. Use HTTPS where the panel firmware supports it.');
   const baseLiteral = JSON.stringify(orsayBase);
   const launcherLiteral = JSON.stringify(orsayBase + orsayChannel);
   /* Matches the shape the 1288 package used: seed serverUrl for a wiped panel,

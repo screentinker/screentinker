@@ -11,12 +11,12 @@ function environment(xhrBytesMap) {
   FileSystem.prototype.createCommonDir = function () {};
   FileSystem.prototype.openCommonFile = function (name, mode) { opened.push(name); if (name.indexOf('screentinker_media/') === 0) name = '/mtd_down/common/' + name; if (mode !== 'w' && !Object.prototype.hasOwnProperty.call(files, name)) throw Error('missing'); return { name, readAll() { return files[name]; }, writeAll(value) { files[name] = value; } }; };
   FileSystem.prototype.closeCommonFile = function () {};
-  FileSystem.prototype.deleteCommonFile = function (name) { if (name.indexOf('screentinker_media/') === 0) name = '/mtd_down/common/' + name; delete files[name]; };
+  FileSystem.prototype.deleteCommonFile = function (name) { if (/^(?:screentinker_media|screentinker)\//.test(name)) name = '/mtd_down/common/' + name; delete files[name]; };
   const downloader = { cancels: 0, StartDownFile: (url, destination) => downloads.push({ url, destination }), CancelDownload() { this.cancels++; } };
   const player = { style: {}, stops: 0, Stop() { this.stops++; }, InitPlayer(url) { this.url = url; }, SetDisplayArea() {}, SetInitialBuffer() {}, StartPlayback() { this.started = true; } };
   const container = { appendChild(el) { el.parentNode = container; }, removeChild(el) { el.parentNode = null; } };
   const storage = {};
-  const window = { __STNative: { base: 'http://example.test' }, STOfflinePlan: { dependencies(plan) { const out = []; for (const s of (plan && plan.states) || []) { const payload = s && s.payload || {}; for (const item of (payload.assignments || [])) out.push(item); if (payload.default_content) out.push(payload.default_content); } return out; } }, localStorage: { getItem(key) { return Object.prototype.hasOwnProperty.call(storage, key) ? storage[key] : null; }, setItem(key, value) { storage[key] = String(value); } } };
+  const window = { __STNative: { base: 'http://example.test' }, STOfflinePlan: { dependencies(plan) { const out = []; for (const s of (plan && plan.states) || []) { const payload = s && s.payload || {}; for (const item of (payload.assignments || [])) out.push(item); if (payload.default_content) out.push(payload.default_content); } return out; } }, localStorage: { getItem(key) { return Object.prototype.hasOwnProperty.call(storage, key) ? storage[key] : null; }, setItem(key, value) { storage[key] = String(value); }, removeItem(key) { delete storage[key]; } } };
   const body = { appendChild(p) { p.parentNode = body; }, removeChild(p) { p.parentNode = null; } };
   // XHR stub mirrors the panel's same-origin fetch: preset bodies (string,
   // per-attempt array, or result function); absent URLs answer 404/empty.
@@ -281,6 +281,29 @@ test('an interval state does not erase the parent offline plan after activation'
   e.b.accept({ assignments: [future] }, () => {});
   e.files[e.downloads[0].destination] = true; e.done('1000?1');
   assert.equal(e.storage.st_offline_plan, JSON.stringify(plan));
+});
+test('a failed current item cannot evict verified media needed by the durable future plan', () => {
+  const e = environment(), future = { content_id: 'future', filepath: 'future.jpg', mime_type: 'image/jpeg', content_rev: 1 };
+  const oldPlan = { states: [{ payload: { assignments: [future] } }] };
+  e.storage.st_offline_plan = JSON.stringify(oldPlan);
+  e.files[e.b._test.path(future)] = true;
+  const bad = { content_id: 'bad', filepath: 'bad.jpg', mime_type: 'image/jpeg', content_rev: 1 };
+  const good = { content_id: 'good', filepath: 'good.jpg', mime_type: 'image/jpeg', content_rev: 1 };
+  e.b.accept({ assignments: [bad, good] }, () => {});
+  e.done('500'); e.scheduled.find(x => x.ms === 2000).fn();
+  e.files[e.downloads.at(-1).destination] = true; e.done('1000?1');
+  for (let i = 2; i <= 4; i++) { e.done('500'); const retry = e.scheduled.filter(x => x.ms === i * 2000).at(-1); if (retry) retry.fn(); }
+  assert.ok(e.files[e.b._test.path(future)], 'future-plan media survives a failed current update');
+});
+test('clearOwnedState removes legacy credentials, cache journals, and offline state', () => {
+  const e = environment();
+  e.files['/mtd_down/common/screentinker/state.json'] = JSON.stringify({ deviceId: 'old', deviceToken: 'secret' });
+  e.storage.rd_web_player = JSON.stringify({ deviceId: 'old', deviceToken: 'secret' });
+  e.storage.st_offline_plan = JSON.stringify({ states: [] });
+  e.b.clearOwnedState();
+  assert.equal(e.files['/mtd_down/common/screentinker/state.json'], undefined);
+  assert.equal(e.storage.rd_web_player, undefined);
+  assert.equal(e.storage.st_offline_plan, undefined);
 });
 test('offline-safe widget HTML is cached by revision', () => {
   const e = environment(), widget = { widget_id: 'clock', widget_type: 'clock', widget_rev: 4 }, applied = [];

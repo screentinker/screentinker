@@ -1,7 +1,9 @@
 'use strict';
 const puppeteer = require('puppeteer-core');
 const http = require('http');
-let Server; try { Server = require('../../server/node_modules/socket.io').Server; } catch (e) { console.log('skipped: socket.io unavailable (npm install in server/)'); process.exit(0); }
+/* This is required coverage, not an optional developer convenience.  Resolve
+ * the repository dependency exactly as the server does and fail if CI omitted it. */
+const { Server } = require('../../server/node_modules/socket.io');
 const path = require('path');
 (async () => {
   const server = http.createServer();
