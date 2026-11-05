@@ -19,6 +19,7 @@ const MAX_CONCURRENT_RENDITIONS = 1;
 const MAX_PENDING_RENDITIONS = 256;
 const MAX_PENDING_RENDITIONS_PER_WORKSPACE = 32;
 const DEFAULT_CACHE_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_CACHE_BYTES_PER_WORKSPACE = 512 * 1024 * 1024;
 const FILE_RE = /^ssf_([a-f0-9]{32})(\.(?:mp4|jpg|jpeg|png|webp))$/;
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v']);
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.svg']);
@@ -224,15 +225,21 @@ function cacheLimit() {
   return Number.isSafeInteger(configured) && configured > 0 ? configured : DEFAULT_CACHE_BYTES;
 }
 
-function makeRoom(bytes, protectedId) {
+function makeRoom(bytes, protectedId, workspaceId) {
   let total = Number(db.prepare("SELECT coalesce(sum(file_size),0) AS n FROM sssp3_fit_renditions WHERE status = 'ready'").get().n || 0);
   if (bytes > cacheLimit()) return false;
-  const rows = db.prepare("SELECT * FROM sssp3_fit_renditions WHERE status = 'ready' AND id != ? ORDER BY last_used_at ASC,created_at ASC").all(protectedId);
+  // Keep one workspace from retaining an unlimited ready working set. Its own
+  // least-recently-used files are considered first, then the global LRU only
+  // when the global cache is genuinely full.
+  const rows = db.prepare("SELECT * FROM sssp3_fit_renditions WHERE status = 'ready' AND id != ? ORDER BY CASE WHEN workspace_id = ? THEN 0 ELSE 1 END,last_used_at ASC,created_at ASC").all(protectedId, workspaceId);
+  let workspaceTotal = Number(db.prepare("SELECT coalesce(sum(file_size),0) AS n FROM sssp3_fit_renditions WHERE status = 'ready' AND workspace_id = ?").get(workspaceId).n || 0);
   for (const row of rows) {
-    if (total + bytes <= cacheLimit()) break;
+    const requiresWorkspaceRoom = row.workspace_id === workspaceId && workspaceTotal + bytes > Math.min(MAX_CACHE_BYTES_PER_WORKSPACE, cacheLimit());
+    if (total + bytes <= cacheLimit() && !requiresWorkspaceRoom) break;
     removeFile(row.filepath);
     db.prepare("UPDATE sssp3_fit_renditions SET status = 'evicted',filepath = NULL,file_size = NULL,updated_at = strftime('%s','now') WHERE id = ?").run(row.id);
     total -= Number(row.file_size || 0);
+    if (row.workspace_id === workspaceId) workspaceTotal -= Number(row.file_size || 0);
   }
   return total + bytes <= cacheLimit();
 }
@@ -260,12 +267,16 @@ async function processRow(row) {
     if (!rendered) throw new Error('renderer produced no regular file');
     const size = fs.statSync(rendered).size;
     if (size < 1) throw new Error('renderer produced an empty file');
-    if (!makeRoom(size, row.id)) throw new Error('SSSP3 rendition cache quota exceeded');
+    if (!makeRoom(size, row.id, row.workspace_id)) throw new Error('SSSP3 rendition cache quota exceeded');
     const destination = path.join(root, `ssf_${row.id}${row.output_ext}`);
     fs.renameSync(rendered, destination);
     const committed = db.prepare("UPDATE sssp3_fit_renditions SET status = 'ready',filepath = ?,file_size = ?,error = NULL,updated_at = strftime('%s','now') WHERE id = ? AND status = 'running' AND source_file = ?")
       .run(path.basename(destination), size, row.id, row.source_file);
     if (!committed.changes) removeFile(path.basename(destination));
+    else {
+      const current = db.prepare('SELECT duration_sec FROM content WHERE id = ?').get(row.content_id);
+      videoVariants.chargeUsage(row.workspace_id, Number(current && current.duration_sec) || 0, new Date());
+    }
   } finally {
     try { fs.rmSync(workDir, { recursive: true, force: true }); } catch (_) {}
     activeWorkDirs.delete(workDir);
@@ -373,7 +384,7 @@ function resetForTest(options = {}) {
 }
 
 module.exports = {
-  CAPABILITY, MAX_VARIANTS_PER_CONTENT, MAX_CONCURRENT_RENDITIONS, MAX_PENDING_RENDITIONS, MAX_PENDING_RENDITIONS_PER_WORKSPACE, FILE_RE,
+  CAPABILITY, MAX_VARIANTS_PER_CONTENT, MAX_CONCURRENT_RENDITIONS, MAX_PENDING_RENDITIONS, MAX_PENDING_RENDITIONS_PER_WORKSPACE, MAX_CACHE_BYTES_PER_WORKSPACE, FILE_RE,
   vf, canvasFor, stampItems, resolveReady, removeFor, sweepOrphans, start, tick, stats,
   _drain: drain, _resetForTest: resetForTest,
 };
