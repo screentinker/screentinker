@@ -729,6 +729,13 @@ function asMirrorPayload(p, mirrorId, sourceId) {
   p.local_api = null;
   delete p.site_cache;
   try { p.audience = require('../lib/audience').payloadConfig(mirrorId); } catch (e) { p.audience = null; }
+  /* Content resolution comes from the source, but optional protocol fields
+   * describe the receiving player. A browser mirror must not receive an Orsay
+   * offline-plan contract merely because its source supports it. */
+  try {
+    const receiver = db.prepare('SELECT capabilities FROM devices WHERE id = ?').get(mirrorId);
+    if (!capsLib.supports(receiver, 'offline.schedule_plan')) delete p.offline_plan;
+  } catch (_) { delete p.offline_plan; }
   p.mirror_of = sourceId;
   return p;
 }
