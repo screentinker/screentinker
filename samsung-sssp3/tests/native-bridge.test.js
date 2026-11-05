@@ -5,13 +5,17 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 const code = fs.readFileSync(path.join(__dirname, '../app/native-bridge.js'), 'utf8');
-function environment(xhrBytesMap) {
+function environment(xhrBytesMap, options = {}) {
   const files = {}, downloads = [], scheduled = [], opened = [], plugins = [], xhrBodies = xhrBytesMap || {};
   function FileSystem() {}
   FileSystem.prototype.createCommonDir = function () {};
   FileSystem.prototype.openCommonFile = function (name, mode) { opened.push(name); if (name.indexOf('screentinker_media/') === 0) name = '/mtd_down/common/' + name; if (mode !== 'w' && !Object.prototype.hasOwnProperty.call(files, name)) throw Error('missing'); return { name, readAll() { return files[name]; }, writeAll(value) { files[name] = value; } }; };
   FileSystem.prototype.closeCommonFile = function () {};
-  FileSystem.prototype.deleteCommonFile = function (name) { if (/^(?:screentinker_media|screentinker)\//.test(name)) name = '/mtd_down/common/' + name; delete files[name]; };
+  FileSystem.prototype.deleteCommonFile = function (name) {
+    if (/^(?:screentinker_media|screentinker)\//.test(name)) name = '/mtd_down/common/' + name;
+    if (options.failDelete && options.failDelete(name)) throw Error('delete failed');
+    delete files[name];
+  };
   const downloader = { cancels: 0, StartDownFile: (url, destination) => downloads.push({ url, destination }), CancelDownload() { this.cancels++; } };
   const player = { style: {}, stops: 0, Stop() { this.stops++; }, InitPlayer(url) { this.url = url; }, SetDisplayArea() {}, SetInitialBuffer() {}, StartPlayback() { this.started = true; } };
   const container = { appendChild(el) { el.parentNode = container; }, removeChild(el) { el.parentNode = null; } };
@@ -365,6 +369,15 @@ test('clearOwnedState removes legacy credentials, cache journals, and offline st
   assert.equal(e.files['/mtd_down/common/screentinker/state.json'], undefined);
   assert.equal(e.storage.rd_web_player, undefined);
   assert.equal(e.storage.st_offline_plan, undefined);
+});
+test('a failed legacy-state deletion cannot resurrect a revoked owner on restore', () => {
+  const e = environment(null, { failDelete: (name) => /screentinker\/state\.json$/.test(name) });
+  e.files['/mtd_down/common/screentinker/state.json'] = JSON.stringify({ deviceId: 'old', deviceToken: 'secret' });
+  e.b.clearOwnedState();
+  assert.ok(e.files['/mtd_down/common/screentinker/state.json'], 'the simulated filesystem failure leaves legacy bytes behind');
+  assert.equal(e.storage.st_owner_revoked, '1');
+  e.b.restoreStorage();
+  assert.equal(e.storage.rd_web_player, undefined, 'the tombstone blocks legacy credential recovery');
 });
 test('offline-safe widget HTML is cached by revision', () => {
   const e = environment(), widget = { widget_id: 'clock', widget_type: 'clock', widget_rev: 4 }, applied = [];
