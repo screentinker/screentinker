@@ -878,6 +878,20 @@ router.get('/host', requirePlatformAdmin, async (req, res) => {
   catch (e) { res.status(500).json({ error: 'Could not read server stats' }); }
 });
 
+// ===================== Traffic (lib/traffic-ledger.js) =====================
+// Platform-admin only: bandwidth this server served (attributed to category / workspace / screen)
+// beside the network interface's own totals, with month-to-date against an optional quota.
+router.get('/traffic', requirePlatformAdmin, (req, res) => {
+  try {
+    const config = require('../config');
+    const quotaBytes = (config.trafficMonthlyQuotaGb || 0) * 1e9;
+    res.json(require('../lib/traffic-ledger').report(db, { days: req.query.days, quotaBytes }));
+  } catch (e) {
+    console.error('[admin] traffic report failed:', e.message);
+    res.status(500).json({ error: 'Could not read traffic' });
+  }
+});
+
 // ===================== TV-safe video copies (3.0, lib/video-variants.js) =====================
 // Platform-admin only: how much of THIS server's CPU goes to re-encoding tall videos for Tizen TVs.
 // Each value also has an env default (VIDEO_VARIANTS_*) for self-hosters who configure by env.

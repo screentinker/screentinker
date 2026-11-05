@@ -992,6 +992,7 @@ export const api = {
   getPromotion: () => request('/subscription/promotion'),
   adminOverview: () => request('/admin/overview'),
   adminHost: () => request('/admin/host'),
+  adminTraffic: (days) => request(`/admin/traffic?days=${encodeURIComponent(days)}`),
   adminAttention: (item) => request(`/admin/overview/attention/${encodeURIComponent(item)}`),
   adminStaleAccounts: (days) => request(`/admin/cleanup/stale-accounts?days=${encodeURIComponent(days)}`),
   adminPurgeStale: (body) => request('/admin/cleanup/stale-accounts', { method: 'POST', body: JSON.stringify(body) }),

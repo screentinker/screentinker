@@ -77,6 +77,9 @@ const { getClientIp } = require('./services/activity');
 // non-trusted source is ignored, so the value can't be spoofed.
 app.set('trust proxy', trustedProxies);
 // Before parsers, CORS, limiters and routes so their rejections are recorded too.
+// Bandwidth served, per category / workspace / device, for the platform Traffic page (lib/traffic-ledger.js).
+// First, so it sees every response; it only reads the socket's byte counters, never the body.
+app.use(require('./lib/traffic-ledger').middleware());
 if (config.accessLogEnabled) app.use(accessLogger({ getClientIp }));
 
 // Determine if SSL certs are available
@@ -2883,6 +2886,7 @@ app.use('/media', require('./routes/media'));
 const setupWebSockets = require('./ws');
 const { deviceNs, dashboardNs } = setupWebSockets(io);
 app.set('io', io);
+require('./lib/traffic-ledger').start(require('./db/database').db, { io });   // once-a-minute flush + NIC sample
 require('./lib/screen-share').init(io);   // 3.0: screen share — reaches the screens over /device
 
 // Start heartbeat checker
