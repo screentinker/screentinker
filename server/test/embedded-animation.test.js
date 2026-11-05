@@ -165,3 +165,44 @@ test('isGifSource recognises GIF content by type or name', () => {
   assert.equal(anim.isGifSource({ mime_type: 'image/png', filepath: 'a.png' }), false);
   assert.equal(anim.isGifSource(null), false);
 });
+
+// ── Slides with motion (lib/embedded-render.js) ─────────────────────────────────────────────────
+const render = require('../lib/embedded-render');
+const motionSlide = (motion) => ({ widget_type: 'slide', widget_config: JSON.stringify({
+  template: { aspect: '8:1', elements: [{ kind: 'head', slot: 't', box: { x: 0, y: 0, w: 100, h: 100 }, style: { size_cqw: 15, color: '#00E5FF' }, ...(motion ? { motion } : {}) }] },
+  fields: { t: 'HI' } }) });
+
+test('only a slide with a motion block counts as animated', () => {
+  assert.equal(render.slideHasMotion(motionSlide({ animation: 'wipe', duration: 1 })), true);
+  assert.equal(render.slideHasMotion(motionSlide(null)), false);
+  assert.equal(render.slideHasMotion({ widget_type: 'clock', widget_config: '{"motion":{}}' }), false);
+  assert.equal(render.slideHasMotion(null), false);
+});
+
+test('crispForLed snaps anti-aliased fringe off and glyph pixels to full strength, keeping hue', () => {
+  const px = Buffer.from([
+    60, 60, 60, 255,      // dim fringe -> off
+    0, 115, 128, 255,     // a cyan stem at half strength -> full cyan
+    255, 138, 0, 255,     // already full orange -> unchanged
+  ]);
+  render.crispForLed(px);
+  assert.deepEqual([...px.subarray(0, 3)], [0, 0, 0]);
+  assert.deepEqual([...px.subarray(4, 7)], [0, 229, 255]);
+  assert.deepEqual([...px.subarray(8, 11)], [255, 138, 0]);
+});
+
+// A real capture needs Chromium; CI has none, so this runs where CHROME_PATH is set.
+test('a moving slide is captured as frames that change, then hold', { skip: !process.env.CHROME_PATH }, async () => {
+  const prof = { width: 64, height: 8, rotation: 0, colorDepth: '24bit-rgb888', outputFormat: 'raw' };
+  const cap = anim.animationCapability({ ...ASK, 'x-st-animation-max-fps': '60' }, prof);
+  try {
+    const r = await render.renderAnimation(motionSlide({ animation: 'wipe', duration: 1, easing: 'linear' }), null, prof, cap, {});
+    assert.ok(r, 'an animation, not a still');
+    const d = anim.decode(r.buffer);
+    assert.equal(d.loops, 1, 'plays once and holds the final layout');
+    assert.ok(d.frameCount >= 3, `frames: ${d.frameCount}`);
+  } finally {
+    await render.closeBrowser();
+  }
+});
+

@@ -677,6 +677,123 @@ async function renderPlayerFrame(source, profile, options = {}) {
   }
 }
 
+/* The widget's HTML exactly as the still path renders it, with its own workspace's resolvers. */
+function widgetHtmlFor(item, content, profile, type, config) {
+  const { renderWidgetHtml, imageResolverFor, dataResolverFor, widgetIframeSandboxForWorkspace } = require('../routes/widgets');
+  const { fontResolverFor } = require('../routes/fonts');
+  const { db } = require('../db/database');
+
+  let wsId;
+  if (item.widget_id) {
+    wsId = item.widget_workspace_id !== undefined ? item.widget_workspace_id : null;
+    if (wsId == null) {
+      try {
+        const w = db.prepare('SELECT workspace_id FROM widgets WHERE id = ?').get(item.widget_id);
+        wsId = w ? w.workspace_id : null;
+      } catch (_) {}
+    }
+  } else {
+    wsId = item.workspace_id || content?.workspace_id || profile?.workspace_id;
+  }
+
+  return renderWidgetHtml(type, config, {
+    iframeSandbox: widgetIframeSandboxForWorkspace ? widgetIframeSandboxForWorkspace(wsId) : 'allow-scripts',
+    resolveImage: imageResolverFor ? imageResolverFor({ workspace_id: wsId }) : undefined,
+    resolveFont: fontResolverFor ? fontResolverFor({ workspace_id: wsId }) : undefined,
+    resolveData: typeof dataResolverFor === 'function' ? dataResolverFor(wsId) : undefined,
+    workspaceId: wsId,
+  });
+}
+
+function widgetConfigOf(item) {
+  if (typeof item?.widget_config === 'string') { try { return JSON.parse(item.widget_config) || {}; } catch (_) { return {}; } }
+  return (item && typeof item.widget_config === 'object' && item.widget_config) || {};
+}
+
+/** Does this slide move? (an element with a motion block: lib/slide-render.js ANIMATIONS) */
+function slideHasMotion(item) {
+  if (!item || item.widget_type !== 'slide') return false;
+  return /"motion"\s*:\s*\{/.test(typeof item.widget_config === 'string' ? item.widget_config : JSON.stringify(item.widget_config || {}));
+}
+
+/*
+ * Capture a page's CSS animations as frames. Unlike the still path, animations are left ON but
+ * every one is paused and stepped through time with the Web Animations API (currentTime), so the
+ * capture is exact and does not depend on how fast this server screenshots. Returns null when the
+ * page has no finite animation. At most `maxMs` of motion, at `fps`.
+ */
+/*
+ * Tiny LED canvases: text a few pixels tall is mostly anti-aliased edge, which on LEDs reads as a
+ * smear of dim dots between letters. Snap every pixel to off or to full strength at its own hue
+ * (the 40% cut keeps glyph stems and drops the fringe). Only for <=32 px tall captures.
+ */
+function crispForLed(rgba) {
+  for (let i = 0; i < rgba.length; i += 4) {
+    const m = Math.max(rgba[i], rgba[i + 1], rgba[i + 2]);
+    if (m < 100) { rgba[i] = rgba[i + 1] = rgba[i + 2] = 0; continue; }
+    const k = 255 / m;
+    rgba[i] = Math.min(255, Math.round(rgba[i] * k));
+    rgba[i + 1] = Math.min(255, Math.round(rgba[i + 1] * k));
+    rgba[i + 2] = Math.min(255, Math.round(rgba[i + 2] * k));
+  }
+}
+
+const SLIDE_CAPTURE_MAX_MS = 8000;
+const SLIDE_CAPTURE_MAX_FPS = 15;   // each frame is a screenshot; more is not worth the CPU
+async function captureAnimationFrames(html, profile, { fps = 10, maxMs = SLIDE_CAPTURE_MAX_MS, signal } = {}) {
+  await acquirePageSlot(signal);
+  let page = null;
+  try {
+    return await withTimeout((async () => {
+      const browser = await getBrowser();
+      page = await browser.newPage();
+      const baseUrl = localBaseUrl();
+      await guardRasterRequests(page, new URL(baseUrl).origin);   // tenant HTML: same SSRF rule as stills
+      await page.setViewport({ width: profile.width, height: profile.height });
+      let finalHtml = html;
+      // Tiny LED canvases (a matrix is often 8 or 16 px tall): at 5-7 px per glyph, anti-aliased
+      // letters run into each other, so open up the tracking. Big screens are untouched.
+      const ledTracking = profile.height <= 32 ? '<style>.stage, .stage * { letter-spacing: 0.12em !important; }</style>' : '';
+      if (/<head[^>]*>/i.test(finalHtml)) finalHtml = finalHtml.replace(/(<head[^>]*>)/i, `$1\n<base href="${baseUrl}/">${ledTracking}`);
+      else finalHtml = `<!DOCTYPE html><html><head><base href="${baseUrl}/"></head><body>${finalHtml}</body></html>`;
+      await page.setContent(finalHtml, { waitUntil: 'load', timeout: 8000 });
+      const endMs = await page.evaluate(async (cap) => {
+        try { await document.fonts.ready; } catch (_) {}
+        const anims = document.getAnimations();
+        let end = 0;
+        for (const a of anims) {
+          a.pause();
+          const t = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming().endTime : 0;
+          if (Number.isFinite(t) && t > end) end = t;
+        }
+        return Math.min(cap, end);
+      }, maxMs);
+      if (!endMs || endMs <= 0) return null;
+      const step = 1000 / Math.max(1, Math.min(SLIDE_CAPTURE_MAX_FPS, fps));
+      const times = [];
+      for (let t = 0; t < endMs; t += step) times.push(t);
+      times.push(endMs);
+      const frames = [];
+      for (let i = 0; i < times.length; i++) {
+        if (signal?.aborted) throw Object.assign(new Error('Render request aborted'), { code: 'ABORTED' });
+        await page.evaluate((t) => new Promise((resolve) => {
+          for (const a of document.getAnimations()) a.currentTime = t;
+          requestAnimationFrame(() => requestAnimationFrame(resolve));
+        }), times[i]);
+        const png = await page.screenshot({ type: 'png' });
+        const img = await Jimp.fromBuffer(Buffer.from(png));
+        if (profile.height <= 32) crispForLed(img.bitmap.data);
+        const next = i + 1 < times.length ? times[i + 1] : times[i] + 1000;
+        frames.push({ rgba: img.bitmap.data, delayMs: Math.max(1, next - times[i]) });
+      }
+      return { width: profile.width, height: profile.height, loops: 1, frames };   // play once, hold the end
+    })(), 30000, 'Animation capture exceeded 30s');
+  } finally {
+    if (page) { try { await page.close(); } catch (_) {} }
+    releasePageSlot();
+  }
+}
+
 async function render(item, content, screenProfile, options = {}) {
   const profile = {
     width: safeDimension(screenProfile?.width, 800),
@@ -698,30 +815,7 @@ async function render(item, content, screenProfile, options = {}) {
     }
 
     try {
-      const { renderWidgetHtml, imageResolverFor, dataResolverFor, widgetIframeSandboxForWorkspace } = require('../routes/widgets');
-      const { fontResolverFor } = require('../routes/fonts');
-      const { db } = require('../db/database');
-
-      let wsId;
-      if (item.widget_id) {
-        wsId = item.widget_workspace_id !== undefined ? item.widget_workspace_id : null;
-        if (wsId == null) {
-          try {
-            const w = db.prepare('SELECT workspace_id FROM widgets WHERE id = ?').get(item.widget_id);
-            wsId = w ? w.workspace_id : null;
-          } catch (_) {}
-        }
-      } else {
-        wsId = item.workspace_id || content?.workspace_id || profile?.workspace_id;
-      }
-
-      const html = renderWidgetHtml(type, config, {
-        iframeSandbox: widgetIframeSandboxForWorkspace ? widgetIframeSandboxForWorkspace(wsId) : 'allow-scripts',
-        resolveImage: imageResolverFor ? imageResolverFor({ workspace_id: wsId }) : undefined,
-        resolveFont: fontResolverFor ? fontResolverFor({ workspace_id: wsId }) : undefined,
-        resolveData: typeof dataResolverFor === 'function' ? dataResolverFor(wsId) : undefined,
-        workspaceId: wsId,
-      });
+      const html = widgetHtmlFor(item, content, profile, type, config);
       const png = await renderWidgetOrHtml(html, profile, type, options);
       return { png };
     } catch (e) {
@@ -1074,13 +1168,23 @@ async function renderLayout(layout, zoneEntries, screenProfile, options = {}) {
  */
 async function renderAnimation(item, content, screenProfile, cap, options = {}) {
   const anim = require('./embedded-animation');
-  if (!cap || !content || (item && (item.widget_id || item.widget_type)) || !anim.isGifSource(content)) return null;
+  if (!cap) return null;
   const profile = {
     ...screenProfile,
     width: safeDimension(screenProfile?.width, 800),
     height: safeDimension(screenProfile?.height, 480),
     rotation: [0, 90, 180, 270].includes(Number(screenProfile?.rotation)) ? Number(screenProfile.rotation) : 0,
   };
+  // A slide with motion: capture its entrance animations, played once and held on the final layout.
+  if (slideHasMotion(item)) {
+    if (!isBrowserAvailable()) return null;
+    const html = widgetHtmlFor(item, content, profile, 'slide', widgetConfigOf(item));
+    const captured = await captureAnimationFrames(html, profile, { fps: Math.min(cap.maxFps, SLIDE_CAPTURE_MAX_FPS), signal: options.signal });
+    if (!captured) return null;
+    // Rendered at the screen's own size, so the fit is 1:1 (fitImageOntoCanvas skips the resize).
+    return anim.buildFromFrames(captured, profile, cap, { fitMode: 'fill', backgroundColor: '#000000' }, fitImageOntoCanvas);
+  }
+  if (!content || (item && (item.widget_id || item.widget_type)) || !anim.isGifSource(content)) return null;
   let bytes;
   if (content.remote_url) {
     try {
@@ -1107,6 +1211,9 @@ async function renderAnimation(item, content, screenProfile, cap, options = {}) 
 module.exports = {
   render,
   renderAnimation,
+  slideHasMotion,
+  crispForLed,
+  captureAnimationFrames,
   renderRemotePage,
   renderPlayerFrame,
   renderLayout,

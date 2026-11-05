@@ -43,7 +43,7 @@ const { resolveTenancy }    = require('../lib/tenancy');
 const { resolveDevicePlaylist, resolvedLayoutId, resolveDeviceContext } = require('../lib/resolve-device-playlist');
 const { parseProfile, listPresets, getPreset, frameDimensions, frameOrientation } = require('../lib/embedded-profiles');
 const { cacheKey, toETag, isNotModified, get: cacheGet, set: cacheSet } = require('../lib/embedded-cache');
-const { render, renderAnimation, renderLayout, isLayoutImageOnly, isBrowserAvailable, looksLikeImage, safeFitMode } = require('../lib/embedded-render');
+const { render, renderAnimation, slideHasMotion, renderLayout, isLayoutImageOnly, isBrowserAvailable, looksLikeImage, safeFitMode } = require('../lib/embedded-render');
 const animation = require('../lib/embedded-animation');
 const ledConfig = require('../lib/embedded-led-config');
 const { postprocess }       = require('../lib/embedded-postprocess');
@@ -1413,7 +1413,8 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
   // Animated GIFs go only to firmware that asked for them (X-ST-Animation, lib/embedded-animation.js),
   // and never to a dashboard preview, which shows the still frame as before.
   const animCap = isPreview ? null : animation.animationCapability(req.headers, profile);
-  const animKey = (animCap && !(item && (item.widget_id || item.widget_type)) && animation.isGifSource(content))
+  // Two sources: an animated GIF, or a slide with motion (its entrance animations, captured).
+  const animKey = (animCap && (slideHasMotion(item) || (!(item && (item.widget_id || item.widget_type)) && animation.isGifSource(content))))
     ? animation.capabilityKey(animCap) : null;
 
   let key = cacheKey(

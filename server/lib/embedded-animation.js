@@ -284,7 +284,16 @@ function decimate(frames, step) {
 async function buildAnimation(gifBuffer, profile, cap, fitOpts, fitImageOntoCanvas) {
   const gif = decodeGif(gifBuffer);
   if (!gif) return null;
+  return buildFromFrames(gif, profile, cap, fitOpts, fitImageOntoCanvas, { gifDelays: true });
+}
 
+/**
+ * The shared half: composited RGBA frames (from a GIF, or from a browser capture of a slide's
+ * animations) -> fitted, packed, delta-encoded, budgeted STA1. `src` is
+ * { width, height, loops, frames: [{ rgba, delayCs } | { rgba, delayMs }] }.
+ */
+async function buildFromFrames(src, profile, cap, fitOpts, fitImageOntoCanvas, { gifDelays = false } = {}) {
+  const gif = src;
   const bpp = cap.format === FORMAT_RGB565 ? 2 : 3;
   const frameBytes = profile.width * profile.height * bpp;
   let minDelayMs = Math.ceil(1000 / cap.maxFps);
@@ -300,7 +309,10 @@ async function buildAnimation(gifBuffer, profile, cap, fitOpts, fitImageOntoCanv
   for (const f of gif.frames) {
     const p = await packFrame(f.rgba, gif.width, gif.height, profile, fitOpts, fitImageOntoCanvas);
     outW = p.width; outH = p.height;
-    packed.push({ packed: p.packed, delay: normaliseDelayMs(f.delayCs, minDelayMs) });
+    const delay = gifDelays
+      ? normaliseDelayMs(f.delayCs, minDelayMs)
+      : Math.min(65535, Math.max(minDelayMs, Math.round(Number(f.delayMs) || 100)));
+    packed.push({ packed: p.packed, delay });
   }
 
   // Shrink by dropping frames until it fits. Deltas are recomputed each time, because what changed
@@ -348,7 +360,7 @@ function decode(buf) {
 module.exports = {
   CONTENT_TYPE, FORMAT_RGB888, FORMAT_RGB565,
   animationCapability, capabilityKey, isGifSource, isAnimationBuffer,
-  decodeGif, buildAnimation, decode,
+  decodeGif, buildAnimation, buildFromFrames, decode,
   // exported for tests
   normaliseDelayMs, changedRect, decimate,
 };
