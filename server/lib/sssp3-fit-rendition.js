@@ -34,6 +34,7 @@ let testEncode = null;
 let testCacheBytes = null;
 let pushFn = null;
 let tools = null;
+let lastWorkspaceServed = null;
 
 function evenPx(value) {
   const n = Math.floor(Number(value) || 0);
@@ -308,7 +309,18 @@ async function tick() {
   }
   const room = MAX_CONCURRENT_RENDITIONS - running.size;
   if (room <= 0) return;
-  const rows = db.prepare("SELECT * FROM sssp3_fit_renditions WHERE status = 'queued' ORDER BY last_used_at DESC,created_at ASC LIMIT ?").all(room);
+  const candidates = db.prepare("SELECT * FROM sssp3_fit_renditions WHERE status = 'queued' ORDER BY created_at ASC,id ASC LIMIT 64").all();
+  // Round-robin at workspace boundaries. The per-workspace admission cap limits
+  // burst size; this selection rule prevents one older tenant backlog starving
+  // a later tenant indefinitely on the single-worker default.
+  const rows = [];
+  while (rows.length < room && candidates.length) {
+    let index = candidates.findIndex((row) => row.workspace_id !== lastWorkspaceServed);
+    if (index < 0) index = 0;
+    const row = candidates.splice(index, 1)[0];
+    rows.push(row);
+    lastWorkspaceServed = row.workspace_id;
+  }
   for (const row of rows) {
     const source = db.prepare('SELECT duration_sec FROM content WHERE id = ? AND workspace_id = ?').get(row.content_id, row.workspace_id);
     if (!source) { db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',error = 'source deleted' WHERE id = ?").run(row.id); continue; }
@@ -391,6 +403,7 @@ function resetForTest(options = {}) {
   testCacheBytes = options.cacheBytes == null ? null : options.cacheBytes;
   pushFn = null;
   tools = options.ffmpeg === undefined ? null : { ffmpeg: !!options.ffmpeg };
+  lastWorkspaceServed = null;
 }
 
 module.exports = {
