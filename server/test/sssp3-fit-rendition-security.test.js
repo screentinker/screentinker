@@ -207,6 +207,21 @@ test('failed work is bounded and public requests do not retry it', async () => {
   assert.equal(db.prepare('SELECT status FROM sssp3_fit_renditions WHERE id = ?').get(row.id).status, 'failed');
 });
 
+test('a transient failed rendition retries only after bounded exponential backoff', () => {
+  const item = content('fit-retry-' + crypto.randomBytes(3).toString('hex'));
+  fit.stampItems([item], layout, device);
+  const row = db.prepare('SELECT * FROM sssp3_fit_renditions WHERE content_id = ?').get(item.content_id);
+  db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',attempts = 1,updated_at = strftime('%s','now'),error = 'temporary storage outage' WHERE id = ?").run(row.id);
+  fit.stampItems([{ ...item }], layout, device);
+  assert.equal(db.prepare('SELECT status FROM sssp3_fit_renditions WHERE id = ?').get(row.id).status, 'failed');
+  db.prepare("UPDATE sssp3_fit_renditions SET updated_at = strftime('%s','now') - 61 WHERE id = ?").run(row.id);
+  fit.stampItems([{ ...item }], layout, device);
+  assert.equal(db.prepare('SELECT status FROM sssp3_fit_renditions WHERE id = ?').get(row.id).status, 'queued');
+  db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',attempts = ? ,updated_at = 0 WHERE id = ?").run(fit.MAX_RENDITION_ATTEMPTS, row.id);
+  fit.stampItems([{ ...item }], layout, device);
+  assert.equal(db.prepare('SELECT status FROM sssp3_fit_renditions WHERE id = ?').get(row.id).status, 'failed');
+});
+
 test('content cleanup removes rendition rows and files', async () => {
   const item = content('fit-remove-' + crypto.randomBytes(3).toString('hex'));
   fit.stampItems([item], layout, device);

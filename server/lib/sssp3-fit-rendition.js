@@ -18,6 +18,7 @@ const MAX_VARIANTS_PER_CONTENT = 12;
 const MAX_CONCURRENT_RENDITIONS = 1;
 const MAX_PENDING_RENDITIONS = 256;
 const MAX_PENDING_RENDITIONS_PER_WORKSPACE = 32;
+const MAX_RENDITION_ATTEMPTS = 3;
 const DEFAULT_CACHE_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_CACHE_BYTES_PER_WORKSPACE = 512 * 1024 * 1024;
 const FILE_RE = /^ssf_([a-f0-9]{32})(\.(?:mp4|jpg|jpeg|png|webp))$/;
@@ -109,6 +110,15 @@ function approve(content, spec) {
   const id = rowId(content.id, sourceFile, sourceRevision, spec.fit, spec.width, spec.height);
   let row = db.prepare('SELECT * FROM sssp3_fit_renditions WHERE id = ?').get(id);
   if (row) {
+    // A transient storage/ffmpeg failure may recover, but ordinary payload
+    // refreshes must not create a retry storm. Retry at most three times with
+    // 1m, 2m, then 4m backoff; evictions remain terminal for this revision.
+    if (row.status === 'failed' && row.attempts < MAX_RENDITION_ATTEMPTS) {
+      const retryAfter = Number(row.updated_at || 0) + (60 * (2 ** Math.max(0, Number(row.attempts) - 1)));
+      if (Math.floor(Date.now() / 1000) >= retryAfter) {
+        db.prepare("UPDATE sssp3_fit_renditions SET status = 'queued',error = NULL,updated_at = strftime('%s','now') WHERE id = ? AND status = 'failed'").run(id);
+      }
+    }
     db.prepare("UPDATE sssp3_fit_renditions SET last_used_at = strftime('%s','now') WHERE id = ?").run(id);
     // Eviction is terminal for this source revision. A frequently delivered
     // payload must fall back to the original media, never silently requeue
@@ -384,7 +394,7 @@ function resetForTest(options = {}) {
 }
 
 module.exports = {
-  CAPABILITY, MAX_VARIANTS_PER_CONTENT, MAX_CONCURRENT_RENDITIONS, MAX_PENDING_RENDITIONS, MAX_PENDING_RENDITIONS_PER_WORKSPACE, MAX_CACHE_BYTES_PER_WORKSPACE, FILE_RE,
+  CAPABILITY, MAX_VARIANTS_PER_CONTENT, MAX_CONCURRENT_RENDITIONS, MAX_PENDING_RENDITIONS, MAX_PENDING_RENDITIONS_PER_WORKSPACE, MAX_RENDITION_ATTEMPTS, MAX_CACHE_BYTES_PER_WORKSPACE, FILE_RE,
   vf, canvasFor, stampItems, resolveReady, removeFor, sweepOrphans, start, tick, stats,
   _drain: drain, _resetForTest: resetForTest,
 };
