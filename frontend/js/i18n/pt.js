@@ -649,6 +649,7 @@ export default {
   'data_sources.synced_unchanged': "Sincronizado. Sem alterações, os ecrãs não foram recarregados.",
   'data_sources.synced_changed': "Sincronizado. Os dados mudaram, os ecrãs que os mostram vão recarregar.",
   'data_sources.synced_changed_keys': "Sincronizado. Alterado: {keys}. Os ecrãs que os mostram vão recarregar.",
+  'data_sources.synced_changed_keys_unused': "Sincronizado. Alterado: {keys}. Nenhum diapositivo mostra estes campos, por isso nenhum ecrã recarrega.",
   'data_sources.created_ok': "Fonte de dados criada e sincronizada",
   'data_sources.failed_load': "Falha ao carregar fontes de dados",
   'data_sources.deleted_ok': "Fonte de dados excluída",

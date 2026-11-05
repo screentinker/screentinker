@@ -486,6 +486,8 @@ router.post('/:id/refresh', requireWorkspaceWrite, async (req, res, next) => {
       // Whether this sync changed the data, and so re-rendered the slides bound to it (#790).
       changed: synced.changed === true,
       changed_keys: Array.isArray(synced.changed_keys) ? synced.changed_keys : [],
+      // How many slides show a changed field and so reload. 0 = the change is in fields nobody shows.
+      slides_updated: Number(synced.slides_updated) || 0,
       data: synced.data,
     });
   } catch (err) {

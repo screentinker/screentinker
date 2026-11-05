@@ -624,6 +624,7 @@ export default {
   'data_sources.synced_unchanged': "Synkroniseret. Ingen ændring, så skærmene blev ikke genindlæst.",
   'data_sources.synced_changed': "Synkroniseret. Data ændret, skærme der viser dem genindlæses.",
   'data_sources.synced_changed_keys': "Synkroniseret. Ændret: {keys}. Skærme der viser dem genindlæses.",
+  'data_sources.synced_changed_keys_unused': "Synkroniseret. Ændret: {keys}. Ingen slides viser disse felter, så ingen skærme genindlæses.",
   'data_sources.created_ok': "Datakilden er oprettet og synkroniseret",
   'data_sources.failed_load': "Kunne ikke indlæse datakilder",
   'data_sources.deleted_ok': "Datakilde slettet",

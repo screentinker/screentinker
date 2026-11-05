@@ -646,6 +646,7 @@ export default {
   'data_sources.synced_unchanged': "Synced. No change, so screens were not reloaded.",
   'data_sources.synced_changed': "Synced. Data changed, screens showing it will reload.",
   'data_sources.synced_changed_keys': "Synced. Changed: {keys}. Screens showing it will reload.",
+  'data_sources.synced_changed_keys_unused': "Synced. Changed: {keys}. No slide shows these fields, so no screen reloads.",
   'data_sources.created_ok': 'Data source created and synced',
   'data_sources.failed_load': 'Failed to load data sources',
   'data_sources.deleted_ok': 'Data source deleted',
