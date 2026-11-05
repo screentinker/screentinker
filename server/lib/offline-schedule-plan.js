@@ -66,6 +66,18 @@ function transitionCandidates(schedules, clock, start, end) {
       }
     }
   }
+  /* A skipped local edge has no UTC inverse (for example 02:30 at US spring
+   * forward).  The live resolver nevertheless becomes active at the actual
+   * offset-change instant, so include every bounded offset transition. */
+  if (clock && typeof clock.offsetAt === 'function') {
+    const bucket = 15 * MINUTE_MS;
+    let previous = clock.offsetAt(Math.floor(start / bucket) * bucket);
+    for (let instant = Math.floor(start / bucket) * bucket + bucket; instant < end; instant += bucket) {
+      const next = clock.offsetAt(instant);
+      if (next !== previous && instant > start) out.add(instant);
+      previous = next;
+    }
+  }
   return [...out].sort((a, b) => a - b);
 }
 

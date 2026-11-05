@@ -117,6 +117,21 @@ test('plan intervals agree with the live scheduler at every minute across a DST 
   }
 });
 
+test('spring-forward activates a skipped local start at the real offset transition', () => {
+  const { isScheduleActiveAt } = require('../services/scheduler');
+  const clock = makeClock('America/New_York');
+  const schedule = { id: 'dst-gap', playlist_id: 'p', recurrence: 'FREQ=DAILY', start_time: '2027-03-01T02:30:00', end_time: '2027-03-01T04:00:00' };
+  const start = Date.parse('2027-03-14T06:45:00Z');
+  const plan = build({ schedules: [schedule], timezone: 'America/New_York', now: start, horizonMs: 2 * H,
+    clock, pickAt: (rows, local) => rows.find((row) => isScheduleActiveAt(row, local)) || null });
+  for (const iso of ['2027-03-14T06:59:00Z', '2027-03-14T07:00:00Z', '2027-03-14T07:30:00Z', '2027-03-14T08:01:00Z']) {
+    const ms = Date.parse(iso);
+    const actual = plan.intervals.find((interval) => interval.start_utc_ms <= ms && ms < interval.end_utc_ms).schedule_id;
+    const expected = isScheduleActiveAt(schedule, clock(ms)) ? 'dst-gap' : null;
+    assert.equal(actual, expected, iso);
+  }
+});
+
 test('a truncated plan expires at its last emitted interval', () => {
   const { MAX_INTERVALS, MINUTE_MS } = require('../lib/offline-schedule-plan');
   const plan = build({
