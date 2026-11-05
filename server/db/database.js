@@ -3488,7 +3488,6 @@ const migrations = [
      updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
      last_used_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
      UNIQUE (content_id, source_file, fit, width, height))`,
-  'ALTER TABLE sssp3_fit_renditions ADD COLUMN source_revision INTEGER NOT NULL DEFAULT 0',
   'CREATE INDEX IF NOT EXISTS idx_sssp3_fit_status ON sssp3_fit_renditions(status, created_at)',
   'CREATE INDEX IF NOT EXISTS idx_sssp3_fit_content ON sssp3_fit_renditions(content_id)',
   `CREATE TRIGGER IF NOT EXISTS trg_sssp3_fit_content_del AFTER DELETE ON content

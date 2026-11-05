@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 
 process.env.DATA_DIR = path.join(os.tmpdir(), 'st-sssp3-fit-source-' + crypto.randomBytes(4).toString('hex'));
 process.env.NODE_ENV = 'test';
-const { vf } = require('../lib/sssp3-fit-rendition');
+const { vf, canvasFor } = require('../lib/sssp3-fit-rendition');
 
 test('vf encodes contain as pad, cover as crop, fill as stretch', () => {
   assert.match(vf('contain', 1920, 1080), /force_original_aspect_ratio=decrease/);
@@ -17,6 +17,10 @@ test('vf encodes contain as pad, cover as crop, fill as stretch', () => {
   assert.match(vf('cover', 1920, 1080), /force_original_aspect_ratio=increase/);
   assert.match(vf('cover', 1920, 1080), /crop=1920:1080/);
   assert.match(vf('fill', 1920, 1080), /force_original_aspect_ratio=disable/);
+});
+test('portrait output swaps a landscape panel into its logical canvas', () => {
+  assert.deepEqual(canvasFor({ screen_width: 1920, screen_height: 1080, orientation: 'portrait' }), { width: 1080, height: 1920 });
+  assert.deepEqual(canvasFor({ screen_width: 1920, screen_height: 1080, orientation: 'landscape' }), { width: 1920, height: 1080 });
 });
 test('the public uploads mount cannot create renditions', () => {
   const source = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');

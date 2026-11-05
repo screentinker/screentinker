@@ -74,13 +74,22 @@ test('the per-content variant ceiling remains durable across requests', () => {
   assert.equal(count, fit.MAX_VARIANTS_PER_CONTENT);
 });
 
-test('the durable pending queue has a global ceiling', () => {
+test('the durable pending queue has a global ceiling and a per-workspace share', () => {
   for (let i = 0; i < fit.MAX_PENDING_RENDITIONS + 5; i++) {
     const item = content('fit-queue-' + i + '-' + crypto.randomBytes(2).toString('hex'), 'ws-a', 'jpg');
     fit.stampItems([item], layout, device);
   }
   const pending = db.prepare("SELECT count(*) AS n FROM sssp3_fit_renditions WHERE status IN ('queued','running')").get().n;
-  assert.equal(pending, fit.MAX_PENDING_RENDITIONS);
+  assert.equal(pending, fit.MAX_PENDING_RENDITIONS_PER_WORKSPACE);
+});
+
+test('one workspace cannot consume another workspace pending capacity', () => {
+  for (let i = 0; i < fit.MAX_PENDING_RENDITIONS_PER_WORKSPACE; i++) {
+    fit.stampItems([content('fit-fair-a-' + i + '-' + crypto.randomBytes(2).toString('hex'), 'ws-a', 'jpg')], layout, device);
+  }
+  const other = content('fit-fair-b-' + crypto.randomBytes(2).toString('hex'), 'ws-b', 'jpg');
+  fit.stampItems([other], layout, { ...device, workspace_id: 'ws-b' });
+  assert.equal(db.prepare("SELECT status FROM sssp3_fit_renditions WHERE content_id = ?").get(other.content_id).status, 'queued');
 });
 
 test('replacing source bytes invalidates the old approved rendition', async () => {

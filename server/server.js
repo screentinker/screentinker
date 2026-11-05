@@ -1858,7 +1858,9 @@ app.get('/api/content/:id/sssp3-fit/:renditionId', (req, res) => {
   if (!file) return res.status(404).json({ error: 'Rendition not ready' });
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  // This is a player-gated derivative. Do not let a shared cache continue
+  // serving it after assignment or authorization has changed.
+  res.setHeader('Cache-Control', 'private, no-store');
   hardenUploadResponse(res, file);
   return res.sendFile(file);
 });

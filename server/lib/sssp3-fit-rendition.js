@@ -11,11 +11,13 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { db } = require('../db/database');
 const config = require('../config');
+const videoVariants = require('./video-variants');
 
 const CAPABILITY = 'playback.sssp3_fit_renditions';
 const MAX_VARIANTS_PER_CONTENT = 12;
 const MAX_CONCURRENT_RENDITIONS = 1;
 const MAX_PENDING_RENDITIONS = 256;
+const MAX_PENDING_RENDITIONS_PER_WORKSPACE = 32;
 const DEFAULT_CACHE_BYTES = 2 * 1024 * 1024 * 1024;
 const FILE_RE = /^ssf_([a-f0-9]{32})(\.(?:mp4|jpg|jpeg|png|webp))$/;
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v']);
@@ -44,6 +46,14 @@ function vf(fit, width, height) {
   if (fit === 'fill') return `scale=${width}:${height}:force_original_aspect_ratio=disable,setsar=1,format=yuv420p`;
   if (fit === 'contain') return `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p`;
   return `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,format=yuv420p`;
+}
+
+function canvasFor(device) {
+  let width = Number(device && device.screen_width) || 1920;
+  let height = Number(device && device.screen_height) || 1080;
+  // A landscape panel rotated by the player has a portrait logical canvas.
+  if (/^portrait/.test(String(device && device.orientation || '')) && width > height) [width, height] = [height, width];
+  return { width: Math.min(1920, evenPx(width)), height: Math.min(1920, evenPx(height)) };
 }
 
 function realRegularFile(file, root) {
@@ -87,6 +97,9 @@ function approve(content, spec) {
   const outputExt = outputExtension(path.extname(sourceFile).toLowerCase());
   if (!sourceFile || !outputExt || !validGeometry(spec.width, spec.height)) return null;
   if (!['contain', 'cover', 'fill'].includes(spec.fit)) return null;
+  // Use the platform's established feature switch. A capable panel is never
+  // itself authority to spend hosted encoding capacity.
+  if (!videoVariants.getSettings().enabled) return null;
 
   if (db.prepare('SELECT 1 FROM sssp3_fit_renditions WHERE content_id = ? AND (source_file != ? OR source_revision != ?) LIMIT 1').get(content.id, sourceFile, sourceRevision)) {
     removeFor(content.id);
@@ -100,10 +113,23 @@ function approve(content, spec) {
     // ffmpeg and rebuild the cache in a permanent eviction/requeue loop.
     return db.prepare('SELECT * FROM sssp3_fit_renditions WHERE id = ?').get(id);
   }
-  const count = db.prepare('SELECT count(*) AS n FROM sssp3_fit_renditions WHERE content_id = ?').get(content.id).n;
+  // Terminal rows cannot permanently consume every geometry slot. Ready rows
+  // are retained; stale failures/evictions are cache metadata and are pruned
+  // oldest-first before a new geometry is admitted.
+  let count = db.prepare('SELECT count(*) AS n FROM sssp3_fit_renditions WHERE content_id = ?').get(content.id).n;
+  if (count >= MAX_VARIANTS_PER_CONTENT) {
+    const stale = db.prepare("SELECT id FROM sssp3_fit_renditions WHERE content_id = ? AND status IN ('failed','evicted') ORDER BY updated_at ASC").all(content.id);
+    for (const old of stale) {
+      db.prepare('DELETE FROM sssp3_fit_renditions WHERE id = ?').run(old.id);
+      count--;
+      if (count < MAX_VARIANTS_PER_CONTENT) break;
+    }
+  }
   if (count >= MAX_VARIANTS_PER_CONTENT) return null;
   const pending = db.prepare("SELECT count(*) AS n FROM sssp3_fit_renditions WHERE status IN ('queued','running')").get().n;
   if (pending >= MAX_PENDING_RENDITIONS) return null;
+  const workspacePending = db.prepare("SELECT count(*) AS n FROM sssp3_fit_renditions WHERE workspace_id = ? AND status IN ('queued','running')").get(content.workspace_id).n;
+  if (workspacePending >= MAX_PENDING_RENDITIONS_PER_WORKSPACE) return null;
   const filename = `ssf_${id}${outputExt}`;
   db.prepare(`INSERT INTO sssp3_fit_renditions
     (id,content_id,workspace_id,source_file,source_revision,fit,width,height,output_ext,status,filepath)
@@ -118,7 +144,8 @@ function stampItems(items, layout, device, { lazy = true } = {}) {
   const zones = Array.isArray(layout && layout.zones) ? layout.zones : [];
   const multiZone = zones.length >= 2;
   const byId = new Map(zones.filter(Boolean).map((zone) => [zone.id, zone]));
-  const lookup = db.prepare('SELECT id,workspace_id,filepath,mime_type,updated_at,created_at FROM content WHERE id = ?');
+  const lookup = db.prepare('SELECT id,workspace_id,filepath,mime_type,updated_at,created_at,width,height FROM content WHERE id = ?');
+  const canvas = canvasFor(device);
   for (const item of items) {
     if (!item || !item.content_id || item.remote_url || item.widget_id) continue;
     const mime = String(item.mime_type || '').toLowerCase();
@@ -130,8 +157,8 @@ function stampItems(items, layout, device, { lazy = true } = {}) {
     if (content.workspace_id !== (item.__origin_ws || device.workspace_id)) continue;
     const zone = byId.get(item.zone_id);
     if (video && !zone) continue;
-    const width = zone ? evenPx(1920 * Number(zone.width_percent) / 100) : 1920;
-    const height = zone ? evenPx(1080 * Number(zone.height_percent) / 100) : 1080;
+    const width = zone ? evenPx(canvas.width * Number(zone.width_percent) / 100) : canvas.width;
+    const height = zone ? evenPx(canvas.height * Number(zone.height_percent) / 100) : canvas.height;
     const requested = item.fit_mode || (zone && zone.fit_mode) || 'contain';
     const fit = ['contain', 'cover', 'fill'].includes(requested) ? requested : 'contain';
     const row = approve(content, { fit, width, height });
@@ -168,7 +195,9 @@ function ffmpegArgs(src, tmp, row) {
     '-profile:v', 'baseline', '-level', '3.1', '-pix_fmt', 'yuv420p', '-map_metadata', '-1',
     '-metadata:s:v:0', 'rotate=0', '-movflags', '+faststart', tmp,
   ]);
-  return common.concat(['-frames:v', '1', '-vf', vf(row.fit, row.width, row.height), tmp]);
+  const imageFilter = row.output_ext === '.png' ? vf(row.fit, row.width, row.height).replace(',format=yuv420p', '') : vf(row.fit, row.width, row.height);
+  const quality = (row.output_ext === '.jpg' || row.output_ext === '.jpeg') ? ['-q:v', '2'] : [];
+  return common.concat(['-frames:v', '1', '-vf', imageFilter, ...quality, tmp]);
 }
 
 function encode(job) {
@@ -210,7 +239,16 @@ function makeRoom(bytes, protectedId) {
 async function processRow(row) {
   let root;
   try { root = fs.realpathSync(config.contentDir); } catch (_) { throw new Error('content directory unavailable'); }
-  const src = realRegularFile(path.join(root, row.source_file), root);
+  const content = db.prepare('SELECT * FROM content WHERE id = ? AND workspace_id = ?').get(row.content_id, row.workspace_id);
+  if (!content || path.basename(content.filepath || '') !== row.source_file) throw new Error('source media was replaced or deleted');
+  // This is the same materialisation path used by video variants: it supports
+  // the local implicit location plus configured remote/replica locations.
+  const materialized = await videoVariants.sourcePath(content);
+  // sourcePath is the storage layer's controlled materialisation result. It
+  // may be its private storage-cache rather than contentDir, so validate it
+  // against its resolved parent instead of incorrectly rejecting remote data.
+  let src = null;
+  try { src = materialized && realRegularFile(materialized, fs.realpathSync(path.dirname(materialized))); } catch (_) { src = null; }
   if (!src) throw new Error('source media is missing or unsafe');
   const workDir = fs.mkdtempSync(path.join(root, '.sssp3-fit-'));
   activeWorkDirs.add(workDir);
@@ -315,7 +353,7 @@ function resetForTest(options = {}) {
 }
 
 module.exports = {
-  CAPABILITY, MAX_VARIANTS_PER_CONTENT, MAX_CONCURRENT_RENDITIONS, MAX_PENDING_RENDITIONS, FILE_RE,
-  vf, stampItems, resolveReady, removeFor, sweepOrphans, start, tick, stats,
+  CAPABILITY, MAX_VARIANTS_PER_CONTENT, MAX_CONCURRENT_RENDITIONS, MAX_PENDING_RENDITIONS, MAX_PENDING_RENDITIONS_PER_WORKSPACE, FILE_RE,
+  vf, canvasFor, stampItems, resolveReady, removeFor, sweepOrphans, start, tick, stats,
   _drain: drain, _resetForTest: resetForTest,
 };

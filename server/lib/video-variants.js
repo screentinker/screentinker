@@ -662,6 +662,7 @@ module.exports = {
   ensure, onContentIngested, retry, removeFor, sweepOrphans, variantsForPayload, describe, stampItems,
   getSettings, saveSettings, parseWindow, inWindow, monthKey, withinAllowance,
   ffmpegArgs, scaleFilter, encodeWithFfmpeg,
+  sourcePath,
   start, stats, tick,
   _resetForTest, _running: () => running, _drain: () => Promise.all([...jobs]), _setPush: (fn) => { pushFn = fn; },
 };
