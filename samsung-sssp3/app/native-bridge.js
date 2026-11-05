@@ -24,14 +24,17 @@
     for (i = 0; i < value.length; i++) { a = ((a ^ value.charCodeAt(i)) * 16777619) >>> 0; b = (((b << 5) + b) ^ value.charCodeAt(i)) >>> 0; }
     return a.toString(36) + b.toString(36);
   }
-  function key(item) { return hash(JSON.stringify(item.widget_id ? [item.widget_id, item.widget_rev, item.widget_type, widgetCacheVersion] : [item.content_id, item.filepath, item.content_rev, item.remote_url, item.file_size, item.fill_fit || '', item.fill_width || 0, item.fill_height || 0])); }
+  function key(item) {
+    var asset = item && item.sssp3_rendition_state === 'ready' ? String(item.sssp3_rendition_url || '') : '';
+    return hash(JSON.stringify(item.widget_id ? [item.widget_id, item.widget_rev, item.widget_type, widgetCacheVersion] : [item.content_id, item.filepath, item.content_rev, item.remote_url, item.file_size, item.fill_fit || '', item.fill_width || 0, item.fill_height || 0, asset]));
+  }
   function path(item) {
     if (item.widget_id) return directory + '/' + key(item) + '.html';
     var match = /\.([a-z0-9]{1,8})(?:$|\?)/i.exec(String(item.filepath || item.filename || ''));
     // SVG fitted into a zone is fetched as a raster PNG; preserving `.svg`
     // locally makes this legacy renderer parse PNG bytes as XML.
     var ext = match ? match[1].toLowerCase() : 'bin';
-    if (ext === 'svg' && item.fill_width > 0 && item.fill_height > 0) ext = 'png';
+    if (ext === 'svg' && item.sssp3_rendition_state === 'ready' && item.sssp3_rendition_url) ext = 'png';
     return directory + '/' + key(item) + '.' + ext;
   }
   function exists(name) {

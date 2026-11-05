@@ -187,7 +187,32 @@ test('zoned cover video downloads a cropped zone-sized rendition', () => {
   e.b.accept({ assignments: [video], layout: pipLayout() }, () => {});
   assertFitDownload(e, video, 'cover', 'sssp-motion-test');
 });
-test('fitted SVG assets use a PNG cache extension', () => { const e = environment(); const item = { content_id: 'svg', filepath: 'zone.svg', mime_type: 'image/svg+xml', fill_fit: 'fill', fill_width: 960, fill_height: 540 }; assert.match(e.b._test.path(item), /\.png$/); });
+test('only a ready SVG rendition uses a PNG cache extension', () => {
+  const e = environment();
+  const pending = { content_id: 'svg', filepath: 'zone.svg', mime_type: 'image/svg+xml', fill_fit: 'fill', fill_width: 960, fill_height: 540, sssp3_rendition_state: 'queued' };
+  const ready = approved({ ...pending }, 'fill', 960, 540);
+  assert.match(e.b._test.path(pending), /\.svg$/);
+  assert.match(e.b._test.path(ready), /\.png$/);
+});
+
+test('queued fallback and ready rendition have distinct cache identities and download both assets', () => {
+  const e = environment();
+  const queued = { content_id: 'zone', filepath: 'zone.mp4', mime_type: 'video/mp4', content_rev: 1, file_size: 8, zone_id: 'z-pip-1', fill_fit: 'fill', fill_width: 960, fill_height: 540, sssp3_rendition_state: 'queued' };
+  const applied = [];
+  e.b.accept({ assignments: [queued], layout: pipLayout() }, p => applied.push(p));
+  const fallbackPath = e.b._test.path(queued);
+  e.files[e.downloads[0].destination] = 'ORIGINAL'; e.done('1000?1');
+  assert.equal(e.files[fallbackPath], 'ORIGINAL');
+  const ready = approved({ ...queued }, 'fill', 960, 540);
+  e.b.accept({ assignments: [ready], layout: pipLayout() }, p => applied.push(p));
+  const renditionPath = e.b._test.path(ready);
+  assert.notEqual(renditionPath, fallbackPath);
+  assert.match(e.downloads.at(-1).url, /\/sssp3-fit\//);
+  e.files[e.downloads.at(-1).destination] = 'RENDITION'; e.done('1000?1');
+  assert.equal(e.files[renditionPath], 'RENDITION');
+  assert.equal(e.b.mediaUrl(ready, 'remote'), 'file://' + renditionPath);
+  assert.equal(applied.length, 2);
+});
 
 test('zoned image contain/cover/fill download intrinsic-size renditions', () => {
   for (const fit of ['contain', 'cover', 'fill']) {
