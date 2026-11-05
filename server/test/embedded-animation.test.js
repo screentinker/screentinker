@@ -40,6 +40,11 @@ test('the budget and fps headers are clamped', () => {
   const c = anim.animationCapability({ ...ASK, 'x-st-animation-budget': '999999999', 'x-st-animation-max-fps': '500' }, LED);
   assert.equal(c.budget, 4 * 1024 * 1024);
   assert.equal(c.maxFps, 60);
+  // Free heap wobbles between polls: nearby budgets land on the same step (same cache key, so 304s).
+  const near = (b) => anim.animationCapability({ ...ASK, 'x-st-animation-budget': String(b) }, LED).budget;
+  assert.equal(near(24848), near(26100));
+  assert.equal(near(24848), 24 * 1024);
+  assert.ok(near(24848) <= 24848, 'rounded down, so the answer still fits');
   const d = anim.animationCapability({ ...ASK, 'x-st-animation-budget': '5', 'x-st-animation-max-fps': 'x' }, LED);
   assert.equal(d.budget, 16 * 1024);
   assert.equal(d.maxFps, 30);

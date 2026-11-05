@@ -74,9 +74,22 @@ function animationCapability(headers, profile) {
   if (!format) return null;
   return {
     format,
-    budget: clampInt(headers['x-st-animation-budget'], BUDGET_MIN, BUDGET_MAX, BUDGET_DEFAULT),
+    budget: budgetStep(clampInt(headers['x-st-animation-budget'], BUDGET_MIN, BUDGET_MAX, BUDGET_DEFAULT)),
     maxFps: clampInt(headers['x-st-animation-max-fps'], 1, 60, FPS_DEFAULT),
   };
+}
+
+/*
+ * The budget a device reports is its free heap at that moment, which moves by a few KB from poll to
+ * poll. It is part of the cache key, so used raw it changed the key (and the ETag) on every poll: no
+ * 304s, and a slide re-captured in the browser each time. Round DOWN to a fixed ladder, so the
+ * answer still fits and the key only moves when the room really changes.
+ */
+const BUDGET_STEPS = [16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096].map((k) => k * 1024);
+function budgetStep(bytes) {
+  let out = BUDGET_STEPS[0];
+  for (const s of BUDGET_STEPS) if (s <= bytes) out = s;
+  return out;
 }
 
 function pixelFormatFor(profile) {
@@ -362,5 +375,5 @@ module.exports = {
   animationCapability, capabilityKey, isGifSource, isAnimationBuffer,
   decodeGif, buildAnimation, buildFromFrames, decode,
   // exported for tests
-  normaliseDelayMs, changedRect, decimate,
+  normaliseDelayMs, changedRect, decimate, budgetStep,
 };
