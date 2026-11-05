@@ -201,6 +201,39 @@ test('the global byte quota evicts the least-recently-used completed output', as
   assert.equal(db.prepare('SELECT status FROM sssp3_fit_renditions WHERE content_id = ?').get(second.content_id).status, 'ready');
 });
 
+test('a workspace cannot admit one rendition larger than its own cache allocation', async () => {
+  const item = content('fit-workspace-quota-' + crypto.randomBytes(3).toString('hex'));
+  fit.stampItems([item], layout, device);
+  fit._resetForTest({ cacheBytes: 64, workspaceCacheBytes: 8, encodeFn: async ({ tmp }) => { fs.writeFileSync(tmp, '1234567890123456'); } });
+  await fit.tick(); await fit._drain();
+  const row = db.prepare('SELECT status,error FROM sssp3_fit_renditions WHERE content_id = ?').get(item.content_id);
+  assert.equal(row.status, 'failed');
+  assert.match(row.error, /cache quota/i);
+});
+
+test('a deleted source becomes terminal and cannot be retried by later demand', async () => {
+  const item = content('fit-source-deleted-' + crypto.randomBytes(3).toString('hex'));
+  fit.stampItems([item], layout, device);
+  const row = db.prepare('SELECT * FROM sssp3_fit_renditions WHERE content_id = ?').get(item.content_id);
+  db.prepare('DELETE FROM content WHERE id = ?').run(item.content_id);
+  fit._resetForTest({ encodeFn: async ({ tmp }) => { fs.writeFileSync(tmp, 'unused'); } });
+  await fit.tick(); await fit._drain();
+  const failed = db.prepare('SELECT status,attempts,updated_at,error FROM sssp3_fit_renditions WHERE id = ?').get(row.id);
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.attempts, fit.MAX_RENDITION_ATTEMPTS);
+  assert.ok(failed.updated_at > 0);
+  assert.match(failed.error, /source deleted/);
+});
+
+test('matching source image dimensions skip unnecessary fitting and WebP keeps alpha-capable filtering', () => {
+  const item = content('fit-image-native-' + crypto.randomBytes(3).toString('hex'), 'ws-a', 'jpg');
+  db.prepare('UPDATE content SET width = 960,height = 540 WHERE id = ?').run(item.content_id);
+  fit.stampItems([item], layout, device);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM sssp3_fit_renditions WHERE content_id = ?').get(item.content_id).n, 0);
+  const args = fit.ffmpegArgs('/tmp/source.webp', '/tmp/output.webp', { source_file: 'source.webp', output_ext: '.webp', fit: 'contain', width: 960, height: 540 });
+  assert.equal(args.join(' ').includes('format=yuv420p'), false);
+});
+
 test('an evicted rendition is not automatically requeued by later payloads', () => {
   const item = content('fit-evicted-' + crypto.randomBytes(3).toString('hex'));
   fit.stampItems([item], layout, device);

@@ -188,6 +188,9 @@ function stampItems(items, layout, device, { lazy = true } = {}) {
     const height = zone ? evenPx(canvas.height * Number(zone.height_percent) / 100) : canvas.height;
     const requested = item.fit_mode || (zone && zone.fit_mode) || 'contain';
     const fit = ['contain', 'cover', 'fill'].includes(requested) ? requested : 'contain';
+    // A decoded image already at the requested pixel geometry needs no lossy
+    // round trip. The original remains authorized and is the better asset.
+    if (image && Number(content.width) === width && Number(content.height) === height) continue;
     const row = approve(content, { fit, width, height });
     if (!row) continue;
     item.fill_fit = fit;
@@ -227,7 +230,9 @@ function ffmpegArgs(src, tmp, row) {
     '-profile:v', 'baseline', '-level', '3.1', '-pix_fmt', 'yuv420p', '-map_metadata', '-1',
     '-metadata:s:v:0', 'rotate=0', '-movflags', '+faststart', tmp,
   ]);
-  const imageFilter = row.output_ext === '.png' ? vf(row.fit, row.width, row.height).replace(',format=yuv420p', '') : vf(row.fit, row.width, row.height);
+  // PNG and WebP may carry alpha; forcing yuv420p destroys it before either
+  // encoder sees the frame. Video output remains explicitly yuv420p for SSSP3.
+  const imageFilter = (row.output_ext === '.png' || row.output_ext === '.webp') ? vf(row.fit, row.width, row.height).replace(',format=yuv420p', '') : vf(row.fit, row.width, row.height);
   const quality = (row.output_ext === '.jpg' || row.output_ext === '.jpeg') ? ['-q:v', '2'] : [];
   return common.concat(['-frames:v', '1', '-vf', imageFilter, ...quality, tmp]);
 }
@@ -261,7 +266,7 @@ function workspaceCacheLimit() {
 
 function makeRoom(bytes, protectedId, workspaceId) {
   let total = Number(db.prepare("SELECT coalesce(sum(file_size),0) AS n FROM sssp3_fit_renditions WHERE status = 'ready'").get().n || 0);
-  if (bytes > cacheLimit()) return false;
+  if (bytes > cacheLimit() || bytes > workspaceCacheLimit()) return false;
   // Keep one workspace from retaining an unlimited ready working set. Its own
   // least-recently-used files are considered first, then the global LRU only
   // when the global cache is genuinely full.
@@ -275,7 +280,7 @@ function makeRoom(bytes, protectedId, workspaceId) {
     total -= Number(row.file_size || 0);
     if (row.workspace_id === workspaceId) workspaceTotal -= Number(row.file_size || 0);
   }
-  return total + bytes <= cacheLimit();
+  return total + bytes <= cacheLimit() && workspaceTotal + bytes <= workspaceCacheLimit();
 }
 
 async function processRow(row) {
@@ -351,7 +356,11 @@ async function tickOnce() {
   }
   for (const row of rows) {
     const source = db.prepare('SELECT duration_sec,mime_type FROM content WHERE id = ? AND workspace_id = ?').get(row.content_id, row.workspace_id);
-    if (!source) { db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',error = 'source deleted' WHERE id = ?").run(row.id); continue; }
+    if (!source) {
+      db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',attempts = ?,error = 'source deleted',updated_at = strftime('%s','now') WHERE id = ? AND status = 'queued'")
+        .run(MAX_RENDITION_ATTEMPTS, row.id);
+      continue;
+    }
     const cost = Number(source.duration_sec) || (/^image\//.test(String(source.mime_type || '')) ? IMAGE_ENCODING_COST_SEC : 0);
     if (!videoVariants.withinAllowance(row.workspace_id, cost, settings, new Date())) {
       db.prepare("UPDATE sssp3_fit_renditions SET status = 'failed',attempts = ?,error = 'monthly encoding allowance reached',updated_at = strftime('%s','now') WHERE id = ? AND status = 'queued'").run(MAX_RENDITION_ATTEMPTS, row.id);
