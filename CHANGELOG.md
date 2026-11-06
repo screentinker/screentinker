@@ -1,5 +1,60 @@
 # Changelog
 
+## 3.1.4
+
+### Added
+
+- **Native Samsung SSSP3 / Orsay player** (#806, with #802, #803, #805). A native player for
+  Samsung's older SSSP3 / Orsay smart-signage panels, with legacy-compatibility rendering kept
+  isolated from the modern path (#805) and server-approved media renditions bounded so an old panel
+  is never handed a stream it cannot decode (#803). Contributed by @MashaWaleed.
+
+- **Offline schedule plan** (#804, #818). The server resolves a device's schedule into a bounded,
+  already-UTC timeline and attaches it to the payload (`offline_plan`), and a player that declares
+  the capability pre-caches every state's media and transitions between scheduled playlists and idle
+  gaps while disconnected, instead of replaying its last non-empty playlist past the end of its
+  schedule. The SSSP3 and Android players (#819) both honour it. Requested by @MashaWaleed.
+
+- **Live in-place data-source field updates on slides** (#790, #817). When a bound scalar field
+  changes, the player patches just that value in the live widget instead of reloading the whole
+  slide, so an animation or video no longer restarts on a data refresh. Behind an org flag
+  (`live_field_patch`, off by default), slides only; templates keep the safe reload path.
+  Requested by @olchinga-de.
+
+- **LED screens: animation and remote settings** (#812). Animated GIFs and slides render on LED
+  matrix screens, with remote brightness and a power limiter. A new **Traffic** page shows bandwidth
+  served by kind, workspace and screen beside the NIC totals (#813). Contributed by @renebohne.
+
+- **Configurable PDF import resolution** (#816). The maximum edge a PDF page is rendered at is now an
+  organisation setting (1920 / 2560 / 3840, default 1920) instead of a fixed constant, so a site that
+  needs sharper pages no longer has to patch the build. Requested by @olchinga-de.
+
+### Fixed
+
+- **A slide fed by a data source only reloads when a field it shows changes** (#790, #814). A REST
+  source that stamps a fresh timestamp on every fetch no longer reloads every bound slide; the server
+  reloads only slides whose `{{ds:slug.key}}` tags name a changed key. Reported by @olchinga-de.
+
+- **Recurring schedule occurrence semantics are defined** (#802), so the live resolver, the preview
+  simulator and the offline plan agree on when a recurring schedule is active. Contributed by
+  @MashaWaleed.
+
+- **Recurring database corruption after the nightly backup is fixed** (#815). The 03:00 backup's
+  cross-process VACUUM reader raced the off-thread TRUNCATE checkpointer; the checkpointer now pauses
+  for the backup window, so a busy database is no longer at risk of free-list corruption.
+
+- **Legacy web panels play cached video offline** (#820). On webOS / Tizen-era Chromium (e.g. Chrome
+  79) a `<video src=url>` request bypasses the service worker, so a cached clip failed offline; a
+  local, cached, size-bounded clip is now played from a `blob:` URL built from the cached bytes.
+
+- **SSO: the SAML Issuer check stays in `issuerMatches`**, not node-saml (#811).
+
+### Dependencies
+
+- Routine server, Docker and Gradle dependency bumps (#807, #808, #809, #810), and two build-only
+  security bumps: `decode-uri-component` 0.5.1 (Roku build tooling) and `setuptools` 84.1.0 (macOS
+  packaging CI) (#821).
+
 ## 3.1.3
 
 ### Added
