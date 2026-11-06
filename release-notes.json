@@ -21,6 +21,7 @@
         "A screen that loses its connection now follows the schedule it was given, showing the right playlist or your idle screen through a gap, instead of replaying whatever happened to be on last.",
         "On a slide fed by a data source, a changed value can update in place without reloading the whole slide, so animations and videos no longer restart on a refresh. Turn it on with Live field updates in Settings.",
         "LED matrix screens can show animated GIFs and slides, with remote brightness and a power limit, and a new Traffic page shows how much bandwidth each screen and workspace is using. PDF import resolution is now a setting, and older LG and Samsung web players can play cached video while offline.",
+        "You can now flash a Seeed or Elecrow ESP32 controller (LED, e-paper or LCD) straight from the dashboard over USB, and it comes pre-pointed at this ScreenTinker so it pairs with a 6-digit code. Open it from Add Display (Chrome, Edge or Opera on desktop).",
         "Fixes: a slide fed by data no longer reloads when a value it does not show changes, the nightly backup no longer risks corrupting a busy database, and single sign-on issuer checks are more robust."
       ]
     },
