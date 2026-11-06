@@ -819,6 +819,63 @@ ${FIX_HOUR_CYCLE_JS}
 })();
 </script>`;
 
+// #790 live field patch agent, injected into a slide only when the org flag is on AND the slide
+// has at least one marked ds field. The player postMessages {type:'st-ds-patch', id, fields} when a
+// data source changes; we set textContent (never HTML) on the matching [data-ds] nodes and ack what
+// we applied, so the player knows it does not need to reload the slide. Any other message is ignored.
+// This is just another inline script in the page, exactly like FIT_SCRIPT/LIVE_SCRIPT above.
+const PATCH_SCRIPT = `<script>
+(function(){
+  function sel(k){ try { return (window.CSS && CSS.escape) ? CSS.escape(k) : k; } catch(e){ return k; } }
+  function apply(f){
+    var out=[];
+    for (var k in f){ if(!Object.prototype.hasOwnProperty.call(f,k)) continue;
+      var n=document.querySelectorAll('[data-ds="'+sel(k)+'"]');
+      if(!n.length) continue;
+      for(var i=0;i<n.length;i++){ n[i].textContent=String(f[k]); }
+      out.push(k);
+    }
+    return out;
+  }
+  window.addEventListener('message',function(ev){
+    var d=ev.data;
+    if(!d||d.type!=='st-ds-patch'||!d.fields||typeof d.fields!=='object') return;
+    var applied=apply(d.fields);
+    try{ (ev.source||window.parent).postMessage({type:'st-ds-patch-ack',id:d.id,applied:applied},'*'); }catch(e){}
+  });
+})();
+</script>`;
+
+/*
+ * #790: like interpolateDataSources but returns the PIECES, so the renderer can wrap each
+ * {{ds:slug.key}} value in its own <span data-ds="slug.key"> for live patching. Each piece is
+ * escaped on its own at the call site, so the output is identical in text to the plain path, just
+ * segmented. Returns null when the text has no ds tag (the caller keeps the plain-string path).
+ */
+function interpolateSegments(text, resolveData) {
+  if (typeof text !== 'string' || !text.includes('{{ds:')) return null;
+  const re = /\{\{ds:([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_]+)\}\}/g;
+  const segs = [];
+  let last = 0; let m; let any = false;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) segs.push({ text: text.slice(last, m.index) });
+    let val = '';
+    if (typeof resolveData === 'function') {
+      const v = resolveData(m[1], m[2]);
+      if (v !== undefined && v !== null) {
+        if (typeof v === 'object') { try { val = JSON.stringify(v); } catch (_) { val = ''; } }
+        else val = String(v);
+      }
+    }
+    segs.push({ slug: m[1], key: m[2], value: val.slice(0, MAX_FIELD_CHARS) });
+    any = true;
+    last = m.index + m[0].length;
+  }
+  if (!any) return null;
+  if (last < text.length) segs.push({ text: text.slice(last) });
+  return segs;
+}
+
 function interpolateDataSources(text, resolveData) {
   // ⚠️ CALL-SITE INVARIANT: this may ONLY be used to interpolate into field VALUES (never into
   // raw HTML/template markup). The output is inserted via `escapeHtml(fields[slot])` at every
@@ -864,9 +921,17 @@ function renderSlideHtml(rawConfig, opts = {}) {
   }
 
   const fields = { ...slide.fields };
+  // #790: when the org flag is on, also record the ds segments of each field so the renderer can
+  // mark them for live patching. Off = exactly the old path, no markers, no agent.
+  const fieldMarkers = opts.fieldMarkers === true;
+  const fieldSegments = {};
   if (resolveData) {
     for (const [k, v] of Object.entries(fields)) {
       if (typeof v === 'string') {
+        if (fieldMarkers) {
+          const segs = interpolateSegments(v, resolveData);
+          if (segs) fieldSegments[k] = segs;
+        }
         // Re-capped AFTER interpolation. Each token is capped on its own, but ninety tokens in a
         // 2000-char field expanded to ~180KB, ~10MB a slide, served immutable to every player.
         // MAX_FIELD_CHARS is the bound the renderer promises; it holds for the assembled value.
@@ -1031,6 +1096,17 @@ function renderSlideHtml(rawConfig, opts = {}) {
       return `<div class="e t live" ${attrs.join(' ')} style="${css.filter(Boolean).join(';')}"></div>`;
     }
 
+    if (fieldMarkers && fieldSegments[e.slot]) {
+      // #790: each ds value in its own [data-ds] span, every piece escaped exactly as the plain
+      // path would escape the whole string, so the only difference is the wrapping spans.
+      const marked = fieldSegments[e.slot].map((seg) => (seg.slug
+        // Slug lowercased so the marker matches the field-patch push, which only knows the source's
+        // canonical slug (slugs are matched case-insensitively, as showsChange in data-sources does).
+        // The key stays exact: Temp and temp are different fields.
+        ? `<span data-ds="${escapeHtml(seg.slug.toLowerCase())}.${escapeHtml(seg.key)}">${escapeHtml(seg.value)}</span>`
+        : escapeHtml(seg.text))).join('');
+      return `<div class="e t" style="${css.filter(Boolean).join(';')}">${marked}</div>`;
+    }
     return `<div class="e t" style="${css.filter(Boolean).join(';')}">${escapeHtml(fields[e.slot] || '')}</div>`;
   }).join('\n    ');
 
@@ -1180,7 +1256,8 @@ function renderSlideHtml(rawConfig, opts = {}) {
     ${bgLayers}
     ${body}
 </div>${fitScript}${slide.elements.some((e) => KINDS[e.kind].live) ? LIVE_SCRIPT : ''}${
-  /data-st-cid=/.test(body) || /data-st-cid=/.test(bgLayers) ? MEDIA_SCRIPT : ''}</body></html>`;
+  /data-st-cid=/.test(body) || /data-st-cid=/.test(bgLayers) ? MEDIA_SCRIPT : ''}${
+  fieldMarkers && Object.keys(fieldSegments).length ? PATCH_SCRIPT : ''}</body></html>`;
 }
 
 module.exports = {

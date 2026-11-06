@@ -223,8 +223,11 @@ async function syncDataSourceRow(row, force) {
         WHERE id = ?
       `).run(cachedJson, doneSec, doneSec, row.id);
 
+      // #790: for live field patch, the scalar new values of the changed keys (null on a first fill,
+      // so those widgets just reload). See scalarFieldDeltas for the keying and what it leaves out.
+      const deltaFields = row.cached_data ? scalarFieldDeltas(row.slug, keysChanged, resolvedData) : null;
       // Only the widgets that SHOW a changed field (#790). A first fill (no previous cache) moves them all.
-      slidesUpdated = bumpDependentWidgets(row, doneSec, row.cached_data ? keysChanged : null).length;
+      slidesUpdated = bumpDependentWidgets(row, doneSec, row.cached_data ? keysChanged : null, deltaFields).length;
     } else {
       // Data did not change: update heartbeat/fetch timestamp only, do not defeat immutable cache
       db.prepare(`
@@ -419,7 +422,25 @@ function showsChange(config, slugLower, changed) {
  * that changed data and by DELETE, which used to leave players on the deleted source's last
  * values indefinitely.
  */
-function bumpDependentWidgets(row, nowSec, changed = null) {
+/*
+ * #790: the scalar field deltas to push for live patching, keyed EXACTLY as the slide's data-ds
+ * markers are (lowercased slug + exact key, since slugs match case-insensitively but keys do not).
+ * Only scalars: an object or array is a whole-source or list binding that cannot be patched node by
+ * node, so it is left out and its widgets take the normal rev reload. Returns null when nothing is
+ * patchable, which the caller reads as "no field-patch, just the reload".
+ */
+function scalarFieldDeltas(slug, keys, data) {
+  const slugLower = (slug || '').toLowerCase();
+  const out = {};
+  for (const k of keys || []) {
+    const v = data ? data[k] : undefined;
+    if (v === null || v === undefined || typeof v === 'object') continue;
+    out[`${slugLower}.${k}`] = String(v);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function bumpDependentWidgets(row, nowSec, changed = null, deltaFields = null) {
   try {
     const slugLower = (row.slug || '').toLowerCase();
     if (!slugLower || !row.workspace_id) return [];
@@ -453,7 +474,24 @@ function bumpDependentWidgets(row, nowSec, changed = null) {
           affectedDeviceIds.add(dId);
         }
       }
+      // #790: when the org has live field patch on and the change is a set of scalar field values,
+      // tell the ONLINE displays the new values so they can patch the field in place. The rev bump
+      // and playlist-update below still run, so offline devices, a cold reload and the immutable
+      // cache all stay correct; the patch only spares an online screen the visible slide reload.
+      let liveFieldPatch = false;
+      if (deltaFields && Object.keys(deltaFields).length) {
+        try {
+          const r = db.prepare('SELECT COALESCE(o.live_field_patch, 0) AS v FROM organizations o JOIN workspaces w ON w.organization_id = o.id WHERE w.id = ?').get(row.workspace_id);
+          liveFieldPatch = !!(r && r.v);
+        } catch (_) { liveFieldPatch = false; }
+      }
       for (const devId of affectedDeviceIds) {
+        if (liveFieldPatch) {
+          try {
+            const r = deviceNs.adapter.rooms.get(devId);
+            if (r && r.size > 0) deviceNs.to(devId).emit('device:field-patch', { rev: nowSec, widgetIds, fields: deltaFields });
+          } catch (_) { /* best effort; the playlist-update below is the reliable fallback */ }
+        }
         commandQueue.queueOrEmitPlaylistUpdate(deviceNs, devId, buildPlaylistPayload);
       }
     }
@@ -492,6 +530,7 @@ module.exports = {
   bumpDependentWidgets,
   showsChange,
   changedKeys,
+  scalarFieldDeltas,
   describeSyncError,
   notAllowedMessage,
   getWorkspaceDataMapSync,
