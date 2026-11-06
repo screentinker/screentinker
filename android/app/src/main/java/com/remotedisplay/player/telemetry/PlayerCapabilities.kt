@@ -142,6 +142,13 @@ object PlayerCapabilities {
                 "sync.clock",
                 // Content is cached to local storage and survives a server outage.
                 "offline.cache",
+                // #818: the player accepts the server-resolved UTC schedule timeline (offline_plan),
+                // pre-caches every state's media, and transitions between scheduled playlists and
+                // idle gaps while disconnected instead of replaying its last non-empty playlist past
+                // the end of its schedule (OfflinePlan + MainActivity's plan driver). In no server
+                // baseline: an older APK never sees the plan (the server strips it), so this
+                // declaration is what earns it. Unconditional, like offline.cache above it.
+                "offline.schedule_plan",
                 // 3.0 site cache: DownloadCoordinator tries the site's LAN cache box first and keeps
                 // the bytes only if they hash to the origin's sha256 (ContentCache.fetchFromSiteCache),
                 // falling back to the origin on any failure. Declared so the payload carries the box.
