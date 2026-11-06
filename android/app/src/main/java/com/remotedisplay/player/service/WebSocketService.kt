@@ -253,6 +253,7 @@ class WebSocketService : Service() {
                 override fun onLost(network: Network) {
                     // Only meaningful mid-gap; if we're still connected this is a transient handoff.
                     if (disconnectedAtMs != 0L) linkLostDuringGap = true
+                    handler.post { try { powerSchedule?.onNetworkLost() } catch (e: Throwable) { Log.w("WebSocketService", "power on lost: ${e.message}") } }   // A boot-time drop in the dark strands the panel
                 }
                 override fun onAvailable(network: Network) {
                     // #170: fresh connectivity (boot Wi-Fi coming up, reconnect after a drop). Clear
