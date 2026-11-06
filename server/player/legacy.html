@@ -3355,6 +3355,45 @@ function connect(serverUrl) {
     console.log("Playlist update:", (_a = data.assignments) == null ? void 0 : _a.length, "items");
     handlePlaylistUpdate(data);
   });
+  socket.on("device:field-patch", (data) => {
+    try {
+      if (!data || !data.fields || !Array.isArray(data.widgetIds)) return;
+      const ids = new Set(data.widgetIds);
+      let currentOnScreen = false;
+      for (let i = 0; i < playlist.length; i++) {
+        const it = playlist[i];
+        if (it && it.widget_id && ids.has(it.widget_id)) {
+          if (data.rev != null) it.widget_rev = data.rev;
+          if (i === currentIndex) currentOnScreen = true;
+        }
+      }
+      if (!currentOnScreen) return;
+      const patchId = "p" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+      let acked = false;
+      const onMsg = (ev) => {
+        const d = ev.data;
+        if (d && d.type === "st-ds-patch-ack" && d.id === patchId && Array.isArray(d.applied) && d.applied.length) acked = true;
+      };
+      window.addEventListener("message", onMsg);
+      const frames = document.querySelectorAll("#playerContainer iframe, .zone iframe, .wall-stage iframe");
+      frames.forEach((f) => {
+        try {
+          f.contentWindow && f.contentWindow.postMessage({ type: "st-ds-patch", id: patchId, fields: data.fields }, "*");
+        } catch (_) {
+        }
+      });
+      setTimeout(() => {
+        window.removeEventListener("message", onMsg);
+        if (!acked) {
+          try {
+            playCurrentItem();
+          } catch (_) {
+          }
+        }
+      }, 1500);
+    } catch (e) {
+    }
+  });
   socket.on("wall:sync", (data) => {
     if (!wallConfig || wallConfig.is_leader) return;
     if (wallZonesActive()) return;
