@@ -65,6 +65,18 @@ test('the server reaches the installer with the relaxed (player-style) CSP, not 
     'a route serves the installer at /flash (express.static is index:false)');
 });
 
+test('the i18n apply is DOM-XSS safe (CodeQL js/xss-through-dom): no data-i18n key reaches innerHTML', () => {
+  // The general translation loop must write textContent; a DOM-attribute-selected key must never
+  // flow into innerHTML. The one string that intentionally carries markup is applied with a LITERAL
+  // key from the trusted dictionary (not a DOM source), which is safe and un-flagged.
+  assert.match(INDEX, /querySelectorAll\('\[data-i18n\]'\)[\s\S]{0,200}\.textContent\s*=\s*text/,
+    'the general data-i18n loop writes textContent, not innerHTML');
+  assert.match(INDEX, /\.innerHTML\s*=\s*t\('quick_pairing_tip'\)/, 'the one HTML string uses a literal key');
+  // Guard the regression: the data-i18n loop body must not assign innerHTML from the looked-up text.
+  assert.doesNotMatch(INDEX, /getAttribute\('data-i18n'\);[\s\S]{0,120}\.innerHTML\s*=\s*text/,
+    'a data-i18n attribute value must not be written to innerHTML');
+});
+
 test('the dashboard Add Display flow links to the installer, opening a top-level tab for Web Serial', () => {
   assert.match(DASHBOARD_HTML, /href="\/flash"[^>]*target="_blank"/, 'Add Display links to /flash in a new tab');
 });
