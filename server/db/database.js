@@ -4506,6 +4506,10 @@ migrationStep('workspace and organization settings', () => {
   try { db.prepare('ALTER TABLE storage_profiles ADD COLUMN workspace_id TEXT').run(); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE organizations ADD COLUMN storage_workspace_choice INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE storage_migrations ADD COLUMN workspace_id TEXT').run(); } catch (_) { /* present */ }
+  // PDF import render resolution: the longest edge (px) each PDF page is rasterised to in the
+  // uploader's browser (frontend/js/components/pdf-pages.js). Default 1920 (full HD) keeps existing
+  // behaviour; an org admin can raise it (e.g. 3840 for 4K wall) without patching the client.
+  try { db.prepare('ALTER TABLE organizations ADD COLUMN pdf_max_edge INTEGER NOT NULL DEFAULT 1920').run(); console.log('[migrate] organizations.pdf_max_edge added (default 1920)'); } catch (_) { /* present */ }
 });
 
 migrationStep('smart playlists', () => {

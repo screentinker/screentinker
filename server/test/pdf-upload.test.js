@@ -119,6 +119,28 @@ test('a page is scaled so its longest edge is full HD, whichever way it faces', 
   assert.equal(fitScale(0, 0), 1);
 });
 
+test('a configured resolution scales each page to that longest edge, not the 1920 default', () => {
+  const { fitScale } = pureExports();
+  // 4K: US Letter portrait's long side (792pt) becomes 3840.
+  assert.equal(Math.round(792 * fitScale(612, 792, 3840)), 3840);
+  // QHD on a 16:9 slide: 2560x1440.
+  const s = fitScale(960, 540, 2560);
+  assert.equal(Math.round(960 * s), 2560);
+  assert.equal(Math.round(540 * s), 1440);
+});
+
+test('the Settings dropdown and the server allow-list agree on the offered resolutions', () => {
+  // The org setting is useless if the client can offer a value the server rejects, so pin them to
+  // the same list. If you add a resolution, add it to both and this stays green.
+  const route = fs.readFileSync(path.join(__dirname, '..', 'routes', 'workspaces.js'), 'utf8');
+  const server = JSON.parse(route.match(/PDF_MAX_EDGE_ALLOWED\s*=\s*(\[[^\]]*\])/)[1]);
+  const settings = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'views', 'settings.js'), 'utf8');
+  const block = settings.match(/id="pdfMaxEdgeSelect"[\s\S]*?<\/select>/)[0];
+  const ui = [...block.matchAll(/value="(\d+)"/g)].map((m) => Number(m[1]));
+  assert.deepEqual(ui, server, 'Settings <select> options must equal PDF_MAX_EDGE_ALLOWED');
+  assert.ok(server.includes(1920), 'the default (1920) must be an accepted value');
+});
+
 test('page files are named to sort, and the document name drops its extension', () => {
   const { baseName, pageFileName, isPdf } = pureExports();
   assert.equal(baseName('Quarterly report.pdf'), 'Quarterly report');
