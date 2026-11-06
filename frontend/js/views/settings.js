@@ -39,6 +39,7 @@ export async function render(container) {
     && (user.current_org_role === 'org_owner' || user.current_org_role === 'org_admin' || user.current_workspace_role === 'workspace_admin'));
   const widgetIsolationDisabled = !!user.current_organization?.widget_sandbox_isolation_disabled;
   const WIDGET_ISOLATION_CONFIRM_PHRASE = 'I understand I am enabling a security hole';
+  const liveFieldPatchOn = !!user.current_organization?.live_field_patch;
 
   // #83: the "About" version was hardcoded (showed v1.4.1 regardless of the build).
   // Read it from the server (/api/version) the same way the admin view does.
@@ -226,6 +227,20 @@ export async function render(container) {
       <div id="tokenList"><p style="color:var(--text-muted);font-size:13px">${t('settings.loading_users')}</p></div>
       <div id="tokenEditPanel" style="display:none"></div>
     </div>
+
+    ${canManageOrgSecurity ? `
+    <div class="settings-section">
+      <h3>Live field updates <span style="font-weight:400;color:var(--text-muted);font-size:12px">(beta)</span></h3>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+        <div style="max-width:60ch;color:var(--text-muted);font-size:13px">
+          When a data-source field changes, update just that field on the screen instead of reloading the whole slide. List, table and layout changes still do a normal reload. Off by default while in beta.
+        </div>
+        <label style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="liveFieldPatchToggle" ${liveFieldPatchOn ? 'checked' : ''}>
+          <span>${liveFieldPatchOn ? 'On' : 'Off'}</span>
+        </label>
+      </div>
+    </div>` : ''}
 
     ${canManageOrgSecurity ? `
     <div class="settings-section">
@@ -1840,6 +1855,27 @@ export async function render(container) {
       btn.disabled = false;
     }
   });
+
+  const liveFieldPatchToggle = document.getElementById('liveFieldPatchToggle');
+  if (liveFieldPatchToggle) {
+    liveFieldPatchToggle.addEventListener('change', async (e) => {
+      const checkbox = e.currentTarget;
+      const on = !!checkbox.checked;
+      const workspaceId = user.current_workspace_id;
+      if (!workspaceId) { checkbox.checked = !on; showToast('No active workspace', 'error'); return; }
+      try {
+        await api.setLiveFieldPatch(workspaceId, on);
+        user.current_organization = { ...(user.current_organization || {}), live_field_patch: on ? 1 : 0 };
+        localStorage.setItem('user', JSON.stringify(user));
+        const label = checkbox.parentElement?.querySelector('span');
+        if (label) label.textContent = on ? 'On' : 'Off';
+        showToast(on ? 'Live field updates enabled' : 'Live field updates disabled', 'success');
+      } catch (err) {
+        checkbox.checked = !on;
+        showToast(err.message, 'error');
+      }
+    });
+  }
 
   document.getElementById('widgetSandboxIsolationToggle')?.addEventListener('change', async (e) => {
     const checkbox = e.currentTarget;

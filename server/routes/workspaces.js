@@ -299,6 +299,64 @@ router.put('/:id/security-settings', (req, res) => {
   });
 });
 
+// #790 live field patch (beta): org-wide toggle set through a workspace-scoped admin route, gated
+// exactly like security-settings above (org_owner/org_admin or platform admin). When it flips, the
+// RENDER of data-source-bound slide/template widgets changes (they gain or lose the patch agent and
+// field markers), so bump their revision to force players to re-fetch the new shape. The value also
+// rides on current_organization (getMe) for the Settings toggle.
+router.put('/:id/live-field-patch', (req, res) => {
+  const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(req.params.id);
+  if (!ws) return res.status(404).json({ error: 'Workspace not found' });
+  if (!canAdminWorkspace(db, req.user, ws)) {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  const isPlatformAdmin = isPlatformRole(req.user.role);
+  const orgMember = db.prepare(
+    'SELECT role FROM organization_members WHERE organization_id = ? AND user_id = ?'
+  ).get(ws.organization_id, req.user.id);
+  const isOrgAdmin = !!(orgMember && (orgMember.role === 'org_owner' || orgMember.role === 'org_admin'));
+  if (!isPlatformAdmin && !isOrgAdmin) {
+    return res.status(403).json({ error: 'Organization admin required' });
+  }
+
+  if (typeof req.body?.liveFieldPatch !== 'boolean') {
+    return res.status(400).json({ error: 'liveFieldPatch must be boolean' });
+  }
+  const next = req.body.liveFieldPatch ? 1 : 0;
+  const current = db.prepare(
+    'SELECT COALESCE(live_field_patch, 0) AS v FROM organizations WHERE id = ?'
+  ).get(ws.organization_id);
+  db.prepare(
+    "UPDATE organizations SET live_field_patch = ?, updated_at = strftime('%s','now') WHERE id = ?"
+  ).run(next, ws.organization_id);
+
+  // The render shape of data-source-bound slide/template widgets depends on this flag, so advance
+  // their revision in this org (a '{{ds:' config in a workspace of this org) to republish them.
+  let bumped = 0;
+  if (!current || Number(current.v || 0) !== next) {
+    try {
+      const r = db.prepare(
+        `UPDATE widgets SET updated_at = strftime('%s','now')
+           WHERE widget_type IN ('slide','template')
+             AND config LIKE '%{{ds:%'
+             AND workspace_id IN (SELECT id FROM workspaces WHERE organization_id = ?)`
+      ).run(ws.organization_id);
+      bumped = r.changes || 0;
+    } catch (_) { /* a bump failure must not fail the toggle; next natural render still corrects */ }
+  }
+
+  req.workspaceId = ws.id; // stamp tenant for the activity row
+  logActivity(
+    req.user.id,
+    'org_live_field_patch_setting_changed',
+    `organization_id=${ws.organization_id} liveFieldPatch=${next} widgetsBumped=${bumped}`,
+    null,
+    getClientIp(req),
+    ws.id
+  );
+  res.json({ organization_id: ws.organization_id, liveFieldPatch: !!next, widgetsBumped: bumped });
+});
+
 // ==================== Members / invites ====================
 
 // Load workspace by req.params.id and verify caller has the required level

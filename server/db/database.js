@@ -4530,6 +4530,10 @@ migrationStep('workspace and organization settings', () => {
   try { db.prepare('ALTER TABLE storage_profiles ADD COLUMN workspace_id TEXT').run(); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE organizations ADD COLUMN storage_workspace_choice INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }
   try { db.prepare('ALTER TABLE storage_migrations ADD COLUMN workspace_id TEXT').run(); } catch (_) { /* present */ }
+  // #790 live field patch (beta, default off): when on, a data-source field change patches the
+  // field in the live widget iframe instead of reloading the whole slide. Gating lives server-side
+  // (markers + patch agent at render time, field deltas at push time); off = exactly today's reload.
+  try { db.prepare('ALTER TABLE organizations ADD COLUMN live_field_patch INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] organizations.live_field_patch added (default 0)'); } catch (_) { /* present */ }
 });
 
 migrationStep('smart playlists', () => {

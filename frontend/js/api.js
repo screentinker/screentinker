@@ -957,6 +957,8 @@ export const api = {
   createWorkspace: (data) => request('/workspaces', { method: 'POST', body: JSON.stringify(data ?? {}) }),
   renameWorkspace: (id, data) => request(`/workspaces/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   updateWorkspaceSecuritySettings: (workspaceId, data) => request(`/workspaces/${workspaceId}/security-settings`, { method: 'PUT', body: JSON.stringify(data) }),
+  // #790 live field patch (beta) org toggle, set through the workspace's org.
+  setLiveFieldPatch: (workspaceId, liveFieldPatch) => request(`/workspaces/${workspaceId}/live-field-patch`, { method: 'PUT', body: JSON.stringify({ liveFieldPatch }) }),
 
   // Workspace members + invites (slice 2A read-only)
   getWorkspaceMembers: (id) => request(`/workspaces/${id}/members`),
