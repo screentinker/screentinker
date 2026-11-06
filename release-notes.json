@@ -14,6 +14,17 @@
   ],
   "releases": [
     {
+      "version": "3.1.4",
+      "date": "2026-11-06",
+      "notes": [
+        "Samsung's older SSSP3 / Orsay signage TVs now have a native player.",
+        "A screen that loses its connection now follows the schedule it was given, showing the right playlist or your idle screen through a gap, instead of replaying whatever happened to be on last.",
+        "On a slide fed by a data source, a changed value can update in place without reloading the whole slide, so animations and videos no longer restart on a refresh. Turn it on with Live field updates in Settings.",
+        "LED matrix screens can show animated GIFs and slides, with remote brightness and a power limit, and a new Traffic page shows how much bandwidth each screen and workspace is using. PDF import resolution is now a setting, and older LG and Samsung web players can play cached video while offline.",
+        "Fixes: a slide fed by data no longer reloads when a value it does not show changes, the nightly backup no longer risks corrupting a busy database, and single sign-on issuer checks are more robust."
+      ]
+    },
+    {
       "version": "3.1.3",
       "date": "2026-11-03",
       "notes": [
