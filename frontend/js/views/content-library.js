@@ -1194,9 +1194,13 @@ async function handleFiles(files, dest) {
 async function importPdf(file, parentFolderId, report) {
   const base = baseName(file.name).slice(0, 100);
   report(0, t('content.pdf.rendering', { name: base, done: 0, total: '…' }));
+  // The org's configured render resolution (default 1920), read from the cached user so no extra
+  // request is needed on the import path. renderPdfToPages falls back to its own default if absent.
+  let maxEdge;
+  try { maxEdge = Number(JSON.parse(localStorage.getItem('user') || '{}')?.current_organization?.pdf_max_edge) || undefined; } catch (_) { maxEdge = undefined; }
   const pages = await renderPdfToPages(file, (done, total) => {
     report(Math.round((done / total) * 50), t('content.pdf.rendering', { name: base, done, total }));
-  });
+  }, { maxEdge });
 
   let folderId = parentFolderId;
   try {

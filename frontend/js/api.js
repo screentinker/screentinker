@@ -957,6 +957,8 @@ export const api = {
   createWorkspace: (data) => request('/workspaces', { method: 'POST', body: JSON.stringify(data ?? {}) }),
   renameWorkspace: (id, data) => request(`/workspaces/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   updateWorkspaceSecuritySettings: (workspaceId, data) => request(`/workspaces/${workspaceId}/security-settings`, { method: 'PUT', body: JSON.stringify(data) }),
+  // Org-wide default PDF import resolution (longest edge in px); set through the workspace's org.
+  setPdfRenderResolution: (workspaceId, pdfMaxEdge) => request(`/workspaces/${workspaceId}/pdf-settings`, { method: 'PUT', body: JSON.stringify({ pdfMaxEdge }) }),
 
   // Workspace members + invites (slice 2A read-only)
   getWorkspaceMembers: (id) => request(`/workspaces/${id}/members`),
