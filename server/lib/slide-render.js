@@ -1100,7 +1100,10 @@ function renderSlideHtml(rawConfig, opts = {}) {
       // #790: each ds value in its own [data-ds] span, every piece escaped exactly as the plain
       // path would escape the whole string, so the only difference is the wrapping spans.
       const marked = fieldSegments[e.slot].map((seg) => (seg.slug
-        ? `<span data-ds="${escapeHtml(seg.slug)}.${escapeHtml(seg.key)}">${escapeHtml(seg.value)}</span>`
+        // Slug lowercased so the marker matches the field-patch push, which only knows the source's
+        // canonical slug (slugs are matched case-insensitively, as showsChange in data-sources does).
+        // The key stays exact: Temp and temp are different fields.
+        ? `<span data-ds="${escapeHtml(seg.slug.toLowerCase())}.${escapeHtml(seg.key)}">${escapeHtml(seg.value)}</span>`
         : escapeHtml(seg.text))).join('');
       return `<div class="e t" style="${css.filter(Boolean).join(';')}">${marked}</div>`;
     }
