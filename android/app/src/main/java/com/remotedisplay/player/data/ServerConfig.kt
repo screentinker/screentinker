@@ -293,6 +293,14 @@ class ServerConfig(context: Context) {
         get() = prefs.getString("cached_playlist", "") ?: ""
         set(value) = prefs.edit().putString("cached_playlist", value).apply()
 
+    // #818 offline schedule plan: the server-resolved UTC timeline (intervals + per-state payloads)
+    // that lets a disconnected panel roll over between scheduled playlists and gaps, instead of
+    // replaying its one last non-empty playlist past the end of its schedule. Empty = no committed
+    // plan (fall back to cachedPlaylist). Only ever holds a plan whose dependencies are all cached.
+    var cachedOfflinePlan: String
+        get() = prefs.getString("cached_offline_plan", "") ?: ""
+        set(value) = prefs.edit().putString("cached_offline_plan", value).apply()
+
     // #234: last playing index + when it started. Lives here, not in PlaylistController, precisely
     // because the controller is rebuilt with every Activity — which is how a relaunch used to reset
     // playback to the first item and starve everything after it.

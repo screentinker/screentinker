@@ -68,6 +68,13 @@ class MainActivity : AppCompatActivity() {
     private var lastDownloadSig: String? = null
     private lateinit var cacheJanitor: com.remotedisplay.player.data.CacheJanitor
     private var lastCacheSweepMs = 0L
+    // #818 offline schedule plan driver. `offlinePlanJson` is the committed plan (dependencies all
+    // cached); `offlinePlanAppliedKey` is the interval currently on screen, so a boundary tick only
+    // re-applies when the state actually changed. The tick runs on `handler` and only drives the
+    // screen while the socket is DOWN - the live server is authoritative whenever it is connected.
+    private var offlinePlanJson: org.json.JSONObject? = null
+    private var offlinePlanAppliedKey: String? = null
+    private var offlinePlanTick: Runnable? = null
     private val webHealth = com.remotedisplay.player.player.OfflineGate.WebHealth()
     private lateinit var screenshotCapture: ScreenshotCapture
     private lateinit var touchInjector: TouchInjector
@@ -529,7 +536,31 @@ class MainActivity : AppCompatActivity() {
         // Catch Throwable (not just Exception) so an OOM or corrupt entry can't kill the app
         // before the WebSocket connects — that's the crash-loop scenario. If the cache is
         // unusable for any reason, drop it and continue; the server will resend on connect.
-        val cachedJson = config.cachedPlaylist
+        // #818: a committed offline plan decides what is valid for right now. Prefer it over the
+        // single last-playlist cache so a cold boot during an unscheduled gap shows idle/default, and
+        // during a different scheduled window shows THAT window - never the last non-empty playlist
+        // past the end of its schedule. Fall back to the plain cache when no plan covers this instant
+        // (a gap resolves to an empty/default payload here, which the legacy block skips; the driver
+        // armed below paints its standby once the service binds offline).
+        offlinePlanJson = com.remotedisplay.player.player.OfflinePlan.read(config.cachedOfflinePlan)
+        val planSelection = com.remotedisplay.player.player.OfflinePlan.select(offlinePlanJson, System.currentTimeMillis())
+        val cachedJson = if (planSelection.valid) {
+            (planSelection.state?.optJSONObject("payload")?.toString()) ?: ""
+        } else config.cachedPlaylist
+        // Seed the driver's "what is on screen" to the interval we are about to render, so a periodic
+        // re-tick inside the same interval does not needlessly reload it; a real boundary still does.
+        offlinePlanAppliedKey = if (planSelection.valid) intervalKey(planSelection.interval) else null
+        if (planSelection.valid && cachedJson.isEmpty()) {
+            // Cold boot during a scheduled gap (or an interval whose state carries no assignments):
+            // paint the plan's standby/idle, NEVER the last non-empty playlist. The default image was
+            // pre-cached when the plan committed, so it renders with no server; otherwise idle text.
+            try {
+                val gap = planSelection.state?.optJSONObject("payload")
+                playlistController.setDefaultContent(if (gap == null || gap.isNull("default_content")) null else gap.optJSONObject("default_content"))
+                playlistController.updatePlaylist(org.json.JSONArray(), "sequential")
+                playlistController.startIfNeeded()
+            } catch (e: Throwable) { Log.w("MainActivity", "offline plan gap cold-start failed: ${e.message}") }
+        }
         if (cachedJson.isNotEmpty()) {
             try {
                 val cached = JSONObject(cachedJson)
@@ -616,6 +647,11 @@ class MainActivity : AppCompatActivity() {
                 try { config.clearPlaylistCache() } catch (_: Throwable) {}
             }
         }
+
+        // #818: start the schedule-plan rollover tick. It is a no-op until a plan is committed, and
+        // only drives the screen while the socket is down; a reboot that lands mid-gap or mid-window
+        // keeps showing the right state as time passes with no server.
+        armOfflinePlanDriver(applyNow = false)
 
         // Only nudge "Connecting..." when nothing is on screen yet. A multi-zone panel restored from
         // cache above renders through zoneManager (not playlistController), so isPlaying stays false
@@ -734,6 +770,131 @@ class MainActivity : AppCompatActivity() {
     private fun orientationRotSwap(o: String?): Pair<Float, Boolean> {
         val (w, h) = windowSize()
         return TransitionGeometry.orientationRotSwap(o, h > w)
+    }
+
+    // ---- #818 offline schedule plan driver -----------------------------------------------------
+    // A committed plan (every dependency cached) lets a DISCONNECTED panel roll between scheduled
+    // playlists and gaps instead of replaying its last non-empty playlist past the end of its
+    // schedule. The live server is authoritative whenever it is connected; this only fills offline
+    // periods. A replayed state is an ordinary playlist payload (the server built it with
+    // offlinePlan:false), so applying one here reuses the whole render path and never re-commits.
+
+    private fun intervalKey(interval: org.json.JSONObject?): String =
+        interval?.let { it.optLong("start_utc_ms").toString() } ?: "none"
+
+    /** Adopt (or clear) the plan from a live payload. Commits only a fully-cached plan. */
+    private fun onLiveOfflinePlan(plan: org.json.JSONObject?) {
+        val parsed = com.remotedisplay.player.player.OfflinePlan.read(plan)
+        if (parsed == null) {
+            // Null / unusable: no plan applies (an override, a corporate mandate, or no schedules).
+            // Drop any committed plan so it cannot be resurrected offline, and stop driving.
+            if (config.cachedOfflinePlan.isNotEmpty()) config.cachedOfflinePlan = ""
+            offlinePlanJson = null
+            offlinePlanAppliedKey = null
+            cancelOfflinePlanTick()
+            return
+        }
+        // Pre-cache every state's file media (current AND future intervals). ensure() is idempotent
+        // and single-flight, so this is safe to run on every payload. Widgets/remote/streams need the
+        // network regardless and are not file dependencies, so they never block a commit.
+        var allCached = true
+        for (item in com.remotedisplay.player.player.OfflinePlan.dependencies(parsed)) {
+            val widgetId = if (item.isNull("widget_id")) "" else item.optString("widget_id", "")
+            if (widgetId.isNotEmpty()) continue
+            val contentId = if (item.isNull("content_id")) "" else item.optString("content_id", "")
+            if (contentId.isEmpty()) continue
+            val remoteUrl = if (item.isNull("remote_url")) null else item.optString("remote_url", null)
+            if (!remoteUrl.isNullOrEmpty()) continue
+            val rev = item.optLong("content_rev", 0L)
+            if (!contentCache.isContentCached(contentId, rev)) {
+                allCached = false
+                if (::downloadCoordinator.isInitialized) {
+                    downloadCoordinator.ensure(contentId, item.optString("filename", "content"), rev)
+                }
+            }
+        }
+        // Commit only a COMPLETE plan: a future interval must never roll in to missing media. Until
+        // every dependency is on disk, keep the previously committed plan (itself complete) and let
+        // the downloads above finish; the next payload re-checks and commits when they are ready.
+        if (!allCached) {
+            Log.i("MainActivity", "Offline plan incomplete (caching future media); retaining prior plan")
+            return
+        }
+        config.cachedOfflinePlan = parsed.toString()
+        offlinePlanJson = parsed
+        // Reconcile the on-screen state to the plan on the next tick (a reconnecting panel that just
+        // got a fresh plan should honour its boundaries), but let the live payload we are handling
+        // paint the current instant.
+        offlinePlanAppliedKey = intervalKey(
+            com.remotedisplay.player.player.OfflinePlan.select(parsed, System.currentTimeMillis()).interval
+        )
+        armOfflinePlanDriver(applyNow = false)
+    }
+
+    private fun armOfflinePlanDriver(applyNow: Boolean) {
+        val plan = offlinePlanJson
+            ?: com.remotedisplay.player.player.OfflinePlan.read(config.cachedOfflinePlan)?.also { offlinePlanJson = it }
+            ?: run { cancelOfflinePlanTick(); return }
+        if (applyNow) driveOfflinePlan()
+        scheduleOfflinePlanTick(plan)
+    }
+
+    private fun cancelOfflinePlanTick() {
+        offlinePlanTick?.let { handler.removeCallbacks(it) }
+        offlinePlanTick = null
+    }
+
+    private fun scheduleOfflinePlanTick(plan: org.json.JSONObject) {
+        cancelOfflinePlanTick()
+        val now = System.currentTimeMillis()
+        val next = com.remotedisplay.player.player.OfflinePlan.nextTransitionAfter(plan, now)
+            ?: return // plan fully elapsed; a fresh payload will replace it
+        // Fire just after the boundary (clock skew / wake latency), and cap the wait at a minute so
+        // the rollover is robust: a single multi-hour postDelayed would not survive Doze, whereas a
+        // cheap re-evaluation against the wall clock every <=60s does (and each tick early-returns
+        // while the socket is connected). A process restart is covered separately by the cold-start
+        // path, which re-renders the current state and re-arms from the persisted plan.
+        val delay = (next - now + 1000L).coerceIn(1000L, 60_000L)
+        val r = object : Runnable {
+            override fun run() {
+                offlinePlanTick = null
+                driveOfflinePlan()
+                offlinePlanJson?.let { scheduleOfflinePlanTick(it) }
+            }
+        }
+        offlinePlanTick = r
+        handler.postDelayed(r, delay)
+    }
+
+    /** Apply the plan state for right now, but only while the socket is down. */
+    private fun driveOfflinePlan() {
+        val plan = offlinePlanJson ?: return
+        if (wsService?.isConnected() == true) {
+            // Connected: the live server owns the screen. Forget what we applied so that, if the link
+            // drops again, the next tick re-asserts the plan's current state.
+            offlinePlanAppliedKey = null
+            return
+        }
+        val sel = com.remotedisplay.player.player.OfflinePlan.select(plan, System.currentTimeMillis())
+        if (!sel.valid) return
+        val key = intervalKey(sel.interval)
+        if (key == offlinePlanAppliedKey) return // already showing this interval's state
+        val payload = sel.state?.optJSONObject("payload")
+        if (payload != null) {
+            val cb = wsService?.onPlaylistUpdate ?: return // service not bound yet; retry next tick
+            offlinePlanAppliedKey = key
+            handler.post { try { cb.invoke(payload) } catch (e: Throwable) { Log.w("MainActivity", "offline plan apply failed: ${e.message}") } }
+        } else {
+            // A gap with no default state row: show idle, never the last playlist.
+            offlinePlanAppliedKey = key
+            handler.post {
+                try {
+                    playlistController.setDefaultContent(null)
+                    playlistController.updatePlaylist(org.json.JSONArray(), "sequential")
+                    playlistController.startIfNeeded()
+                } catch (e: Throwable) { Log.w("MainActivity", "offline plan idle failed: ${e.message}") }
+            }
+        }
     }
 
     private fun applyOrientation(orientation: String) {
@@ -1038,6 +1199,18 @@ class MainActivity : AppCompatActivity() {
                 Log.i("MainActivity", "Empty playlist payload — keeping the previous offline cache")
             }
 
+            // #818: adopt the server-resolved offline schedule plan that rides this payload. The key
+            // is present (possibly JSON null) on every LIVE payload once this player declares
+            // offline.schedule_plan, and ABSENT on the nested state payloads the driver itself
+            // replays (the server builds those with offlinePlan:false) — which is exactly why
+            // replaying a state never re-commits or re-arms the plan. onLiveOfflinePlan pre-caches
+            // every future state's media and commits the plan only once it is complete; a null
+            // clears any committed plan so an override/mandate is never resurrected offline.
+            if (data.has("offline_plan")) {
+                try { onLiveOfflinePlan(if (data.isNull("offline_plan")) null else data.optJSONObject("offline_plan")) }
+                catch (e: Throwable) { Log.w("MainActivity", "offline plan adopt failed: ${e.message}") }
+            }
+
             // Video-wall mode takes precedence over orientation + multi-zone: the wall is
             // fullscreen, and WallController owns the root-view slice transform and the
             // leader/follower role. (We're on the main thread here — onPlaylistUpdate is
@@ -1181,6 +1354,16 @@ class MainActivity : AppCompatActivity() {
                     try {
                         val keep = com.remotedisplay.player.data.CacheJanitor.referencedIds(data).toMutableSet()
                         playlistController.currentContentId?.takeIf { it.isNotEmpty() }?.let { keep.add(it) }
+                        // #818: keep every committed offline-plan state's media, not just this
+                        // payload's. Applying one scheduled state would otherwise sweep away the media
+                        // the NEXT interval (or a later cycle back to this one) needs, defeating the
+                        // plan's whole offline guarantee. Additive and safe when no plan is committed.
+                        offlinePlanJson?.let { plan ->
+                            for (dep in com.remotedisplay.player.player.OfflinePlan.dependencies(plan)) {
+                                if (dep.isNull("content_id")) continue
+                                dep.optString("content_id", "").takeIf { it.isNotEmpty() }?.let { keep.add(it) }
+                            }
+                        }
                         val swept = cacheJanitor.sweep(keep)
                         swept.deletedIds.forEach { downloadCoordinator.forget(it) }
                     } catch (e: Exception) { Log.w("MainActivity", "cache sweep failed: ${e.message}") }
@@ -2464,6 +2647,7 @@ class MainActivity : AppCompatActivity() {
         // outlive the Activity otherwise — the socket then holds the port against the next launch,
         // which presents as "triggers stopped working after an app restart".
         try { triggerSweep?.let { handler.removeCallbacks(it) } } catch (e: Throwable) { }
+        try { cancelOfflinePlanTick() } catch (e: Throwable) { } // #818: the self-re-arming plan tick
         try { triggerManager?.stop() } catch (e: Throwable) { }
         triggerManager = null
         try { audience?.onDestroy() } catch (e: Throwable) { }
