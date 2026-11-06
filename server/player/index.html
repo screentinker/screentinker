@@ -980,6 +980,55 @@
     }
 
     /*
+     * OFFLINE VIDEO ON LEGACY PANELS (webOS / Tizen-era Chromium, e.g. Chrome 79).
+     *
+     * On those browsers a <video src=remoteURL> request BYPASSES the service worker entirely (verified
+     * on a real panel: "worker saw 0 cached / 0 network requests", even online), so the SW cache can
+     * neither see nor serve the clip and it fails offline with MEDIA_ELEMENT_ERROR. A blob: URL built
+     * from the SW-cached BYTES plays offline there (method B of the offline-video test; MediaSource was
+     * a dead end). So for a LOCAL video whose bytes the cache already holds, and which is small enough
+     * to hold in memory, play it from a blob instead of the URL. Streaming is kept for remote/HLS,
+     * uncached, or oversize clips; modern browsers that DO route <video> through the SW simply get a
+     * guaranteed-offline copy this way too. The cache is populated by requestOfflineCache (a plain
+     * fetch(), which the SW does see), so this never downloads anything the panel was not already told
+     * to hold. BLOB_VIDEO_MAX_BYTES bounds resident memory - the double buffer can hold two at once.
+     */
+    var BLOB_VIDEO_MAX_BYTES = 128 * 1024 * 1024;
+    function blobVideoEligible(item) {
+      if (!item || item.remote_url) return false;
+      if (typeof item.mime_type !== 'string' || item.mime_type.indexOf('video/') !== 0) return false;
+      if (item.mime_type === 'video/youtube' || item.mime_type === 'video/hls') return false;
+      if (!navigator.serviceWorker || !navigator.serviceWorker.controller) return false;   // no cache to answer
+      if (Number(item.file_size) > BLOB_VIDEO_MAX_BYTES) return false;                      // too big to hold; stream it
+      return true;
+    }
+    /*
+     * Resolve the src for a video item: a blob: URL from the SW cache when eligible and the bytes are
+     * held, else the plain streaming URL. Never throws; always resolves to a usable src. Only what the
+     * cache already holds is used (X-ST-Cache-Only -> 504 on a miss, sw.js), so a miss just streams.
+     */
+    function resolveVideoSrc(item) {
+      const url = mediaUrl(item);
+      if (!blobVideoEligible(item)) return Promise.resolve({ url, blob: false });
+      return fetch(url, { headers: { 'X-ST-Cache-Only': '1' }, credentials: 'omit' })
+        .then((r) => (r.ok ? r.blob() : null))
+        .then((b) => {
+          if (!b || (BLOB_VIDEO_MAX_BYTES && b.size > BLOB_VIDEO_MAX_BYTES)) return { url, blob: false };
+          return { url: URL.createObjectURL(b), blob: true };
+        })
+        .catch(() => ({ url, blob: false }));
+    }
+    /*
+     * Revoke a blob: object URL exactly when its <video> is reset - removeAttribute('src') + load(),
+     * or a new src - via the media 'emptied' event. Every teardown site in this file already does that
+     * reset, so this frees the blob without any of them being touched (a leak here bricks a 24/7 panel).
+     */
+    function revokeBlobOnEmptied(video, url) {
+      function onEmptied() { try { URL.revokeObjectURL(url); } catch (e) {} video.removeEventListener('emptied', onEmptied); }
+      video.addEventListener('emptied', onEmptied);
+    }
+
+    /*
      * A SLIDE ASKING FOR ITS OWN MEDIA (lib/slide-render.js MEDIA_SCRIPT).
      *
      * The slide's frame is an opaque origin: this page's service worker never sees its requests, and
@@ -8173,8 +8222,24 @@
       // Watchdog caps the wait so a cold/slow clip hard-cuts (mount+play) instead of the boundary
       // hanging. 800ms — deliberately shorter than renderImageBuffered's 3s: a video either
       // presents fast or will never present detached.
-      watchdog = setTimeout(() => { if (done) return; done = true; if (stale()) { abandon(); return; } mountVideo(); }, 800);
-      video.src = src;
+      // Arm the 800ms warm-up watchdog and set the src. A superseded or finished render frees an
+      // already-built blob here instead of mounting it.
+      const armAndSet = (resolvedUrl, isBlob) => {
+        if (done || stale()) { if (isBlob) { try { URL.revokeObjectURL(resolvedUrl); } catch (e) {} } abandon(); return; }
+        if (isBlob) revokeBlobOnEmptied(video, resolvedUrl);
+        watchdog = setTimeout(() => { if (done) return; done = true; if (stale()) { abandon(); return; } mountVideo(); }, 800);
+        video.src = resolvedUrl;
+      };
+      // A remote/HLS/uncached/oversize clip - or a browser with no SW cache - keeps the proven
+      // SYNCHRONOUS mount (src set and watchdog armed right here, exactly as before). Only a
+      // blob-eligible LOCAL clip defers, by necessity: reading its bytes from the cache is async,
+      // and arming the watchdog after that read keeps the cache lookup off the warm-up budget. This
+      // is what lets the clip play offline on panels whose SW never sees <video> requests.
+      if (blobVideoEligible(item)) {
+        resolveVideoSrc(item).then((res) => armAndSet(res.url, res.blob));
+      } else {
+        armAndSet(src, false);
+      }
     }
 
     function renderContent(item) {
