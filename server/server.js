@@ -3555,6 +3555,56 @@ app.get('/tizen/ScreenTinker.wgt', (req, res) => {
   res.sendFile(wgt.path);
 });
 
+// ==================== Samsung SSSP3 (Orsay) native install ====================
+// The legacy SSSP3 platform (pre-Tizen WebKit build) has no web-page launcher; it
+// polls an entered URL for sssp_config.xml, downloads the named package and runs it
+// from local storage. Our player package source lives in samsung-sssp3/ (build it
+// with samsung-sssp3/build-sssp3.sh). Deployables are resolved like the Tizen .wgt:
+// an operator mount /data/ScreenTinkerSSSP3.zip, a repo-root drop, then the local
+// dev build. The manifest unit is BYTES on this platform (not the Tizen kilobytes).
+const sssp3Cache = require('./lib/sssp3-package-cache');
+
+function sssp3NotAvailable(res) {
+  return res.status(404).send('<!DOCTYPE html><html><head><title>SSSP3 Player Not Available</title>'
+    + '<style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}div{text-align:center;max-width:520px;padding:24px}h1{color:#f87171;font-size:24px}code{background:#1e293b;padding:2px 8px;border-radius:4px;font-size:14px}p{line-height:1.6;color:#94a3b8}</style></head>'
+    + '<body><div><h1>SSSP3 Player Not Available</h1><p>No ready <code>ScreenTinkerSSSP3.zip</code> is hosted on this instance. Build it with <code>samsung-sssp3/build-sssp3.sh</code>; for an externally mounted ZIP, also set matching integer <code>SSSP3_WGT_VER</code>.</p></div></body></html>');
+}
+
+app.get('/sssp3/sssp_config.xml', (req, res) => {
+  const pkg = sssp3Cache.get();
+  if (!pkg.exists) return sssp3NotAvailable(res);
+  res.setHeader('Content-Type', 'text/xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.send(sssp3Cache.sssp3ConfigXml(pkg));
+});
+
+app.get('/sssp3/ScreenTinkerSSSP3.zip', (req, res) => {
+  const pkg = sssp3Cache.get();
+  if (!pkg.exists) return sssp3NotAvailable(res);
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(pkg.path);
+});
+
+// Human-facing landing (a panel appends /sssp_config.xml itself, so it never lands here).
+app.get(['/sssp3', '/sssp3/'], (req, res) => {
+  const pkg = sssp3Cache.get();
+  const base = '/sssp3';
+  if (!pkg.exists) return sssp3NotAvailable(res);
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('text/plain').send(
+    'ScreenTinker SSSP3 native player\n'
+    + `version: ${pkg.version} (integer, installs move upward)\n`
+    + `bytes: ${pkg.size}\n`
+    + `manifest: ${base}/sssp_config.xml\n`
+    + `package: ${base}/ScreenTinkerSSSP3.zip\n`
+    + 'On the panel enter this URL under URL Launcher: '
+    + `<entry-host>${base}</entry-host>`
+  );
+});
+
+sssp3Cache.start();
+
 // ---- LG webOS Signage ------------------------------------------------------------------------
 // The shell app (webos/) is installed from USB or an SI server and then keeps itself current
 // against these two routes: version.json says what is published, the .ipk is what it installs.
