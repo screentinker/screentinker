@@ -223,20 +223,9 @@ async function syncDataSourceRow(row, force) {
         WHERE id = ?
       `).run(cachedJson, doneSec, doneSec, row.id);
 
-      // #790: for live field patch, the scalar new values of the changed keys, keyed exactly as the
-      // slide's data-ds markers are (lowercased slug + exact key). Objects/arrays are whole-source or
-      // list bindings that cannot be patched node-by-node, so they are left to the normal rev reload.
-      let deltaFields = null;
-      if (row.cached_data && keysChanged.length) {
-        const slugLower = (row.slug || '').toLowerCase();
-        deltaFields = {};
-        for (const k of keysChanged) {
-          const v = resolvedData[k];
-          if (v === null || v === undefined || typeof v === 'object') continue;
-          deltaFields[`${slugLower}.${k}`] = String(v);
-        }
-        if (!Object.keys(deltaFields).length) deltaFields = null;
-      }
+      // #790: for live field patch, the scalar new values of the changed keys (null on a first fill,
+      // so those widgets just reload). See scalarFieldDeltas for the keying and what it leaves out.
+      const deltaFields = row.cached_data ? scalarFieldDeltas(row.slug, keysChanged, resolvedData) : null;
       // Only the widgets that SHOW a changed field (#790). A first fill (no previous cache) moves them all.
       slidesUpdated = bumpDependentWidgets(row, doneSec, row.cached_data ? keysChanged : null, deltaFields).length;
     } else {
@@ -433,6 +422,24 @@ function showsChange(config, slugLower, changed) {
  * that changed data and by DELETE, which used to leave players on the deleted source's last
  * values indefinitely.
  */
+/*
+ * #790: the scalar field deltas to push for live patching, keyed EXACTLY as the slide's data-ds
+ * markers are (lowercased slug + exact key, since slugs match case-insensitively but keys do not).
+ * Only scalars: an object or array is a whole-source or list binding that cannot be patched node by
+ * node, so it is left out and its widgets take the normal rev reload. Returns null when nothing is
+ * patchable, which the caller reads as "no field-patch, just the reload".
+ */
+function scalarFieldDeltas(slug, keys, data) {
+  const slugLower = (slug || '').toLowerCase();
+  const out = {};
+  for (const k of keys || []) {
+    const v = data ? data[k] : undefined;
+    if (v === null || v === undefined || typeof v === 'object') continue;
+    out[`${slugLower}.${k}`] = String(v);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 function bumpDependentWidgets(row, nowSec, changed = null, deltaFields = null) {
   try {
     const slugLower = (row.slug || '').toLowerCase();
@@ -523,6 +530,7 @@ module.exports = {
   bumpDependentWidgets,
   showsChange,
   changedKeys,
+  scalarFieldDeltas,
   describeSyncError,
   notAllowedMessage,
   getWorkspaceDataMapSync,

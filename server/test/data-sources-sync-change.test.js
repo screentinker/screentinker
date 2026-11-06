@@ -112,6 +112,19 @@ test('showsChange: tag keys, whole-source bindings and the fall-backs', () => {
   assert.equal(svc.showsChange(cfg({ t: '{{ds:menu.{{param:x}}}}' }), 'menu', ['stamp']), true, 'a tag we cannot parse');
 });
 
+test('#790 scalarFieldDeltas: lowercased slug + exact key, scalars only, null when nothing patchable', () => {
+  // The shape the live field-patch push sends and the slide data-ds markers match on.
+  assert.deepEqual(svc.scalarFieldDeltas('Menu', ['price', 'Name'], { price: 9.5, Name: 'Soup' }),
+    { 'menu.price': '9.5', 'menu.Name': 'Soup' }, 'slug lowercased, key exact, values stringified');
+  assert.equal(svc.scalarFieldDeltas('menu', ['items'], { items: [1, 2] }), null, 'arrays are list bindings, not patchable');
+  assert.equal(svc.scalarFieldDeltas('menu', ['obj'], { obj: { a: 1 } }), null, 'objects are whole-source, not patchable');
+  assert.deepEqual(svc.scalarFieldDeltas('menu', ['a', 'b', 'c'], { a: 'x', b: null, c: undefined }),
+    { 'menu.a': 'x' }, 'null/undefined keys are dropped');
+  assert.equal(svc.scalarFieldDeltas('menu', [], {}), null, 'no keys -> null');
+  assert.equal(svc.scalarFieldDeltas('menu', ['k'], null), null, 'no data -> null');
+  assert.deepEqual(svc.scalarFieldDeltas('menu', ['on'], { on: false }), { 'menu.on': 'false' }, 'false is a value, not absence');
+});
+
 test('changedKeys: added, removed and modified keys; capped; tolerant of a bad cache', () => {
   assert.deepEqual(svc.changedKeys(JSON.stringify({ a: 1, b: 2, c: 3 }), { a: 1, b: 9, d: 4 }), ['b', 'd', 'c']);
   assert.deepEqual(svc.changedKeys(null, { a: 1 }), ['a']);
