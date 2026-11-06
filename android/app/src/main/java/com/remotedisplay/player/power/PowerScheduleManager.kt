@@ -3,6 +3,7 @@ package com.remotedisplay.player.power
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import org.json.JSONObject
 
@@ -76,6 +77,13 @@ class PowerScheduleManager(
      */
     @Volatile private var manualOverride = false
 
+    /**
+     * elapsedRealtime until which a scheduled OFF is not applied, because the panel has not reached
+     * the server yet. 0 = no hold. See [holdDarkUntilOnline].
+     */
+    @Volatile private var darkHoldUntilMs = 0L
+    @Volatile private var darkHoldLogged = false
+
     /** Last state we actually applied, so a tick that changes nothing does nothing. */
     @Volatile private var appliedOff: Boolean? = null
 
@@ -148,6 +156,31 @@ class PowerScheduleManager(
         manualOverride = false
     }
 
+    /**
+     * Keep the panel lit after a (re)start until the socket connects, or [maxMs] at most.
+     *
+     * ⚠️ GOING DARK BEFORE THE NETWORK IS UP STRANDS THE PANEL OFFLINE FOR HOURS.
+     *
+     * restore() runs seconds after boot, usually before Wi-Fi has associated. lockNow() then puts
+     * the device to sleep, and with the screen off Android barely scans for Wi-Fi. Measured on a
+     * Fanconn SC228 (SM6225, Android 14) rebooted at 22:19 inside its off window: 680 consecutive
+     * connect errors, then the 08:00 edge woke the screen and the socket connected 19 s later. A
+     * second panel rebooted nightly at 04:00 inside its window stayed offline 3 h 19 min every
+     * day. Online on the dashboard is what tells the operator a dark panel is fine.
+     *
+     * The cap keeps the original promise — a panel that reboots with no WAN still goes dark, just a
+     * few minutes later instead of at once.
+     */
+    fun holdDarkUntilOnline(maxMs: Long = BOOT_DARK_HOLD_MS) {
+        darkHoldUntilMs = SystemClock.elapsedRealtime() + maxMs
+        darkHoldLogged = false
+    }
+
+    /** The socket is up: a scheduled OFF may apply now. The caller re-asserts with applyNow(true). */
+    fun releaseDarkHold() {
+        darkHoldUntilMs = 0L
+    }
+
     /* ------------------------------------------------------------------ the tick */
 
     fun start() {
@@ -184,6 +217,13 @@ class PowerScheduleManager(
         // Leaving the window clears the override, whichever way we are crossing.
         if (!PowerWindow.isOff(schedule, System.currentTimeMillis())) manualOverride = false
 
+        // appliedOff stays untouched, so the first tick after the hold applies the OFF.
+        if (deferDark(want.off, SystemClock.elapsedRealtime(), darkHoldUntilMs)) {
+            if (!darkHoldLogged) Log.i(TAG, "scheduled off held until online (max ${BOOT_DARK_HOLD_MS / 1000}s)")
+            darkHoldLogged = true
+            return
+        }
+
         if (!force && appliedOff == want.off) return
         appliedOff = want.off
         if (want.clearOverride) manualOverride = false
@@ -209,6 +249,14 @@ class PowerScheduleManager(
         private const val PREFS = "remote_display"
         private const val KEY = "power_schedule"
         private const val TICK_MS = 60_000L
+
+        /** 3 min: boot to Wi-Fi to socket takes ~20-60 s on our panels; this leaves slack for a slow AP. */
+        internal const val BOOT_DARK_HOLD_MS = 180_000L
+
+        /** True while a scheduled OFF must wait for the hold. An ON is never delayed. */
+        @JvmStatic
+        fun deferDark(wantOff: Boolean, nowElapsedMs: Long, holdUntilElapsedMs: Long): Boolean =
+            wantOff && nowElapsedMs < holdUntilElapsedMs
 
         /**
          * The whole decision, as a pure function, so it can be tested without a Context, a Looper
