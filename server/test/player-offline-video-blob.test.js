@@ -109,9 +109,9 @@ test('resolve: an oversize cached blob is dropped (revoked-by-GC) and streamed i
 for (const [name, src] of [['index.html', INDEX], ['legacy.html', LEGACY]]) {
   test(`${name}: the solo-video mount resolves through resolveVideoSrc and frees the blob on teardown`, () => {
     const fn = extractFn(src, 'renderVideoBuffered');
-    assert.match(fn, /resolveVideoSrc\(item\)/, 'the solo video src goes through the cache-aware resolver');
-    assert.match(fn, /revokeBlobOnEmptied\(video,\s*res\.url\)/, 'a blob src is registered for revoke');
-    // The watchdog is armed INSIDE the resolve callback, so the cache lookup is not counted against it.
+    assert.match(fn, /blobVideoEligible\(item\)/, 'the mount gates the blob path on eligibility');
+    assert.match(fn, /resolveVideoSrc\(item\)/, 'an eligible clip resolves its src through the cache-aware resolver');
+    assert.match(fn, /revokeBlobOnEmptied\(video,/, 'a blob src is registered for revoke');
     assert.ok(src.indexOf('function revokeBlobOnEmptied') >= 0, 'the revoke-on-emptied helper ships in this bundle');
   });
 }

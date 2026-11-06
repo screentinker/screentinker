@@ -6770,18 +6770,18 @@ function renderVideoBuffered(item) {
     }
     mediaFailureSkip(video, "video(buffered)", src);
   });
-  resolveVideoSrc(item).then((res) => {
+  const armAndSet = (resolvedUrl, isBlob) => {
     if (done || stale()) {
-      if (res.blob) {
+      if (isBlob) {
         try {
-          URL.revokeObjectURL(res.url);
+          URL.revokeObjectURL(resolvedUrl);
         } catch (e) {
         }
       }
       abandon();
       return;
     }
-    if (res.blob) revokeBlobOnEmptied(video, res.url);
+    if (isBlob) revokeBlobOnEmptied(video, resolvedUrl);
     watchdog = setTimeout(() => {
       if (done) return;
       done = true;
@@ -6791,8 +6791,13 @@ function renderVideoBuffered(item) {
       }
       mountVideo();
     }, 800);
-    video.src = res.url;
-  });
+    video.src = resolvedUrl;
+  };
+  if (blobVideoEligible(item)) {
+    resolveVideoSrc(item).then((res) => armAndSet(res.url, res.blob));
+  } else {
+    armAndSet(src, false);
+  }
 }
 function renderContent(item) {
   var _a, _b;

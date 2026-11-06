@@ -195,6 +195,11 @@ function harnessBuffered({ transition = null, planeOk = true, rvfc = true, inter
     config: { serverUrl: 'http://x' },
     nextItem: () => {},
     mediaFailureSkip: (el, label) => calls.skips.push(label),
+    // #offline-video: this harness drives the SYNCHRONOUS mount (no SW cache in play), so the clip is
+    // not blob-eligible and renderVideoBuffered sets the src + arms the watchdog inline, exactly as it
+    // did before the blob-from-cache path existed. (resolveVideoSrc/revokeBlobOnEmptied are only
+    // reached on the async branch, which this gate skips, so they need not be provided.)
+    blobVideoEligible: () => false,
     setTimeout: (fn, ms) => { const id = ++seq; timers.set(id, { fn, ms }); return id; },
     clearTimeout: (id) => { timers.delete(id); },
     console: { log() {}, warn() {}, error() {} },

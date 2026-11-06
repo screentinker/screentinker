@@ -8222,16 +8222,24 @@
       // Watchdog caps the wait so a cold/slow clip hard-cuts (mount+play) instead of the boundary
       // hanging. 800ms — deliberately shorter than renderImageBuffered's 3s: a video either
       // presents fast or will never present detached.
-      // Choose the src FIRST (a blob: from cache when eligible, so the clip plays offline on panels
-      // whose SW never sees <video> requests; else the streaming URL), THEN arm the 800ms warm-up
-      // watchdog - so the cache lookup is never counted against the warm-up budget. A superseded or
-      // finished render frees an already-built blob here instead of mounting it.
-      resolveVideoSrc(item).then((res) => {
-        if (done || stale()) { if (res.blob) { try { URL.revokeObjectURL(res.url); } catch (e) {} } abandon(); return; }
-        if (res.blob) revokeBlobOnEmptied(video, res.url);
+      // Arm the 800ms warm-up watchdog and set the src. A superseded or finished render frees an
+      // already-built blob here instead of mounting it.
+      const armAndSet = (resolvedUrl, isBlob) => {
+        if (done || stale()) { if (isBlob) { try { URL.revokeObjectURL(resolvedUrl); } catch (e) {} } abandon(); return; }
+        if (isBlob) revokeBlobOnEmptied(video, resolvedUrl);
         watchdog = setTimeout(() => { if (done) return; done = true; if (stale()) { abandon(); return; } mountVideo(); }, 800);
-        video.src = res.url;
-      });
+        video.src = resolvedUrl;
+      };
+      // A remote/HLS/uncached/oversize clip - or a browser with no SW cache - keeps the proven
+      // SYNCHRONOUS mount (src set and watchdog armed right here, exactly as before). Only a
+      // blob-eligible LOCAL clip defers, by necessity: reading its bytes from the cache is async,
+      // and arming the watchdog after that read keeps the cache lookup off the warm-up budget. This
+      // is what lets the clip play offline on panels whose SW never sees <video> requests.
+      if (blobVideoEligible(item)) {
+        resolveVideoSrc(item).then((res) => armAndSet(res.url, res.blob));
+      } else {
+        armAndSet(src, false);
+      }
     }
 
     function renderContent(item) {
