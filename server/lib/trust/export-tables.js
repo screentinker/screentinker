@@ -207,6 +207,7 @@ const EXCLUDED = {
   app_settings: 'instance configuration, not an organization\'s',
   a11y_media_checks: 'cached results of the accessibility checks on media: recomputed automatically',
   content_video_variants: 'TV-safe re-encoded copies of tall videos (lib/video-variants.js): a cache, made again on demand on the new server',
+  sssp3_fit_renditions: 'derived fixed-geometry SSSP3 media cache: approved rows and files are rebuilt from content and layouts on the new server',
   video_variant_usage: 'per-month encode minutes for the hosted TV-safe copy allowance: instance accounting, not the organization\'s data',
   site_caches: 'a site cache box and the credential it signs in with: set the box up again on the new server (docs/site-cache.md)',
   device_wifi_networks: 'Wi-Fi passwords of the screens (#720, lib/device-wifi.js): credentials into the customer\'s network never leave a server; the screens keep the networks they already joined, and new ones are entered again on the new server',

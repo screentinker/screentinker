@@ -190,6 +190,9 @@ function addUsage(orgId, month, seconds) {
   db.prepare(`INSERT INTO video_variant_usage (organization_id, month, seconds) VALUES (?, ?, ?)
               ON CONFLICT(organization_id, month) DO UPDATE SET seconds = seconds + excluded.seconds`).run(orgId, month, seconds);
 }
+function chargeUsage(workspaceId, seconds, date = clock()) {
+  addUsage(orgOf(workspaceId) || `ws:${workspaceId || ''}`, monthKey(date), seconds);
+}
 /** True when this organization may encode `seconds` more this month. */
 function withinAllowance(workspaceId, seconds, settings, date) {
   const cap = settings.org_monthly_minutes;
@@ -441,7 +444,7 @@ async function runJob(entry, content) {
                         WHERE content_id = ? AND kind = ? AND status = 'running' AND source_file = ?`)
     .run(entry.filename, size, result && result.width || null, result && result.height || null, result && result.encoder || null, ms, entry.contentId, entry.kind, entry.sourceFile);
   if (!r.changes) { removeFile(entry.filename); return; }
-  try { addUsage(orgOf(content.workspace_id) || `ws:${content.workspace_id || ''}`, monthKey(clock()), Number(content.duration_sec) || 0); } catch (_) { /* accounting must not lose the copy */ }
+  try { chargeUsage(content.workspace_id, Number(content.duration_sec) || 0, clock()); } catch (_) { /* accounting must not lose the copy */ }
   lastDone = { content_id: entry.contentId, kind: entry.kind, status: 'ready', at: Date.now() };
   pushFor(content);
 }
@@ -660,8 +663,9 @@ module.exports = {
   KINDS, CAPABILITY, FILE_RE,
   kindForOrientation, kindForDevice, isTallVideo, workspaceNeeds,
   ensure, onContentIngested, retry, removeFor, sweepOrphans, variantsForPayload, describe, stampItems,
-  getSettings, saveSettings, parseWindow, inWindow, monthKey, withinAllowance,
+  getSettings, saveSettings, parseWindow, inWindow, monthKey, withinAllowance, chargeUsage, cpuGate,
   ffmpegArgs, scaleFilter, encodeWithFfmpeg,
+  sourcePath,
   start, stats, tick,
   _resetForTest, _running: () => running, _drain: () => Promise.all([...jobs]), _setPush: (fn) => { pushFn = fn; },
 };
