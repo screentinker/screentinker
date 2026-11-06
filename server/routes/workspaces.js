@@ -357,6 +357,46 @@ router.put('/:id/live-field-patch', (req, res) => {
   res.json({ organization_id: ws.organization_id, liveFieldPatch: !!next, widgetsBumped: bumped });
 });
 
+// Organization PDF import resolution for the workspace's parent org. Org-wide (stored on
+// organizations.pdf_max_edge), set through a workspace-scoped admin route exactly like the
+// security switch above, and restricted the same way: org_owner/org_admin or platform admin.
+// The client reads the current value from current_organization (getMe) and hands it to the
+// browser PDF renderer, so raising the quality needs no local patch on a self-hosted install.
+const PDF_MAX_EDGE_ALLOWED = [1920, 2560, 3840];
+router.put('/:id/pdf-settings', (req, res) => {
+  const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(req.params.id);
+  if (!ws) return res.status(404).json({ error: 'Workspace not found' });
+  if (!canAdminWorkspace(db, req.user, ws)) {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  const isPlatformAdmin = isPlatformRole(req.user.role);
+  const orgMember = db.prepare(
+    'SELECT role FROM organization_members WHERE organization_id = ? AND user_id = ?'
+  ).get(ws.organization_id, req.user.id);
+  const isOrgAdmin = !!(orgMember && (orgMember.role === 'org_owner' || orgMember.role === 'org_admin'));
+  if (!isPlatformAdmin && !isOrgAdmin) {
+    return res.status(403).json({ error: 'Organization admin required' });
+  }
+
+  const val = Number(req.body?.pdfMaxEdge);
+  if (!PDF_MAX_EDGE_ALLOWED.includes(val)) {
+    return res.status(400).json({ error: `pdfMaxEdge must be one of ${PDF_MAX_EDGE_ALLOWED.join(', ')}` });
+  }
+  db.prepare(
+    "UPDATE organizations SET pdf_max_edge = ?, updated_at = strftime('%s','now') WHERE id = ?"
+  ).run(val, ws.organization_id);
+  req.workspaceId = ws.id; // stamp tenant for the activity row
+  logActivity(
+    req.user.id,
+    'org_pdf_resolution_setting_changed',
+    `organization_id=${ws.organization_id} pdfMaxEdge=${val}`,
+    null,
+    getClientIp(req),
+    ws.id
+  );
+  res.json({ organization_id: ws.organization_id, pdfMaxEdge: val });
+});
+
 // ==================== Members / invites ====================
 
 // Load workspace by req.params.id and verify caller has the required level

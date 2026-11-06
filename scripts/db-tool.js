@@ -56,6 +56,25 @@ function report(rows) {
   return 1;
 }
 
+/*
+ * Pause the server's off-thread WAL checkpointer while we hold a read transaction on the LIVE
+ * database. The snapshot's VACUUM INTO and the live-db check both open a SECOND connection from
+ * this process; a TRUNCATE checkpoint racing that cross-process reader corrupted the high-churn
+ * tables' free-list inside the nightly backup window (play_logs / device_telemetry, 2026-11-06).
+ * We drop a sentinel the worker watches (<db>.checkpoint-paused) for the duration and clear it in
+ * the finally. The worker enforces its own staleness bound, so if this process is killed before
+ * the finally runs, checkpointing resumes on its own and the WAL never grows unbounded. Checking a
+ * snapshot FILE creates a sentinel beside it that no worker watches; it is cleaned up the same way.
+ * Creating the sentinel is best-effort: a backup must never fail because the sentinel could not be
+ * written (worst case we are back to the old racy behaviour, not worse).
+ */
+function withCheckpointPaused(file, fn) {
+  const sentinel = file + '.checkpoint-paused';
+  let made = false;
+  try { fs.writeFileSync(sentinel, String(Date.now())); made = true; } catch (_) { /* best effort */ }
+  try { return fn(); } finally { if (made) { try { fs.unlinkSync(sentinel); } catch (_) { /* best effort */ } } }
+}
+
 function main(argv) {
   const [cmd, a, b] = argv;
   if (cmd === 'check') {
@@ -63,15 +82,19 @@ function main(argv) {
     const kind = b || 'quick';
     if (kind !== 'quick' && kind !== 'integrity') usage(`unknown check: ${kind}`);
     const { Database } = driver();
-    const db = open(a, Database);
-    try { return report(checkRows(db, kind)); } finally { db.close(); }
+    return withCheckpointPaused(a, () => {
+      const db = open(a, Database);
+      try { return report(checkRows(db, kind)); } finally { db.close(); }
+    });
   }
   if (cmd === 'snapshot') {
     if (!a || !b) usage('snapshot needs <db> <out>');
     if (fs.existsSync(b)) usage(`refusing to overwrite ${b}`);   // VACUUM INTO refuses too; say so plainly
     const { Database } = driver();
-    const src = open(a, Database);
-    try { src.prepare('VACUUM INTO ?').run(b); } finally { src.close(); }
+    withCheckpointPaused(a, () => {
+      const src = open(a, Database);
+      try { src.prepare('VACUUM INTO ?').run(b); } finally { src.close(); }
+    });
     const out = open(b, Database);
     try { return report(checkRows(out, 'quick')); } finally { out.close(); }
   }
@@ -86,4 +109,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { main, checkRows };
+module.exports = { main, checkRows, withCheckpointPaused };

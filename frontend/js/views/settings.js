@@ -244,6 +244,24 @@ export async function render(container) {
 
     ${canManageOrgSecurity ? `
     <div class="settings-section">
+      <h3>Documents</h3>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:600">PDF import resolution</div>
+          <div style="color:var(--text-muted);font-size:13px;max-width:56ch">
+            The longest edge each PDF page is rendered to when imported, in pixels. Higher is sharper on large screens but uses more memory and renders slower on low-power players such as a Raspberry Pi. Applies to new imports.
+          </div>
+        </div>
+        <select id="pdfMaxEdgeSelect" class="input" style="width:auto">
+          <option value="1920">Full HD (1920 px)</option>
+          <option value="2560">QHD (2560 px)</option>
+          <option value="3840">4K (3840 px)</option>
+        </select>
+      </div>
+    </div>` : ''}
+
+    ${canManageOrgSecurity ? `
+    <div class="settings-section">
       <h3>Security</h3>
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
         <div style="min-width:260px;flex:1">
@@ -1872,6 +1890,27 @@ export async function render(container) {
         showToast(on ? 'Live field updates enabled' : 'Live field updates disabled', 'success');
       } catch (err) {
         checkbox.checked = !on;
+        showToast(err.message, 'error');
+      }
+    });
+  }
+
+  const pdfMaxEdgeSelect = document.getElementById('pdfMaxEdgeSelect');
+  if (pdfMaxEdgeSelect) {
+    pdfMaxEdgeSelect.value = String(user.current_organization?.pdf_max_edge || 1920);
+    pdfMaxEdgeSelect.addEventListener('change', async (e) => {
+      const select = e.currentTarget;
+      const prev = String(user.current_organization?.pdf_max_edge || 1920);
+      const val = Number(select.value);
+      const workspaceId = user.current_workspace_id;
+      if (!workspaceId) { select.value = prev; showToast('No active workspace', 'error'); return; }
+      try {
+        await api.setPdfRenderResolution(workspaceId, val);
+        user.current_organization = { ...(user.current_organization || {}), pdf_max_edge: val };
+        localStorage.setItem('user', JSON.stringify(user));
+        showToast('PDF import resolution updated', 'success');
+      } catch (err) {
+        select.value = prev;
         showToast(err.message, 'error');
       }
     });

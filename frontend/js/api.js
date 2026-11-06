@@ -959,6 +959,8 @@ export const api = {
   updateWorkspaceSecuritySettings: (workspaceId, data) => request(`/workspaces/${workspaceId}/security-settings`, { method: 'PUT', body: JSON.stringify(data) }),
   // #790 live field patch (beta) org toggle, set through the workspace's org.
   setLiveFieldPatch: (workspaceId, liveFieldPatch) => request(`/workspaces/${workspaceId}/live-field-patch`, { method: 'PUT', body: JSON.stringify({ liveFieldPatch }) }),
+  // Org-wide default PDF import resolution (longest edge in px); set through the workspace's org.
+  setPdfRenderResolution: (workspaceId, pdfMaxEdge) => request(`/workspaces/${workspaceId}/pdf-settings`, { method: 'PUT', body: JSON.stringify({ pdfMaxEdge }) }),
 
   // Workspace members + invites (slice 2A read-only)
   getWorkspaceMembers: (id) => request(`/workspaces/${id}/members`),

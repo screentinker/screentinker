@@ -69,9 +69,13 @@ function loadPdfjs() {
  *
  * @param {File} file            the PDF
  * @param {(done:number,total:number)=>void} [onPage]  progress, called after each page
+ * @param {{maxEdge?:number}} [opts]  longest-edge cap in px; defaults to MAX_EDGE. The org's
+ *                                    configured value (current_organization.pdf_max_edge) is
+ *                                    passed here so a higher-resolution import needs no patch.
  * @returns {Promise<File[]>}    one PNG File per page, in page order, named to sort
  */
-export async function renderPdfToPages(file, onPage) {
+export async function renderPdfToPages(file, onPage, { maxEdge } = {}) {
+  const edge = Number(maxEdge) > 0 ? Number(maxEdge) : MAX_EDGE;
   const pdfjs = await loadPdfjs();
   const data = await file.arrayBuffer();
   // Keep the loading task: it, not the document proxy, owns destroy(). Calling destroy on the
@@ -97,7 +101,7 @@ export async function renderPdfToPages(file, onPage) {
       const page = await doc.getPage(n);
       try {
         const natural = page.getViewport({ scale: 1 });
-        const viewport = page.getViewport({ scale: fitScale(natural.width, natural.height) });
+        const viewport = page.getViewport({ scale: fitScale(natural.width, natural.height, edge) });
         const canvas = document.createElement('canvas');
         canvas.width = Math.round(viewport.width);
         canvas.height = Math.round(viewport.height);

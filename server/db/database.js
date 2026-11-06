@@ -4534,6 +4534,10 @@ migrationStep('workspace and organization settings', () => {
   // field in the live widget iframe instead of reloading the whole slide. Gating lives server-side
   // (markers + patch agent at render time, field deltas at push time); off = exactly today's reload.
   try { db.prepare('ALTER TABLE organizations ADD COLUMN live_field_patch INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] organizations.live_field_patch added (default 0)'); } catch (_) { /* present */ }
+  // PDF import render resolution: the longest edge (px) each PDF page is rasterised to in the
+  // uploader's browser (frontend/js/components/pdf-pages.js). Default 1920 (full HD) keeps existing
+  // behaviour; an org admin can raise it (e.g. 3840 for 4K wall) without patching the client.
+  try { db.prepare('ALTER TABLE organizations ADD COLUMN pdf_max_edge INTEGER NOT NULL DEFAULT 1920').run(); console.log('[migrate] organizations.pdf_max_edge added (default 1920)'); } catch (_) { /* present */ }
 });
 
 migrationStep('smart playlists', () => {
