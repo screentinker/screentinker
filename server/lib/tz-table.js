@@ -98,15 +98,19 @@ function transitionMinute(zone, lo, hi, before) {
  * @param {number} [nowMs]
  * @returns {{ zone: string, generated_ms: number, spans: { from_ms: number, offset_min: number }[] }}
  */
-function tzTable(zone, nowMs = Date.now()) {
+function tzTable(zone, nowMs = Date.now(), afterMs = AFTER_MS) {
   const z = validZone(zone) || 'UTC';
   const anchor = Math.floor(nowMs / HOUR_MS) * HOUR_MS;
-  const key = `${z}|${anchor}`;
+  // Self-contained legacy widgets cannot depend on the normal six-hour player
+  // refresh. Keep their DST table bounded, but long enough to cross the next
+  // seasonal transition during a prolonged offline run.
+  const horizon = Math.max(AFTER_MS, Math.min(Number(afterMs) || AFTER_MS, 400 * 24 * HOUR_MS));
+  const key = `${z}|${anchor}|${horizon}`;
   const hit = tables.get(key);
   // A copy, so a caller that edits the payload it was handed cannot poison the next screen's.
   if (hit) return { zone: hit.zone, generated_ms: hit.generated_ms, spans: hit.spans.map((x) => ({ ...x })) };
   const start = anchor - BEFORE_MS;
-  const end = anchor + AFTER_MS;
+  const end = anchor + horizon;
 
   let current = offsetMinutes(z, start);
   const spans = [{ from_ms: start, offset_min: current }];
