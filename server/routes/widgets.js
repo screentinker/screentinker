@@ -878,6 +878,7 @@ function renderWidgetHtml(type, config, opts = {}) {
     case 'slide': return slideRender.renderSlideHtml(config, {
       resolveImage: opts.resolveImage, resolveFont: opts.resolveFont,
       resolveData: opts.resolveData, dataSources: opts.dataSources,
+      fieldMarkers: opts.fieldMarkers,   // #790
     });
     default: {
       const plugin = pluginRegistry.getWidget(type);
@@ -945,6 +946,15 @@ router.get('/:id/render', (req, res) => {
     ? widgetLocation.screenPlace(db, req.query.device, widget.workspace_id) : null;
   const config = widgetLocation.applyPlace(widget.widget_type, JSON.parse(widget.config || '{}'), place);
   const iframeSandbox = widgetIframeSandboxForWorkspace(widget.workspace_id);
+  // #790 live field patch: when the widget's org has the beta flag on, mark ds field values and
+  // inject the patch agent so a field change can be applied in place instead of reloading the slide.
+  let liveFieldPatch = false;
+  try {
+    const lfp = db.prepare(
+      'SELECT COALESCE(o.live_field_patch, 0) AS v FROM organizations o JOIN workspaces w ON w.organization_id = o.id WHERE w.id = ?'
+    ).get(widget.workspace_id);
+    liveFieldPatch = !!(lfp && lfp.v);
+  } catch (_) { liveFieldPatch = false; }
   // This page is DESIGNED to be embedded by the player, which frames it in a
   // sandboxed (allow-scripts, no allow-same-origin) iframe = a null origin. The
   // global helmet X-Frame-Options: SAMEORIGIN refuses that (null != same), so
@@ -1128,6 +1138,7 @@ router.get('/:id/render', (req, res) => {
     resolveFont: require('./fonts').fontResolverFor(widget),
     resolveData: dataResolverFor(widget),
     workspaceId: widget.workspace_id,
+    fieldMarkers: liveFieldPatch,   // #790
   }));
 });
 
