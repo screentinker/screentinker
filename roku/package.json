@@ -15,6 +15,6 @@
     "brs-scenegraph": "0.6.0"
   },
   "overrides": {
-    "decode-uri-component": "^0.5.0"
+    "decode-uri-component": "^0.5.1"
   }
 }
