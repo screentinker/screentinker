@@ -29,6 +29,12 @@
   organisation setting (1920 / 2560 / 3840, default 1920) instead of a fixed constant, so a site that
   needs sharper pages no longer has to patch the build. Requested by @olchinga-de.
 
+- **Flash an ESP32 controller from the dashboard** (#823). René's esp-web-tools web-serial installer,
+  vendored in and served at `/flash` (linked from Add Display), so an operator can flash a
+  Seeed/Elecrow controller (LED wall, reTerminal e-paper, CrowPanel) over USB and have it point back
+  at this instance (the server URL is pre-filled). Chrome/Edge/Opera desktop only; complements the
+  existing OTA update path for already-paired devices. Firmware by @renebohne.
+
 ### Fixed
 
 - **A slide fed by a data source only reloads when a field it shows changes** (#790, #814). A REST
