@@ -1,0 +1,29 @@
+{
+  "name": "ScreenTinker Seeed Studio XIAO ESP32-C3 LED Controller",
+  "version": "1.4.3",
+  "home_assistant_domain": "screentinker",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32-C3",
+      "parts": [
+        {
+          "path": "bin/seeed_xiao_esp32c3_led/bootloader.bin",
+          "offset": 0
+        },
+        {
+          "path": "bin/seeed_xiao_esp32c3_led/partitions.bin",
+          "offset": 32768
+        },
+        {
+          "path": "bin/seeed_xiao_esp32c3_led/boot_app0.bin",
+          "offset": 57344
+        },
+        {
+          "path": "bin/seeed_xiao_esp32c3_led/firmware.bin",
+          "offset": 65536
+        }
+      ]
+    }
+  ]
+}

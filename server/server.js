@@ -210,6 +210,11 @@ app.use((req, res, next) => {
   if (req.path.startsWith('/view/')) return exempt(); // view-only display page: the web player (routes/view.js)
   if (req.path.startsWith('/listen/')) return exempt(); // visitor audio-guide page, inline JS like the player (routes/view.js)
   if (req.path === '/docs') return exempt(); // Redoc API reference needs a relaxed CSP
+  // #flash: the ESP32 web-serial firmware installer (frontend/flash/) is René's esp-web-tools page,
+  // vendored in. Like /player it is inline-script HTML (plus a wasm flasher and Web Serial), none of
+  // which the dashboard's `script-src 'self'` allows, so it needs the relaxed policy. Covers its
+  // assets too (manifests, firmware .bin, the vendored esp-web-tools module) - harmless for static files.
+  if (req.path === '/flash' || req.path.startsWith('/flash/')) return exempt();
   if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/render')) return exempt();
   if (req.path.startsWith('/api/widgets/') && req.path.endsWith('/data.json')) return exempt();
   if (req.path.startsWith('/api/widgets/preview-session/')) return exempt();
@@ -727,6 +732,13 @@ app.get(['/solutions', '/solutions/'], (req, res) => {
 
 // Express 5 (send 1.x) ignores dotfile paths by default: certbot webroot needs this mount.
 app.use('/.well-known/acme-challenge', express.static(path.join(config.frontendDir, '.well-known', 'acme-challenge'), { index: false }));
+// #flash: serve the ESP32 web-serial installer at a clean /flash URL. express.static below is
+// index:false, so the directory URL would 404 without this; the page's assets (manifests, firmware
+// .bin, vendored esp-web-tools) are served by express.static as ordinary files. CSP was already
+// relaxed for this path by the exempt middleware above.
+app.get(['/flash', '/flash/'], (req, res) => {
+  res.sendFile(path.join(config.frontendDir, 'flash', 'index.html'));
+});
 // Serve frontend static files
 // JS/CSS/HTML: no-cache (always revalidate, uses ETag/304)
 // Images/fonts/icons: long cache for Cloudflare + browser

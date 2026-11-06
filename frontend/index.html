@@ -497,6 +497,13 @@
              <code id="addDeviceServerUrl" style="display:block;font-size:13px;margin:2px 0;color:var(--primary,#3b82f6);word-break:break-all"></code>
              <span style="font-size:11px;color:var(--text-muted,#64748b)" data-i18n="add_display.server_url_hint">Use this URL when configuring the Android app</span>
            </div>
+           <!-- #flash: entry point to the ESP32 web-serial firmware installer (frontend/flash). For a
+                Seeed/Elecrow controller that needs flashing first; opens in a new top-level tab because
+                Web Serial requires one. The installer pre-fills this instance's server URL. -->
+           <p style="font-size:11px;color:var(--text-muted,#64748b);margin-top:12px;line-height:1.5">
+             &#128268; Flashing a Seeed/Elecrow ESP32 controller (LED wall, e&#8209;paper, CrowPanel)?
+             <a href="/flash" target="_blank" rel="noopener" style="color:var(--primary,#3b82f6);white-space:nowrap">Open the firmware installer &rarr;</a>
+           </p>
         </details>
         <details class="add-display-section" id="addDeviceAdvanced">
           <summary data-i18n="add_display.advanced_options">Advanced options</summary>
