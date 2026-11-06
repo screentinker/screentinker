@@ -86,6 +86,16 @@ test('⚠️ THE RESTART: a fresh process re-derives the same state, with nothin
   assert.equal(resolveDevicePlaylist(deviceId).playlist_id, schedPlaylist);
 });
 
+test('offline-plan reconnect reconciles one device without an intermediate push', () => {
+  setSchedule(true);
+  db.prepare('UPDATE devices SET scheduled_playlist_id = NULL WHERE id = ?').run(deviceId);
+  const emitted = [];
+  const reconnectIo = { of: () => ({ to: (room) => ({ emit: (event) => emitted.push({ room, event }) }), emit() {} }) };
+  evaluateSchedules(reconnectIo, undefined, { deviceId, skipReboots: true, noPush: true });
+  assert.equal(row().scheduled_playlist_id, schedPlaylist);
+  assert.deepEqual(emitted, []);
+});
+
 test('when the schedule stops applying, the column is CLEARED and the device returns', () => {
   setSchedule(true);
   evaluateSchedules(fakeIo);

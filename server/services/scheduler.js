@@ -19,18 +19,24 @@ function startScheduler(socketIo) {
 
 // ioOverride lets a test drive one evaluation without startScheduler's 60s setInterval, which keeps
 // the process alive and turns the test run into a hang rather than a failure.
-function evaluateSchedules(ioOverride, nowOverride) {
+function evaluateSchedules(ioOverride, nowOverride, { skipReboots = false, deviceId = null, deviceIds = null, noPush = false, refreshOfflinePlan = false } = {}) {
   const deviceNs = (ioOverride || io)?.of('/device');
   if (!deviceNs) return;
 
   // nowOverride is a TEST SEAM (the preview-at-time equivalence tests drive the live tick at a fixed
   // instant and compare it with lib/device-simulate.js). The live timer never passes it.
   const now = nowOverride instanceof Date ? nowOverride : new Date();
-  const onlineDevices = db.prepare(`SELECT * FROM devices WHERE status = 'online' AND ${LOCAL_ROWS_SQL('devices')}`).all();
+  let onlineDevices = deviceId
+    ? db.prepare(`SELECT * FROM devices WHERE status = 'online' AND id = ? AND ${LOCAL_ROWS_SQL('devices')}`).all(deviceId)
+    : db.prepare(`SELECT * FROM devices WHERE status = 'online' AND ${LOCAL_ROWS_SQL('devices')}`).all();
+  if (!deviceId && Array.isArray(deviceIds)) {
+    const wanted = new Set(deviceIds.filter(Boolean));
+    onlineDevices = onlineDevices.filter((device) => wanted.has(device.id));
+  }
 
   for (const device of onlineDevices) {
     // #12 scheduled reboot — evaluated independently of playlist/layout overrides.
-    maybeRebootDevice(device, now, deviceNs);
+    if (!skipReboots) maybeRebootDevice(device, now, deviceNs);
 
     // Which schedules this screen follows and on whose clock: one definition, shared with the
     // "what will this screen show at…" preview (lib/device-simulate.js), so the forecast and the
@@ -66,7 +72,9 @@ function evaluateSchedules(ioOverride, nowOverride) {
         .run(wantPlaylist, wantLayout, device.id);
     }
 
-    if (changed) pushPlaylistToDevice(device.id, deviceNs);
+    if ((changed || (refreshOfflinePlan && playerCapabilities.supports(device, 'offline.schedule_plan'))) && !noPush) {
+      pushPlaylistToDevice(device.id, deviceNs);
+    }
   }
 }
 

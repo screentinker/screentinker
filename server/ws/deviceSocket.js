@@ -6,6 +6,7 @@ const { resolveWithin } = require('../lib/safe-path');
 const { isRtspsUrl } = require('../lib/remote-url');
 const { db, pruneTelemetry, pruneScreenshots } = require('../db/database');
 const { effectiveDeviceTz } = require('../lib/device-timezone');
+const { makeClock } = require('../lib/local-clock');
 const config = require('../config');
 const heartbeat = require('../services/heartbeat');
 const bootDefer = require('../lib/boot-defer');   // 2.0.1 first-boot player defer
@@ -52,6 +53,53 @@ const playerTermination = require('../lib/mesh/player-termination'); // scale-ou
 // last_heartbeat is older than heartbeatTimeout get marked offline by the
 // next checker sweep within heartbeatInterval).
 const pendingOfflines = new Map();
+// Nested offline states are deterministic for resolver inputs plus a schedule
+// revision. Keep a bounded per-device cache so reconnect bursts do not rebuild
+// every future playlist/layout payload. Content revisions live in resolverInputs
+// and therefore naturally invalidate this key.
+const offlineNestedStateCache = new Map();
+const OFFLINE_NESTED_STATE_CACHE_LIMIT = 1024;
+const OFFLINE_NESTED_STATE_CACHE_BYTES = 8 * 1024 * 1024;
+let offlineNestedStateCacheBytes = 0;
+function offlineStatePayload(payload) {
+  const allowed = ['assignments', 'layout', 'orientation', 'background_color', 'playback_order', 'default_content'];
+  const out = {};
+  for (const key of allowed) if (Object.prototype.hasOwnProperty.call(payload, key)) out[key] = payload[key];
+  return out;
+}
+function cachedOfflineState(key, build) {
+  if (offlineNestedStateCache.has(key)) {
+    const hit = offlineNestedStateCache.get(key);
+    offlineNestedStateCache.delete(key);
+    offlineNestedStateCache.set(key, hit);
+    return hit.value;
+  }
+  const value = build();
+  const bytes = Buffer.byteLength(JSON.stringify(value));
+  if (bytes > OFFLINE_NESTED_STATE_CACHE_BYTES) return value;
+  while (offlineNestedStateCache.size >= OFFLINE_NESTED_STATE_CACHE_LIMIT || offlineNestedStateCacheBytes + bytes > OFFLINE_NESTED_STATE_CACHE_BYTES) {
+    const oldest = offlineNestedStateCache.keys().next().value;
+    if (oldest === undefined) break;
+    offlineNestedStateCacheBytes -= offlineNestedStateCache.get(oldest).bytes;
+    offlineNestedStateCache.delete(oldest);
+  }
+  offlineNestedStateCache.set(key, { value, bytes });
+  offlineNestedStateCacheBytes += bytes;
+  return value;
+}
+function offlineStateRevision(workspaceId) {
+  /* Published playlist snapshots are the authoritative item order/configuration;
+   * content/widget/layout rows cover media replacement and linked resources.
+   * Hashing this compact metadata invalidates future-state cache entries before
+   * they can serve an old payload after a same-ID publish. */
+  const parts = [];
+  const rows = (sql) => { try { return db.prepare(sql).all(workspaceId); } catch (_) { return []; } };
+  parts.push(rows('SELECT id,updated_at,published_snapshot,published_playback_order FROM playlists WHERE workspace_id = ? ORDER BY id'));
+  parts.push(rows('SELECT id,updated_at,filepath,mime_type FROM content WHERE workspace_id = ? ORDER BY id'));
+  parts.push(rows('SELECT id,updated_at,widget_type,config FROM widgets WHERE workspace_id = ? ORDER BY id'));
+  parts.push(rows('SELECT l.id,l.updated_at,z.id AS zone_id,z.x_percent,z.y_percent,z.width_percent,z.height_percent,z.z_index,z.fit_mode FROM layouts l LEFT JOIN layout_zones z ON z.layout_id = l.id WHERE l.workspace_id = ? ORDER BY l.id,z.id'));
+  return crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex');
+}
 const OFFLINE_DEBOUNCE_MS = 5000;
 
 // #146: socket ids we force-disconnected via evictPriorSocket because a NEWER socket
@@ -728,6 +776,13 @@ function asMirrorPayload(p, mirrorId, sourceId) {
   p.local_api = null;
   delete p.site_cache;
   try { p.audience = require('../lib/audience').payloadConfig(mirrorId); } catch (e) { p.audience = null; }
+  /* Content resolution comes from the source, but optional protocol fields
+   * describe the receiving player. A browser mirror must not receive an Orsay
+   * offline-plan contract merely because its source supports it. */
+  try {
+    const receiver = db.prepare('SELECT capabilities FROM devices WHERE id = ?').get(mirrorId);
+    if (!capsLib.supports(receiver, 'offline.schedule_plan')) delete p.offline_plan;
+  } catch (_) { delete p.offline_plan; }
   p.mirror_of = sourceId;
   return p;
 }
@@ -1235,6 +1290,102 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
     playlistBg = (db.prepare('SELECT published_background_color FROM playlists WHERE id = ?').get(bgPlaylistId) || {}).published_background_color || null;
   }
   const assembled = assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: playlistBg || device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints: deviceEndpoints });
+  /*
+   * A last-playlist cache is not offline scheduling: it cannot select a
+   * playlist that has not become active yet, and it inevitably resurrects
+   * expired content after a cold boot. Players that explicitly implement the
+   * schedule-plan contract receive a bounded, server-resolved UTC timeline and
+   * a payload for every distinct scheduled state in that timeline. The player
+   * downloads all supported dependencies before committing the plan.
+   *
+   * `offlinePlan: false` is essential for the nested state payloads. Without
+   * it this builder would recursively attach a plan to every future state.
+   */
+  if (!opts.forecast && opts.offlinePlan !== false && capsLib.supports(device, 'offline.schedule_plan')) {
+    // An override (emergency, automation or manual preview) is authoritative
+    // now. Explicitly clear an older persisted plan instead of leaving an
+    // offline client free to resurrect it after this payload is received.
+    if (overrideNow || hookNow) {
+      assembled.offline_plan = null;
+    } else try {
+      const scheduler = require('../services/scheduler');
+      const planBuilder = require('../lib/offline-schedule-plan');
+      const row = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);
+      const zone = scheduler.scheduleClockTz(row) || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      const schedules = scheduler.schedulesForDevice(row);
+      if (schedules.length) {
+        // The preview simulator mirrors the resolver view for hypothetical
+        // schedule columns. Reuse it here so layout-only schedules, inherited
+        // playlists, and wall members follow the live resolver exactly.
+        const simulator = require('../lib/device-simulate');
+        const inputs = simulator.resolverInputs(db, deviceId);
+        const normal = simulator.resolveFromInputs(inputs, { playlist_id: null, layout_id: null });
+        // A corporate mandate outranks schedules in the live resolver. Do not
+        // leave a previously cached schedule plan able to supersede it offline.
+        if (normal.source === 'corporate') {
+          assembled.offline_plan = null;
+        } else {
+          const planKey = JSON.stringify({
+            device: deviceId, zone,
+            normal: { playlist_id: normal.playlist_id, source: normal.source, layout_id: normal.layout_id },
+            schedules: schedules.map((s) => [s.id, s.playlist_id, s.layout_id, s.start_time, s.end_time, s.recurrence, s.recurrence_end, s.priority, s.enabled]),
+          });
+          const plan = planBuilder.buildCached({
+            key: planKey,
+            schedules,
+            timezone: zone,
+          // This is the live scheduler verdict used by evaluateSchedules and
+          // device-simulate, including its inclusive end-minute and malformed
+          // recurrence compatibility behavior.
+          pickAt: (rows, local) => rows.find((schedule) => scheduler.isScheduleActiveAt(schedule, local)) || null,
+          clock: makeClock(zone),
+          });
+          const requestedStates = new Map();
+          for (const interval of plan.intervals) {
+            const schedule = interval.schedule_id ? schedules.find((s) => s.id === interval.schedule_id) : null;
+            const stateKey = schedule ? `schedule:${schedule.id}` : 'default';
+            if (!requestedStates.has(stateKey)) requestedStates.set(stateKey, schedule);
+          }
+          // A plan is an offline recovery mechanism, never permission to turn
+          // one payload push into an unbounded socket/database response.
+          if (requestedStates.size > 128) {
+            console.warn(`[scheduler] offline plan for ${deviceId} exceeds bounded state/size limits`);
+            assembled.offline_plan = null;
+          } else {
+            const inputRevision = crypto.createHash('sha256').update(JSON.stringify(inputs)).digest('hex');
+            const publicationRevision = offlineStateRevision(row.workspace_id);
+            const stateRows = [];
+            for (const [stateKey, schedule] of requestedStates) {
+              const cacheKey = `${planKey}|${inputRevision}|${publicationRevision}|${stateKey}`;
+              stateRows.push(cachedOfflineState(cacheKey, () => {
+                const resolved = simulator.resolveFromInputs(inputs, schedule
+                  ? { playlist_id: schedule.playlist_id || null, layout_id: schedule.layout_id || null }
+                  : { playlist_id: null, layout_id: null });
+                return {
+                  schedule_id: schedule ? schedule.id : null,
+                  playlist_id: resolved.playlist_id || null,
+                  layout_id: resolved.layout_id || null,
+                  payload: offlineStatePayload(buildPlaylistPayloadUnchecked(deviceId, {
+                    resolved: { ...resolved, scheduled_layout_id: schedule ? schedule.layout_id || null : null },
+                    offlinePlan: false,
+                  })),
+                };
+              }));
+            }
+            if (Buffer.byteLength(JSON.stringify({ ...plan, states: stateRows })) > 2 * 1024 * 1024) {
+              console.warn(`[scheduler] offline plan for ${deviceId} exceeds bounded size limit`);
+              assembled.offline_plan = null;
+            } else assembled.offline_plan = { ...plan, states: stateRows };
+          }
+        }
+      } else {
+        // This is the only successful path that explicitly removes a saved
+        // plan.  Do not clear the panel's last verified plan merely because a
+        // transient server-side resolution error occurred.
+        assembled.offline_plan = null;
+      }
+    } catch (e) { console.warn(`[scheduler] offline plan for ${deviceId} unavailable: ${e.message}`); }
+  }
   /*
    * Audience counting (lib/audience.js). Top-level and outside the item list, so switching it on or
    * off never restarts playback (#234). Rides EVERY payload, and null means OFF — so a screen that
@@ -3134,6 +3285,14 @@ module.exports = function setupDeviceSocket(io) {
                 socket.join(existing.device_id);
                 logDeviceStatus(existing.device_id, 'online');
                 emitToDeviceWorkspace(dashboardNs, existing.device_id, 'dashboard:device-status', { device_id: existing.device_id, status: 'online', liveness: heartbeat.livenessFor(existing.device_id) });
+                // Reconcile the active schedule before the reconnect payload. Without this,
+                // a panel that was offline can receive the stale base playlist until the next
+                // 60-second sweep overwrites it. Do this before flushing too: a queued
+                // playlist marker is rebuilt at flush time and must see the reconciled rows.
+                // noPush avoids a duplicate socket update.
+                if (capsLib.supports(existing, 'offline.schedule_plan')) {
+                  require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
+                }
                 // Flush any commands/playlist-updates queued while this device was offline.
                 commandQueue.flushQueue(deviceNs, existing.device_id, buildPlaylistPayload);
                 // Send playlist
@@ -3178,6 +3337,11 @@ module.exports = function setupDeviceSocket(io) {
                   socket.join(existing.device_id);
                   logDeviceStatus(existing.device_id, 'online');
                   emitToDeviceWorkspace(dashboardNs, existing.device_id, 'dashboard:device-status', { device_id: existing.device_id, status: 'online', liveness: heartbeat.livenessFor(existing.device_id) });
+                  // This branch is normally unpaired, but may retain a schedule after an
+                  // interrupted claim. Make its first payload deterministic as well.
+                  if (capsLib.supports(existing, 'offline.schedule_plan')) {
+                    require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
+                  }
                   // Flush any commands/playlist-updates queued while this device was offline.
                   commandQueue.flushQueue(deviceNs, existing.device_id, buildPlaylistPayload);
                   // Send playlist
@@ -3356,6 +3520,13 @@ module.exports = function setupDeviceSocket(io) {
             socket.emit('device:paired', { device_id, name: device.name || 'Display', settings_pin: device.settings_pin || undefined, brand: playerBrandForDevice(db, device_id) });
           }
           logDeviceStatus(device_id, 'online');
+          // Resolve the active schedule before *any* reconnect playlist can be generated.
+          // flushQueue rebuilds its pending marker on demand, so its position matters.
+          // This prevents an offline Samsung from briefly activating its stale base playlist
+          // while it waits for the normal one-minute scheduler sweep.
+          if (capsLib.supports(device, 'offline.schedule_plan')) {
+            require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: device_id, noPush: true });
+          }
           // Flush any commands/playlist-updates queued while this device was offline.
           commandQueue.flushQueue(deviceNs, device_id, buildPlaylistPayload);
           // #720: the screen's managed Wi-Fi list, every connect (a change made while it was offline

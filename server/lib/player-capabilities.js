@@ -260,6 +260,11 @@ const CAPABILITIES = [
   'sync.clock', 'sync.native',
   // resilience
   'offline.cache',
+  // The player receives a server-resolved UTC schedule timeline plus every
+  // referenced supported payload, and can transition between those states while
+  // disconnected. Kept opt-in because an older cache player only knows its last
+  // playlist and must not be handed a potentially large plan it would ignore.
+  'offline.schedule_plan',
 ];
 
 const CAP_SET = new Set(CAPABILITIES);
