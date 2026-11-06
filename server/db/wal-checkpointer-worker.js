@@ -24,6 +24,28 @@ db.pragma('wal_autocheckpoint = 0');   // this connection must never auto-checkp
 const walFile = dbPath + '-wal';
 function walBytes() { try { return fs.statSync(walFile).size; } catch { return 0; } }
 
+// Pause ALL checkpointing while a cross-process reader holds a read transaction on this
+// database. The nightly backup takes its snapshot with a second-process VACUUM INTO (see
+// scripts/db-tool.js); a TRUNCATE checkpoint racing that reader corrupted the high-churn
+// tables' free-list inside the backup window (play_logs / device_telemetry, 2026-11-06).
+// db-tool drops the sentinel for the duration of that read. The staleness guard means a
+// reader that dies without clearing the sentinel cannot disable checkpointing for longer
+// than PAUSE_MAX_MS, so the WAL can never grow unbounded behind a stuck pause.
+const pauseFile = dbPath + '.checkpoint-paused';
+const PAUSE_MAX_MS = 20 * 60 * 1000;
+let pauseLogged = false;
+function checkpointPaused() {
+  try {
+    const age = Date.now() - fs.statSync(pauseFile).mtimeMs;
+    if (age >= 0 && age < PAUSE_MAX_MS) {
+      if (!pauseLogged) { pauseLogged = true; post('paused for backup window (sentinel present)'); }
+      return true;
+    }
+  } catch (_) { /* no sentinel = not paused */ }
+  if (pauseLogged) { pauseLogged = false; post('resumed after backup window'); }
+  return false;
+}
+
 let lastBytes = 0;
 let growthRuns = 0;        // consecutive PASSIVE runs where the WAL failed to shrink
 let lastTruncateAt = 0;    // #240: when we last blocked for a TRUNCATE (0 = never)
@@ -32,6 +54,7 @@ let timer = null;
 
 function tick() {
   try {
+    if (checkpointPaused()) return;   // a cross-process reader (nightly backup) holds the DB — don't race it
     // PASSIVE never blocks writers, but skips frames pinned by active readers/writers —
     // so on its own it can perpetually under-checkpoint. That's what the guard below bounds.
     db.pragma('wal_checkpoint(PASSIVE)', { simple: false });
