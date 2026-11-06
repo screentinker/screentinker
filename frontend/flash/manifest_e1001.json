@@ -1,0 +1,29 @@
+{
+  "name": "ScreenTinker Seeed Studio reTerminal E1001 (7.5\" Mono)",
+  "version": "1.4.3",
+  "home_assistant_domain": "screentinker",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "bin/seeed_reterminal_e1001/bootloader.bin",
+          "offset": 0
+        },
+        {
+          "path": "bin/seeed_reterminal_e1001/partitions.bin",
+          "offset": 32768
+        },
+        {
+          "path": "bin/seeed_reterminal_e1001/boot_app0.bin",
+          "offset": 57344
+        },
+        {
+          "path": "bin/seeed_reterminal_e1001/firmware.bin",
+          "offset": 65536
+        }
+      ]
+    }
+  ]
+}

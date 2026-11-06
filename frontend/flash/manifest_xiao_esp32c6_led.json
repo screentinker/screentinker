@@ -1,0 +1,29 @@
+{
+  "name": "ScreenTinker Seeed Studio XIAO ESP32-C6 LED Controller",
+  "version": "1.4.3",
+  "home_assistant_domain": "screentinker",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32-C6",
+      "parts": [
+        {
+          "path": "bin/seeed_xiao_esp32c6_led/bootloader.bin",
+          "offset": 0
+        },
+        {
+          "path": "bin/seeed_xiao_esp32c6_led/partitions.bin",
+          "offset": 32768
+        },
+        {
+          "path": "bin/seeed_xiao_esp32c6_led/boot_app0.bin",
+          "offset": 57344
+        },
+        {
+          "path": "bin/seeed_xiao_esp32c6_led/firmware.bin",
+          "offset": 65536
+        }
+      ]
+    }
+  ]
+}

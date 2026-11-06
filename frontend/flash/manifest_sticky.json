@@ -1,0 +1,29 @@
+{
+  "name": "ScreenTinker Seeed Studio reTerminal Sticky (3.97\" Mono)",
+  "version": "1.4.3",
+  "home_assistant_domain": "screentinker",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "bin/seeed_reterminal_sticky/bootloader.bin",
+          "offset": 0
+        },
+        {
+          "path": "bin/seeed_reterminal_sticky/partitions.bin",
+          "offset": 32768
+        },
+        {
+          "path": "bin/seeed_reterminal_sticky/boot_app0.bin",
+          "offset": 57344
+        },
+        {
+          "path": "bin/seeed_reterminal_sticky/firmware.bin",
+          "offset": 65536
+        }
+      ]
+    }
+  ]
+}
