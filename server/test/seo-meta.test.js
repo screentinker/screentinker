@@ -164,8 +164,7 @@ test('solutions and integrations pages: one H1, valid JSON-LD, breadcrumbs, and 
 });
 
 test('every page that names our trial length names the one the server grants', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'server', 'middleware', 'subscription.js'), 'utf8');
-  const days = Number(src.match(/const TRIAL_DAYS = (\d+);/)[1]);
+  const days = require(path.join(ROOT, 'server', 'lib', 'trial-days.js')).TRIAL_DAYS;   // what middleware/subscription.js grants
   for (const { u, html } of pages) {
     for (const m of html.matchAll(/(\d+)-day (?:free )?Pro trial/g)) {
       assert.equal(Number(m[1]), days, `${u} offers a ${m[1]}-day Pro trial; the server grants ${days}`);

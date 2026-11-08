@@ -69,8 +69,44 @@ function followupEmail(u, base, at) {
   return { subject: SUBJECT[u.trigger], html, text };
 }
 
+/*
+ * Trial re-use review (lib/trial-screens.js suspectTrialReuse): a running trial with 3+ screens that
+ * shares a sign-in network with an account whose unpaid trial lapsed recently, or holds screens an
+ * earlier unpaid trial used. A SIGNAL FOR A PERSON, never acted on automatically: offices, coworking
+ * spaces and mobile carriers share addresses. Each account is reported once (trial_reuse_flags).
+ */
+const REUSE_HEAD = 'Possible trial re-use (review, nothing was blocked):';
+function reuseLine(r) {
+  const day = (t) => (t ? new Date(t * 1000).toISOString().slice(0, 10) : '?');
+  const lapsed = r.lapsed_accounts.map((l) => `${l.email} (trial ended ${day(l.trial_expired_at)})`).join(', ');
+  return `- ${r.email}: ${r.screens} screen(s), signed up ${day(r.created_at)}` +
+    (r.reused_screens ? `, ${r.reused_screens} screen(s) already used by another unpaid trial` : '') +
+    (lapsed ? `\n    same network as: ${lapsed}` : '');
+}
+/** Flags not reported yet. Read-only: stampReuseFlags marks them, once a digest actually went out. */
+function newReuseFlags(db, at) {
+  let found;
+  try { found = require('../lib/trial-screens').suspectTrialReuse(db, { now: at }); }
+  catch (e) { console.warn(`[feedback] trial re-use check failed: ${e.message}`); return []; }
+  let seen;
+  try { seen = db.prepare('SELECT 1 FROM trial_reuse_flags WHERE user_id = ?'); }
+  catch { return []; }   // table not there yet: report nothing rather than everything every day
+  return found.filter((r) => !seen.get(r.user_id));
+}
+/**
+ * Mark flags as reported. Only after a delivery succeeded: stamping before sending meant a failed
+ * mail run (SMTP down, no admins, a bad webhook) hid that account from every later digest.
+ */
+function stampReuseFlags(db, flags, at) {
+  const ins = db.prepare('INSERT OR IGNORE INTO trial_reuse_flags (user_id, first_flagged_at, detail) VALUES (?, ?, ?)');
+  for (const r of flags) {
+    try { ins.run(r.user_id, at, JSON.stringify({ screens: r.screens, reused: r.reused_screens, lapsed: r.lapsed_accounts.map((l) => l.user_id) })); }
+    catch (e) { console.warn(`[feedback] could not stamp re-use flag ${r.user_id}: ${e.message}`); }
+  }
+}
+
 /** The admin digest for the day: null when there is nothing new to say. */
-function buildDigest(db, at, base) {
+function buildDigest(db, at, base, reuse = []) {
   const day = feedback.summary(db, { days: 1, at });
   const week = feedback.summary(db, { days: 7, at });
   const month = feedback.summary(db, { days: 30, at });
@@ -79,7 +115,7 @@ function buildDigest(db, at, base) {
   const funnel = ['signup', 'first_pair', 'first_publish', 'limit_hit', 'checkout_start', 'checkout_complete', 'trial_expired', 'subscription_cancelled']
     .map((e) => ({ event: e, day: count(e, 1), week: count(e, 7) }));
   const signupsToday = funnel[0].day;
-  if (!day.total && !signupsToday && !funnel.find((f) => f.event === 'checkout_complete').day) return null;
+  if (!day.total && !signupsToday && !funnel.find((f) => f.event === 'checkout_complete').day && !reuse.length) return null;
 
   const stars = (r) => (r == null ? 'no rating' : `${r}/5`);
   const journey = (j) => [j.screens ? `${j.screens} screen${j.screens === 1 ? '' : 's'}` : 'no screens', j.first_publish ? 'published' : null,
@@ -93,6 +129,7 @@ function buildDigest(db, at, base) {
     `Funnel (24h / 7d): ` + funnel.map((f) => `${f.event} ${f.day}/${f.week}`).join(' | '), '',
     day.total ? 'New answers:' : 'No new answers today.', ...lines, '',
     `Top reasons (30 days): ${reasons}`,
+    ...(reuse.length ? ['', REUSE_HEAD, ...reuse.map(reuseLine)] : []),
     base ? `\nEverything, with a CSV export: ${base}/app#/platform/overview` : '',
   ].join('\n');
   const html = `<div style="font:14px/1.5 system-ui,-apple-system,'Segoe UI',sans-serif;color:#0f172a;max-width:720px">
@@ -103,10 +140,11 @@ ${day.entries.map((e) => `<div style="border-left:3px solid ${e.rating != null &
 <div><b>${esc(stars(e.rating))}</b> · ${esc(e.trigger)} · ${esc(e.email || 'unknown')} <span style="color:#64748b">(${esc(journey(e.journey))})</span></div>
 ${e.reasons.length ? `<div style="color:#475569">${esc(e.reasons.join(', '))}</div>` : ''}${e.comment ? `<div style="margin-top:4px">“${esc(e.comment)}”</div>` : ''}</div>`).join('') || '<p>No new answers today.</p>'}
 <p style="color:#475569">Top reasons (30 days): ${esc(reasons)}</p>
+${reuse.length ? `<h3 style="margin:16px 0 4px">${esc(REUSE_HEAD)}</h3>${reuse.map((r) => `<div style="border-left:3px solid #f59e0b;padding:6px 12px;margin:8px 0;white-space:pre-wrap">${esc(reuseLine(r).replace(/^- /, ''))}</div>`).join('')}` : ''}
 ${base ? `<p><a href="${esc(base)}/app#/platform/overview">Everything, with a CSV export</a></p>` : ''}</div>`;
-  const short = `Feedback: ${day.total} new today (avg ${day.average ?? 'n/a'}), ${week.total} this week. Signups ${funnel[0].day}, paid ${funnel.find((f) => f.event === 'checkout_complete').day}.` +
+  const short = (reuse.length ? `${reuse.length} account(s) flagged for trial re-use review. ` : '') + `Feedback: ${day.total} new today (avg ${day.average ?? 'n/a'}), ${week.total} this week. Signups ${funnel[0].day}, paid ${funnel.find((f) => f.event === 'checkout_complete').day}.` +
     (day.entries.find((e) => e.comment) ? ` Latest: "${day.entries.find((e) => e.comment).comment.replace(/\s+/g, ' ').slice(0, 200)}"` : '');
-  return { subject: `Feedback: ${day.total} new, avg ${day.average ?? 'n/a'} · signups ${signupsToday}`, text, html, short };
+  return { subject: `Feedback: ${day.total} new, avg ${day.average ?? 'n/a'} · signups ${signupsToday}` + (reuse.length ? ` · ${reuse.length} trial re-use flag(s)` : ''), text, html, short };
 }
 
 /**
@@ -130,7 +168,9 @@ async function run({ db = require('../db/database').db, email = require('./email
     }
   }
 
-  const d = buildDigest(db, now, base);
+  // Looked for only when something could deliver them; stamped below only once an email did.
+  const reuse = (canMail || discordUrl) ? newReuseFlags(db, now) : [];
+  const d = buildDigest(db, now, base, reuse);
   if (!d) { out.skipped = out.skipped || 'nothing_new'; return out; }
   if (canMail) {
     const admins = db.prepare("SELECT id, email FROM users WHERE role IN ('platform_admin','superadmin') AND email IS NOT NULL AND disabled_at IS NULL").all();
@@ -146,6 +186,10 @@ async function run({ db = require('../db/database').db, email = require('./email
       out.discord = !!(r && r.ok);
     } catch (e) { console.warn(`[feedback] Discord post failed: ${e.message}`); }
   }
+  // Only the email names the accounts (the Discord post carries just the count), so only a delivered
+  // email marks them reported.
+  if (reuse.length && out.digests > 0) stampReuseFlags(db, reuse, now);
+  out.reuse_flags = reuse.length;
   out.digest = d;
   return out;
 }
@@ -170,4 +214,4 @@ function startFeedbackDigest() {
   schedule();
 }
 
-module.exports = { run, startFeedbackDigest, followupCandidates, followupEmail, buildDigest, msUntilNextRun, RUN_HOUR_UTC };
+module.exports = { run, startFeedbackDigest, followupCandidates, followupEmail, buildDigest, newReuseFlags, stampReuseFlags, reuseLine, msUntilNextRun, RUN_HOUR_UTC };

@@ -343,9 +343,8 @@ test('the banner countdown runs on the server clock and ends the sale at zero', 
 
 test('every trial length on the page is the one the server grants', () => {
   // The trial is the primary call to action, so the number in it must be the real one. It comes from
-  // middleware/subscription.js, not from whoever last edited the copy.
-  const src = fs.readFileSync(path.join(__dirname, '..', 'middleware', 'subscription.js'), 'utf8');
-  const days = Number(src.match(/const TRIAL_DAYS = (\d+);/)[1]);
+  // lib/trial-days.js (what middleware/subscription.js grants), not from whoever last edited the copy.
+  const days = require('../lib/trial-days').TRIAL_DAYS;
   const claims = [...LANDING.matchAll(/(\d+)-day/g)].map((m) => Number(m[1]));
   assert.ok(claims.length >= 3, 'the page states the trial length');
   for (const n of claims) assert.equal(n, days, `the page says ${n}-day, the server grants ${days}`);

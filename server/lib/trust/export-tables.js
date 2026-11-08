@@ -234,6 +234,8 @@ const EXCLUDED = {
   feedback_prompts: 'which feedback questions a person has already been asked (lib/feedback.js): the hosting service\'s bookkeeping',
   feedback_followups: 'which feedback follow-up emails a person was sent (lib/feedback.js): the hosting service\'s bookkeeping',
   renewal_reminders: 'which renewal reminders have been sent for an account (services/renewalReminder.js): the hosting service\'s billing bookkeeping',
+  trial_screen_ledger: 'which screens have already used a free trial (lib/trial-screens.js): the hosting service\'s own abuse bookkeeping, never carried to another server',
+  trial_reuse_flags: 'which accounts the hosting service flagged for trial re-use review: its own bookkeeping',
   recovery_grants: 'break-glass credentials (secret)',
   support_grants: 'support access credentials (secret)',
   support_requests: 'support access codes (secret)',

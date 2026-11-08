@@ -56,7 +56,7 @@ export function requestError(status, body) {
   }
   return err;
 }
-const PLAN_LIMIT_CODES = new Set(['DEVICE_LIMIT', 'STORAGE_LIMIT', 'FEATURE_LOCKED']);
+const PLAN_LIMIT_CODES = new Set(['DEVICE_LIMIT', 'STORAGE_LIMIT', 'FEATURE_LOCKED', 'TRIAL_SCREEN_USED']);
 
 export function getAuthHeaders() {
   const token = localStorage.getItem('token');
@@ -977,6 +977,9 @@ export const api = {
 
   // Slice 2C - accept a workspace invite by id (post-auth flow)
   acceptInvite: (inviteId) => request(`/auth/accept-invite/${inviteId}`, { method: 'POST' }),
+  // The no-workspace screen: invites addressed to me, and "create my own workspace instead".
+  getMyInvites: () => request('/auth/my-invites'),
+  createOwnWorkspace: () => request('/auth/own-workspace', { method: 'POST' }),
 
   // Admin-provisioned user creation (#10). data: { email, name, password,
   // workspaceId, role, mustChangePassword }

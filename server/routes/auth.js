@@ -32,7 +32,18 @@ const passkeys = require('../lib/passkeys');
 // returned (idempotent). When allowCreate is false and the user has no
 // membership, returns null - the caller is created org-less and an admin /
 // operator assigns them to a workspace afterward.
-function ensureDefaultOrgForUser(user, { allowCreate = true } = {}) {
+/** Is there an unexpired workspace invite for this address? (Matched case-insensitively, as accept-invite does.) */
+function hasPendingInvite(email) {
+  if (!email) return false;
+  try {
+    // Joined to workspaces: an invite to a workspace since deleted is no invite (and /my-invites
+    // could not show it, leaving the person workspace-less with nothing on screen to explain why).
+    return !!db.prepare(`SELECT 1 FROM workspace_invites i JOIN workspaces w ON w.id = i.workspace_id
+                          WHERE lower(i.email) = lower(?) AND i.expires_at > strftime('%s','now') LIMIT 1`).get(String(email));
+  } catch { return false; }
+}
+
+function ensureDefaultOrgForUser(user, { allowCreate = true, ignoreInvites = false } = {}) {
   const existing = db.prepare(`
     SELECT w.id FROM workspaces w
     JOIN workspace_members wm ON wm.workspace_id = w.id
@@ -41,6 +52,14 @@ function ensureDefaultOrgForUser(user, { allowCreate = true } = {}) {
   `).get(user.id);
   if (existing) return existing.id;
   if (!allowCreate) return null;
+  // Someone who was INVITED is joining a team, not starting one: no organization of their own. The
+  // dashboard accepts the invite straight after sign-in (app.js consumeAcceptInvite), which is where
+  // their workspace comes from. A personal one beside it was never wanted. (This is about where they
+  // land, not trials: the trial is per account either way, and lib/trial-screens.js counts re-used
+  // screens per workspace for that reason.)
+  // "Create my own workspace" on the no-workspace screen passes ignoreInvites: an invite must never
+  // be a way to keep someone OUT (anyone can invite any address).
+  if (!ignoreInvites && hasPendingInvite(user.email)) return null;
 
   // No memberships -> mint a fresh org and Default workspace owned by user.
   const orgId = uuidv4();
@@ -967,6 +986,40 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     acting_as: req.actingAs,
     accessible_workspaces: accessible,
   });
+});
+
+/*
+ * The no-workspace screen (frontend views/no-workspace.js). An invited signup gets no workspace of its
+ * own (ensureDefaultOrgForUser), and the dashboard normally accepts the invite straight after sign-in
+ * from the link it was opened with. These two cover every other way in: the invite opened in another
+ * browser, or one the person never asked for.
+ *   GET  /my-invites      the unexpired invites addressed to this account's email, to accept from here.
+ *   POST /own-workspace   "Create my own workspace instead", wherever signups get one at all.
+ */
+router.get('/my-invites', requireAuth, (req, res) => {
+  let invites = [];
+  // An invite id is what accept-invite needs, and until now it was only ever in the emailed link. So
+  // list them only to an account that has PROVED it owns the address: a self-hosted server issues a
+  // session before verification, and anyone can register any address.
+  const me = db.prepare('SELECT email_verified FROM users WHERE id = ?').get(req.user.id);
+  if (!me || me.email_verified === 0) return res.json({ invites, can_create_own: !!config.autoCreateOrgOnSignup, verify_required: !!me });
+  try {
+    invites = db.prepare(`SELECT i.id, i.role, i.expires_at, w.name AS workspace_name, o.name AS organization_name, u.email AS invited_by_email
+                            FROM workspace_invites i JOIN workspaces w ON w.id = i.workspace_id
+                            LEFT JOIN organizations o ON o.id = w.organization_id LEFT JOIN users u ON u.id = i.invited_by
+                           WHERE lower(i.email) = lower(?) AND i.expires_at > strftime('%s','now')
+                           ORDER BY i.created_at DESC`).all(String(req.user.email || ''));
+  } catch { /* no invites table: nothing to list */ }
+  res.json({ invites, can_create_own: !!config.autoCreateOrgOnSignup });
+});
+
+router.post('/own-workspace', requireAuth, (req, res) => {
+  if (!config.autoCreateOrgOnSignup) return res.status(403).json({ error: 'Ask your administrator to add you to a workspace.' });
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user) return res.status(404).json({ error: 'Account not found' });
+  const workspaceId = ensureDefaultOrgForUser(user, { allowCreate: true, ignoreInvites: true });
+  const token = generateToken(req.user, workspaceId, { authTime: req.authTime });
+  res.json({ token, current_workspace_id: workspaceId });
 });
 
 // Switch the active workspace. Validates the user has access (direct

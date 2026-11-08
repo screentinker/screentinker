@@ -51,6 +51,7 @@ import * as playlists from './views/playlists.js';
 import * as workspaceMembers from './views/workspace-members.js';
 import * as forcePasswordChange from './views/force-password-change.js';
 import * as noWorkspace from './views/no-workspace.js';
+import { markWorkspaceJoined } from './workspace-joined.js';
 import * as siteCaches from './views/site-caches.js';
 import { applyBranding } from './branding.js';
 import { t } from './i18n.js';
@@ -215,6 +216,7 @@ async function consumeAcceptInvite(inviteId) {
     } catch (e) {
       console.warn('switchWorkspace after accept failed (non-fatal):', e.message);
     }
+    markWorkspaceJoined(result.workspace_id);
 
     // Stash the toast text in a scoped key (not a generic pending-toast
     // channel) so app boot below fires it after reload.
@@ -378,6 +380,9 @@ async function refreshCurrentUser() {
     // Guard against the login / change-password / already-there screens to avoid
     // a redirect loop.
     const hash = window.location.hash || '#/';
+    // And the other way: a workspace arrived (invite accepted, own workspace created, an admin added
+    // them) while the empty state is showing.
+    if (hash === '#/no-workspace' && !hasNoAccessibleWorkspace(fresh)) { window.location.hash = '#/'; return; }
     if (hasNoAccessibleWorkspace(fresh)
         && hash !== '#/no-workspace' && !hash.startsWith('#/login') && hash !== '#/change-password' && hash !== '#/delete-account') {
       window.location.hash = '#/no-workspace';
