@@ -14,6 +14,15 @@
   ],
   "releases": [
     {
+      "version": "3.1.5",
+      "date": "2026-11-08",
+      "notes": [
+        "Each screen gets one free trial. A screen that already ran a trial on another account asks for a plan before it can be added again; screens you already have keep playing.",
+        "Someone you invite to your workspace now lands straight in it, without an empty workspace of their own beside it.",
+        "If you sign in and have no workspace, you now see any invites waiting for you and can accept one, or create a workspace of your own."
+      ]
+    },
+    {
       "version": "3.1.4",
       "date": "2026-11-06",
       "notes": [

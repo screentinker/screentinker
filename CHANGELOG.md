@@ -1,5 +1,38 @@
 # Changelog
 
+## 3.1.5
+
+### Added
+
+- **One free trial per screen** (#826). Hosted only. When an account on a running trial pairs a
+  screen, the screen is recorded in `trial_screen_ledger` under a hashed per-unit key (for the web
+  player, its install salt only, never the model-level hardware hash). A trial that pairs the third
+  screen one earlier unpaid trial already used is refused with `TRIAL_SCREEN_USED`, which opens the
+  upgrade prompt; the first two pass (on production, ordinary accounts re-used one screen at most).
+  Counted per account and per workspace, so invitees cannot split the move. Never applies to an
+  account that has paid (Stripe, comped or invoiced), a paying team, an entry older than a year, or
+  a self-hosted server; a row that stops counting passes to the next trial that pairs the screen. A
+  one-time backfill seeds the ledger from current trialing and lapsed-unpaid accounts. Account
+  deletion anonymizes an unpaid trial's rows and deletes a paid account's.
+
+- **Trial re-use review in the daily admin digest** (#826). A running trial with three or more
+  screens that shares a sign-in network with a recently lapsed unpaid trial, or holds screens an
+  earlier unpaid trial used, is listed under "Possible trial re-use". A signal for a person, never
+  a block. Each account is reported once (`trial_reuse_flags`), and only after an email digest was
+  delivered.
+
+### Changed
+
+- **Invited signups join the team instead of getting their own workspace** (#826). An account
+  created while an invite to its address is pending no longer gets a personal organization; the
+  invite is where it lands. The "No workspaces yet" screen now lists the person's pending invites
+  (verified addresses only, `GET /api/auth/my-invites`) with Accept, and offers "Create my own
+  workspace" (`POST /api/auth/own-workspace`) wherever signups get one, so an unwanted invite can
+  never keep anyone out. Joining a first workspace no longer bounces back to the empty screen.
+
+- Trial length lives in `server/lib/trial-days.js`; new indexes on `devices(user_id)` and
+  `device_fingerprints(device_id)`.
+
 ## 3.1.4
 
 ### Added
