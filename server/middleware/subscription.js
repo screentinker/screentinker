@@ -2,7 +2,7 @@ const { db } = require('../db/database');
 const config = require('../config');
 const { isSupportSession } = require('../lib/support-access');
 
-const TRIAL_DAYS = 14;
+const { TRIAL_DAYS } = require('../lib/trial-days');
 
 // The ONE way a lapsed trial becomes Free. Used by the lazy path below (getUserPlan) and by the
 // nightly sweep (services/trialExpiry.js) so the two can never disagree on what "expired" writes.
@@ -443,6 +443,7 @@ module.exports = {
   expireTrial,
   findExpiredTrialUserIds,
   getUserPlan,
+  noteLimitHit,
   getUserDeviceCount,
   getUserStorageMB,
   checkDeviceLimit,

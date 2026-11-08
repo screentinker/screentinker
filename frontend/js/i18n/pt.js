@@ -1100,6 +1100,9 @@ export default {
   'upgrade.device.b1': 'Gerencie todos os locais em um só painel',
   'upgrade.device.b2': 'Aplique uma agenda ou campanha em todas as telas de uma vez',
   'upgrade.device.b3': 'Veja quais telas estão online e o que cada uma exibiu',
+  'upgrade.trial_screen.title': 'Esta tela já teve um teste gratuito',
+  'upgrade.trial_screen.lead': 'Cada tela tem direito a um teste gratuito, e esta já foi usada no teste de outra conta. Escolha um plano para adicioná-la; todas as telas que você já tem continuam exibindo.',
+  'upgrade.trial_screen.b3': 'Se esta tela é nova para você, fale com o suporte e resolvemos',
   'upgrade.offer': 'O {plan} oferece {what} por {price}/mês.',
   'upgrade.offer_feature': 'O {plan} inclui isso, a partir de {price}/mês.',
   'upgrade.storage.title': 'Sua biblioteca está cheia ({size} no {plan})',
@@ -4636,6 +4639,12 @@ export default {
   'noworkspace.title': "Nenhum espaço de trabalho ainda",
   'noworkspace.body': "Sua conta ainda não faz parte de nenhum espaço de trabalho. Peça ao administrador para adicioná-la a um, depois faça login novamente.",
   'noworkspace.sign_out': "Sair",
+  'noworkspace.create_own': "Criar o meu próprio espaço de trabalho",
+  'noworkspace.invited_body': "Foi convidado para um espaço de trabalho. Aceite para entrar.",
+  'noworkspace.own_body': "A sua conta ainda não faz parte de nenhum espaço de trabalho. Crie o seu ou peça ao administrador para o adicionar.",
+  'noworkspace.invited_by': "Convidado por {email}",
+  'noworkspace.accept': "Aceitar",
+  'noworkspace.create_failed': "Não foi possível criar o espaço de trabalho. Tente novamente.",
 
   // Accept-invite flow (Slice 2C). Toasts that fire post-accept on the
   // dashboard. Error variants share one helper in app.js's mapAcceptError().

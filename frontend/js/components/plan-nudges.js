@@ -191,6 +191,16 @@ export function promptCopy(code, body = {}, user = cachedUser()) {
       secondary: null,
     };
   }
+  if (code === 'TRIAL_SCREEN_USED') {
+    // One free trial per screen (server lib/trial-screens.js): this screen already had one.
+    return {
+      title: t('upgrade.trial_screen.title'),
+      lead: t('upgrade.trial_screen.lead'),
+      offer: sp ? t('upgrade.offer', { plan: sp.display_name, what: fmtScreens(sp.max_devices), price }) : '',
+      bullets: [t('upgrade.device.b1'), t('upgrade.device.b2'), t('upgrade.trial_screen.b3')],
+      secondary: null,
+    };
+  }
   if (code === 'STORAGE_LIMIT') {
     return {
       title: t('upgrade.storage.title', { size: fmtStorage(body.limit_mb), plan: planName }),

@@ -2894,6 +2894,12 @@ export default {
     'noworkspace.body':
         'Je account maakt nog geen deel uit van een werkruimte. Vraag je beheerder om je aan een werkruimte toe te voegen en meld daarna opnieuw aan.',
     'noworkspace.sign_out': 'Afmelden',
+    'noworkspace.create_own': "Mijn eigen werkruimte maken",
+    'noworkspace.invited_body': "Je bent uitgenodigd voor een werkruimte. Accepteer om lid te worden.",
+    'noworkspace.own_body': "Je account hoort nog bij geen enkele werkruimte. Maak je eigen werkruimte of vraag je beheerder je toe te voegen.",
+    'noworkspace.invited_by': "Uitgenodigd door {email}",
+    'noworkspace.accept': "Accepteren",
+    'noworkspace.create_failed': "De werkruimte kon niet worden gemaakt. Probeer het opnieuw.",
 
     // Accept-invite flow (Slice 2C). Toasts that fire post-accept on the
     // dashboard. Error variants share one helper in app.js's mapAcceptError().
@@ -3489,6 +3495,9 @@ export default {
   'upgrade.device.b1': 'Beheer elke locatie vanuit één dashboard',
   'upgrade.device.b2': 'Rol een planning of campagne in één keer uit naar elk scherm',
   'upgrade.device.b3': 'Zie welke schermen online zijn en wat elk scherm heeft afgespeeld',
+  'upgrade.trial_screen.title': 'Dit scherm heeft al een gratis proefperiode gehad',
+  'upgrade.trial_screen.lead': 'Elk scherm krijgt één gratis proefperiode, en dit scherm is al gebruikt in de proefperiode van een ander account. Kies een abonnement om het toe te voegen; al je bestaande schermen blijven afspelen.',
+  'upgrade.trial_screen.b3': 'Is dit scherm nieuw voor je, neem dan contact op met support en we lossen het op',
   'upgrade.offer': '{plan} geeft je {what} voor {price}/maand.',
   'upgrade.offer_feature': 'Dit zit in {plan}, vanaf {price}/maand.',
   'upgrade.storage.title': 'Je bibliotheek is vol ({size} bij {plan})',

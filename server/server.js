@@ -3346,6 +3346,35 @@ app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (
   }
   pairLockout.reset(ip); // a valid claim forgives prior failed attempts from this IP
 
+  // One free trial per screen (lib/trial-screens.js): a trialing account claiming the third screen
+  // that another, unpaid trial already used is refused. Hosted only; paying / Free accounts never.
+  // Only the DECISION is inside the try: a fault there skips the check (never blocks a pairing),
+  // but a refusal, once decided, is always returned.
+  let claimPlan = null;
+  let refused = null;
+  const sub = require('./middleware/subscription');
+  if (!config.selfHosted) {
+    try {
+      claimPlan = sub.getUserPlan(req.user.id);
+      const verdict = require('./lib/trial-screens').checkTrialScreen(db,
+        { userId: req.user.id, workspaceId: req.workspaceId || null, deviceId: device.id, plan: claimPlan });
+      if (!verdict.allowed) refused = verdict;
+    } catch (e) { console.warn(`[trial-screens] check skipped for ${device.id}: ${e && e.message}`); }
+  }
+  if (refused) {
+    sub.noteLimitHit(req, 'TRIAL_SCREEN_USED', { reused: refused.reused });
+    console.warn(`[trial-screens] refused pair of ${device.id} by ${req.user.id}: screen used by an earlier unpaid trial (${refused.priorUserId}, ${refused.reused} re-used)`);
+    let suggested = null;
+    try { suggested = sub.suggestPlan(null, { devices: sub.getUserDeviceCount(req.user.id) + 1 }); } catch { /* the prompt falls back to the plans page */ }
+    return res.status(403).json({
+      error: 'This screen has already been used with a free trial on another account. Choose a plan to add it.',
+      code: 'TRIAL_SCREEN_USED',
+      plan: claimPlan && claimPlan.plan_name,
+      // Any plan with room, the trial's own plan included: buying it is exactly the way out.
+      suggested_plan: suggested,
+    });
+  }
+
   const deviceName = name || 'Display ' + (db.prepare('SELECT COUNT(*) as count FROM devices WHERE user_id = ?').get(req.user.id).count + 1);
   // Generate a random 6-digit PIN for the hidden settings menu — each device gets a
   // unique PIN provisioned by the server (never a hardcoded default). CSPRNG-backed
@@ -3369,6 +3398,11 @@ app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (
   // Link fingerprint to user
   db.prepare("UPDATE device_fingerprints SET user_id = ?, device_id = ? WHERE device_id = ?")
     .run(req.user.id, device.id, device.id);
+  // One free trial per screen: a screen paired during a trial is now burned for other accounts.
+  if (claimPlan) {
+    try { require('./lib/trial-screens').recordTrialScreen(db, { userId: req.user.id, workspaceId: req.workspaceId, deviceId: device.id, plan: claimPlan }); }
+    catch (e) { console.warn(`[trial-screens] record failed for ${device.id}: ${e && e.message}`); }
+  }
 
   // #150 settings restore — ⚠️ AUDIT F07: runs HERE, after workspace_id is set, not at
   // provisioning time where the row had no workspace and the guard was a no-op. applyToDevice

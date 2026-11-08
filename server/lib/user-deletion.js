@@ -443,6 +443,12 @@ function deleteUserCascade(db, { targetId, actingAdminId, unlink, revokeCanva })
     if (have.has('canva_connections')) db.prepare('DELETE FROM canva_connections WHERE user_id = ?').run(targetId);
     if (have.has('canva_links')) db.prepare('DELETE FROM canva_links WHERE user_id = ?').run(targetId);
     if (have.has('canva_jobs')) db.prepare('DELETE FROM canva_jobs WHERE user_id = ?').run(targetId);
+    // One free trial per screen (lib/trial-screens.js): an unpaid trial's screens stay burned (deleting
+    // the account must not hand them a fresh trial) but the ledger stops naming the person; a paid
+    // account's rows are dropped. BEFORE the funnel rows go: that is how "paid" is still known.
+    // The review flag goes either way.
+    if (have.has('trial_screen_ledger')) require('./trial-screens').anonymizeUser(db, targetId);
+    if (have.has('trial_reuse_flags')) db.prepare('DELETE FROM trial_reuse_flags WHERE user_id = ?').run(targetId);
     // 3.0 funnel rows (lib/conversion-events.js): no foreign key, so nothing else would remove them.
     if (have.has('conversion_events')) db.prepare('DELETE FROM conversion_events WHERE user_id = ?').run(targetId);
     // Feedback-loop rows (lib/feedback.js): no foreign keys either.

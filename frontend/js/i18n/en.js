@@ -1140,6 +1140,9 @@ export default {
   'upgrade.device.b1': 'Run every location from one dashboard',
   'upgrade.device.b2': 'Roll out a schedule or campaign to every screen at once',
   'upgrade.device.b3': 'See which screens are online, and what each one played',
+  'upgrade.trial_screen.title': 'This screen has already had a free trial',
+  'upgrade.trial_screen.lead': 'Each screen gets one free trial, and this one was already used with a trial on another account. Choose a plan to add it; every screen you already have keeps playing.',
+  'upgrade.trial_screen.b3': 'If this screen is new to you, contact support and we will sort it out',
   'upgrade.offer': '{plan} gives you {what} for {price}/month.',
   'upgrade.offer_feature': '{plan} includes it, from {price}/month.',
   'upgrade.storage.title': 'Your library is full ({size} on {plan})',
@@ -4733,6 +4736,12 @@ export default {
   'noworkspace.title': 'No workspaces yet',
   'noworkspace.body': "Your account isn't part of any workspace yet. Ask your administrator to add you to one, then sign in again.",
   'noworkspace.sign_out': 'Sign out',
+  'noworkspace.create_own': "Create my own workspace",
+  'noworkspace.invited_body': "You've been invited to a workspace. Accept to join it.",
+  'noworkspace.own_body': "Your account isn't part of any workspace yet. Create your own, or ask your administrator to add you to one.",
+  'noworkspace.invited_by': "Invited by {email}",
+  'noworkspace.accept': "Accept",
+  'noworkspace.create_failed': "Could not create the workspace. Try again.",
 
   // Accept-invite flow (Slice 2C). Toasts that fire post-accept on the
   // dashboard. Error variants share one helper in app.js's mapAcceptError().

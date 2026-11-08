@@ -1796,6 +1796,9 @@ export default {
   'upgrade.device.b1': 'Gestiona todas tus ubicaciones desde un solo panel',
   'upgrade.device.b2': 'Lanza un horario o una campaña en todas las pantallas a la vez',
   'upgrade.device.b3': 'Mira qué pantallas están en línea y qué reprodujo cada una',
+  'upgrade.trial_screen.title': 'Esta pantalla ya tuvo una prueba gratuita',
+  'upgrade.trial_screen.lead': 'Cada pantalla tiene una prueba gratuita, y esta ya se usó en la prueba de otra cuenta. Elige un plan para añadirla; todas tus pantallas actuales siguen reproduciendo.',
+  'upgrade.trial_screen.b3': 'Si esta pantalla es nueva para ti, contacta con soporte y lo resolveremos',
   'upgrade.offer': '{plan} te da {what} por {price}/mes.',
   'upgrade.offer_feature': '{plan} lo incluye, desde {price}/mes.',
   'upgrade.storage.title': 'Tu biblioteca está llena ({size} en {plan})',
@@ -7539,6 +7542,12 @@ export default {
   'noworkspace.title': 'Aún no hay espacios de trabajo',
   'noworkspace.body': 'Tu cuenta aún no pertenece a ningún espacio de trabajo. Pide a tu administrador que te añada a uno y vuelve a iniciar sesión.',
   'noworkspace.sign_out': 'Cerrar sesión',
+  'noworkspace.create_own': "Crear mi propio espacio de trabajo",
+  'noworkspace.invited_body': "Te han invitado a un espacio de trabajo. Acepta para unirte.",
+  'noworkspace.own_body': "Tu cuenta aún no forma parte de ningún espacio de trabajo. Crea el tuyo o pide a tu administrador que te añada a uno.",
+  'noworkspace.invited_by': "Invitado por {email}",
+  'noworkspace.accept': "Aceptar",
+  'noworkspace.create_failed': "No se pudo crear el espacio de trabajo. Inténtalo de nuevo.",
 
   // accept
   'accept.success': 'Te has unido a {name}',

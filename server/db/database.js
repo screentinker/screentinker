@@ -2566,6 +2566,28 @@ const migrations = [
      sent_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
      PRIMARY KEY (user_id, milestone_days))`,
   /*
+   * One free trial per screen (lib/trial-screens.js). trial_screen_ledger: a screen's per-unit
+   * identity (hashed, never the raw fingerprint) against the first trialing account that paired
+   * it. Deliberately NOT keyed or cascaded on devices: deleting a screen and re-pairing it is the
+   * very move this exists to see. No foreign keys; account deletion anonymizes user_id rather than
+   * deleting, so a screen stays burned. trial_reuse_flags: which accounts the daily digest has
+   * already reported for review (services/feedback-digest.js), so each is reported once.
+   */
+  `CREATE TABLE IF NOT EXISTS trial_screen_ledger (
+     screen_key TEXT PRIMARY KEY,
+     user_id TEXT NOT NULL,
+     organization_id TEXT,
+     first_trial_at INTEGER NOT NULL,
+     last_seen_at INTEGER NOT NULL)`,
+  'CREATE INDEX IF NOT EXISTS idx_trial_screen_ledger_user ON trial_screen_ledger(user_id)',
+  // The one-trial-per-screen lookups (a device's fingerprints; a user's screens) on the pairing route.
+  'CREATE INDEX IF NOT EXISTS idx_device_fingerprints_device ON device_fingerprints(device_id)',
+  'CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id)',
+  `CREATE TABLE IF NOT EXISTS trial_reuse_flags (
+     user_id TEXT PRIMARY KEY,
+     first_flagged_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     detail TEXT)`,
+  /*
    * 3.0: single-use codes handing a single sign-on session to the Manager app (routes/auth.js
    * /sso/app-exchange). Stored hashed, live for 2 minutes, deleted on use and swept on each insert.
    */
@@ -3722,6 +3744,21 @@ try {
     if (n > 0) console.log(`[migrate] offline-alert backfill: ${n} device(s) marked as already-alerted`);
   }
 } catch { /* schema_migrations or column not ready yet; next boot retries */ }
+
+// One-time: seed the one-trial-per-screen ledger from the screens already on trialing or
+// lapsed-unpaid accounts (lib/trial-screens.js). Hosted only: a self-hosted server has no trials
+// to protect. Runs exactly once -> schema_migrations, not the array.
+try {
+  const ID = 'trial_screen_ledger_backfill_v1';
+  if (process.env.SELF_HOSTED !== 'true' && !db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(ID)) {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'trial_screen_ledger'").get()) {
+      throw new Error('trial_screen_ledger not created yet');   // retried next boot, never marked done
+    }
+    const n = require('../lib/trial-screens').backfillLedger(db);
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)').run(ID);
+    if (n > 0) console.log(`[migrate] trial-screen ledger: seeded ${n} screen(s) from trialing / lapsed-unpaid accounts`);
+  }
+} catch (e) { console.warn(`[migrate] trial-screen ledger backfill deferred: ${e && e.message}`); }
 
 // Content-only schedules invent a throwaway one-item "Scheduled: ..." playlist, but the insert
 // historically omitted is_auto_generated, so the Playlists page "Show auto-generated" toggle
