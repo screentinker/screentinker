@@ -42,8 +42,23 @@ function lookup(key) {
 function brandName() {
   try {
     const n = typeof window !== 'undefined' && window.__ST_BRAND_NAME;
-    return (typeof n === 'string' && n.trim()) ? n.trim() : 'ScreenTinker';
+    return (typeof n === 'string' && n.trim()) ? asText(n.trim()) : 'ScreenTinker';
   } catch (e) { return 'ScreenTinker'; }
+}
+
+/*
+ * ⚠️ THE NAME IS TYPED BY A WORKSPACE ADMIN AND LANDS IN EVERY STRING, so it has to be inert in
+ * every place a string is written: as HTML, inside a quoted attribute, and as plain text.
+ *
+ * Escaping for HTML here would be wrong for the plain-text call sites (textContent, document.title,
+ * placeholders), which would show "&lt;" literally, and several hundred call sites cannot each be
+ * trusted to pick the right one. So the five characters that can open a tag or close an attribute
+ * are swapped for look-alikes that are only ever text. "Joe's Signs" reads the same; markup does not
+ * survive. "&" is left alone: on its own it cannot start a tag or end an attribute.
+ */
+const TEXT_ONLY = { '<': '\u2039', '>': '\u203A', '"': '\u201D', "'": '\u2019', '`': '\u2019' };
+function asText(name) {
+  return name.replace(/[<>"'`]/g, (c) => TEXT_ONLY[c]);
 }
 
 function format(s, vars) {
