@@ -1,6 +1,18 @@
 const express = require('express');
 const router = express.Router();
 // Abuse backstop (lib/backstop-limiter.js): already counted app-wide; here so this router is never unguarded.
+/*
+ * A zone's geometry is four percentages, and the dashboard writes them into style attributes. The
+ * columns are REAL, which in SQLite keeps a non-numeric string exactly as it was sent, so every
+ * write goes through this: a finite, non-zero number, or the default (the same `|| default` the
+ * writes always applied to a missing or zero value).
+ */
+const GEOMETRY_FIELDS = new Set(['x_percent', 'y_percent', 'width_percent', 'height_percent']);
+function zonePct(v, dflt) {
+  const n = typeof v === 'number' ? v : (typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
+  return Number.isFinite(n) && n !== 0 ? n : dflt;
+}
+
 router.use(require('../lib/backstop-limiter'));
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
@@ -151,8 +163,8 @@ router.post('/', (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     zones.forEach((z, i) => {
-      stmt.run(uuidv4(), id, z.name || `Zone ${i + 1}`, z.x_percent || 0, z.y_percent || 0,
-        z.width_percent || 100, z.height_percent || 100, z.z_index || 0,
+      stmt.run(uuidv4(), id, z.name || `Zone ${i + 1}`, zonePct(z.x_percent, 0), zonePct(z.y_percent, 0),
+        zonePct(z.width_percent, 100), zonePct(z.height_percent, 100), z.z_index || 0,
         z.zone_type || 'content', safeFitMode(z.fit_mode), safeHexColor(z.background_color, '#000000'), i);
     });
   }
@@ -250,7 +262,7 @@ router.put('/:id', (req, res) => {
         const zid = (z.id && (existingSet.has(z.id) || !zoneIdTaken.get(z.id))) ? z.id : uuidv4();
         const vals = [
           z.name || `Zone ${i + 1}`,
-          z.x_percent || 0, z.y_percent || 0, z.width_percent || 100, z.height_percent || 100,
+          zonePct(z.x_percent, 0), zonePct(z.y_percent, 0), zonePct(z.width_percent, 100), zonePct(z.height_percent, 100),
           z.z_index || 0, z.zone_type || 'content', safeFitMode(z.fit_mode),
           safeHexColor(z.background_color, '#000000'), i,
         ];
@@ -394,8 +406,8 @@ router.post('/:id/zones', (req, res) => {
   db.prepare(`
     INSERT INTO layout_zones (id, layout_id, name, x_percent, y_percent, width_percent, height_percent, z_index, zone_type, fit_mode, background_color, sort_order)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, req.params.id, name || 'New Zone', x_percent || 0, y_percent || 0,
-    width_percent || 50, height_percent || 50, z_index || 0,
+  `).run(id, req.params.id, name || 'New Zone', zonePct(x_percent, 0), zonePct(y_percent, 0),
+    zonePct(width_percent, 50), zonePct(height_percent, 50), z_index || 0,
     zone_type || 'content', safeFitMode(fit_mode), safeHexColor(background_color, '#000000'), maxOrder + 1);
 
   db.prepare("UPDATE layouts SET updated_at = strftime('%s','now') WHERE id = ?").run(req.params.id);
@@ -415,15 +427,24 @@ router.put('/:id/zones/:zoneId', (req, res) => {
   const fields = ['name', 'x_percent', 'y_percent', 'width_percent', 'height_percent', 'z_index', 'zone_type', 'fit_mode', 'background_color', 'sort_order'];
   const updates = [];
   const values = [];
+  let badGeometry = null;
   fields.forEach(f => {
     if (req.body[f] !== undefined) {
       let val = req.body[f];
       if (f === 'fit_mode') val = safeFitMode(val);
       if (f === 'background_color') val = safeHexColor(val, '#000000');
+      if (GEOMETRY_FIELDS.has(f)) {
+        // Zero is a real position here (a single-field edit has no default to fall back on).
+        const n = typeof val === 'number' ? val : (typeof val === 'string' && val.trim() !== '' ? Number(val) : NaN);
+        if (!Number.isFinite(n)) { badGeometry = f; return; }
+        val = n;
+      }
       updates.push(`${f} = ?`);
       values.push(val);
     }
   });
+
+  if (badGeometry) return res.status(400).json({ error: `${badGeometry} must be a number` });
 
   if (updates.length > 0) {
     values.push(req.params.zoneId);
