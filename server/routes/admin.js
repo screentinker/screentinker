@@ -132,12 +132,17 @@ router.post('/users', (req, res) => {
     // no SMTP configured that left them with a permanent "Please confirm your email address"
     // banner they could not clear, fixable only by editing the database by hand. An address chosen
     // by an administrator provisioning the account is as verified as this system can make it.
+    //
+    // ⚠️ email_proven = 0, though: verified is about the banner, and the administrator chose this
+    // account's password, so nothing here shows the mailbox's owner is the one signing in. Invites
+    // addressed to the email are not listed to the account until a mailed link has been used
+    // (routes/auth.js my-invites; lib/passwordReset.js and lib/emailVerify.js set it).
   const txn = db.transaction(() => {
     db.prepare(`
       INSERT INTO users (
         id, email, name, password_hash, auth_provider, role, plan_id,
-        must_change_password, email_verified, welcome_email_sent_at, activation_nudge_sent_at
-      ) VALUES (?, ?, ?, ?, 'local', 'user', 'free', ?, 1, strftime('%s','now'), strftime('%s','now'))
+        must_change_password, email_verified, email_proven, welcome_email_sent_at, activation_nudge_sent_at
+      ) VALUES (?, ?, ?, ?, 'local', 'user', 'free', ?, 1, 0, strftime('%s','now'), strftime('%s','now'))
     `).run(id, email, name || email.split('@')[0], passwordHash, mustChangePassword ? 1 : 0);
 
     // Same membership footprint as an accepted invite: one workspace_members

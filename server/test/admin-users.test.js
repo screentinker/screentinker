@@ -37,6 +37,8 @@ db.exec(`
     -- unclearable "confirm your email" banner (#292), so the fixture must carry the same
     -- default or the fix cannot be tested here at all.
     email_verified INTEGER NOT NULL DEFAULT 0,
+    -- and its companion (db/database.js): 1 everywhere except an account an admin created.
+    email_proven INTEGER NOT NULL DEFAULT 1,
     welcome_email_sent_at INTEGER,
     activation_nudge_sent_at INTEGER,
     last_login INTEGER,
