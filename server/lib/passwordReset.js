@@ -40,7 +40,7 @@ function consume(token, newPassword) {
   if (!row) return null;
   if (!row.password_reset_expires || row.password_reset_expires < Math.floor(Date.now() / 1000)) return null;
   const res = db.prepare(`UPDATE users SET password_hash = ?, password_reset_hash = NULL,
-      password_reset_expires = NULL, must_change_password = 0, updated_at = strftime('%s','now')
+      password_reset_expires = NULL, must_change_password = 0, email_proven = 1, updated_at = strftime('%s','now')
     WHERE id = ? AND password_reset_hash = ?`).run(bcrypt.hashSync(newPassword, 10), row.id, hash);
   return res.changes === 1 ? row.id : null;
 }

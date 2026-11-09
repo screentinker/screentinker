@@ -1001,8 +1001,12 @@ router.get('/my-invites', requireAuth, (req, res) => {
   // An invite id is what accept-invite needs, and until now it was only ever in the emailed link. So
   // list them only to an account that has PROVED it owns the address: a self-hosted server issues a
   // session before verification, and anyone can register any address.
-  const me = db.prepare('SELECT email_verified FROM users WHERE id = ?').get(req.user.id);
+  const me = db.prepare('SELECT email_verified, email_proven FROM users WHERE id = ?').get(req.user.id);
   if (!me || me.email_verified === 0) return res.json({ invites, can_create_own: !!config.autoCreateOrgOnSignup, verify_required: !!me });
+  // An account an administrator created is verified (no banner) without its owner ever having
+  // shown they hold the address: the administrator set the password. The emailed invite link still
+  // works for the real owner; the list is simply not offered until a mailed link has been used.
+  if (me.email_proven === 0) return res.json({ invites, can_create_own: !!config.autoCreateOrgOnSignup, proof_required: true });
   try {
     invites = db.prepare(`SELECT i.id, i.role, i.expires_at, w.name AS workspace_name, o.name AS organization_name, u.email AS invited_by_email
                             FROM workspace_invites i JOIN workspaces w ON w.id = i.workspace_id

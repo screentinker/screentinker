@@ -2690,6 +2690,19 @@ const migrations = [
    * upgrade changes nobody.
    */
   'ALTER TABLE users ADD COLUMN disabled_at INTEGER',
+  /*
+   * "The owner of this address has proved it is theirs", kept apart from email_verified.
+   *
+   * email_verified answers "should this account see the confirm-your-email banner", and an account
+   * an administrator creates is marked verified so it does not carry a banner nobody can clear.
+   * But the administrator chose that account's password, so "verified" there says nothing about
+   * who holds the mailbox, and GET /api/auth/my-invites was treating it as if it did.
+   *
+   * DEFAULT 1: every existing account and every other way an account is made keeps exactly the
+   * behaviour it had. Only POST /api/admin/users writes 0, and a link mailed to the address
+   * (password reset, email verification) sets it back to 1.
+   */
+  'ALTER TABLE users ADD COLUMN email_proven INTEGER NOT NULL DEFAULT 1',
   // One row per organization that has turned provisioning on. default_* is optional access every
   // provisioned person gets, on top of whatever their groups map to.
   `CREATE TABLE IF NOT EXISTS org_scim_settings (
