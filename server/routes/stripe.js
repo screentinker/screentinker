@@ -47,6 +47,9 @@ const appBase = (req) => {
 // STRIPE_SECRET_KEY is unset.
 const stripeClient = require('../lib/stripe-client');
 
+// Statuses under which Stripe is providing the service: paid, in a trial, or paid-but-retrying.
+const ENTITLING_STATUSES = new Set(['active', 'trialing', 'past_due']);
+
 // Create checkout session - user clicks "Upgrade" on a plan
 router.post('/checkout', requireAuth, async (req, res) => {
   const stripe = stripeClient.get();
@@ -232,7 +235,36 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
          * and kept Pro, and one who upgraded paid Pro and stayed capped at Starter. The price is
          * what Stripe is actually charging; metadata only answers for a price no plan row knows.
          */
-        const planId = subscriptions.planIdFromSubscription(sub);
+        let planId = subscriptions.planIdFromSubscription(sub);
+
+        /*
+         * ⚠️ ONLY A SUBSCRIPTION STRIPE IS HONOURING GRANTS A PLAN.
+         *
+         * Stripe creates the subscription before the first payment settles. A payment that is never
+         * completed leaves it `incomplete`, then `incomplete_expired` a day later, and NO deletion
+         * event follows. This handler copied the plan from the price for any status, so an
+         * abandoned checkout upgraded the account; and because it also wrote the status, a second,
+         * abandoned checkout on a paying account replaced that account's `active` with `incomplete`.
+         *
+         *   active / trialing / past_due   as before: plan from the billed price, status, period end.
+         *   incomplete(_expired)           never paid. Ignored unless it IS the tracked subscription.
+         *   anything else (unpaid, canceled, paused, a status added later)
+         *                                  ignored when the account tracks a DIFFERENT subscription
+         *                                  (the same rule customer.subscription.deleted applies);
+         *                                  otherwise the status is recorded and the plan is left to
+         *                                  the paths that own it (deletion, dunning, reconcile).
+         */
+        if (!ENTITLING_STATUSES.has(sub.status)) {
+          const acct = db.prepare('SELECT stripe_subscription_id FROM users WHERE id = ?').get(userId);
+          const tracked = acct ? acct.stripe_subscription_id : null;
+          const neverPaid = sub.status === 'incomplete' || sub.status === 'incomplete_expired';
+          const mine = tracked ? tracked === sub.id : !neverPaid;
+          if (!mine) {
+            console.log(`Subscription ${sub.id} is ${sub.status} for ${userId} and is not the tracked one - account left as is`);
+            break;
+          }
+          planId = null;   // COALESCE below keeps the plan the account has
+        }
 
         const status = sub.status === 'active' ? 'active' : sub.status === 'past_due' ? 'past_due' : sub.status;
         const ends = periodEndOf(sub);   // moved to the item in Stripe 2025-03+; see lib/stripe-fields.js
