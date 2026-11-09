@@ -3496,10 +3496,15 @@ app.post('/api/provision/pair', bearerAuth, resolveTenancy, requireTokenScope('f
 
   const updated = db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id);
   auditTokenCreate(req, 'device_paired_via_token', device.id, updated.name || pairedName);
+  // The broadcast reaches every dashboard in the workspace, read-only members included, so it gets
+  // the list-sanitised copy (as the web-player route above does). The caller's own response keeps
+  // the PIN: the person pairing has to be able to write it on the panel.
+  const updatedForBroadcast = require('./lib/device-sanitize').stripDeviceSecretsForList({ ...updated });
   require('./lib/device-sanitize').stripDeviceSecrets(updated); // never leak device_token to clients
+  require('./lib/device-sanitize').stripSecretsForTokens(updated, req.viaToken);
   // Phase 2.3: scope to the workspace the device was just claimed into.
   const { workspaceRoom, emitToWorkspace } = require('./lib/socket-rooms');
-  emitToWorkspace(dashboardNs, workspaceRoom(updated.workspace_id), 'dashboard:device-added', updated);
+  emitToWorkspace(dashboardNs, workspaceRoom(updated.workspace_id), 'dashboard:device-added', updatedForBroadcast);
   // 3.0 funnel (hosted only, once per account; lib/conversion-events.js).
   require('./lib/conversion-events').record(db, { userId: req.user.id, workspaceId: updated.workspace_id || null, event: 'first_pair', meta: { via: 'code' } });
 

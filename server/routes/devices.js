@@ -19,7 +19,7 @@ const { resourceAccess } = require('../lib/tenancy');
 // already rejects workspace_viewer — the same check requireFleetWrite performs in routes/triggers.js.
 const { requireScope } = require('../middleware/apiToken');
 const { ALLOWED_COMMANDS, LOCAL_API_COMMANDS, deliverCommand, validateCommand, requireCommandScope } = require('../lib/device-command');
-const { stripDeviceSecrets, stripDeviceSecretsForList, stripSecretsForTokens } = require('../lib/device-sanitize');
+const { stripDeviceSecrets, stripDeviceSecretsForList, stripSecretsForTokens, stripSecretsForReadOnly } = require('../lib/device-sanitize');
 const { layoutZones, orphanCountsByDevice } = require('../lib/zone-validate');
 const deviceSettings = require('../lib/device-settings'); // #150 delete+re-pair settings preservation
 const { normalizeTags, parseTags } = require('../lib/content-tags');
@@ -258,7 +258,7 @@ router.post('/move-workspace', (req, res) => {
       try {
         emitToWorkspace(io.of('/dashboard'), workspaceRoom(m.from_workspace_id), 'dashboard:device-removed', { device_id: m.device_id });
         const row = db.prepare('SELECT * FROM devices WHERE id = ?').get(m.device_id);
-        if (row) emitToWorkspace(io.of('/dashboard'), workspaceRoom(target.id), 'dashboard:device-added', stripDeviceSecrets(row));
+        if (row) emitToWorkspace(io.of('/dashboard'), workspaceRoom(target.id), 'dashboard:device-added', stripDeviceSecretsForList(row));
         const { buildPlaylistPayload } = require('../ws/deviceSocket');
         require('../lib/command-queue').queueOrEmitPlaylistUpdate(io.of('/device'), m.device_id, buildPlaylistPayload);
       } catch (e) { console.warn(`[move-workspace] notify failed for ${m.device_id}: ${e && e.message}`); }
@@ -327,6 +327,9 @@ router.get('/:id', (req, res) => {
   // SELECT d.* now carries trigger_secret. A read-scoped token must not be able to turn "list my
   // screens" into "inject content on any of them" — see lib/device-sanitize.js.
   stripSecretsForTokens(device, req.viaToken);
+  // And a read-only member, by the same reasoning: each credential is a way round the write checks
+  // that already refuse this role. Same test the write gates use (requireFleetWrite).
+  stripSecretsForReadOnly(device, !ctx.actingAs && ctx.workspaceRole === 'workspace_viewer');
 
   const telemetry = db.prepare(
     'SELECT * FROM device_telemetry WHERE device_id = ? ORDER BY reported_at DESC LIMIT 20'

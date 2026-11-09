@@ -1779,7 +1779,8 @@ function provisionViaReplica({ pairing_code, device_info, fingerprint, hw_finger
       // workspace guard cannot work. The claim (/api/provision/pair) restores instead.
     } catch (e) { /* fingerprint bookkeeping is best effort */ }
   }
-  emitToDeviceWorkspace(_dashboardNsRef, id, 'dashboard:device-added', db.prepare('SELECT * FROM devices WHERE id = ?').get(id));
+  emitToDeviceWorkspace(_dashboardNsRef, id, 'dashboard:device-added',
+    require('../lib/device-sanitize').stripDeviceSecretsForList(db.prepare('SELECT * FROM devices WHERE id = ?').get(id)));
   console.log(`New device registered via replica ${nodeId}: ${id} with pairing code: ${pairing_code}`);
   return { device_id: id, device_token: token };
 }
@@ -3656,7 +3657,8 @@ module.exports = function setupDeviceSocket(io) {
         // workspace; that's safer than the previous platform-wide broadcast.
         // Dashboards refresh /api/devices/unassigned on poll for the
         // platform_admin pairing view.
-        emitToDeviceWorkspace(dashboardNs, id, 'dashboard:device-added', db.prepare('SELECT * FROM devices WHERE id = ?').get(id));
+        emitToDeviceWorkspace(dashboardNs, id, 'dashboard:device-added',
+          require('../lib/device-sanitize').stripDeviceSecretsForList(db.prepare('SELECT * FROM devices WHERE id = ?').get(id)));
         console.log(`New device registered: ${id} with pairing code: ${pairing_code}`);
       }
     });

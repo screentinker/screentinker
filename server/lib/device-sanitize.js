@@ -84,10 +84,30 @@ function stripSecretsForTokens(d, viaToken) {
   return d;
 }
 
+/*
+ * A READ-ONLY MEMBER GETS NONE OF THEM, the PIN included.
+ *
+ * Every write to a screen refuses workspace_viewer. Each of these four is a way to act on the screen
+ * without going through one of those writes: the PIN at the panel, the trigger and local-API secrets
+ * from the LAN, the enrolment key by becoming the display. Handing them to a member whose role is
+ * "may look" gave back, through one read, everything the write checks withhold. Admins and editors
+ * keep all four; the detail page is still the only place they exist.
+ */
+function stripSecretsForReadOnly(d, readOnly) {
+  if (readOnly && d && typeof d === 'object') {
+    delete d.settings_pin;
+    delete d.trigger_secret;
+    delete d.local_api_secret;
+    delete d.enrol_key;
+  }
+  return d;
+}
+
 /** @deprecated the name predates the enrolment key; kept so no call site silently keeps the old,
  *  narrower behaviour. Both names do the same, complete thing. */
 const stripTriggerSecretForTokens = stripSecretsForTokens;
 
 module.exports = {
   stripDeviceSecrets, stripDeviceSecretsForList, stripSecretsForTokens, stripTriggerSecretForTokens,
+  stripSecretsForReadOnly,
 };
