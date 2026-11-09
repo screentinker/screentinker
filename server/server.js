@@ -1399,7 +1399,8 @@ const { canonicalLimitPath } = require('./lib/limit-paths');
  * unchanged. Every 429 now carries Retry-After, so a client in a loop knows how long to back off
  * instead of guessing — which, for an agent, means retrying immediately.
  */
-function rateLimit(windowMs, maxRequests, onReject) {
+// keyFn (optional) replaces the client IP as the bucket owner, e.g. one bucket per API token (#827).
+function rateLimit(windowMs, maxRequests, onReject, keyFn) {
   return (req, res, next) => {
     // #100: key on the FULL path, not req.path. These limiters are mounted via
     // app.use('/api/auth/login', ...) etc., and Express strips the mount path, so
@@ -1417,7 +1418,7 @@ function rateLimit(windowMs, maxRequests, onReject) {
      */
     const rawPath = (req.originalUrl || req.url || req.path).split('?')[0];
     const normalisedPath = canonicalLimitPath(rawPath);
-    const key = getClientIp(req) + normalisedPath;
+    const key = (keyFn ? keyFn(req) : getClientIp(req)) + normalisedPath;
     const now = Date.now();
     const windowStart = now - windowMs;
     let hits = rateLimits.get(key) || [];
@@ -1647,7 +1648,27 @@ app.use('/scim/v2', rateLimit(60000, 3000), require('./routes/scim'));
 // POST /api/provision (routes/provisioning.js) is a second pairing endpoint that
 // was unthrottled, letting an authed user brute-force pairing codes. /api/provision
 // matches both /api/provision and /api/provision/pair.
-app.use('/api/provision', rateLimit(60000, 5));
+app.use('/api/provision', provisionLimiter());
+/*
+ * #827: an API token may pair a screen (POST /api/provision/pair only; the bare POST /api/provision
+ * router stays JWT-only). A token request skips the 5/min PER-IP budget, which an installer pairing a
+ * batch from one site network or NAT address would share with everyone else there, and gets 5/min PER
+ * TOKEN instead, counted after the token authenticates (pairTokenLimit, on the route). Requests that
+ * only carry a token-shaped header still meet a per-IP ceiling, so the token lookup is never unbounded.
+ * Failed codes from a token lock out its OWNER, not the token: minting more tokens buys no more guesses.
+ */
+// A token-bearing POST /api/provision/pair. Matched relative to the /api/provision mount, the way
+// Express routes it (case-insensitive, trailing slash ignored), so no spelling slips past either side.
+function isTokenPairRequest(req) {
+  const auth = req.headers.authorization || '';
+  return req.method === 'POST' && auth.startsWith('Bearer st_')
+    && (req.path || '').toLowerCase().replace(/\/+$/, '') === '/pair';
+}
+function provisionLimiter() {
+  const perIp = rateLimit(60000, 5);
+  const tokenFront = rateLimit(60000, 120, null, (req) => 'st-front:' + getClientIp(req));
+  return (req, res, next) => (isTokenPairRequest(req) ? tokenFront(req, res, next) : perIp(req, res, next));
+}
 // Rate limit expensive operations
 app.use('/api/status/export', rateLimit(60000, 5)); // 5 exports per minute
 app.use('/api/status/import', rateLimit(60000, 3)); // 3 imports per minute
@@ -2308,8 +2329,13 @@ for (const r of PUBLIC_ROUTERS) {
 for (const r of JWT_ONLY_ROUTERS) {
   // tenancy routers act on the caller's active workspace; the rest (workspaces, admin)
   // target a workspace by URL/body param and are gated per-handler (canAdminWorkspace).
-  if (r.tenancy) app.use(r.path, requireAuth, resolveTenancy, require(r.mod));
-  else app.use(r.path, requireAuth, require(r.mod));
+  // #827: the provisioning router stays JWT-only, but a token's POST /pair passes through its mount to
+  // the app-level pair route below (bearerAuth + requireScope('full')). Nothing else is let through.
+  const gate = r.path === '/api/provision'
+    ? (mw) => (req, res, next) => (isTokenPairRequest(req) ? next() : mw(req, res, next))
+    : (mw) => mw;
+  if (r.tenancy) app.use(r.path, gate(requireAuth), gate(resolveTenancy), gate(require(r.mod)));
+  else app.use(r.path, gate(requireAuth), gate(require(r.mod)));
 }
 for (const r of AGENCY_ROUTERS) {
   // #73: capability-restricted token surface. bearerAuth + resolveTenancy + agencyGate
@@ -3237,7 +3263,27 @@ const pairLockout = require('./lib/pair-lockout');
  *
  * Same guards as pairing: authenticated, tenanted, and counted against the plan's device limit.
  */
-app.post('/api/devices/web-player', requireAuth, resolveTenancy, checkDeviceLimit, (req, res) => {
+/*
+ * #827: both creation routes take an API token as well as a session. bearerAuth binds a token to its
+ * workspace (resolveTenancy reads the bound one, never a header), requireScope('full') matches
+ * enrol-key, and agency / billing tokens are off that ladder so they are refused. Platform powers are
+ * stripped for tokens as everywhere else. Each token-made display is audited with the token's name.
+ */
+const { requireScope: requireTokenScope } = require('./middleware/apiToken');
+const pairTokenLimit = (() => {
+  const limit = rateLimit(60000, 5, null, (req) => 'st-token:' + req.apiToken.id);
+  return (req, res, next) => (req.viaToken ? limit(req, res, next) : next());
+})();
+function auditTokenCreate(req, action, deviceId, deviceName) {
+  if (!req.viaToken || !req.apiToken) return;
+  try {
+    require('./services/activity').logActivity(req.user.id, action,
+      `"${deviceName}" via API token ${req.apiToken.prefix}… ("${req.apiToken.name}")`,
+      deviceId, getClientIp(req), req.workspaceId || null);
+  } catch (e) { console.warn(`[audit] ${action} for ${deviceId}: ${e && e.message}`); }
+}
+
+app.post('/api/devices/web-player', bearerAuth, resolveTenancy, requireTokenScope('full'), checkDeviceLimit, (req, res) => {
   // ⚠️ A read-only member must not create displays (and mint their enrolment keys) in the
   // workspace. Required inline: only this handler is touched, not the module-scope import.
   if (require('./lib/tenancy').denyReadOnly(req, res)) return;
@@ -3265,7 +3311,8 @@ app.post('/api/devices/web-player', requireAuth, resolveTenancy, checkDeviceLimi
     .run(id, deviceName, req.user.id, req.workspaceId, crypto.randomBytes(32).toString('hex'), sixDigitCode());
 
   const key = enrolKey.setEnrolKey(db, id);
-  console.log(`[enrol] created web-player display ${id} with an enrolment key (user ${req.user.id})`);
+  console.log(`[enrol] created web-player display ${id} with an enrolment key (user ${req.user.id}${req.viaToken ? ', API token ' + req.apiToken.prefix : ''})`);
+  auditTokenCreate(req, 'web_player_created_via_token', id, deviceName);
 
   const created = db.prepare('SELECT * FROM devices WHERE id = ?').get(id);
   /*
@@ -3294,13 +3341,14 @@ app.post('/api/devices/web-player', requireAuth, resolveTenancy, checkDeviceLimi
   });
 });
 
-app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (req, res) => {
+app.post('/api/provision/pair', bearerAuth, resolveTenancy, requireTokenScope('full'), pairTokenLimit, checkDeviceLimit, (req, res) => {
   // ⚠️ A read-only member must not claim screens into the workspace. Checked before the lockout
   // bookkeeping so a viewer's attempts neither pair nor burn the IP's guess budget.
   if (require('./lib/tenancy').denyReadOnly(req, res)) return;
   // #87: lock out an IP after repeated failed pairing-code guesses (brute-force defense
   // beyond the 5/min rate-limit on /api/provision).
-  const ip = getClientIp(req);
+  // #827: a token's failures count against its OWNER (every token they hold), not the IP it calls from.
+  const ip = req.viaToken ? 'st-owner:' + req.user.id : getClientIp(req);
   if (pairLockout.isLocked(ip)) {
     return res.status(429).json({ error: 'Too many failed pairing attempts. Try again in a few minutes.' });
   }
@@ -3447,6 +3495,7 @@ app.post('/api/provision/pair', requireAuth, resolveTenancy, checkDeviceLimit, (
   } catch (e) { console.warn(`[pair] time zone fallback failed for ${device.id}: ${e.message}`); }
 
   const updated = db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id);
+  auditTokenCreate(req, 'device_paired_via_token', device.id, updated.name || pairedName);
   require('./lib/device-sanitize').stripDeviceSecrets(updated); // never leak device_token to clients
   // Phase 2.3: scope to the workspace the device was just claimed into.
   const { workspaceRoom, emitToWorkspace } = require('./lib/socket-rooms');
