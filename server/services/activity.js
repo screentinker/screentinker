@@ -153,7 +153,25 @@ function shouldAudit(req, res) {
   // A 5xx is OUR fault. Keep it whoever triggered it — that is the row worth having.
   if (res.statusCode >= 500) return true;
   // Everything else must belong to someone. An anonymous caller cannot write here.
-  return !!(req.user?.id || req.params?.deviceId || req.body?.device_id);
+  if (req.user?.id) return true;
+  return !!knownDeviceId(req);
+}
+
+/*
+ * ⚠️ "A KNOWN DEVICE" MEANS A ROW IN `devices`, NOT A VALUE IN THE REQUEST.
+ *
+ * This used to be `req.params.deviceId || req.body.device_id`: whatever the caller typed. So a
+ * refused anonymous request became an audit row as long as it named any device at all, real or
+ * invented, which is exactly the unlimited anonymous write the rule above forbids (and a
+ * non-string value went on to fail the insert, one [AUDIT-DROP] line per request).
+ *
+ * One primary-key lookup, and only for a finished mutation that carries no user.
+ */
+function knownDeviceId(req) {
+  const id = req.params?.deviceId || req.params?.id || req.body?.device_id;
+  if (typeof id !== 'string' || !id || id.length > 100) return null;
+  try { return db.prepare('SELECT 1 FROM devices WHERE id = ?').get(id) ? id : null; }
+  catch (_) { return null; }
 }
 
 /*
@@ -176,7 +194,9 @@ function activityLogger(req, res, next) {
       if (!shouldAudit(req, res)) return;
       const action = `${req.method} ${req.baseUrl || ''}${req.route?.path || req.path}`;
       const userId = req.user?.id;
-      const deviceId = req.params?.id || req.params?.deviceId || req.body?.device_id;
+      // Only ever a string: the column is TEXT and a caller can send an object or an array here.
+      const rawDevice = req.params?.id || req.params?.deviceId || req.body?.device_id;
+      const deviceId = typeof rawDevice === 'string' ? rawDevice.slice(0, 100) : null;
       const details = summarizeAction(req);
       logActivity(userId, action, details, deviceId, getClientIp(req), req.workspaceId || null, res.statusCode);
     } catch (e) {
@@ -188,13 +208,18 @@ function activityLogger(req, res, next) {
   next();
 }
 
+// A request's own text, cut to a length worth reading in a log. Uncapped, one request could put
+// megabytes into a row.
+const SUMMARY_PART_MAX = 120;
+const brief = (v) => { const s = String(v); return s.length > SUMMARY_PART_MAX ? s.slice(0, SUMMARY_PART_MAX) + '...' : s; };
+
 function summarizeAction(req) {
   const parts = [];
-  if (req.body?.name) parts.push(`name: ${req.body.name}`);
-  if (req.body?.filename) parts.push(`file: ${req.body.filename}`);
+  if (req.body?.name) parts.push(`name: ${brief(req.body.name)}`);
+  if (req.body?.filename) parts.push(`file: ${brief(req.body.filename)}`);
   if (req.body?.pairing_code) parts.push('device paired');
-  if (req.body?.plan_id) parts.push(`plan: ${req.body.plan_id}`);
-  if (req.file?.originalname) parts.push(`uploaded: ${req.file.originalname}`);
+  if (req.body?.plan_id) parts.push(`plan: ${brief(req.body.plan_id)}`);
+  if (req.file?.originalname) parts.push(`uploaded: ${brief(req.file.originalname)}`);
   return parts.join(', ') || null;
 }
 

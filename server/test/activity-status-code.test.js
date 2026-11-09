@@ -97,6 +97,9 @@ test('an anonymous SUCCESS is not audited either — the rule is ownership, not 
 });
 
 test('a request owned by a DEVICE is audited even with no user', async () => {
+  // A device the server knows: "owned by a device" is a row in `devices`, not a value the caller
+  // typed (test/activity-log-ownership.test.js pins the other half, an invented id writes nothing).
+  db.prepare("INSERT OR IGNORE INTO devices (id, name, status) VALUES ('dev-7', 'Dev 7', 'online')").run();
   const res = await fetch(base + '/ok', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ device_id: 'dev-7' }),
