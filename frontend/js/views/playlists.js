@@ -548,8 +548,8 @@ function layoutMockup(playlist) {
     const filled = n > 0;
     return `<div title="${esc(z.name)}${filled ? ` — ${n}` : ''}" style="
       position:absolute;
-      left:${z.x_percent}%; top:${z.y_percent}%;
-      width:${z.width_percent}%; height:${z.height_percent}%;
+      left:${Number(z.x_percent) || 0}%; top:${Number(z.y_percent) || 0}%;
+      width:${Number(z.width_percent) || 0}%; height:${Number(z.height_percent) || 0}%;
       box-sizing:border-box;
       border:1px solid ${filled ? 'var(--accent)' : 'var(--border)'};
       background:${filled ? 'color-mix(in srgb, var(--accent) 18%, transparent)' : 'transparent'};

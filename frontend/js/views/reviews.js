@@ -110,7 +110,7 @@ export async function render(container) {
       } else if (sub.resource_type === 'playlist') {
         pv.innerHTML = `<ol style="margin:0 0 0 18px;padding:0">${(st.items || []).map((it) => `<li>${esc(itemLine(it, sub.names))}</li>`).join('')}</ol>`;
       } else if (sub.resource_type === 'layout') {
-        pv.innerHTML = `<div style="position:relative;width:100%;aspect-ratio:${st.width || 16}/${st.height || 9};background:#111;border-radius:8px;overflow:hidden">${(st.zones || []).map((z) => `<div style="position:absolute;left:${z.x_percent}%;top:${z.y_percent}%;width:${z.width_percent}%;height:${z.height_percent}%;border:1px solid #34d399;color:#fff;font-size:10px;padding:2px">${esc(z.name)}</div>`).join('')}</div>`;
+        pv.innerHTML = `<div style="position:relative;width:100%;aspect-ratio:${Number(st.width) || 16}/${Number(st.height) || 9};background:#111;border-radius:8px;overflow:hidden">${(st.zones || []).map((z) => `<div style="position:absolute;left:${Number(z.x_percent) || 0}%;top:${Number(z.y_percent) || 0}%;width:${Number(z.width_percent) || 0}%;height:${Number(z.height_percent) || 0}%;border:1px solid #34d399;color:#fff;font-size:10px;padding:2px">${esc(z.name)}</div>`).join('')}</div>`;
       } else if (sub.resource_type === 'slide_deck') {
         pv.innerHTML = `<ol style="margin:0 0 0 18px;padding:0">${((st.doc && st.doc.slides) || []).map((sl) => `<li>${esc(sl.name || sl.id)}</li>`).join('')}</ol>`;
       }
