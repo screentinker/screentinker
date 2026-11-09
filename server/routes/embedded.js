@@ -1145,6 +1145,17 @@ router.get('/presets', resolveAuth, (req, res) => {
   res.json(listPresets());
 });
 
+/*
+ * ⚠️ A header value is bytes. Node throws on a character above U+00FF or a control character, and a
+ * throw here is a 500 on EVERY poll of that panel: it never gets a new image and never receives its
+ * queued command. A screen's name is whatever the workspace typed ("大堂屏幕", "Lobby ☕"), so it is
+ * made header-safe instead: printable ASCII and Latin-1 pass through byte for byte, anything else
+ * becomes "?". The header is informational; the JSON bodies still carry the real name.
+ */
+function headerText(v) {
+  return String(v == null ? '' : v).replace(/[^\x20-\x7E\xA0-\xFF]/g, '?');
+}
+
 // ─── GET /api/embedded/render ───────────────────────────────────────────────────
 
 router.get('/render', resolveAuth, async (req, res) => {
@@ -1376,7 +1387,7 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
   // does). A genuine device render still advances, time-gated by the current item's dwell.
   const resolved = resolveCurrentItem(device.id, forceIndex, { advance: !isPreview });
   if (!resolved) {
-    const errHeaders = { 'X-ST-Device-Name': device.name || '' };
+    const errHeaders = { 'X-ST-Device-Name': headerText(device.name) };
     if (opts.pendingCmd) errHeaders['X-ST-Command'] = opts.pendingCmd;
     res.set(errHeaders);
     markCommandDelivered(device.id, opts);
@@ -1451,7 +1462,7 @@ async function handleRenderStandard(req, res, device, profile, opts = {}) {
     'ETag': toETag(key),
     'Cache-Control': 'no-store',
     'X-ST-Device-Id': device.id,
-    'X-ST-Device-Name': device.name || '',
+    'X-ST-Device-Name': headerText(device.name),
     'X-ST-Content-Id': content?.content_id || '',
     'X-ST-Expires-In': String(expiresIn),
     'X-ST-Item-Index': String(itemIndex),
@@ -2120,6 +2131,7 @@ module.exports.touchDeviceHeartbeat = touchDeviceHeartbeat;
 module.exports.dynamicRevFor = dynamicRevFor;
 module.exports.dynamicPeriodFor = dynamicPeriodFor;
 module.exports.getPendingCommand = getPendingCommand;
+module.exports.headerText = headerText;
 module.exports.resolvePendingCommand = resolvePendingCommand;
 module.exports.normalizePresetName = normalizePresetName;
 module.exports.getFirmwareInfo = getFirmwareInfo;
