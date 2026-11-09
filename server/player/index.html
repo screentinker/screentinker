@@ -7186,6 +7186,10 @@
 
         const shouldLoop = zoneMode ? !!opts.loop : playlist.length <= 1;
         let playStartTime = 0;
+        let liveArmed = false;
+        const itemMs = () => Math.max(1, Number(item.duration_sec) || 10) * 1000;
+        // getVideoData() is undocumented but long-standing; any throw or a missing field means "not live".
+        const ytIsLive = (t) => { try { const d = t && t.getVideoData && t.getVideoData(); return !!(d && d.isLive); } catch { return false; } };
         activeYtPlayer = new YT.Player(playerDiv.id, {
           videoId: videoId,
           width: '100%',
@@ -7228,10 +7232,14 @@
               if (!shouldLoop && done) {
                 let duration = 0;
                 try { duration = event.target.getDuration(); } catch {}
-                if (duration > 0) setSafety((duration + 3) * 1000);
+                // #828: a LIVE stream never sends ENDED, and its getDuration() is the time since the
+                // broadcast started, so "length + 3 s" held the screen for hours. Its item's duration is
+                // the only end it has. (The flag can be missing at onReady; PLAYING checks again.)
+                if (ytIsLive(event.target)) { liveArmed = true; setSafety(itemMs()); }
+                else if (duration > 0) setSafety((duration + 3) * 1000);
                 // #624 play to end: with no length to go on, the item's duration is the fallback,
                 // so a video whose ENDED never comes cannot hold the screen forever.
-                else if (item.play_to_end) setSafety(Math.max(1, Number(item.duration_sec) || 10) * 1000);
+                else if (item.play_to_end) setSafety(itemMs());
               }
               // #217: best-effort quality cap for weak WiFi. setPlaybackQuality is a
               // hint (YouTube may still adapt), but combined with the vq playerVar it
@@ -7266,7 +7274,12 @@
             onStateChange: (event) => {
               if (!alive()) return;
               // Track when video actually starts playing
-              if (event.data === 1) playStartTime = Date.now();
+              if (event.data === 1) {
+                playStartTime = Date.now();
+                // #828: the live flag often arrives with playback rather than at onReady. The timer
+                // counts from now, so a live item can run a little over its duration, never forever.
+                if (!liveArmed && !shouldLoop && done && ytIsLive(event.target)) { liveArmed = true; setSafety(itemMs()); }
+              }
               // YT.PlayerState.ENDED = 0 — advance to next video
               // Ignore ENDED if video played for less than 3 seconds (spurious during init)
               if (event.data === 0 && !shouldLoop && done && (Date.now() - playStartTime) > 3000) {

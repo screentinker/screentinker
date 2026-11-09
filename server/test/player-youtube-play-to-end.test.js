@@ -140,6 +140,67 @@ test('fullscreen without the flag is unchanged: no length, no timer; ENDED still
   assert.equal(h.calls.next, 1);
 });
 
+// #828: a live stream never sends ENDED and reports the time since the broadcast began as its length.
+const liveTarget = (elapsed, live = true) => ({
+  getDuration: () => elapsed, getVideoData: () => ({ isLive: live }), playVideo() {}, mute() {}, unMute() {}, setVolume() {},
+});
+
+test('#828 fullscreen: a LIVE stream moves on at its item duration, not "length + 3 s"', () => {
+  const h = embedHarness();
+  h.api.createYoutubeEmbed('x', item({ duration_sec: 60 }), fakeEl());
+  h.fire(h.players[0], 'onReady', undefined, liveTarget(14_400));   // 4 h into the broadcast
+  const live = h.liveTimers();
+  assert.equal(live.length, 1);
+  assert.equal(live[0].ms, 60_000, 'the stream held the screen for its broadcast age');
+  live[0].fn();
+  assert.equal(h.calls.next, 1);
+});
+
+test('#828: a live stream with play to end also falls back to its duration', () => {
+  const h = embedHarness();
+  h.api.createYoutubeEmbed('x', item({ duration_sec: 45, play_to_end: 1 }), fakeEl());
+  h.fire(h.players[0], 'onReady', undefined, liveTarget(900));
+  assert.deepEqual(h.liveTimers().map((t) => t.ms), [45_000]);
+});
+
+test('#828: the live flag that only shows up at PLAYING still arms the duration, once', () => {
+  const h = embedHarness();
+  h.api.createYoutubeEmbed('x', item({ duration_sec: 30 }), fakeEl());
+  const p = h.players[0];
+  h.fire(p, 'onReady', undefined, liveTarget(0, false));   // no flag, no length yet: no timer
+  assert.equal(h.liveTimers().length, 0);
+  h.fire(p, 'onStateChange', 1, liveTarget(120));
+  assert.deepEqual(h.liveTimers().map((t) => t.ms), [30_000]);
+  h.fire(p, 'onStateChange', 1, liveTarget(150));          // rebuffer -> PLAYING again: not re-armed
+  assert.equal(h.timeouts.length, 1);
+});
+
+test('#828: a zone live stream with play to end fires the ZONE advance at its duration', () => {
+  const h = embedHarness();
+  let zoneAdvances = 0;
+  h.api.createYoutubeEmbed('x', item({ duration_sec: 20, play_to_end: 1 }), h.zone(), { zone: true, loop: false, onEnded: () => { zoneAdvances++; } });
+  h.fire(h.players[0], 'onReady', undefined, liveTarget(5000));
+  const t = h.liveTimers().find((x) => x.ms === 20_000);
+  assert.ok(t);
+  t.fn();
+  assert.equal(zoneAdvances, 1);
+  assert.equal(h.calls.next, 0);
+});
+
+test('#828: an ordinary video is untouched (length + 3 s), even if getVideoData throws', () => {
+  const h = embedHarness();
+  h.api.createYoutubeEmbed('x', item({ duration_sec: 10 }), fakeEl());
+  h.fire(h.players[0], 'onReady', undefined, { ...liveTarget(95), getVideoData() { throw new Error('x'); } });
+  assert.deepEqual(h.liveTimers().map((t) => t.ms), [98_000]);
+});
+
+test('#828: a one-item live playlist keeps showing the stream (loops, no timer)', () => {
+  const h = embedHarness({ playlistLength: 1 });
+  h.api.createYoutubeEmbed('x', item({ duration_sec: 60 }), fakeEl());
+  h.fire(h.players[0], 'onReady', undefined, liveTarget(3600));
+  assert.equal(h.liveTimers().length, 0);
+});
+
 // ------------------------------------------------------------------ showZoneItem's choice
 
 function zoneHarness() {
