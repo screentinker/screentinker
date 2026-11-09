@@ -723,6 +723,7 @@ function parseRRule(rrule) {
 
   for (const part of parts) {
     const [key, val] = part.split('=');
+    if (val === undefined || val === '') continue;   // same rule as services/scheduler.js parseSimpleRRule
     switch (key) {
       case 'FREQ': rule.freq = val; break;
       case 'INTERVAL': rule.interval = parseInt(val); break;
