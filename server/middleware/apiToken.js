@@ -10,7 +10,9 @@
 // req.workspaceRole (resolved by resolveTenancy from the token's bound workspace),
 // exactly as for a JWT session. Combined with mount-by-exclusion (tokens are never
 // attached to /api/admin, auth, billing, workspaces, provisioning, status), a token
-// cannot reach any privileged surface.
+// cannot reach any privileged surface. #827: the two display-creation routes in server.js
+// (POST /api/provision/pair and POST /api/devices/web-player) are the deliberate exceptions,
+// each mounted with bearerAuth + requireScope('full'); the /api/provision router stays JWT-only.
 
 const crypto = require('crypto');
 const { db } = require('../db/database');
