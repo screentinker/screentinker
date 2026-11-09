@@ -7186,6 +7186,15 @@
 
         const shouldLoop = zoneMode ? !!opts.loop : playlist.length <= 1;
         let playStartTime = 0;
+        let liveArmed = false;
+        const itemMs = () => Math.max(1, Number(item.duration_sec) || 10) * 1000;
+        // getVideoData() is undocumented but long-standing; any throw or a missing field means "not live".
+        const ytIsLive = (t) => { try { const d = t && t.getVideoData && t.getVideoData(); return !!(d && d.isLive); } catch { return false; } };
+        // Without "Play to end" the item's duration is its length, fullscreen as in zones and on Android:
+        // the clip loops until the timer moves the playlist on. Fullscreen used to ignore the duration and
+        // always wait for the video to end, so the same playlist ran differently on a web player.
+        const byDuration = !zoneMode && !shouldLoop && !!done && !item.play_to_end;
+        const loops = shouldLoop || byDuration;
         activeYtPlayer = new YT.Player(playerDiv.id, {
           videoId: videoId,
           width: '100%',
@@ -7199,8 +7208,8 @@
             controls: 0,
             rel: 0,
             modestbranding: 1,
-            loop: shouldLoop ? 1 : 0,
-            playlist: shouldLoop ? videoId : undefined,
+            loop: loops ? 1 : 0,
+            playlist: loops ? videoId : undefined,
             enablejsapi: 1,
             origin: window.location.origin,
             // #217: cap quality at 720p for items flagged "unstable connection" so weak
@@ -7225,13 +7234,17 @@
               // WebViews), advance from the reported duration + 3s slack. Cleared
               // on a real ENDED, on error, or on teardown. Skip when looping (a
               // single-item playlist intentionally loops forever).
-              if (!shouldLoop && done) {
+              if (!loops && done) {
                 let duration = 0;
                 try { duration = event.target.getDuration(); } catch {}
-                if (duration > 0) setSafety((duration + 3) * 1000);
+                // #828: a LIVE stream never sends ENDED, and its getDuration() is the time since the
+                // broadcast started, so "length + 3 s" held the screen for hours. Its item's duration is
+                // the only end it has. (The flag can be missing at onReady; PLAYING checks again.)
+                if (ytIsLive(event.target)) { liveArmed = true; setSafety(itemMs()); }
+                else if (duration > 0) setSafety((duration + 3) * 1000);
                 // #624 play to end: with no length to go on, the item's duration is the fallback,
                 // so a video whose ENDED never comes cannot hold the screen forever.
-                else if (item.play_to_end) setSafety(Math.max(1, Number(item.duration_sec) || 10) * 1000);
+                else if (item.play_to_end) setSafety(itemMs());
               }
               // #217: best-effort quality cap for weak WiFi. setPlaybackQuality is a
               // hint (YouTube may still adapt), but combined with the vq playerVar it
@@ -7266,10 +7279,15 @@
             onStateChange: (event) => {
               if (!alive()) return;
               // Track when video actually starts playing
-              if (event.data === 1) playStartTime = Date.now();
+              if (event.data === 1) {
+                playStartTime = Date.now();
+                // #828: the live flag often arrives with playback rather than at onReady. The timer
+                // counts from now, so a live item can run a little over its duration, never forever.
+                if (!liveArmed && !loops && done && ytIsLive(event.target)) { liveArmed = true; setSafety(itemMs()); }
+              }
               // YT.PlayerState.ENDED = 0 — advance to next video
               // Ignore ENDED if video played for less than 3 seconds (spurious during init)
-              if (event.data === 0 && !shouldLoop && done && (Date.now() - playStartTime) > 3000) {
+              if (event.data === 0 && !loops && done && (Date.now() - playStartTime) > 3000) {
                 clearSafety();
                 console.log('YouTube video ended:', item.filename);
                 done();
@@ -7277,11 +7295,13 @@
             },
           },
         });
+        // Counted from the item's start, like an image. Torn down with the player (clearSafety / generation).
+        if (byDuration) setSafety(itemMs());
       });
 
-      // Note: YouTube advancement is handled by onStateChange ENDED event.
-      // Do NOT use duration_sec timeout here — it defaults to 10s for assignments
-      // and would cut videos short. The YouTube player tells us when it's done.
+      // Advancement: with "Play to end" the video's ENDED (length + 3 s as the safety net); without it
+      // the item's duration (byDuration above). New YouTube items default to play to end, so the
+      // 10 s default duration only governs an item someone turned it off for, or one from before #624.
 
       return playerDiv;
     }

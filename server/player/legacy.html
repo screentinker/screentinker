@@ -5895,6 +5895,18 @@ function createYoutubeEmbed(src, item, container, opts) {
     if (!alive()) return;
     const shouldLoop = zoneMode ? !!opts.loop : playlist.length <= 1;
     let playStartTime = 0;
+    let liveArmed = false;
+    const itemMs = () => Math.max(1, Number(item.duration_sec) || 10) * 1e3;
+    const ytIsLive = (t) => {
+      try {
+        const d = t && t.getVideoData && t.getVideoData();
+        return !!(d && d.isLive);
+      } catch (e) {
+        return false;
+      }
+    };
+    const byDuration = !zoneMode && !shouldLoop && !!done && !item.play_to_end;
+    const loops = shouldLoop || byDuration;
     activeYtPlayer = new YT.Player(playerDiv.id, {
       videoId,
       width: "100%",
@@ -5908,8 +5920,8 @@ function createYoutubeEmbed(src, item, container, opts) {
         controls: 0,
         rel: 0,
         modestbranding: 1,
-        loop: shouldLoop ? 1 : 0,
-        playlist: shouldLoop ? videoId : void 0,
+        loop: loops ? 1 : 0,
+        playlist: loops ? videoId : void 0,
         enablejsapi: 1,
         origin: window.location.origin,
         // #217: cap quality at 720p for items flagged "unstable connection" so weak
@@ -5928,14 +5940,17 @@ function createYoutubeEmbed(src, item, container, opts) {
             event.target.unMute();
             event.target.setVolume(mediaVolume != null ? Math.round(mediaVolume * 100) : 100);
           }
-          if (!shouldLoop && done) {
+          if (!loops && done) {
             let duration = 0;
             try {
               duration = event.target.getDuration();
             } catch (e) {
             }
-            if (duration > 0) setSafety((duration + 3) * 1e3);
-            else if (item.play_to_end) setSafety(Math.max(1, Number(item.duration_sec) || 10) * 1e3);
+            if (ytIsLive(event.target)) {
+              liveArmed = true;
+              setSafety(itemMs());
+            } else if (duration > 0) setSafety((duration + 3) * 1e3);
+            else if (item.play_to_end) setSafety(itemMs());
           }
           if (item.unstable_connection) {
             try {
@@ -5973,8 +5988,14 @@ function createYoutubeEmbed(src, item, container, opts) {
         },
         onStateChange: (event) => {
           if (!alive()) return;
-          if (event.data === 1) playStartTime = Date.now();
-          if (event.data === 0 && !shouldLoop && done && Date.now() - playStartTime > 3e3) {
+          if (event.data === 1) {
+            playStartTime = Date.now();
+            if (!liveArmed && !loops && done && ytIsLive(event.target)) {
+              liveArmed = true;
+              setSafety(itemMs());
+            }
+          }
+          if (event.data === 0 && !loops && done && Date.now() - playStartTime > 3e3) {
             clearSafety();
             console.log("YouTube video ended:", item.filename);
             done();
@@ -5982,6 +6003,7 @@ function createYoutubeEmbed(src, item, container, opts) {
         }
       }
     });
+    if (byDuration) setSafety(itemMs());
   });
   return playerDiv;
 }
