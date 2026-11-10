@@ -144,7 +144,20 @@ async function offer() {
  * person running the show sees and can hear this guest live, whether or not the stream is running.
  */
 const legs = new Map();      // desk id -> { pc, seq, busy }
-function dropLeg(id) { const l = legs.get(id); if (l) closeConn(l.pc); legs.delete(id); }
+function dropLeg(id) { const l = legs.get(id); if (l) { closeConn(l.pc); if (l.audio) { l.audio.srcObject = null; } } legs.delete(id); talkback(); }
+/** Says so while the studio is talking to this guest. */
+function talkback() { const on = [...legs.values()].some((l) => l.heard); $('gsTalk').hidden = !on; }
+/** Whether sound is arriving from a desk right now: the studio pressed Talk. Counted, because a line that goes quiet does not say so. */
+async function hearCheck() {
+  for (const leg of legs.values()) {
+    if (!leg.rx) continue;
+    try {
+      let n = 0; (await leg.rx.getStats()).forEach((r) => { if (r.type === 'inbound-rtp') n = r.packetsReceived || 0; });
+      leg.heard = leg.packets !== undefined && n - leg.packets > 5; leg.packets = n;
+    } catch { leg.heard = false; }
+  }
+  talkback();
+}
 async function offerDesk(id) {
   const had = legs.get(id); if (had && had.busy) return;
   if (had) closeConn(had.pc);
@@ -156,6 +169,14 @@ async function offerDesk(id) {
       // A preview, not the programme: a quarter of the pixels and a modest bit rate leave the uplink for the stream.
       if (t.kind === 'video') { try { const p = sender.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}]; p.encodings[0].maxBitrate = 400000; p.encodings[0].scaleResolutionDownBy = 2; await sender.setParameters(p); } catch { /* full size then */ } }
     }
+    // TALKBACK: the studio can talk to this guest on the same connection. A guest without a microphone still gets the line to listen on.
+    if (!media.getAudioTracks().length) conn.addTransceiver('audio', { direction: 'recvonly' });
+    conn.ontrack = (e) => {
+      if (e.track.kind !== 'audio') return;
+      const el = document.createElement('audio'); el.autoplay = true; el.srcObject = new MediaStream([e.track]); leg.audio = el;
+      el.play().catch(() => {});
+      leg.rx = e.receiver;
+    };
     conn.onconnectionstatechange = () => { if (legs.get(id) === leg && conn.connectionState === 'failed') dropLeg(id); };
     await conn.setLocalDescription(await conn.createOffer());
     await gathered(conn);
@@ -210,7 +231,7 @@ async function tick() {
     if (pc && lostAt && Date.now() - lostAt > 5000 && pc.connectionState === 'disconnected' && !offering) { lostAt = 0; fails += 1; closeConn(pc); pc = null; }
     if (st.studio && (st.need_offer || !pc)) offer();
     else if (pc && !offering && st.answer && st.seq === pc.seq && pc.signalingState === 'have-local-offer') { const conn = pc; await conn.setRemoteDescription({ type: 'answer', sdp: st.answer }).catch(() => { if (pc === conn) { closeConn(conn); pc = null; } }); }
-    syncDesks(st.desks);
+    syncDesks(st.desks); hearCheck();
     show(st); say('');
   } catch { say('Lost touch with the studio. Trying again...'); }
   finally { ticking = false; }

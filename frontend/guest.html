@@ -25,6 +25,7 @@
     .gs-tag { position: absolute; left: 10px; top: 10px; padding: 4px 10px; border-radius: 3px; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; background: rgba(11, 12, 14, 0.8); }
     .gs-view.is-air .gs-tag { background: #ff2a1f; color: #fff; }
     .gs-view.is-back .gs-tag { background: #f5a623; color: #111; }
+    .gs-talk { margin: 8px 0 0; padding: 8px 10px; border-radius: 4px; font-size: 13px; font-weight: 600; background: #17324a; color: #cfe6ff; }
     .gs-turn { margin: 8px 0 0; font-size: 13px; color: #f5a623; }
     .gs-view.is-wait { border-color: #5b6470; }
     .gs-view.is-wait .gs-tag { background: #5b6470; color: #fff; }
@@ -48,6 +49,7 @@
       <p class="lead" id="gsLead">Check your camera and microphone, then join. You will wait backstage until the studio puts you on air.</p>
     </div>
     <div class="gs-view is-mirror" id="gsView"><video id="gsVideo" autoplay muted playsinline></video><span class="gs-tag" id="gsTag">Camera check</span></div>
+    <p class="gs-talk" id="gsTalk" role="status" hidden>You are hearing the studio's talk line. It is not on air. Headphones keep it out of your microphone.</p>
     <p class="gs-turn" id="gsTurn" hidden>Your picture is upright. Turn your phone sideways to fill the screen.</p>
     <div class="gs-level" aria-hidden="true"><i id="gsLevel"></i></div>
     <div id="gsSetup">

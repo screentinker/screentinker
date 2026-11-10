@@ -46,11 +46,63 @@ let roomsSig = '', guestTimer = null;
 const deskId = (() => { const b = new Uint8Array(12); crypto.getRandomValues(b); return [...b].map((x) => x.toString(16).padStart(2, '0')).join(''); })();
 const guestLive = new Map();   // guest id -> { pc, seq, stream, sid }
 const listening = new Set();   // guest ids the operator is listening to
+/*
+ * TALKBACK and MERGE: the control room's sound lines to the guests. Neither is an input of any
+ * stream: what is said on them reaches ears, not air.
+ *
+ *   Talk    this desk's microphone to one guest. Only they hear it.
+ *   Merge   a conversation: every guest of one stream hears this desk's microphone and each other,
+ *           and this desk hears them all. Each guest is sent everyone but themselves.
+ *
+ * Both run on the connection this desk already has with each guest (its sound line is open both
+ * ways from the start, silent until used), and the mixing is done here, in this page: the desk is
+ * the hub. Closing the desk ends them.
+ */
+const liveOf = (gid) => { const c = guestLive.get(gid); return c && c.pc.connectionState === 'connected' && c.stream.getVideoTracks().length ? c : null; };
 let guestIce = [];
 let closeArmed = null, closeTimer = null;   // the stream whose "Close the green room" has been pressed once
 const liveAsked = new Map();                // guest id -> when this desk last asked them for a new offer
-const liveOf = (gid) => { const c = guestLive.get(gid); return c && c.pc.connectionState === 'connected' && c.stream.getVideoTracks().length ? c : null; };
-function liveDrop(gid) { const c = guestLive.get(gid); if (c) { try { c.pc.close(); } catch { /* gone */ } } guestLive.delete(gid); }
+const talking = new Set();     // guest ids the operator is talking to, one to one
+const merged = new Set();      // stream ids whose green room is in a conversation
+let talkMic = null, hub = null, hubMic = null, routing = Promise.resolve();
+function route() {
+  routing = routing.then(async () => {
+    const wanted = talking.size > 0 || merged.size > 0;
+    if (!wanted && !hub) return;
+    hub = hub || new (window.AudioContext || window.webkitAudioContext)();
+    if (hub.state === 'suspended') await hub.resume().catch(() => {});
+    if (wanted && !talkMic) {
+      talkMic = await navigator.mediaDevices.getUserMedia({ audio: { ...(micDeviceId ? { deviceId: { exact: micDeviceId } } : {}), echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      hubMic = hub.createMediaStreamSource(talkMic);
+    }
+    for (const [gid, c] of guestLive) {
+      if (!c.talk) continue;
+      c.dest = c.dest || hub.createMediaStreamDestination();
+      if (!c.src && c.stream.getAudioTracks().length) { try { c.src = hub.createMediaStreamSource(c.stream); } catch { /* no sound from them */ } }
+      for (const node of c.ins || []) { try { node.disconnect(c.dest); } catch { /* was not connected */ } }
+      c.ins = [];
+      const inRoom = merged.has(c.sid);
+      if (hubMic && (talking.has(gid) || inRoom)) c.ins.push(hubMic);
+      if (inRoom) for (const [oid, o] of guestLive) if (oid !== gid && o.sid === c.sid && o.src) c.ins.push(o.src);      // everyone but themselves
+      for (const node of c.ins) node.connect(c.dest);
+      const track = c.ins.length ? c.dest.stream.getAudioTracks()[0] : null;
+      if (c.sent !== track) { c.sent = track; try { await c.talk.replaceTrack(track); } catch { /* the connection is gone */ } }
+    }
+    // Nobody is being talked to: the microphone is let go (and its light goes out).
+    if (!wanted && talkMic) { try { hubMic.disconnect(); } catch { /* gone */ } talkMic.getTracks().forEach((tr) => tr.stop()); talkMic = null; hubMic = null; }
+  }).catch((err) => { talking.clear(); merged.clear(); showToast(err && err.name === 'NotAllowedError' ? t('mixer.guest_talk_mic') : (err && err.message) || String(err), 'error'); });
+  return routing;
+}
+async function talkSet(gid, on) {
+  const c = guestLive.get(gid);
+  if (!c || !c.talk) throw new Error(t('mixer.guest_talk_none'));
+  if (on) talking.add(gid); else talking.delete(gid);
+  await route();
+}
+function liveDrop(gid) {
+  const c = guestLive.get(gid); if (c) { try { c.pc.close(); } catch { /* gone */ } } guestLive.delete(gid);
+  if (talking.delete(gid) || merged.size) route();
+}
 async function liveAnswer(sid, g) {
   liveDrop(g.id);
   const c = { pc: new RTCPeerConnection({ iceServers: guestIce }), seq: g.leg_seq, stream: new MediaStream(), sid };
@@ -60,10 +112,14 @@ async function liveAnswer(sid, g) {
   c.pc.onconnectionstatechange = () => {
     if (guestLive.get(g.id) !== c) return;
     if (c.pc.connectionState === 'failed') { liveDrop(g.id); said({ again: true }); }
+    if (c.pc.connectionState === 'connected' && merged.has(sid)) route();      // someone new joins the conversation
     guestsRefresh(true);
   };
   try {
     await c.pc.setRemoteDescription({ type: 'offer', sdp: g.leg_offer });
+    // The sound line of this connection is opened both ways, silent until Talk is pressed: no new offer is needed then.
+    const line = c.pc.getTransceivers().find((x) => x.receiver && x.receiver.track && x.receiver.track.kind === 'audio');
+    if (line) { try { line.direction = 'sendrecv'; c.talk = line.sender; } catch { /* listen only */ } }
     await c.pc.setLocalDescription(await c.pc.createAnswer());
     await new Promise((resolve) => {
       if (c.pc.iceGatheringState === 'complete') return resolve();
@@ -95,7 +151,7 @@ function liveAttach(root) {
   if (!root) return;
   root.querySelectorAll('video[data-gvid]').forEach((v) => {
     const c = liveOf(v.dataset.gvid); if (!c) return;
-    v.muted = v.dataset.sound !== '1' || !listening.has(v.dataset.gvid);
+    v.muted = v.dataset.sound !== '1' || !(listening.has(v.dataset.gvid) || merged.has(c.sid));
     if (v.srcObject !== c.stream) {
       // On the Program monitor, as in the stream: an upright picture is shown whole, a wide one fills its box.
       if (v.closest('.mx-guest-tile')) { const fit = () => { v.style.objectFit = v.videoHeight > v.videoWidth ? 'contain' : 'cover'; }; v.addEventListener('loadedmetadata', fit); v.addEventListener('resize', fit); }
@@ -111,6 +167,7 @@ function guestsHtml() {
       <div class="mx-room">
         <div class="mx-group-name"><span class="mx-lamp mx-lamp-${streamTally(s)}"></span>${esc(s.name)}
           ${url ? `<span class="mx-room-keys">${(r.layouts || []).map((l) => `<button type="button" class="mx-key mx-key-sm${r.layout === l ? ' is-on' : ''}" data-glayout="${esc(s.id)}" data-layout="${esc(l)}" aria-pressed="${r.layout === l}">${esc(t('mixer.guest_layout.' + l))}</button>`).join('')}</span>` : ''}
+          ${url && r.guests.some((g) => liveOf(g.id)) ? `<button type="button" class="btn btn-sm ${merged.has(s.id) ? 'mx-golive' : 'btn-secondary'}" data-gmerge="${esc(s.id)}" aria-pressed="${merged.has(s.id)}" title="${esc(t('mixer.guest_merge_tip'))}">${esc(t(merged.has(s.id) ? 'mixer.guest_merged' : 'mixer.guest_merge'))}</button>` : ''}
           <button type="button" class="btn btn-secondary btn-sm mx-meters-on" data-ginvite="${esc(s.id)}">${esc(t(url ? 'mixer.guest_copy' : 'mixer.guest_invite'))}</button>
           ${url ? `<button type="button" class="btn btn-secondary btn-sm" data-grevoke="${esc(s.id)}">${esc(t(closeArmed === s.id ? 'mixer.guest_close_sure' : 'mixer.guest_close'))}</button>` : ''}</div>
         ${url ? `<input class="input mx-room-link" readonly value="${esc(url)}" aria-label="${esc(t('mixer.guest_link'))}" data-glink>
@@ -120,14 +177,16 @@ function guestsHtml() {
               <div class="mx-guest-pic">${liveOf(g.id) ? `<video data-gvid="${esc(g.id)}" data-sound="1" autoplay muted playsinline></video>` : g.thumb ? `<img data-gthumb="${esc(g.id)}" src="${esc(g.thumb)}" alt="">` : `<span>${esc(t('mixer.guest_state.' + (s.status.state === 'off' ? 'waiting' : g.state === 'connected' ? 'connected' : 'connecting')))}</span>`}${g.on_air ? `<b>${esc(t('mixer.guest_on_air'))}</b>` : ''}${s.status.state !== 'off' && g.state !== 'connected' ? `<i class="mx-guest-badge">${esc(t('mixer.guest_state.connecting'))}</i>` : ''}</div>
               <div class="mx-guest-name" title="${esc(g.name)}">${esc(g.name)}</div>
               <div class="mx-guest-keys"><button type="button" class="btn btn-sm ${g.on_air ? 'btn-secondary' : 'mx-golive'}" data-gair="${esc(s.id)}" data-gid="${esc(g.id)}" data-on="${g.on_air ? 0 : 1}" ${(s.status.state === 'off' || g.state !== 'connected') && !g.on_air ? `disabled title="${esc(t('mixer.guest_not_connected'))}"` : ''}>${esc(t(g.on_air ? 'mixer.guest_off' : 'mixer.guest_put_on'))}</button>
-                ${liveOf(g.id) ? `<button type="button" class="btn btn-secondary btn-sm${listening.has(g.id) ? ' is-on' : ''}" data-glisten="${esc(g.id)}" aria-pressed="${listening.has(g.id)}" title="${esc(t('mixer.guest_listen_tip'))}">${esc(t(listening.has(g.id) ? 'mixer.guest_listening' : 'mixer.guest_listen'))}</button>` : ''}
+                ${liveOf(g.id) ? `<button type="button" class="btn btn-secondary btn-sm${listening.has(g.id) || merged.has(s.id) ? ' is-on' : ''}" data-glisten="${esc(g.id)}" aria-pressed="${listening.has(g.id) || merged.has(s.id)}" ${merged.has(s.id) ? 'disabled' : ''} title="${esc(t('mixer.guest_listen_tip'))}">${esc(t(listening.has(g.id) || merged.has(s.id) ? 'mixer.guest_listening' : 'mixer.guest_listen'))}</button>` : ''}
+                ${liveOf(g.id) && guestLive.get(g.id).talk ? `<button type="button" class="btn btn-sm ${talking.has(g.id) || merged.has(s.id) ? 'mx-golive' : 'btn-secondary'}" data-gtalk="${esc(g.id)}" aria-pressed="${talking.has(g.id) || merged.has(s.id)}" ${merged.has(s.id) ? 'disabled' : ''} title="${esc(t('mixer.guest_talk_tip'))}">${esc(t(talking.has(g.id) || merged.has(s.id) ? 'mixer.guest_talking' : 'mixer.guest_talk'))}</button>` : ''}
                 <button type="button" class="btn btn-secondary btn-sm" data-gdel="${esc(s.id)}" data-gid="${esc(g.id)}">${esc(t('mixer.guest_remove'))}</button></div>
             </div>`).join('')}</div>` : `<p class="mx-note">${esc(t('mixer.guest_none'))}</p>`}` : ''}
       </div>`; }).join('')}
     <p class="mx-note">${esc(t('mixer.guest_note'))}</p>`;
 }
 async function guestsRefresh(force) {
-  try { const r = await call(`/stream-out/guests?desk=${deskId}`); rooms = r.rooms || {}; guestIce = r.ice_servers || []; } catch { return; }
+  let r; try { r = await call(`/stream-out/guests?desk=${deskId}`); } catch { return; }      // only the request failing is passed over: the next poll asks again
+  rooms = r.rooms || {}; guestIce = r.ice_servers || [];
   liveSync();
   // What is drawn: a guest shown live does not need drawing again each time their still is renewed.
   // The panel is drawn again only when what it is made of changes. A renewed still is put into the
@@ -136,7 +195,7 @@ async function guestsRefresh(force) {
   const el = document.getElementById('mxGuests');
   const stills = new Map(Object.values(rooms).flatMap((r) => r.guests.filter((g) => g.thumb).map((g) => [g.id, g.thumb])));
   document.querySelectorAll('img[data-gthumb]').forEach((img) => { const src = stills.get(img.dataset.gthumb); if (src && img.getAttribute('src') !== src) img.setAttribute('src', src); });
-  const sig = JSON.stringify([closeArmed, Object.entries(rooms).map(([sid, r]) => [sid, r.invite_url, r.layout, r.guests.map((g) => [g.id, g.name, g.on_air, g.state, liveOf(g.id) ? 'live' : !!g.thumb, listening.has(g.id)])])]) + streams().map((s) => s.status.state).join();
+  const sig = JSON.stringify([closeArmed, [...merged], Object.entries(rooms).map(([sid, r]) => [sid, r.invite_url, r.layout, r.guests.map((g) => [g.id, g.name, g.on_air, g.state, liveOf(g.id) ? 'live' : !!g.thumb, listening.has(g.id), talking.has(g.id)])])]) + streams().map((s) => s.status.state).join();
   if (sig === roomsSig && !force) return;
   roomsSig = sig;
   guestLayer();
@@ -162,6 +221,8 @@ function guestsBind(el) {
     await call(`/stream-out/${encodeURIComponent(sid)}/guests/invite`, { method: 'DELETE' });
   });
   el.querySelectorAll('[data-glisten]').forEach((b) => b.addEventListener('click', () => { const id = b.dataset.glisten; if (listening.has(id)) listening.delete(id); else listening.add(id); guestsRefresh(true); }));
+  act('[data-gmerge]', (b) => { const sid = b.dataset.gmerge; if (merged.has(sid)) merged.delete(sid); else merged.add(sid); return route(); });
+  act('[data-gtalk]', (b) => talkSet(b.dataset.gtalk, !talking.has(b.dataset.gtalk)));
   act('[data-gstandby]', async (b) => {
     const sid = b.dataset.gstandby, s = streams().find((x) => x.id === sid);
     const r = await call(`/stream-out/${encodeURIComponent(sid)}/start`, { method: 'POST', body: JSON.stringify({ standby: true }) });
@@ -954,7 +1015,7 @@ export function cleanup() {
   clearInterval(meterTimer); meterTimer = null;
   clearInterval(guestTimer); guestTimer = null;
   // Moving between the desk's own pages keeps the guests' pictures; leaving the desk lets them go.
-  setTimeout(() => { if (!alive) { for (const gid of [...guestLive.keys()]) liveDrop(gid); listening.clear(); } }, 800);
+  setTimeout(() => { if (!alive) { talking.clear(); merged.clear(); for (const gid of [...guestLive.keys()]) liveDrop(gid); listening.clear(); route(); } }, 800);
   clearInterval(monTimer); monTimer = null; document.removeEventListener('pointerdown', wakeAudio);
   releaseMove();
 }
