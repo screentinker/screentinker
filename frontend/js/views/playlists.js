@@ -1580,10 +1580,10 @@ function renderItems(items) {
           // A live stream's duration is DWELL (how long to stay on the channel), not clip length.
           // 0 = stay until the item is skipped (window / enabled / play_when / the playlist advances).
           ? `<label style="font-size:12px;color:var(--text-muted)" title="${esc(t('playlist.dwell_hint'))}">${t('playlist.dwell')}</label>
-        <input type="number" class="input item-duration" data-item-id="${item.id}" data-live="1" value="${item.duration_sec || 0}" min="0" title="${esc(t('playlist.dwell_hint'))}" style="width:60px;padding:4px 8px;font-size:13px;text-align:center">
+        <input type="number" step="1" class="input item-duration" data-item-id="${item.id}" data-live="1" value="${item.duration_sec || 0}" min="0" title="${esc(t('playlist.dwell_hint'))}" style="width:60px;padding:4px 8px;font-size:13px;text-align:center">
         <span style="font-size:12px;color:var(--text-muted)">${t('playlist.sec')}</span>`
           : `${playToEndToggle(item)}${prerotatedToggle(item)}${transparentToggle(item)}<label style="font-size:12px;color:var(--text-muted)"${item.play_to_end && item.mime_type === 'video/youtube' ? ` title="${esc(t('playlist.play_to_end_fallback_hint'))}">${t('playlist.play_to_end_fallback')}` : `>${t('playlist.duration')}`}</label>
-        <input type="number" class="input item-duration" data-item-id="${item.id}" value="${item.duration_sec}" min="1" style="width:60px;padding:4px 8px;font-size:13px;text-align:center">
+        <input type="number" step="1" class="input item-duration" data-item-id="${item.id}" value="${item.duration_sec}" min="1" style="width:60px;padding:4px 8px;font-size:13px;text-align:center">
         <span style="font-size:12px;color:var(--text-muted)">${t('playlist.sec')}</span>`}
         ${currentPlaybackOrder === 'weighted' && !item.child_playlist_id ? `<label style="font-size:12px;color:var(--text-muted)">${t('playlist.weight')}</label>
         <input type="number" class="input item-weight" data-item-id="${item.id}" value="${item.weight || 1}" min="1" max="1000" style="width:56px;padding:4px 8px;font-size:13px;text-align:center">` : ''}
@@ -1646,6 +1646,8 @@ function renderItems(items) {
       clearTimeout(timer); timer = null;
       const val = parseInt(input.value, 10);
       if (Number.isNaN(val) || val < (isLive ? 0 : 1)) { input.value = Number.isNaN(saved) ? (isLive ? 0 : 10) : saved; return; }
+      // Whole seconds are what is stored: show that, not the 12.5 that was typed.
+      input.value = String(val);
       if (val === saved) return;
       const was = saved;
       saved = val;
