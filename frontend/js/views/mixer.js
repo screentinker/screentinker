@@ -51,12 +51,12 @@ function guestsHtml() {
           <button type="button" class="btn btn-secondary btn-sm mx-meters-on" data-ginvite="${esc(s.id)}">${esc(t(url ? 'mixer.guest_copy' : 'mixer.guest_invite'))}</button>
           ${url ? `<button type="button" class="btn btn-secondary btn-sm" data-grevoke="${esc(s.id)}">${esc(t('mixer.guest_close'))}</button>` : ''}</div>
         ${url ? `<input class="input mx-room-link" readonly value="${esc(url)}" aria-label="${esc(t('mixer.guest_link'))}" data-glink>
-          ${s.status.state === 'off' ? `<p class="mx-note">${esc(t('mixer.guest_need_standby'))}</p>` : ''}
+          ${s.status.state === 'off' ? `<p class="mx-note mx-room-off">${esc(t('mixer.guest_need_standby'))} <button type="button" class="btn btn-secondary btn-sm" data-gstandby="${esc(s.id)}">${esc(t('mixer.standby'))}</button></p>` : ''}
           ${r.guests.length ? `<div class="mx-guest-list">${r.guests.map((g) => `
             <div class="mx-guest${g.on_air ? ' is-air' : ''}">
-              <div class="mx-guest-pic">${g.thumb ? `<img src="${esc(g.thumb)}" alt="">` : `<span>${esc(t('mixer.guest_state.' + (g.state === 'connected' ? 'connected' : 'connecting')))}</span>`}${g.on_air ? `<b>${esc(t('mixer.guest_on_air'))}</b>` : ''}</div>
+              <div class="mx-guest-pic">${g.thumb ? `<img src="${esc(g.thumb)}" alt="">` : `<span>${esc(t('mixer.guest_state.' + (s.status.state === 'off' ? 'waiting' : g.state === 'connected' ? 'connected' : 'connecting')))}</span>`}${g.on_air ? `<b>${esc(t('mixer.guest_on_air'))}</b>` : ''}</div>
               <div class="mx-guest-name" title="${esc(g.name)}">${esc(g.name)}</div>
-              <div class="mx-guest-keys"><button type="button" class="btn btn-sm ${g.on_air ? 'btn-secondary' : 'mx-golive'}" data-gair="${esc(s.id)}" data-gid="${esc(g.id)}" data-on="${g.on_air ? 0 : 1}">${esc(t(g.on_air ? 'mixer.guest_off' : 'mixer.guest_put_on'))}</button>
+              <div class="mx-guest-keys"><button type="button" class="btn btn-sm ${g.on_air ? 'btn-secondary' : 'mx-golive'}" data-gair="${esc(s.id)}" data-gid="${esc(g.id)}" data-on="${g.on_air ? 0 : 1}" ${s.status.state === 'off' && !g.on_air ? 'disabled' : ''}>${esc(t(g.on_air ? 'mixer.guest_off' : 'mixer.guest_put_on'))}</button>
                 <button type="button" class="btn btn-secondary btn-sm" data-gdel="${esc(s.id)}" data-gid="${esc(g.id)}">${esc(t('mixer.guest_remove'))}</button></div>
             </div>`).join('')}</div>` : `<p class="mx-note">${esc(t('mixer.guest_none'))}</p>`}` : ''}
       </div>`; }).join('')}
@@ -85,6 +85,12 @@ function guestsBind(el) {
   act('[data-grevoke]', async (b) => {
     if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = t('mixer.guest_close_sure'); b.disabled = false; throw new Error(t('mixer.guest_close_warn')); }
     await call(`/stream-out/${encodeURIComponent(b.dataset.grevoke)}/guests/invite`, { method: 'DELETE' });
+  });
+  act('[data-gstandby]', async (b) => {
+    const sid = b.dataset.gstandby, s = streams().find((x) => x.id === sid);
+    const r = await call(`/stream-out/${encodeURIComponent(sid)}/start`, { method: 'POST', body: JSON.stringify({ standby: true }) });
+    if (s && r.status) s.status = { ...s.status, ...r.status };
+    showToast(t('mixer.toast.standby'), 'success');
   });
   act('[data-glayout]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.glayout)}/guests/layout`, { method: 'POST', body: JSON.stringify({ layout: b.dataset.layout }) }));
   act('[data-gair]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.gair)}/guests/${encodeURIComponent(b.dataset.gid)}`, { method: 'POST', body: JSON.stringify({ on_air: b.dataset.on === '1' }) }));

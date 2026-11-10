@@ -85,11 +85,14 @@ async function offer() {
 function show(st) {
   const view = $('gsView');
   const connected = pc && pc.connectionState === 'connected';
-  view.classList.toggle('is-air', !!st.on_air && connected);
-  view.classList.toggle('is-back', !st.on_air || !connected);
-  $('gsTag').textContent = st.on_air && connected ? 'ON AIR' : 'Backstage';
-  $('gsTitle').textContent = st.on_air && connected ? 'You are on air' : 'You are backstage';
-  $('gsLead').textContent = !st.studio ? 'The studio has not opened yet. Keep this page open: you will be connected as soon as it does.'
+  // Four states, and the page never claims more than is true: no studio yet, connecting, backstage, on air.
+  const mode = !st.studio ? 'wait' : !connected ? 'conn' : st.on_air ? 'air' : 'back';
+  view.classList.toggle('is-air', mode === 'air');
+  view.classList.toggle('is-back', mode === 'back');
+  view.classList.toggle('is-wait', mode === 'wait' || mode === 'conn');
+  $('gsTag').textContent = { wait: 'Waiting', conn: 'Connecting', back: 'Backstage', air: 'ON AIR' }[mode];
+  $('gsTitle').textContent = { wait: 'Waiting for the studio', conn: 'Connecting to the studio', back: 'You are backstage', air: 'You are on air' }[mode];
+  $('gsLead').textContent = !st.studio ? 'You are in, but the studio has not started yet. Keep this page open: you will be connected as soon as it does.'
     : !connected ? 'Connecting you to the studio...'
       : st.on_air ? 'The audience can see and hear you now.'
         : 'The studio can see you. Nobody else can see or hear you until you are put on air.';

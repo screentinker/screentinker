@@ -667,6 +667,7 @@
 .mx-guest { width: 208px; }
 .mx-guest-pic { position: relative; aspect-ratio: 16 / 9; background: #000; border: 2px solid var(--border-light); border-radius: 3px; overflow: hidden; display: grid; place-items: center; font-size: 12px; color: var(--text-secondary); }
 .mx-guest.is-air .mx-guest-pic { border-color: var(--tally, var(--danger)); box-shadow: 0 0 14px color-mix(in srgb, var(--tally, var(--danger)) 45%, transparent); }
+.mx-room-off { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--warning, #f5a623); }
 .mx-guest-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .mx-guest-pic b { position: absolute; left: 6px; top: 6px; padding: 2px 6px; border-radius: 2px; font-size: 10px; letter-spacing: 0.08em; color: #fff; background: var(--danger); }
 .mx-guest-name { margin: 6px 0; font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
