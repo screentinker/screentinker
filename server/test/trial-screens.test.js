@@ -181,7 +181,10 @@ test('a PAYING team moving screens between its members is not a second trial', (
   orgBilling.install(db, null);
   try {
     const prior2 = user('lapsed'), me2 = user('trial');
-    wsIn(org(prior2, { sub: 'sub_org' }), prior2, me2);
+    // Bought after the organization existed (a first organization starts as its owner's state).
+    const paidOrg = org(prior2);
+    db.prepare("UPDATE organizations SET stripe_subscription_id = 'sub_org' WHERE id = ?").run(paidOrg);
+    wsIn(paidOrg, prior2, me2);
     for (let i = 0; i < 2; i++) claim(me2, burnedScreen(prior2));
     assert.equal(check(me2, burnedScreen(prior2)).allowed, true, 'the organization has its own subscription');
   } finally {
