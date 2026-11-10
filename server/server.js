@@ -750,6 +750,19 @@ app.get('/favicon.ico', (req, res) => {
     if (err && !res.headersSent) res.status(404).type('text/plain').send('not found');
   });
 });
+// Broadcast graphics for the vision mixer (lib/mixer-gfx.js): lower thirds, crawls, bugs, title
+// cards. A player keys one over the screen as a web overlay, and a player has no session, so
+// these are public; they render only the escaped text they are handed and carry a policy with no
+// script at all. Frameable from any player (some are not same-origin with this server).
+app.get('/gfx/:kind', (req, res) => {
+  const gfx = require('./lib/mixer-gfx');
+  const html = gfx.page(req.params.kind, req.query || {});
+  if (!html) return res.status(404).type('text/plain').send('not found');
+  res.removeHeader('X-Frame-Options');
+  res.setHeader('Content-Security-Policy', gfx.CSP);
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('html').send(html);
+});
 // Serve frontend static files
 // JS/CSS/HTML: no-cache (always revalidate, uses ETag/304)
 // Images/fonts/icons: long cache for Cloudflare + browser

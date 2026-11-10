@@ -2631,7 +2631,7 @@ html.nav-pending .main-wrapper { margin-left: 0 !important; }
 .ui-simple [data-advanced-ui] { display: none !important; }
 
 .ui-mode-switch {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 2px; margin-top: 12px; padding: 3px;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; margin-top: 12px; padding: 3px;
   background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius);
 }
 .ui-mode-switch[hidden] { display: none; }

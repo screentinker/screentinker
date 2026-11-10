@@ -32,5 +32,6 @@
     if (hidden) document.documentElement.classList.add('nav-pending');
     // 3.0: the simple menu (components/ui-mode.js), from the cached account, before first paint.
     if (user && user.ui_mode === 'simple') document.documentElement.classList.add('ui-simple');
+    if (user && user.ui_mode === 'broadcast') document.documentElement.classList.add('ui-broadcast');
   } catch (e) { /* storage blocked: the router decides, as it always did */ }
 })();

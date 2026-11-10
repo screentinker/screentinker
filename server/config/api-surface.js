@@ -50,6 +50,8 @@ const PUBLIC_ROUTERS = [
   { path: '/api/activity',    mod: './routes/activity' },
   { path: '/api/kiosk',       mod: './routes/kiosk', renderBypass: true },
   { path: '/api/pip',         mod: './routes/pip' },
+  // The vision mixer: put a source on air on several screens at once (routes/mixer.js).
+  { path: '/api/mixer',       mod: './routes/mixer' },
   // Data Sources (iCal, APIs, etc.) for dynamic slide template interpolation
   { path: '/api/data-sources', mod: './routes/data-sources' },
   // Trigger DEFINITIONS. ⚠️ Public (token-reachable) on purpose — an integrator provisioning a site

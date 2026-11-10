@@ -266,7 +266,8 @@ function accountSummary(userId, workspaceId) {
   try {
     const row = db.prepare('SELECT ui_mode, onboarded_at, subscription_status, created_at FROM users WHERE id = ?').get(userId);
     if (!row) return out; // support / recovery identities: full menu, no guide, no billing facts
-    out.ui_mode = row.ui_mode === 'simple' ? 'simple' : 'advanced';
+    // 'broadcast' is the full dashboard with the vision mixer as its home (views/mixer.js).
+    out.ui_mode = row.ui_mode === 'simple' ? 'simple' : (row.ui_mode === 'broadcast' ? 'broadcast' : 'advanced');
     out.onboarded_at = row.onboarded_at || null;
     out.sponsor_prompt = sponsorEligible(row.created_at);
     out.subscription_status = row.subscription_status || null;
@@ -1073,7 +1074,7 @@ router.post('/switch-workspace', requireAuth, (req, res) => {
 router.put('/me', requireAuth, (req, res) => {
   const { name, password, current_password, email_alerts, ui_mode, onboarded } = req.body;
   // 3.0 preferences. Validated narrowly: anything else is ignored, not stored.
-  if (ui_mode === 'simple' || ui_mode === 'advanced') {
+  if (ui_mode === 'simple' || ui_mode === 'advanced' || ui_mode === 'broadcast') {
     db.prepare("UPDATE users SET ui_mode = ?, updated_at = strftime('%s','now') WHERE id = ?").run(ui_mode, req.user.id);
   }
   if (onboarded === true) {

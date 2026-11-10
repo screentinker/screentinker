@@ -23,6 +23,9 @@ import { inManagerApp, openOutsideApp } from '../utils.js';
 export function uiModeOf(user) {
   // The Manager app is the Simple view by definition; the account's setting governs the browser.
   if (inManagerApp()) return 'simple';
+  // 'broadcast' is the full dashboard with the vision mixer as its home; everything that asks
+  // "simple or not" treats it as not simple.
+  if (user && user.ui_mode === 'broadcast') return 'broadcast';
   return user && user.ui_mode === 'simple' ? 'simple' : 'advanced';
 }
 
@@ -31,9 +34,11 @@ export function isSimpleMode() {
 }
 
 function setBodyMode(mode) {
-  const simple = mode === 'simple';
-  if (document.documentElement.classList.contains('ui-simple') === simple) return;
-  document.documentElement.classList.toggle('ui-simple', simple);
+  const simple = mode === 'simple', broadcast = mode === 'broadcast';
+  const root = document.documentElement.classList;
+  if (root.contains('ui-simple') === simple && root.contains('ui-broadcast') === broadcast) return;
+  root.toggle('ui-simple', simple);
+  root.toggle('ui-broadcast', broadcast);
   // nav-groups.js re-counts which groups still have a visible link.
   window.dispatchEvent(new CustomEvent('st:ui-mode', { detail: { mode } }));
 }
@@ -59,7 +64,9 @@ export function applyUiMode(user) {
   sw.addEventListener('keydown', (e) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     e.preventDefault();
-    const other = sw.querySelector('[aria-checked="false"]');
+    const all = [...sw.querySelectorAll('[data-ui-mode]')];
+    const at = all.findIndex((b) => b.getAttribute('aria-checked') === 'true');
+    const other = all[(at + (e.key === 'ArrowRight' ? 1 : all.length - 1)) % all.length];
     if (other) { other.click(); other.focus(); }
   });
 }
@@ -70,11 +77,12 @@ export function applyUiMode(user) {
  * full dashboard are different views of #/.
  */
 export async function setUiMode(next) {
-  if (next !== 'simple' && next !== 'advanced') return;
+  if (next !== 'simple' && next !== 'advanced' && next !== 'broadcast') return;
   // In the Manager app, Advanced is the full dashboard in the phone's browser (#/switch-advanced
   // turns Advanced on for this account there, then lands on the dashboard).
   if (inManagerApp()) { if (next === 'advanced') openOutsideApp('/app#/switch-advanced'); return; }
-  if (next === (isSimpleMode() ? 'simple' : 'advanced')) return;
+  const nowMode = isSimpleMode() ? 'simple' : (document.documentElement.classList.contains('ui-broadcast') ? 'broadcast' : 'advanced');
+  if (next === nowMode) return;
   try {
     const cached = JSON.parse(localStorage.getItem('user') || '{}');
     localStorage.setItem('user', JSON.stringify({ ...cached, ui_mode: next }));
@@ -82,7 +90,9 @@ export async function setUiMode(next) {
   setBodyMode(next);
   const sw = document.getElementById('uiModeSwitch');
   if (sw) paintSwitch(sw, next);
-  showToast(t(next === 'advanced' ? 'nav.view_advanced_on' : 'nav.view_simple_on'), 'info');
+  showToast(t(next === 'advanced' ? 'nav.view_advanced_on' : next === 'broadcast' ? 'nav.view_broadcast_on' : 'nav.view_simple_on'), 'info');
+  // The desk is Broadcast's home: go there when switching to it, and off it when leaving.
+  if (next === 'broadcast' || nowMode === 'broadcast') { if (window.location.hash !== '#/') window.location.hash = '#/'; }
   try { await api.updateMe({ ui_mode: next }); } catch { /* kept locally until the next /me */ }
 }
 

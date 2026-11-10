@@ -17,6 +17,7 @@ import * as dataSources from './views/data-sources.js';
 import * as reviews from './views/reviews.js';
 import * as contentRequests from './views/requests.js';
 import * as videoWall from './views/video-wall.js';
+import * as mixer from './views/mixer.js';
 import * as reports from './views/reports.js';
 import * as audience from './views/audience.js';
 import * as servers from './views/servers.js';
@@ -715,6 +716,7 @@ function route() {
     else if (hash === '#/templates' && link.dataset.view === 'templates') link.classList.add('active');
     else if ((hash === '#/data-sources' || hash.startsWith('#/data-sources/')) && link.dataset.view === 'data-sources') link.classList.add('active');
     else if ((hash.startsWith('#/wall') || hash === '#/walls') && link.dataset.view === 'walls') link.classList.add('active');
+    else if (hash === '#/mixer' && link.dataset.view === 'mixer') link.classList.add('active');
     else if (hash === '#/site-caches' && link.dataset.view === 'site-caches') link.classList.add('active');
     else if (hash === '#/reports' && link.dataset.view === 'reports') link.classList.add('active');
     else if (hash === '#/audience' && link.dataset.view === 'audience') link.classList.add('active');
@@ -734,7 +736,17 @@ function route() {
   });
 
   // Route to view
-  if (hash === '#/' || hash === '#' || hash === '') {
+  if ((hash === '#/' || hash === '#' || hash === '') && document.documentElement.classList.contains('ui-broadcast')) {
+    // Broadcast view: the desk is home. Screens is still in the menu.
+    currentView = mixer;
+    mixer.render(app);
+  } else if (hash === '#/mixer') {
+    currentView = mixer;
+    mixer.render(app);
+  } else if (hash === '#/screens') {
+    currentView = dashboard;
+    dashboard.render(app);
+  } else if (hash === '#/' || hash === '#' || hash === '') {
     currentView = dashboard;
     dashboard.render(app);
   } else if (hash.startsWith('#/device/')) {

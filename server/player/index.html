@@ -6765,7 +6765,9 @@
       // An emergency alert raised or cleared cuts in now (see interruptChanged). On a wall the
       // follower already swaps at once (schedule-driven); this makes the leader do the same, so the
       // whole wall switches together instead of the leader holding out for up to 60 s.
-      const interruptNow = interruptChanged(oldPlaylist, playlist);
+      // cut_now: the vision mixer's TAKE (routes/mixer.js). An operator pressed a key to put this
+      // on air; waiting out the current item is exactly what they did not ask for.
+      const interruptNow = interruptChanged(oldPlaylist, playlist) || data.cut_now === true;
       if (interruptNow) console.log('Emergency alert raised/cleared — swapping now, not at the next advance');
       /*
        * The STAGE changed shape (a different layout, or none; a wall joined or left). The deferral

@@ -71,7 +71,7 @@ test('the Control room design layer never applies to Classic', () => {
   const offenders = rules.filter((sel) => !sel.startsWith('@') && !/^(from|to|\d+%)/.test(sel) && sel !== ''
     && sel.split(',').some((s) => {
       const one = s.trim();
-      return one && !one.startsWith(':root:not([data-theme="classic"])') && !one.startsWith(':root[data-theme="light"]') && !one.startsWith(':root[data-theme="control-room"]') && !/^\.theme-/.test(one) && one !== '.gallery-clock' && !/^(\d+%|from|to)$/.test(one);
+      return one && !one.startsWith(':root:not([data-theme="classic"])') && !one.startsWith(':root[data-theme="light"]') && !one.startsWith(':root[data-theme="control-room"]') && !/^\.(theme-|mx|ui-mode-switch)/.test(one) && one !== '.gallery-clock' && !/^(\d+%|from|to)$/.test(one);
     }));
   assert.deepEqual(offenders, [], 'selectors that would restyle Classic');
 });
