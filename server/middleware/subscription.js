@@ -238,6 +238,65 @@ function getUserStorageMB(userId) {
   return Math.ceil(result.total / (1024 * 1024));
 }
 
+/*
+ * WHOSE LIMITS APPLY (step 3 of moving payment to the organization, lib/org-billing.js).
+ *
+ * Until now every limit was the ACTING PERSON's: their plan, counted against the screens THEY
+ * paired and the files THEY uploaded. So an invited member brought their own allowance into
+ * someone else's workspace (a trial each, stacked), and a member on Free was held to two screens
+ * inside an organization that pays for a hundred.
+ *
+ * `app_settings.limits_scope` chooses:
+ *   absent / 'user'  exactly the behaviour above. Nothing below changes anything.
+ *   'org'            the limits are the ORGANIZATION's: the plan of the organization the workspace
+ *                    belongs to (read through its owner, which is where billing still lives),
+ *                    counted across every screen and file in that organization.
+ *
+ * A request or screen with no workspace, or a workspace with no organization (an older
+ * single-tenant database), has nothing to be scoped to and keeps the per-person rule in both modes.
+ * Never throws: on any doubt the answer is the per-person subject, which is today's behaviour.
+ */
+function limitsScope() {
+  try { return require('../lib/app-settings').get('limits_scope', 'user') === 'org' ? 'org' : 'user'; }
+  catch { return 'user'; }
+}
+
+/** { scope: 'user', userId } or { scope: 'org', orgId, userId: <the organization's owner> }. */
+function limitSubject(userId, workspaceId) {
+  const personal = { scope: 'user', userId, orgId: null };
+  if (!workspaceId || limitsScope() !== 'org') return personal;
+  try {
+    const o = db.prepare(`SELECT o.id, o.owner_user_id FROM workspaces w JOIN organizations o ON o.id = w.organization_id
+                           WHERE w.id = ?`).get(workspaceId);
+    return (o && o.owner_user_id) ? { scope: 'org', userId: o.owner_user_id, orgId: o.id } : personal;
+  } catch { return personal; }
+}
+
+const subjectPlan = (subject) => getUserPlan(subject.userId);
+
+function subjectDeviceCount(subject) {
+  if (subject.scope !== 'org') return getUserDeviceCount(subject.userId);
+  return db.prepare(`SELECT COUNT(*) AS n FROM devices d JOIN workspaces w ON w.id = d.workspace_id
+                      WHERE w.organization_id = ?`).get(subject.orgId).n;
+}
+
+/** The screens counted together, oldest first: what "the first N are within the plan" is read against. */
+function subjectDeviceIds(subject) {
+  if (subject.scope !== 'org') {
+    return db.prepare('SELECT id FROM devices WHERE user_id = ? ORDER BY created_at ASC').all(subject.userId).map((r) => r.id);
+  }
+  return db.prepare(`SELECT d.id FROM devices d JOIN workspaces w ON w.id = d.workspace_id
+                      WHERE w.organization_id = ? ORDER BY d.created_at ASC, d.id ASC`).all(subject.orgId).map((r) => r.id);
+}
+
+function subjectStorageBytes(subject) {
+  if (subject.scope !== 'org') {
+    return Number(db.prepare('SELECT COALESCE(SUM(file_size), 0) AS total FROM content WHERE user_id = ?').get(subject.userId).total || 0);
+  }
+  return Number(db.prepare(`SELECT COALESCE(SUM(c.file_size), 0) AS total FROM content c JOIN workspaces w ON w.id = c.workspace_id
+                             WHERE w.organization_id = ?`).get(subject.orgId).total || 0);
+}
+
 /**
  * Bytes this user may still store, or null when the plan is unlimited.
  *
@@ -253,11 +312,12 @@ function getUserStorageMB(userId) {
  * Returns a possibly NEGATIVE number when someone is already over (a plan downgrade will do it),
  * so callers see the true shortfall rather than a floor of zero.
  */
-function storageRoomBytes(userId) {
-  const plan = getUserPlan(userId);
+function storageRoomBytes(userId, workspaceId) {
+  // workspaceId: where the bytes will land. Only matters when limits are per organization.
+  const subject = limitSubject(userId, workspaceId);
+  const plan = subjectPlan(subject);
   if (!plan || plan.max_storage_mb === -1) return null;
-  const used = db.prepare('SELECT COALESCE(SUM(file_size), 0) AS total FROM content WHERE user_id = ?').get(userId);
-  return (plan.max_storage_mb * 1024 * 1024) - Number(used.total || 0);
+  return (plan.max_storage_mb * 1024 * 1024) - subjectStorageBytes(subject);
 }
 
 /*
@@ -297,7 +357,8 @@ function noteLimitHit(req, code, extra) {
 
 // Check if user can add more devices
 function checkDeviceLimit(req, res, next) {
-  const plan = getUserPlan(req.user.id);
+  const subject = limitSubject(req.user.id, req.workspaceId);
+  const plan = subjectPlan(subject);
   if (!plan) {
     /*
      * A support session has no `users` row by design, so getUserPlan finds no plan and this
@@ -318,7 +379,7 @@ function checkDeviceLimit(req, res, next) {
   // -1 means unlimited
   if (plan.max_devices === -1) return next();
 
-  const deviceCount = getUserDeviceCount(req.user.id);
+  const deviceCount = subjectDeviceCount(subject);
   if (deviceCount >= plan.max_devices) {
     noteLimitHit(req, 'DEVICE_LIMIT', { limit: plan.max_devices, plan: plan.plan_name });
     return res.status(403).json({
@@ -335,7 +396,8 @@ function checkDeviceLimit(req, res, next) {
 
 // Check if user can upload more content
 function checkStorageLimit(req, res, next) {
-  const plan = getUserPlan(req.user.id);
+  const subject = limitSubject(req.user.id, req.workspaceId);
+  const plan = subjectPlan(subject);
   if (!plan) {
     /*
      * A support session has no `users` row by design, so getUserPlan finds no plan and this
@@ -356,7 +418,7 @@ function checkStorageLimit(req, res, next) {
   // -1 means unlimited
   if (plan.max_storage_mb === -1) return next();
 
-  const usedMB = getUserStorageMB(req.user.id);
+  const usedMB = Math.ceil(subjectStorageBytes(subject) / (1024 * 1024));
   if (usedMB >= plan.max_storage_mb) {
     noteLimitHit(req, 'STORAGE_LIMIT', { limit_mb: plan.max_storage_mb, plan: plan.plan_name });
     return res.status(403).json({
@@ -373,7 +435,7 @@ function checkStorageLimit(req, res, next) {
 
 // Check if user has remote control access
 function checkRemoteControl(req, res, next) {
-  const plan = getUserPlan(req.user.id);
+  const plan = subjectPlan(limitSubject(req.user.id, req.workspaceId));
   if (!plan || !plan.remote_control) {
     return res.status(403).json({
       error: 'Remote control requires Starter plan or above.',
@@ -386,7 +448,7 @@ function checkRemoteControl(req, res, next) {
 
 // Check remote URL feature access
 function checkRemoteUrl(req, res, next) {
-  const plan = getUserPlan(req.user.id);
+  const plan = subjectPlan(limitSubject(req.user.id, req.workspaceId));
   if (!plan || !plan.remote_url) {
     noteLimitHit(req, 'FEATURE_LOCKED', { feature: 'remote_url', plan: plan?.plan_name });
     return res.status(403).json({
@@ -446,6 +508,12 @@ module.exports = {
   noteLimitHit,
   getUserDeviceCount,
   getUserStorageMB,
+  limitsScope,
+  limitSubject,
+  subjectPlan,
+  subjectDeviceCount,
+  subjectDeviceIds,
+  subjectStorageBytes,
   checkDeviceLimit,
   checkStorageLimit,
   checkRemoteControl,

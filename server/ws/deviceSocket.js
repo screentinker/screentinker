@@ -1661,9 +1661,16 @@ function assemblePayload({ assignments, layout, orientation, background_color, w
 // Check if a device should show trial expired screen
 function checkDeviceAccess(deviceId) {
   const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);
-  if (!device || !device.user_id) return { allowed: true };
+  if (!device) return { allowed: true };
 
-  const plan = getUserPlan(device.user_id);
+  // Whose limits this screen is held to: the person who paired it, or (app_settings.limits_scope =
+  // 'org') the organization its workspace belongs to. See limitSubject in middleware/subscription.js;
+  // with the setting absent this is exactly the per-person rule it has always been.
+  const limits = require('../middleware/subscription');
+  const subject = limits.limitSubject(device.user_id, device.workspace_id);
+  if (!subject.userId) return { allowed: true };
+
+  const plan = limits.subjectPlan(subject);
   if (!plan) return { allowed: true };
 
   // A lapsed trial that landed on Free: the extra screens are told WHY (their trial ended), not
@@ -1675,8 +1682,7 @@ function checkDeviceAccess(deviceId) {
   // "Device Limit Reached" card below.
   if (plan.trial_expired_at && plan.plan_name === 'free' && plan.max_devices > 0) {
     // Get this device's position (ordered by created_at)
-    const userDevices = db.prepare('SELECT id FROM devices WHERE user_id = ? ORDER BY created_at ASC').all(device.user_id);
-    const deviceIndex = userDevices.findIndex(d => d.id === deviceId);
+    const deviceIndex = limits.subjectDeviceIds(subject).indexOf(deviceId);
 
     // Only the first device (within free limit) is allowed
     if (deviceIndex >= plan.max_devices) {
@@ -1699,8 +1705,7 @@ function checkDeviceAccess(deviceId) {
   // nothing paid for; anything else is held to its plan like any other account.
   const trialRunning = plan.trial_active && plan.plan_id === plan.trial_plan && !plan.stripe_subscription_id;
   if (!trialRunning && plan.max_devices > 0) {
-    const userDevices = db.prepare('SELECT id FROM devices WHERE user_id = ? ORDER BY created_at ASC').all(device.user_id);
-    const deviceIndex = userDevices.findIndex(d => d.id === deviceId);
+    const deviceIndex = limits.subjectDeviceIds(subject).indexOf(deviceId);
     if (deviceIndex >= plan.max_devices) {
       return {
         allowed: false,
