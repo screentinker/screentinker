@@ -68,6 +68,14 @@ tags:
     description: Interactive kiosk pages and their render output.
   - name: pip
     description: Picture-in-picture / overlay push (image or web on top of the running playlist).
+  - name: slides
+    description: Slide decks.
+  - name: triggers
+    description: Triggers that switch what a screen shows.
+  - name: device-endpoints
+    description: Scheduled or event-driven calls to a device's local endpoints.
+  - name: display-power-schedules
+    description: Display power schedules.
 
 security:
   - ApiToken: []
@@ -309,7 +317,7 @@ components:
         orientation:
           type: string
         notes:
-          type: string
+          type: [string, "null"]
         tags:
           type: array
           items: { type: string }
@@ -359,7 +367,7 @@ components:
             that do not report it and on IPv4-only panels.
 
         # --- Latest telemetry --------------------------------------------------------------
-        # Flattened from the most recent telemetry report. All null for a device that has
+        # Flattened from the most recent telemetry report. ABSENT (not null) for a device that has
         # never reported, and for platforms that cannot supply a given metric — treat every
         # field here as optional rather than assuming a web player reports what Android does.
         wifi_ssid:
@@ -578,7 +586,10 @@ components:
         name:
           type: string
         config:
-          type: object
+          type: string
+          description: |
+            The widget's settings as a JSON-encoded string (parse it to read them), for example
+            `"{\"format\":\"24h\"}"`. Send an object when creating or updating; it comes back encoded.
         workspace_id:
           type: [string, "null"]
 
@@ -875,6 +886,7 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
         '200': { description: Binary image stream. }
+        '404': { description: 'The item has no thumbnail (an uploaded image is its own thumbnail: use the file).' }
 
   # ------------------------------------------------------------------ folders
   /folders:
@@ -1015,7 +1027,8 @@ paths:
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
-        '200': { description: Reverted playlist with items. }
+        '200': { description: 'Reverted playlist with items. The items are re-created from the published snapshot, so their ids change.' }
+        '400': { description: There is no draft to discard. }
   /playlists/{id}/items:
     get:
       tags: [playlists]
@@ -2355,6 +2368,7 @@ paths:
                 op: { type: string, enum: [fire, clear] }
       responses:
         '200': { description: '{ ok, result }.' }
+        '409': { description: 'op is clear, and the trigger has no clear code configured.' }
   /zapier/actions/data:
     post:
       tags: [zapier]
