@@ -1820,6 +1820,10 @@ function requesterCanAccessContent(req, content) {
   try {
     const m = (req.headers.authorization || '').match(/^Bearer (.+)$/);
     if (!m) return false;
+    // An API token bound to this content's workspace (documented for scope `read`). It was
+    // handed to the session resolver below, which refused it, so an integration could not read
+    // back a file it had just uploaded until the item was put in a playlist.
+    if (m[1].startsWith('st_')) return require('./middleware/apiToken').tokenReadsWorkspace(m[1].trim(), content.workspace_id);
     // Same resolver as requireAuth: a pre-TOTP token, a deleted user or an outstanding
     // forced password change all throw here and fall through to false.
     const session = resolveSessionUser(m[1]);
