@@ -103,6 +103,24 @@ function accountOfStripe(meta, subId, custId) {
 }
 const ownerOf = (accountId) => subscriptions.accountOwnerId(accountId);
 
+/*
+ * The account's plan just changed: tell its screens NOW.
+ *
+ * A screen learns whether it is inside the plan when it connects and whenever a playlist is pushed
+ * to it. The trial sweep and the dunning sweep push after they change a plan; the webhook did not.
+ * So after a cancellation the screens beyond the Free limit went on playing until each one next
+ * reconnected or was sent something (hours, or never for a screen nobody edits), and after an
+ * UPGRADE the screens that had been showing "Device Limit Reached" stayed dark the same way.
+ * Best effort, after the state is written; a failure here never fails the webhook.
+ */
+const planOf = (accountId) => { try { const r = db.prepare(`SELECT plan_id FROM ${T()} WHERE id = ?`).get(accountId); return r ? r.plan_id : null; } catch { return null; } };
+function pushIfPlanChanged(req, accountId, before) {
+  try {
+    if (!accountId || planOf(accountId) === before) return 0;
+    return require('../services/trialExpiry').pushDowngradedUserScreens(req.app.get('io'), accountId);
+  } catch (e) { console.warn('[billing] could not push the new limits to screens:', e.message); return 0; }
+}
+
 // Create checkout session - user clicks "Upgrade" on a plan
 router.post('/checkout', requireAuth, tenancyWhenOrgPays, async (req, res) => {
   const stripe = stripeClient.get();
@@ -263,6 +281,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         }
         const userId = accountOfStripe(session.metadata, session.subscription, session.customer);   // the ACCOUNT: a user, or an organization
         const planId = session.metadata?.plan_id;
+        const planBefore = userId ? planOf(userId) : null;
         if (userId && session.subscription) {
           // ⚠️ trial_started = NULL: a trial that converts is OVER. Left set, the account looked like
           // a trial for ever (the Billing page's trial block, checkDeviceAccess's trial exemption),
@@ -273,6 +292,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
             .run(session.subscription, planId || 'starter', userId);
           console.log(`User ${userId} subscribed to ${planId} (sub: ${session.subscription})`);
           require('../lib/conversion-events').record(db, { userId: ownerOf(userId), event: 'checkout_complete', meta: { plan: planId || 'starter' } });
+          pushIfPlanChanged(req, userId, planBefore);
         }
         break;
       }
@@ -308,6 +328,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
          */
         const planId = subscriptions.planIdFromSubscription(sub);
 
+        const planBefore = planOf(userId);
         const status = sub.status === 'active' ? 'active' : sub.status === 'past_due' ? 'past_due' : sub.status;
         const ends = periodEndOf(sub);   // moved to the item in Stripe 2025-03+; see lib/stripe-fields.js
 
@@ -316,6 +337,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         // Back in good standing: end the dunning episode, including its email stamps, so a lapse
         // next year is announced rather than silently suppressed by a stale one.
         if (status === 'active') subscriptions.clearGrace(userId);
+        pushIfPlanChanged(req, userId, planBefore);
         console.log(`Subscription ${event.type.split('.').pop()} for ${userId}: ${planId} (${status}, ends ${ends || 'unknown'})`);
         break;
       }
@@ -337,6 +359,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
             .run(userId, sub.id);
           if (r.changes) {
             console.log(`Subscription cancelled for ${userId}`);
+            pushIfPlanChanged(req, userId, null);   // now on Free: the screens beyond its limit are told at once
             // When it happened, so the feedback loop can ask why (lib/feedback.js, the 'cancelled' moment).
             require('../lib/conversion-events').record(db, { userId: ownerOf(userId), event: 'subscription_cancelled', meta: { status: sub.status || '' } });
           }

@@ -144,6 +144,7 @@ before(async () => {
 
   const app = express();
   app.use(express.json());
+  app.set('io', io);
   app.use('/api/stripe', stripeRouter);
   app.use('/api/subscription', subscriptionRouter);
   server = http.createServer(app);
@@ -314,6 +315,31 @@ test('a plan assigned by the operator goes to the organization: by its id, or by
   assert.equal(first.plan_comped, 1); assert.equal(first.trial_started, null, 'a comp ends the trial clock, on the organization');
   assert.equal((await post('/api/subscription/assign', op, null, { organization_id: 'nope', plan_id: 'pro' })).status, 404);
   assert.equal((await post('/api/subscription/assign', C.owner, null, { organization_id: C.org.o, plan_id: 'pro' })).status, 403, 'operators only');
+});
+
+test('when the plan changes, every screen of the organization is told at once: cancel, then buy again', async () => {
+  const D = {}; D.owner = person('pushowner'); D.org = organization(D.owner, 'Pushed');
+  D.member = person('pushmember'); joinWorkspace(D.org.w, D.member);
+  db.prepare("UPDATE organizations SET plan_id = 'starter', stripe_subscription_id = 'sub_push', stripe_customer_id = 'cus_push', trial_started = NULL WHERE id = ?").run(D.org.o);
+  const all = [...screens(2, D.owner, D.org.w), ...screens(2, D.member, D.org.w)];
+  assert.deepEqual(plays(all), [true, true, true, false], 'Starter: three of four');
+  // What a push is: the gated payload queued or sent to the screen (lib/command-queue.js).
+  const queue = require('../lib/command-queue');
+  const real = queue.queueOrEmitPlaylistUpdate; const pushed = [];
+  queue.queueOrEmitPlaylistUpdate = (ns, id) => { pushed.push(id); };
+  try {
+    await webhook('customer.subscription.deleted', sub({ id: 'sub_push', price: 'price_starter_m', meta: { org_id: D.org.o } }));
+    assert.equal(orgRow(D.org.o).plan_id, 'free');
+    assert.deepEqual([...pushed].sort(), [...all].sort(), 'cancelled: all four screens are sent their new answer, not left until they next reconnect');
+    assert.deepEqual(plays(all), [true, true, false, false], 'and the answer is the Free limit: the two oldest play');
+    pushed.length = 0;
+    await webhook('checkout.session.completed', { id: 'cs_push', subscription: 'sub_push2', customer: 'cus_push', metadata: { org_id: D.org.o, user_id: D.member, plan_id: 'pro' } });
+    assert.deepEqual([...pushed].sort(), [...all].sort(), 'bought again: the dark screens are told straight away too');
+    assert.deepEqual(plays(all), [true, true, true, true]);
+    pushed.length = 0;
+    await webhook('customer.subscription.updated', sub({ id: 'sub_push2', price: 'price_pro_m', meta: { org_id: D.org.o } }));
+    assert.deepEqual(pushed, [], 'an event that changes no plan pushes nothing');
+  } finally { queue.queueOrEmitPlaylistUpdate = real; }
 });
 
 test('one person\'s two organizations are separate accounts', async () => {

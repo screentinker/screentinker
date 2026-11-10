@@ -113,7 +113,22 @@ function reverseSql(cols) {
     WHERE id = NEW.owner_user_id AND NEW.id = ${primary}`;
 }
 
-const REVERSE_TRIGGERS = ['trg_org_billing_rev_upd', 'trg_org_billing_rev_ins'];
+const REVERSE_TRIGGERS = ['trg_org_billing_rev_upd', 'trg_org_billing_rev_ins', 'trg_org_billing_rev_owner', 'trg_org_billing_rev_del'];
+
+/**
+ * Organization pays, and who owns what just changed (a hand-over, an organization deleted): each
+ * person involved gets the copy of the oldest organization they now own, and someone who owns
+ * none any more stops claiming a plan and a subscription that were never theirs. trial_expired_at
+ * is kept, so having had a trial is remembered.
+ */
+function ownerCopySql(cols, people) {
+  const primary = primaryOf('users.id');
+  return `UPDATE users SET (${cols.join(', ')}) = (SELECT ${cols.map((c) => `o.${c}`).join(', ')} FROM organizations o WHERE o.id = ${primary})
+     WHERE id IN (${people}) AND EXISTS (SELECT 1 FROM organizations x WHERE x.owner_user_id = users.id);
+   UPDATE users SET plan_id = 'free', stripe_customer_id = NULL, stripe_subscription_id = NULL, subscription_status = 'active',
+          subscription_ends = NULL, trial_started = NULL, past_due_since = NULL, plan_comped = 0, renewal_at = NULL
+     WHERE id IN (${people}) AND NOT EXISTS (SELECT 1 FROM organizations x WHERE x.owner_user_id = users.id)`;
+}
 const TRIGGERS = ['trg_org_billing_user_ins', 'trg_org_billing_user_upd', 'trg_org_billing_org_ins', 'trg_org_billing_org_owner', 'trg_org_billing_org_del'];
 
 const columnsOf = (db, table) => db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
@@ -194,6 +209,13 @@ function install(db, log = console) {
              AND (SELECT COUNT(*) FROM organizations x WHERE x.owner_user_id = NEW.owner_user_id) = 1
              AND EXISTS (SELECT 1 FROM users u WHERE u.id = NEW.owner_user_id);
         END`);
+      const need = ['plan_id', 'stripe_customer_id', 'stripe_subscription_id', 'subscription_status', 'subscription_ends', 'trial_started', 'past_due_since', 'plan_comped', 'renewal_at'];
+      if (need.every((c) => userCols.includes(c))) {
+        db.exec(`CREATE TRIGGER trg_org_billing_rev_owner AFTER UPDATE OF owner_user_id ON organizations
+          BEGIN ${ownerCopySql(cols, 'NEW.owner_user_id, OLD.owner_user_id')}; END`);
+        db.exec(`CREATE TRIGGER trg_org_billing_rev_del AFTER DELETE ON organizations
+          BEGIN ${ownerCopySql(cols, 'OLD.owner_user_id')}; END`);
+      }
       createView(db, 'org', userCols, orgColsNow);
       out.reason = 'billing_source is org';
       out.source = 'org';

@@ -1635,6 +1635,8 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/organizations', rateLimit(60000, 60), require('./routes/org-sso'));
 // 3.0: Settings > User provisioning (SCIM). Same mount, same org-admin gate, same limiter (above).
 app.use('/api/organizations', require('./routes/org-scim'));
+// Handing an organization to another person in it (routes/org-ownership.js).
+app.use('/api/organizations', rateLimit(60000, 30), require('./routes/org-ownership'));
 /*
  * 3.0: SCIM 2.0 provisioning for an organization's identity provider (docs/scim.md). Bearer-token
  * only, no cookies, so there is no CSRF surface. The per-IP limit here is a coarse ceiling: Okta and
