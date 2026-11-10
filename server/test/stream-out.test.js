@@ -223,8 +223,8 @@ test('a stream\'s audio bed is an audio item of its own workspace, and its level
     net_url: 'rtsp://cam:hunter2@192.0.2.9/audio', fx: { decay: 0.8 } });
   assert.equal(proc.status, 200, proc.text);
   const pm = proc.body.audio.mix;
-  assert.deepEqual({ hpf: pm.line.hpf, eq: pm.line.eq, gate: pm.line.gate, comp: pm.line.comp, fx: pm.line.fx, denoise: pm.line.denoise }, { hpf: true, eq: { low: -6, mid: 0, high: 12 }, gate: 0.4, comp: 1, fx: 0.25, denoise: 0.5 });
-  assert.deepEqual(pm.master, { level: 0.8, muted: false, eq: { low: 0, mid: 3, high: 0 } }, 'the master has an EQ and a fader, no gate');
+  assert.deepEqual({ hpf: pm.line.hpf, eq: pm.line.eq, gate: pm.line.gate, comp: pm.line.comp, fx: pm.line.fx, denoise: pm.line.denoise }, { hpf: true, eq: { low: -6, mid: 0, high: 12, low_f: 120, lomid: 0, lomid_f: 400, lomid_q: 1, mid_f: 1200, mid_q: 0.9, high_f: 8000 }, gate: 0.4, comp: 1, fx: 0.25, denoise: 0.5 });
+  assert.deepEqual([pm.master.level, pm.master.muted, pm.master.eq.mid, pm.master.gate], [0.8, false, 3, undefined], 'the master has an EQ, a compressor and a fader, no gate');
   assert.equal(pm.fx.decay, 0.8);
   assert.match(pm.net.url, /^rtsp:\/\/cam:\*{3,}@192\.0\.2\.9\/audio$/);
   assert.doesNotMatch(proc.text, /hunter2/, 'a feed\'s password is not sent back');
@@ -300,8 +300,8 @@ test('sound inputs are read from the system\'s own list, and settings are made s
   assert.deepEqual(audio.parseCapture('', ''), []);
   const s = audio.cleanSettings({ line: { device: 'hw:0; rm -rf /', level: 99, eq: { low: 'x', mid: -50 }, gate: 7, denoise: -1 }, master: { muted: 1, level: -3, comp: 1 }, extra: { level: 1 }, net: { url: 'file:///etc/passwd' } });
   assert.deepEqual(Object.keys(s).sort(), ['bed', 'console', 'fx', 'line', 'master', 'mic', 'net', 'net2', 'programme']);
-  assert.deepEqual(s.master, { level: 0, muted: true, eq: { low: 0, mid: 0, high: 0 } });
-  assert.deepEqual(s.line, { level: audio.MAX_LEVEL, muted: false, hpf: false, eq: { low: 0, mid: -12, high: 0 }, gate: 1, comp: 0, fx: 0, device: null, denoise: 0, noise: null });
+  assert.deepEqual(s.master, { level: 0, muted: true, eq: { low: 0, mid: 0, high: 0, low_f: 120, lomid: 0, lomid_f: 400, lomid_q: 1, mid_f: 1200, mid_q: 0.9, high_f: 8000 }, comp: 1, cmp: { on: false, thr: -20, ratio: 3, att: 8, rel: 200, gain: 0 } });
+  assert.deepEqual(s.line, { level: audio.MAX_LEVEL, muted: false, trim: 0, inv: false, pan: 0, hpf: false, hpf_f: 80, lpf: 0, eq: { low: 0, mid: -12, high: 0, low_f: 120, lomid: 0, lomid_f: 400, lomid_q: 1, mid_f: 1200, mid_q: 0.9, high_f: 8000 }, gate: 1, comp: 0, cmp: { on: false, thr: -20, ratio: 3, att: 8, rel: 200, gain: 0 }, deess: 0, chorus: 0, fx: 0, dly: 0, duck: 0, device: null, denoise: 0, noise: null });
   assert.equal(s.net.url, null);
   const args = audio.netArgs('udp://239.0.0.1:5004');
   assert.equal(args[args.indexOf('-i') + 1], 'udp://239.0.0.1:5004', 'the feed is one argument');
@@ -593,5 +593,84 @@ test('a console\'s settings are bounded, and it must be a device this server has
   assert.equal(named.status, 200); assert.deepEqual([named.body.audio.mix.c2.level, named.body.audio.mix.c2.gate, named.body.audio.mix.c2.label], [0.7, 0.2, 'Pastor <b>']);
   assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { strips: [{ strip: 'c3', level: 1 }] })).status, 400);
   assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { strips: [{ strip: 'bed', label: 'x' }] })).body.audio.mix.bed.label, undefined, 'only console channels are named');
+  await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+});
+
+/*
+ * THE REST OF THE CHANNEL STRIP: trim and polarity, the filters, the parametric bands, the
+ * compressor's own controls, the de-esser, chorus, pan, the delay, and ducking. Measured on known
+ * signals, like the stages above.
+ */
+const sides = (b) => { let l = 0, r = 0; for (let i = Math.floor(b.length / 2) & ~1; i < b.length; i += 2) { l = Math.max(l, Math.abs(b[i])); r = Math.max(r, Math.abs(b[i + 1])); } return [l, r]; };
+test('trim, polarity, the filters and the parametric bands do what a console\'s do', () => {
+  const ref = through(1000, 0.1, {});
+  assert.ok(Math.abs(through(1000, 0.1, { trim: 12 }) - (ref + 12)) < 0.1, 'trim is gain in dB');
+  const inv = sine(1000, 0.1), was = Float32Array.from(inv); new dsp.Strip().run(inv, dsp.cleanProcessing({ inv: true }));
+  assert.ok(inv.every((v, i) => v === -was[i]), 'polarity turns the wave over');
+  assert.ok(through(200, 0.1, { hpf: true, hpf_f: 300 }) < ref - 5 && through(200, 0.1, { hpf: true, hpf_f: 40 }) > ref - 0.5, 'the high-pass is where it is put');
+  assert.ok(through(12000, 0.1, { lpf: 4000 }) < ref - 15 && Math.abs(through(500, 0.1, { lpf: 4000 }) - ref) < 0.3, 'the low-pass takes the top off and leaves the rest');
+  assert.ok(through(3000, 0.1, { eq: { mid: 9, mid_f: 3000 } }) > ref + 8 && through(1200, 0.1, { eq: { mid: 9, mid_f: 3000, mid_q: 4 } }) < ref + 1.5, 'a bell is moved to its frequency, and narrowed');
+  assert.ok(through(400, 0.1, { eq: { lomid: -9 } }) < ref - 8 && Math.abs(through(4000, 0.1, { eq: { lomid: -9 } }) - ref) < 0.5, 'the low-mid band is its own band');
+  assert.ok(through(300, 0.1, { eq: { low: 9, low_f: 300 } }) > through(300, 0.1, { eq: { low: 9, low_f: 60 } }) + 3, 'a shelf turns over where it is set');
+});
+
+test('the compressor answers to its own threshold, ratio and make-up; the de-esser takes only the top; chorus adds a moving double', () => {
+  const on = (o) => ({ cmp: { on: true, ...o } });
+  const ref = through(1000, 0.5, {});
+  assert.ok(Math.abs(through(1000, 0.5, on({ thr: 0 })) - ref) < 0.2, 'under the threshold nothing happens');
+  const four = ref - through(1000, 0.5, on({ thr: -26, ratio: 4 })), ten = ref - through(1000, 0.5, on({ thr: -26, ratio: 20 }));
+  assert.ok(four > 12 && four < 17 && ten > four + 3, 'over it, the signal comes down by the ratio');
+  assert.ok(Math.abs(through(1000, 0.5, on({ thr: 0, gain: 6 })) - (ref + 6)) < 0.3, 'make-up gain is gain');
+  assert.ok(through(1000, 0.5, { comp: 0.5, cmp: { on: true, thr: 0 } }) > through(1000, 0.5, { comp: 0.5 }) + 3, 'its own controls, when on, replace the one knob');
+  const sRef = through(8000, 0.3, {});
+  assert.ok(through(8000, 0.3, { deess: 0.8 }) < sRef - 6, 'a loud "s" is brought down');
+  assert.ok(Math.abs(through(300, 0.3, { deess: 0.8 }) - through(300, 0.3, {})) < 0.3, 'a vowel is not');
+  const dry = sine(440, 0.2), wet = sine(440, 0.2); new dsp.Strip().run(wet, dsp.cleanProcessing({ chorus: 1 }));
+  let differs = 0; for (let i = 4096; i < wet.length; i++) if (Math.abs(wet[i] - dry[i]) > 0.01) differs++;
+  assert.ok(differs > wet.length / 4, 'the chorus changes the signal'); assert.ok(wet.every((v) => Math.abs(v) < 0.35), 'and stays in bounds');
+});
+
+test('pan places a strip, the delay brings it back later, and a ducked strip gives way while someone talks', async () => {
+  const feed = (m, name, amp, sec = 1) => { const s = new PassThrough({ highWaterMark: 1 << 24 }); m.attach(name, s); const t = sine(440, amp, sec), raw = Buffer.alloc(t.length * 2); t.forEach((v, i) => raw.writeInt16LE(Math.round(v * 32767), i * 2)); s.write(raw); };
+  const peakOf = (buf) => Math.max(...ints(buf).map(Math.abs));
+  const left = new audio.Mix({ bed: { pan: -1 } }), half = new audio.Mix({ bed: { pan: 0.5 } });
+  feed(left, 'bed', 0.3); feed(half, 'bed', 0.3); await tick(); await tick();
+  const fa = (m) => { const o = ints(m.next(audio.SECOND / 4)); const f = new Float32Array(o.length); o.forEach((v, i) => { f[i] = v / 32768; }); return sides(f); };
+  const [l1, r1] = fa(left), [l2, r2] = fa(half);
+  assert.ok(l1 > 0.29 && r1 === 0, 'hard left is on the left only'); assert.ok(Math.abs(l2 - 0.15) < 0.01 && r2 > 0.29, 'half right leaves the right whole and halves the left');
+  // Delay: half a second of tone, sent to a 300 ms echo. After the tone ends the echo is still arriving; dry, there is nothing.
+  const dry = new audio.Mix({}), echo = new audio.Mix({ bed: { dly: 1 }, fx: { delay_ms: 300, delay_fb: 0 } });
+  for (const m of [dry, echo]) feed(m, 'bed', 0.3, 0.5);
+  await tick(); await tick();
+  dry.next(audio.SECOND / 2); echo.next(audio.SECOND / 2);
+  assert.equal(peakOf(dry.next(audio.SECOND / 5)), 0); assert.ok(peakOf(echo.next(audio.SECOND / 5)) > 8000, 'the echo of the last 300 ms is heard after the sound ends');
+  echo.next(audio.SECOND / 2);
+  assert.equal(peakOf(echo.next(audio.SECOND / 5)), 0, 'with no feedback it comes back once');
+  assert.deepEqual(audio.cleanSettings({ fx: { delay_ms: 99999, delay_fb: 5, decay: 'x' } }).fx, { decay: 0.5, delay_ms: 1500, delay_fb: 0.9 });
+  // Ducking: the bed plays alone at full level; when the microphone carries signal the bed gives way, and comes back after.
+  const m = new audio.Mix({ bed: { duck: 1 }, mic: { muted: false } });
+  feed(m, 'bed', 0.3, 6); await tick(); await tick();
+  const bedNow = () => { m.next(882 * 4); return m.peaks.bed; };
+  for (let i = 0; i < 10; i++) bedNow();
+  assert.ok(bedNow() > 0.29, 'alone, the bed is at its level');
+  const talk = m.open('mic', { live: true }); assert.ok(talk);
+  const voice = sine(300, 0.2, 1), raw = Buffer.alloc(voice.length * 2); voice.forEach((v, i) => raw.writeInt16LE(Math.round(v * 32767), i * 2));
+  for (let i = 0; i < 20; i++) { m.push('mic', raw.subarray(i * 882 * 4, (i + 1) * 882 * 4)); bedNow(); }
+  assert.ok(m.peaks.bed < 0.03, 'while the microphone talks the bed is down by 24 dB');
+  for (let i = 0; i < 80; i++) bedNow();
+  assert.ok(m.peaks.bed > 0.29, 'and it comes back when the talking stops');
+});
+
+test('the new strip controls are stored through the API in range, and the master has a compressor', async () => {
+  const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Strip', kind: 'record' })).body;
+  const r = await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { strips: [
+    { strip: 'mic', trim: 99, inv: true, pan: -3, hpf_f: 5, lpf: 500, deess: 0.4, chorus: 2, dly: 0.3, duck: 0.5, eq: { lomid: 4, mid_f: 99999, mid_q: 0 }, cmp: { on: true, thr: -30, ratio: 99 } },
+    { strip: 'master', comp: 0.3, cmp: { gain: 3 }, pan: 1, duck: 1 }], fx: { delay_ms: 500, delay_fb: 0.5 } });
+  assert.equal(r.status, 200, r.text);
+  const mic = r.body.audio.mix.mic, master = r.body.audio.mix.master;
+  assert.deepEqual([mic.trim, mic.inv, mic.pan, mic.hpf_f, mic.lpf, mic.deess, mic.chorus, mic.dly, mic.duck], [40, true, -1, 20, 1000, 0.4, 1, 0.3, 0.5]);
+  assert.deepEqual([mic.eq.lomid, mic.eq.mid_f, mic.eq.mid_q, mic.cmp.on, mic.cmp.thr, mic.cmp.ratio, mic.cmp.att], [4, 8000, 0.3, true, -30, 20, 8]);
+  assert.deepEqual([master.comp, master.cmp.gain, master.pan, master.duck], [0.3, 3, undefined, undefined], 'the master takes a compressor, not a channel\'s controls');
+  assert.deepEqual(r.body.audio.mix.fx, { decay: 0.5, delay_ms: 500, delay_fb: 0.5 });
   await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
 });

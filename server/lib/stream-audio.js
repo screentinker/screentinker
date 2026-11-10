@@ -81,8 +81,11 @@ function cleanSettings(s) {
   }
   for (const name of ['net', 'net2']) out[name].url = netUrl(x[name] && x[name].url);
   const m = x.master && typeof x.master === 'object' ? x.master : {};
-  out.master = { level: level(m.level, 1), muted: !!m.muted, eq: dsp.cleanProcessing(m).eq };
-  out.fx = { decay: x.fx && Number.isFinite(Number(x.fx.decay)) ? unit(x.fx.decay) : 0.5 };
+  const mp = dsp.cleanProcessing(m);
+  out.master = { level: level(m.level, 1), muted: !!m.muted, eq: mp.eq, comp: mp.comp, cmp: mp.cmp };
+  const fx = x.fx && typeof x.fx === 'object' ? x.fx : {};
+  const num = (v, lo, hi, dflt) => { const n = Number(v); return v !== null && v !== undefined && v !== '' && Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt; };
+  out.fx = { decay: num(fx.decay, 0, 1, 0.5), delay_ms: num(fx.delay_ms, 50, 1500, 350), delay_fb: num(fx.delay_fb, 0, 0.9, 0.35) };
   return out;
 }
 
@@ -92,7 +95,8 @@ class Mix {
     this.inputs = new Map();     // name -> { q: Buffer[], bytes, stream, live, odd }
     this.strips = {}; this.denoisers = {};        // made when a strip is first used: the console's channels come and go
     this.masterEq = new dsp.Strip();
-    this.reverb = new dsp.Reverb();
+    this.reverb = new dsp.Reverb(); this.delay = new dsp.Delay();
+    this.talk = 0; this.ducked = 0;      // how loud the talking strips were a moment ago; how far ducking is in (0..1)
     this.limiter = new dsp.Limiter();
     this.peaks = Object.fromEntries([...INPUTS, 'master'].map((n) => [n, 0]));
     // What a meter shows: the loudest each strip has been lately, falling back at 20 dB a second,
@@ -147,8 +151,13 @@ class Mix {
   next(n) {
     n -= n % FRAME;
     const len = n / 2;                                 // samples, both channels counted
-    const sum = new Float32Array(len), send = new Float32Array(len);
-    let sending = false;
+    const sum = new Float32Array(len), send = new Float32Array(len), send2 = new Float32Array(len);
+    let sending = false, echoing = false, talk = 0;
+    // DUCKING. While any talking strip (a microphone, the line, a console channel, a network
+    // feed) carries signal, the strips set to duck (the bed, the programme) are turned down, and
+    // come back when the talking stops: quick down, slow up.
+    const secs = len / 2 / RATE, was = this.ducked;
+    this.ducked = this.talk > 0.02 ? Math.min(1, was + secs / 0.08) : Math.max(0, was - secs / 0.9);
     for (const name of inputNames(this.settings)) {
       const input = this.inputs.get(name);
       if (!input) { this.peaks[name] = 0; continue; }
@@ -169,19 +178,27 @@ class Mix {
       const gain = set.muted ? 0 : set.level;
       let peak = 0;
       if (gain !== 0) {
-        const fx = set.fx;
+        const fx = set.fx, dly = set.dly;
+        const gl = gain * (set.pan > 0 ? 1 - set.pan : 1), gr = gain * (set.pan < 0 ? 1 + set.pan : 1);
+        // A ducked strip's gain moves across the block from where ducking was to where it is now: no steps to hear.
+        const d0 = set.duck ? dsp.dbToLin(-24 * set.duck * was) : 1, d1 = set.duck ? dsp.dbToLin(-24 * set.duck * this.ducked) : 1;
         for (let i = 0; i < len; i++) {
-          const v = buf[i] * gain; sum[i] += v;
+          const v = buf[i] * ((i & 1) ? gr : gl) * (d0 + (d1 - d0) * (i / len)); sum[i] += v;
           const m = v < 0 ? -v : v; if (m > peak) peak = m;
           if (fx) send[i] += v * fx;
+          if (dly) send2[i] += v * dly;
         }
         if (fx && peak > 0) sending = true;
+        if (dly && peak > 0) echoing = true;
       }
       this.peaks[name] = Math.min(1, peak);
+      if (!set.duck && name !== 'programme' && name !== 'bed' && peak > talk) talk = peak;
     }
+    this.talk = talk;
     this.reverb.run(send, sum, this.settings.fx.decay, sending);
+    this.delay.run(send2, sum, this.settings.fx.delay_ms, this.settings.fx.delay_fb, echoing);
     const master = this.settings.master;
-    this.masterEq.run(sum, { hpf: false, eq: master.eq, gate: 0, comp: 0, fx: 0 });
+    this.masterEq.run(sum, { hpf: false, eq: master.eq, gate: 0, comp: master.comp, cmp: master.cmp, fx: 0 });
     const mg = master.muted ? 0 : master.level;
     if (mg !== 1) for (let i = 0; i < len; i++) sum[i] *= mg;
     this.limiter.run(sum);                             // loud is held under full scale; it never wraps

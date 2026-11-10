@@ -6,12 +6,14 @@
  * What a channel strip on a broadcast desk does, in the order a desk does it:
  *
  *   noise       subtracts the steady noise floor under the signal (Denoiser, below)
- *   high-pass   takes out rumble and handling noise below 80 Hz
- *   EQ          three bands: low shelf (120 Hz), mid bell (1.2 kHz), high shelf (8 kHz), ±12 dB
+ *   trim        input gain, and polarity
+ *   high-pass   takes out rumble and handling noise (80 Hz unless moved); low-pass, the other end
+ *   EQ          four bands: low shelf, two bells, high shelf, ±12 dB, each where it is put
  *   gate        closes the channel when it falls below a threshold: the room between sentences
- *   compressor  evens out loud and quiet, one "amount" control
- *   fader       level and mute
- *   send        how much of the channel goes to the reverb
+ *   compressor  evens out loud and quiet: one "amount" control, or all five of its own
+ *   de-esser    takes the edge off sibilance; chorus doubles the signal
+ *   fader       level, mute and pan; ducking turns a channel down while someone talks
+ *   sends       how much of the channel goes to the reverb, and to the delay
  *
  * and on the way out: the reverb's return, the master EQ and fader, and a limiter that holds the
  * sum under full scale instead of letting it clip.
@@ -40,6 +42,8 @@ class Biquad {
     let b0, b1, b2, a0, a1, a2;
     if (type === 'highpass') {
       b0 = (1 + cs) / 2; b1 = -(1 + cs); b2 = (1 + cs) / 2; a0 = 1 + alpha; a1 = -2 * cs; a2 = 1 - alpha;
+    } else if (type === 'lowpass') {
+      b0 = (1 - cs) / 2; b1 = 1 - cs; b2 = (1 - cs) / 2; a0 = 1 + alpha; a1 = -2 * cs; a2 = 1 - alpha;
     } else if (type === 'peaking') {
       b0 = 1 + alpha * A; b1 = -2 * cs; b2 = 1 - alpha * A; a0 = 1 + alpha / A; a1 = -2 * cs; a2 = 1 - alpha / A;
     } else {
@@ -71,35 +75,65 @@ class Biquad {
 /** One-pole smoothing coefficient for a time constant in milliseconds. */
 const coef = (ms) => Math.exp(-1 / (RATE * ms / 1000));
 
-/** A strip's processing controls, made safe. Neutral is: no filter, no dynamics, no send. */
+/**
+ * A strip's processing controls, made safe. Neutral is: no trim, no filter, flat EQ, no dynamics,
+ * no effect, no send, centre. What a channel of a digital console has:
+ *
+ *   trim, inv        input gain in dB, and polarity
+ *   hpf, hpf_f       high-pass and where it turns over
+ *   lpf              low-pass (0 = off)
+ *   eq               four bands: low shelf, low-mid bell, high-mid bell, high shelf, each with its
+ *                    gain and frequency, the bells with their width (Q)
+ *   gate             closes the channel under a threshold
+ *   comp / cmp       compressor: one "amount" knob, or (cmp.on) threshold, ratio, attack, release, make-up
+ *   deess            takes the edge off sibilance (dynamic cut above 5 kHz)
+ *   chorus           a modulated double of the signal
+ *   fx, dly          sends to the reverb and to the delay
+ *   pan              left to right; duck: turned down while someone is talking (applied by the mixer)
+ */
 function cleanProcessing(p) {
   const x = p && typeof p === 'object' ? p : {};
   const eq = x.eq && typeof x.eq === 'object' ? x.eq : {};
+  const c = x.cmp && typeof x.cmp === 'object' ? x.cmp : {};
   return {
-    hpf: x.hpf === true,
-    eq: { low: clamp(eq.low, -12, 12, 0), mid: clamp(eq.mid, -12, 12, 0), high: clamp(eq.high, -12, 12, 0) },
+    trim: clamp(x.trim, -20, 40, 0), inv: x.inv === true, pan: clamp(x.pan, -1, 1, 0),
+    hpf: x.hpf === true, hpf_f: clamp(x.hpf_f, 20, 400, 80), lpf: Number(x.lpf) > 0 ? clamp(x.lpf, 1000, 20000, 0) : 0,
+    eq: {
+      low: clamp(eq.low, -12, 12, 0), mid: clamp(eq.mid, -12, 12, 0), high: clamp(eq.high, -12, 12, 0), lomid: clamp(eq.lomid, -12, 12, 0),
+      low_f: clamp(eq.low_f, 40, 400, 120), lomid_f: clamp(eq.lomid_f, 100, 2000, 400), lomid_q: clamp(eq.lomid_q, 0.3, 6, 1),
+      mid_f: clamp(eq.mid_f, 400, 8000, 1200), mid_q: clamp(eq.mid_q, 0.3, 6, 0.9), high_f: clamp(eq.high_f, 2000, 16000, 8000),
+    },
     gate: clamp(x.gate, 0, 1, 0),        // 0 off; up to 1 = closes below about -20 dB
     comp: clamp(x.comp, 0, 1, 0),        // 0 off; up to 1 = heavy
+    cmp: { on: c.on === true, thr: clamp(c.thr, -60, 0, -20), ratio: clamp(c.ratio, 1, 20, 3), att: clamp(c.att, 0.1, 100, 8), rel: clamp(c.rel, 10, 2000, 200), gain: clamp(c.gain, 0, 24, 0) },
+    deess: clamp(x.deess, 0, 1, 0), chorus: clamp(x.chorus, 0, 1, 0),
     fx: clamp(x.fx, 0, 1, 0),            // send to the reverb
+    dly: clamp(x.dly, 0, 1, 0),          // send to the delay
+    duck: clamp(x.duck, 0, 1, 0),
   };
 }
 
 class Strip {
   constructor() {
-    this.hp = new Biquad(); this.lo = new Biquad(); this.mid = new Biquad(); this.hi = new Biquad();
+    this.hp = new Biquad(); this.lp = new Biquad(); this.lo = new Biquad(); this.lm = new Biquad(); this.mid = new Biquad(); this.hi = new Biquad();
+    this.ess = new Biquad(); this.essShelf = new Biquad(); this.essEnv = 0; this.essOn = false;
     this.gateEnv = 0; this.gateGain = 1; this.compEnv = 0;
     this.reduction = 0;                  // what the compressor is taking off right now, in dB (for the desk)
+    this.ch = null;                      // the chorus's delay lines, made when it is first used
   }
 
   /**
    * Processes `buf` in place up to (not including) the fader. `p` is cleanProcessing() output.
-   * Returns nothing; the caller applies level, mute and the send.
+   * Returns nothing; the caller applies level, mute, pan and the sends.
    */
   run(buf, p) {
-    if (p.hpf) { this.hp.set('highpass', 80, 0, 0.707); this.hp.run(buf); }
-    if (p.eq.low) { this.lo.set('lowshelf', 120, p.eq.low, 0.707); this.lo.run(buf); }
-    if (p.eq.mid) { this.mid.set('peaking', 1200, p.eq.mid, 0.9); this.mid.run(buf); }
-    if (p.eq.high) { this.hi.set('highshelf', 8000, p.eq.high, 0.707); this.hi.run(buf); }
+    if (p.trim || p.inv) { const g = dbToLin(p.trim || 0) * (p.inv ? -1 : 1); for (let i = 0; i < buf.length; i++) buf[i] *= g; }
+    if (p.hpf) { this.hp.set('highpass', p.hpf_f || 80, 0, 0.707); this.hp.run(buf); }
+    if (p.lpf) { this.lp.set('lowpass', p.lpf, 0, 0.707); this.lp.run(buf); }
+    if (p.eq.low) { this.lo.set('lowshelf', p.eq.low_f || 120, p.eq.low, 0.707); this.lo.run(buf); }
+    if (p.eq.lomid) { this.lm.set('peaking', p.eq.lomid_f || 400, p.eq.lomid, p.eq.lomid_q || 1); this.lm.run(buf); }
+    if (p.eq.mid) { this.mid.set('peaking', p.eq.mid_f || 1200, p.eq.mid, p.eq.mid_q || 0.9); this.mid.run(buf); }
+    if (p.eq.high) { this.hi.set('highshelf', p.eq.high_f || 8000, p.eq.high, 0.707); this.hi.run(buf); }
     if (p.gate > 0) {
       // Threshold from -60 dB (barely there) to -20 dB. Fast to open, slow to close, and it closes
       // by turning down smoothly, not by cutting: a gate that clicks is worse than the noise.
@@ -114,10 +148,11 @@ class Strip {
       }
       this.gateEnv = env < 1e-12 ? 0 : env; this.gateGain = g;
     } else { this.gateEnv = 0; this.gateGain = 1; }
-    if (p.comp > 0) {
-      // One knob: more amount = lower threshold, higher ratio, and make-up gain to match.
-      const thrDb = -10 - 20 * p.comp, ratio = 1 + 7 * p.comp, makeup = dbToLin(6 * p.comp);
-      const att = coef(8), rel = coef(200);
+    const c = p.cmp && p.cmp.on ? p.cmp : null;
+    if (c || p.comp > 0) {
+      // Set by its own controls, or by the one knob: more amount = lower threshold, higher ratio, and make-up gain to match.
+      const thrDb = c ? c.thr : -10 - 20 * p.comp, ratio = c ? c.ratio : 1 + 7 * p.comp, makeup = dbToLin(c ? c.gain : 6 * p.comp);
+      const att = coef(c ? c.att : 8), rel = coef(c ? c.rel : 200);
       let env = this.compEnv, most = 0;
       for (let i = 0; i + 1 < buf.length; i += 2) {
         const a = Math.max(Math.abs(buf[i]), Math.abs(buf[i + 1]));
@@ -131,6 +166,49 @@ class Strip {
       }
       this.compEnv = env < 1e-12 ? 0 : env; this.reduction = most;
     } else { this.compEnv = 0; this.reduction = 0; }
+    if (p.deess > 0) {
+      // What is above 5 kHz is measured on its own (a copy, filtered); when it jumps out (an "s"),
+      // a high shelf is pulled down by as much, a few milliseconds at a time, and let back up after.
+      const top = Float32Array.from(buf); this.ess.set('highpass', 5000, 0, 0.707); this.ess.run(top);
+      const thrDb = -24 - 16 * p.deess;
+      for (let at = 0; at < buf.length; at += 512) {
+        const end = Math.min(buf.length, at + 512);
+        let pk = 0; for (let i = at; i < end; i++) { const a = top[i] < 0 ? -top[i] : top[i]; if (a > pk) pk = a; }
+        const over = pk > 1e-9 ? 20 * Math.log10(pk) - thrDb : -99;
+        const want = over > 0 ? Math.min(18, 0.75 * over) : 0;
+        this.essEnv = want > this.essEnv ? want : this.essEnv + (want - this.essEnv) * 0.25;      // down at once, back up over ~25 ms
+        const cut = Math.round(this.essEnv * 2) / 2;
+        if (cut > 0 || this.essOn) { this.essShelf.set('highshelf', 4500, -cut, 0.707); this.essShelf.run(buf.subarray(at, end)); this.essOn = cut > 0; }
+      }
+    } else { this.essEnv = 0; this.essOn = false; }
+    if (p.chorus > 0) {
+      // A copy of the signal, 15 ms late and drifting by a few ms, a little differently on each side.
+      if (!this.ch) this.ch = { l: new Float32Array(2048), r: new Float32Array(2048), w: 0, ph: 0 };
+      const ch = this.ch, wet = 0.5 * p.chorus, step = 2 * Math.PI * 0.8 / RATE;
+      for (let i = 0; i + 1 < buf.length; i += 2) {
+        ch.l[ch.w] = buf[i]; ch.r[ch.w] = buf[i + 1];
+        const tap = (line, phase) => { const d = (15 + 5 * Math.sin(ch.ph + phase)) * RATE / 1000, at = ch.w - d, i0 = Math.floor(at), fr = at - i0; return line[i0 & 2047] * (1 - fr) + line[(i0 + 1) & 2047] * fr; };
+        buf[i] += tap(ch.l, 0) * wet; buf[i + 1] += tap(ch.r, Math.PI / 2) * wet;
+        ch.w = (ch.w + 1) & 2047; ch.ph += step; if (ch.ph > 2 * Math.PI) ch.ph -= 2 * Math.PI;
+      }
+    } else if (this.ch) this.ch = null;
+  }
+}
+
+/** An echo: what is sent comes back `ms` later, and again, each time quieter (`fb`), crossing sides as it goes. */
+class Delay {
+  constructor() { this.l = new Float32Array(1 << 17); this.r = new Float32Array(1 << 17); this.w = 0; this.active = 0; }
+  run(send, out, ms, fb, hasInput) {
+    if (hasInput) this.active = RATE * 8; else if (this.active <= 0) return;
+    const d = Math.max(1, Math.min((1 << 17) - 1, Math.round(ms * RATE / 1000))), mask = (1 << 17) - 1;
+    for (let i = 0; i + 1 < send.length; i += 2) {
+      const at = (this.w - d) & mask, dl = this.l[at], dr = this.r[at];
+      out[i] += dl; out[i + 1] += dr;
+      this.l[this.w] = send[i] + dr * fb; this.r[this.w] = send[i + 1] + dl * fb;
+      this.w = (this.w + 1) & mask;
+    }
+    this.active -= send.length / 2;
+    if (this.active <= 0) { this.l.fill(0); this.r.fill(0); }
   }
 }
 
@@ -336,4 +414,4 @@ class Denoiser {
   }
 }
 
-module.exports = { RATE, Biquad, Strip, Reverb, Limiter, Denoiser, cleanProcessing, dbToLin, isPrint, NFFT };
+module.exports = { RATE, Biquad, Strip, Reverb, Delay, Limiter, Denoiser, cleanProcessing, dbToLin, isPrint, NFFT };

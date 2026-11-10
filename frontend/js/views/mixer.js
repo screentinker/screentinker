@@ -96,33 +96,58 @@ function gfxLayer(root, pgm) {
 }
 let procOpen = null;         // the strip whose processing is open on the desk: { sid, strip }
 /** Whether a strip's processing does anything: its EQ key is lit when it does. */
-const shaped = (st) => !!(st.hpf || st.gate || st.comp || st.fx || st.denoise || (st.eq && (st.eq.low || st.eq.mid || st.eq.high)));
-const knob = (s, strip, ctl, label, value, min, max, step, show) => `<label class="mx-knob">${esc(label)}<input type="range" min="${min}" max="${max}" step="${step}" value="${value}" data-proc="${esc(s.id)}" data-strip="${strip}" data-ctl="${ctl}"><output>${esc(show)}</output></label>`;
+const shaped = (st) => !!(st.hpf || st.lpf || st.trim || st.inv || st.pan || st.gate || st.comp || (st.cmp && st.cmp.on) || st.deess || st.chorus || st.fx || st.dly || st.duck || st.denoise || (st.eq && (st.eq.low || st.eq.lomid || st.eq.mid || st.eq.high)));
 const sizeOf = (n) => (n >= 1024 ** 3 ? (n / 1024 ** 3).toFixed(2) + ' GB' : (n / 1024 ** 2).toFixed(1) + ' MB');
 /** A meter's height for a peak of 0..1: a dB scale from -60 to 0, as a desk's meter reads. */
 const meterPct = (v) => (v > 0.001 ? Math.round(Math.max(0, Math.min(1, (20 * Math.log10(v) + 60) / 60)) * 100) : 0);
-const dB = (v) => (v > 0 ? '+' : '') + v + ' dB';
-const pct = (v) => (v ? Math.round(v * 100) + '%' : t('mixer.audio_off'));
-/** The processing of one strip: what a desk channel has between its input and its fader. */
+/** How a control's value reads on the desk, by what kind of control it is. */
+function fmt(ctl, v) {
+  v = Number(v);
+  if (ctl === 'pan') return Math.abs(v) < 0.02 ? t('mixer.pan_c') : (v < 0 ? 'L' : 'R') + Math.round(Math.abs(v) * 100);
+  if (ctl === 'lpf') return v > 20000 || v <= 0 ? t('mixer.audio_off') : (v / 1000).toFixed(1) + ' kHz';
+  if (/_f$/.test(ctl)) return v >= 1000 ? (v / 1000).toFixed(1) + ' kHz' : Math.round(v) + ' Hz';
+  if (/_q$/.test(ctl)) return 'Q ' + v.toFixed(1);
+  if (ctl === 'cmp.ratio') return v.toFixed(1) + ':1';
+  if (ctl === 'cmp.att' || ctl === 'cmp.rel' || ctl === 'fx.delay_ms') return Math.round(v) + ' ms';
+  if (ctl === 'trim' || ctl === 'cmp.thr' || ctl === 'cmp.gain' || /^eq\.(low|lomid|mid|high)$/.test(ctl)) return (v > 0 ? '+' : '') + v + ' dB';
+  if (ctl === 'fx.decay' || ctl === 'fx.delay_fb') return Math.round(v * 100) + '%';
+  return v ? Math.round(v * 100) + '%' : t('mixer.audio_off');
+}
+const knob = (s, strip, ctl, label, value, min, max, step) => `<label class="mx-knob">${esc(label)}<input type="range" min="${min}" max="${max}" step="${step}" value="${value}" data-proc="${esc(s.id)}" data-strip="${strip}" data-ctl="${ctl}"><output>${esc(fmt(ctl, value))}</output></label>`;
+const tick = (s, strip, ctl, label, on) => `<label class="mx-knob mx-knob-check"><input type="checkbox" ${on ? 'checked' : ''} data-proc="${esc(s.id)}" data-strip="${strip}" data-ctl="${ctl}"> ${esc(label)}</label>`;
+const sect = (title, body) => `<div class="mx-proc-sect"><h5>${esc(title)}</h5><div class="mx-knobs">${body}</div></div>`;
+/** A strip with every control at neutral: what "Set flat" sends. */
+const FLAT = { trim: 0, inv: false, pan: 0, hpf: false, hpf_f: 80, lpf: 0, eq: { low: 0, lomid: 0, mid: 0, high: 0, low_f: 120, lomid_f: 400, lomid_q: 1, mid_f: 1200, mid_q: 0.9, high_f: 8000 }, gate: 0, comp: 0, cmp: { on: false, thr: -20, ratio: 3, att: 8, rel: 200, gain: 0 }, deess: 0, chorus: 0, fx: 0, dly: 0, duck: 0, denoise: 0 };
+/** The processing of one strip: what a console channel has between its input and its fader. */
 function procPanel(s, strip) {
-  const st = s.audio.mix[strip], master = strip === 'master';
+  const st = s.audio.mix[strip], master = strip === 'master', fx = s.audio.mix.fx, k = (...a) => knob(s, strip, ...a);
+  const band = (...knobs) => `<div class="mx-band">${knobs.join('')}</div>`;
+  const eq = `<div class="mx-proc-sect"><h5>${esc(t('mixer.sect_eq'))}</h5><div class="mx-bands">
+      ${band(k('eq.low', t('mixer.audio_eq_low'), st.eq.low, -12, 12, 1), k('eq.low_f', t('mixer.at_freq'), st.eq.low_f, 40, 400, 10))}
+      ${band(k('eq.lomid', t('mixer.audio_eq_lomid'), st.eq.lomid, -12, 12, 1), k('eq.lomid_f', t('mixer.at_freq'), st.eq.lomid_f, 100, 2000, 50), k('eq.lomid_q', t('mixer.width'), st.eq.lomid_q, 0.3, 6, 0.1))}
+      ${band(k('eq.mid', t('mixer.audio_eq_mid'), st.eq.mid, -12, 12, 1), k('eq.mid_f', t('mixer.at_freq'), st.eq.mid_f, 400, 8000, 100), k('eq.mid_q', t('mixer.width'), st.eq.mid_q, 0.3, 6, 0.1))}
+      ${band(k('eq.high', t('mixer.audio_eq_high'), st.eq.high, -12, 12, 1), k('eq.high_f', t('mixer.at_freq'), st.eq.high_f, 2000, 16000, 500))}
+    </div></div>`;
+  const comp = `${k('comp', t('mixer.audio_comp'), st.comp, 0, 1, 0.05)}
+      ${tick(s, strip, 'cmp.on', t('mixer.cmp_manual'), st.cmp.on)}
+      ${st.cmp.on ? `${k('cmp.thr', t('mixer.cmp_thr'), st.cmp.thr, -60, 0, 1)}${k('cmp.ratio', t('mixer.cmp_ratio'), st.cmp.ratio, 1, 20, 0.5)}${k('cmp.att', t('mixer.cmp_att'), st.cmp.att, 0.1, 100, 0.1)}${k('cmp.rel', t('mixer.cmp_rel'), st.cmp.rel, 10, 2000, 10)}${k('cmp.gain', t('mixer.cmp_gain'), st.cmp.gain, 0, 24, 0.5)}` : ''}`;
   return `<div class="mx-proc" role="group" aria-label="${esc(stripName(s, strip))}">
     <div class="mx-proc-title">${esc(t('mixer.audio_proc_of', { strip: stripName(s, strip) }))}<button type="button" class="btn btn-secondary btn-sm" data-procreset="${esc(s.id)}" data-strip="${strip}">${esc(t('mixer.audio_flat'))}</button></div>
-    <div class="mx-knobs">
+    ${master ? `${eq}${sect(t('mixer.sect_dyn'), comp)}${sect(t('mixer.sect_fx_returns'), `
+      ${k('fx.decay', t('mixer.audio_room'), fx.decay, 0, 1, 0.05)}${k('fx.delay_ms', t('mixer.delay_time'), fx.delay_ms, 50, 1500, 10)}${k('fx.delay_fb', t('mixer.delay_fb'), fx.delay_fb, 0, 0.9, 0.05)}`)}` : `
+    ${sect(t('mixer.sect_input'), `
       ${/^c\d+$/.test(strip) ? `<label class="mx-knob mx-knob-name">${esc(t('mixer.channel_name'))}<input class="input" maxlength="24" value="${esc(st.label || '')}" placeholder="${esc(t('mixer.strip.channel', { n: strip.slice(1) }))}" data-chname="${esc(s.id)}" data-strip="${strip}"></label>` : ''}
-      ${master ? '' : `<label class="mx-knob mx-knob-check"><input type="checkbox" ${st.hpf ? 'checked' : ''} data-proc="${esc(s.id)}" data-strip="${strip}" data-ctl="hpf"> ${esc(t('mixer.audio_hpf'))}</label>`}
-      ${knob(s, strip, 'eq.low', t('mixer.audio_eq_low'), st.eq.low, -12, 12, 1, dB(st.eq.low))}
-      ${knob(s, strip, 'eq.mid', t('mixer.audio_eq_mid'), st.eq.mid, -12, 12, 1, dB(st.eq.mid))}
-      ${knob(s, strip, 'eq.high', t('mixer.audio_eq_high'), st.eq.high, -12, 12, 1, dB(st.eq.high))}
-      ${master ? knob(s, strip, 'decay', t('mixer.audio_room'), s.audio.mix.fx.decay, 0, 1, 0.05, Math.round(s.audio.mix.fx.decay * 100) + '%') : `
-        ${knob(s, strip, 'gate', t('mixer.audio_gate'), st.gate, 0, 1, 0.05, pct(st.gate))}
-        ${knob(s, strip, 'comp', t('mixer.audio_comp'), st.comp, 0, 1, 0.05, pct(st.comp))}
-        ${knob(s, strip, 'fx', t('mixer.audio_reverb'), st.fx, 0, 1, 0.05, pct(st.fx))}
-        ${knob(s, strip, 'denoise', t('mixer.audio_denoise'), st.denoise, 0, 1, 0.05, pct(st.denoise))}
-        <span class="mx-knob mx-noise">${esc(t(st.noise ? 'mixer.audio_noise_learned' : 'mixer.audio_noise_auto'))}
-          <span class="mx-noise-keys"><button type="button" class="btn btn-secondary btn-sm" data-learn="${esc(s.id)}" data-strip="${strip}" ${s.status.state === 'live' || s.status.state === 'standby' ? '' : 'disabled'} title="${esc(t('mixer.audio_noise_learn_tip'))}">${esc(t('mixer.audio_noise_learn'))}</button>
-          ${st.noise ? `<button type="button" class="btn btn-secondary btn-sm" data-forget="${esc(s.id)}" data-strip="${strip}">${esc(t('mixer.audio_noise_forget'))}</button>` : ''}</span></span>`}
-    </div>
+      ${k('trim', t('mixer.trim'), st.trim, -20, 40, 1)}${k('pan', t('mixer.pan'), st.pan, -1, 1, 0.05)}
+      ${tick(s, strip, 'inv', t('mixer.invert'), st.inv)}
+      ${tick(s, strip, 'hpf', t('mixer.audio_hpf_on'), st.hpf)}${k('hpf_f', t('mixer.at_freq'), st.hpf_f, 20, 400, 10)}
+      ${k('lpf', t('mixer.lpf'), st.lpf > 0 ? st.lpf : 20500, 1000, 20500, 500)}
+      ${k('denoise', t('mixer.audio_denoise'), st.denoise, 0, 1, 0.05)}
+      <span class="mx-knob mx-noise">${esc(t(st.noise ? 'mixer.audio_noise_learned' : 'mixer.audio_noise_auto'))}
+        <span class="mx-noise-keys"><button type="button" class="btn btn-secondary btn-sm" data-learn="${esc(s.id)}" data-strip="${strip}" ${s.status.state === 'live' || s.status.state === 'standby' ? '' : 'disabled'} title="${esc(t('mixer.audio_noise_learn_tip'))}">${esc(t('mixer.audio_noise_learn'))}</button>
+        ${st.noise ? `<button type="button" class="btn btn-secondary btn-sm" data-forget="${esc(s.id)}" data-strip="${strip}">${esc(t('mixer.audio_noise_forget'))}</button>` : ''}</span></span>`)}
+    ${eq}
+    ${sect(t('mixer.sect_dyn'), `${k('gate', t('mixer.audio_gate'), st.gate, 0, 1, 0.05)}${k('deess', t('mixer.deess'), st.deess, 0, 1, 0.05)}${k('duck', t('mixer.duck'), st.duck, 0, 1, 0.05)}${comp}`)}
+    ${sect(t('mixer.sect_fx'), `${k('fx', t('mixer.audio_reverb'), st.fx, 0, 1, 0.05)}${k('dly', t('mixer.delay_send'), st.dly, 0, 1, 0.05)}${k('chorus', t('mixer.chorus'), st.chorus, 0, 1, 0.05)}`)}`}
     <p class="mx-note">${esc(t(master ? 'mixer.audio_proc_master_note' : 'mixer.audio_proc_note'))}</p>
   </div>`;
 }
@@ -591,13 +616,16 @@ function bind(root) {
     procOpen = same ? null : { sid: b.dataset.procopen, strip: b.dataset.strip }; draw(root);
   }));
   root.querySelectorAll('[data-proc]').forEach((el) => el.addEventListener('change', async () => {
-    const ctl = el.dataset.ctl, v = el.type === 'checkbox' ? el.checked : Number(el.value);
-    const body = ctl === 'decay' ? { fx: { decay: v } } : { strips: [{ strip: el.dataset.strip, ...(ctl.startsWith('eq.') ? { eq: { [ctl.slice(3)]: v } } : { [ctl]: v }) }] };
+    const ctl = el.dataset.ctl; let v = el.type === 'checkbox' ? el.checked : Number(el.value);
+    if (ctl === 'lpf' && v > 20000) v = 0;                 // the top of its travel is "off"
+    const [group, key] = ctl.includes('.') ? ctl.split('.') : [null, ctl];
+    const body = group === 'fx' ? { fx: { [key]: v } } : { strips: [{ strip: el.dataset.strip, ...(group ? { [group]: { [key]: v } } : { [key]: v }) }] };
     await streamAudio(el.dataset.proc, body); draw(root);
   }));
-  root.querySelectorAll('[data-proc][type=range]').forEach((el) => el.addEventListener('input', () => { const o = el.parentNode.querySelector('output'); if (o) o.textContent = el.dataset.ctl.startsWith('eq.') ? dB(Number(el.value)) : Math.round(Number(el.value) * 100) + '%'; }));
+  root.querySelectorAll('[data-proc][type=range]').forEach((el) => el.addEventListener('input', () => { const o = el.parentNode.querySelector('output'); if (o) o.textContent = fmt(el.dataset.ctl, el.value); }));
   root.querySelectorAll('[data-procreset]').forEach((b) => b.addEventListener('click', async () => {
-    await streamAudio(b.dataset.procreset, { strips: [{ strip: b.dataset.strip, hpf: false, eq: { low: 0, mid: 0, high: 0 }, gate: 0, comp: 0, fx: 0, denoise: 0 }] }); draw(root);
+    const strip = b.dataset.strip;
+    await streamAudio(b.dataset.procreset, strip === 'master' ? { strips: [{ strip, eq: FLAT.eq, comp: 0, cmp: FLAT.cmp }] } : { strips: [{ strip, ...FLAT }] }); draw(root);
   }));
   root.querySelectorAll('[data-mic]').forEach((b) => b.addEventListener('click', async () => {
     const sid = b.dataset.mic;

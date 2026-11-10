@@ -225,8 +225,10 @@ router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
     if (st.muted !== undefined) target.muted = st.muted === true;
     // The processing controls (lib/stream-dsp.js). Out-of-range values are brought into range when stored.
     if (st.eq && typeof st.eq === 'object') target.eq = { ...target.eq, ...st.eq };
+    if (st.cmp && typeof st.cmp === 'object') target.cmp = { ...target.cmp, ...st.cmp };
+    if (st.comp !== undefined) target.comp = st.comp;
     if (st.strip !== 'master') {
-      for (const k of ['hpf', 'gate', 'comp', 'fx']) if (st[k] !== undefined) target[k] = st[k];
+      for (const k of ['hpf', 'hpf_f', 'lpf', 'gate', 'fx', 'dly', 'trim', 'inv', 'pan', 'deess', 'chorus', 'duck']) if (st[k] !== undefined) target[k] = st[k];
       if (st.denoise !== undefined) target.denoise = st.denoise;
       if (st.label !== undefined && /^c\d+$/.test(st.strip)) target.label = String(st.label);
     }
@@ -239,7 +241,7 @@ router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
     else if (!audio.netUrl(b[field])) return res.status(400).json({ error: 'A network feed is an srt://, rtmp://, rtsp://, rtp://, udp:// or http(s):// address.' });
     else mix[n].url = audio.netUrl(b[field]);
   }
-  if (b.fx && typeof b.fx === 'object' && b.fx.decay !== undefined) mix.fx = { decay: b.fx.decay };
+  if (b.fx && typeof b.fx === 'object') mix.fx = { ...mix.fx, ...Object.fromEntries(['decay', 'delay_ms', 'delay_fb'].filter((k) => b.fx[k] !== undefined).map((k) => [k, b.fx[k]])) };
   // The noise print of a strip: learned from what the input is carrying right now (so the stream
   // must be live and whoever is on the microphone quiet), or forgotten.
   if (b.forget_noise !== undefined) {

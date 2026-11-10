@@ -602,6 +602,11 @@
 .mx-meter { position: absolute; left: 16px; top: 36px; width: 8px; height: 130px; background: var(--bg-input); border-radius: 2px; overflow: hidden; display: flex; align-items: flex-end; }
 .mx-meter i { display: block; width: 100%; background: linear-gradient(0deg, var(--success) 0 70%, var(--warning) 70% 90%, var(--danger) 90%); background-size: 100% 130px; background-position: bottom; transition: height 0.12s linear; }
 .mx-meters-on { margin-left: auto; }
+.mx-proc-sect { margin-top: 12px; }
+.mx-bands { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px 16px; align-items: start; }
+.mx-band { display: grid; gap: 8px; padding: 10px; background: var(--bg-input); border: 1px solid var(--border-light); border-radius: var(--radius); }
+.mx-proc-sect h5 { margin: 0 0 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.mx-proc-sect .mx-knob-check { grid-column: auto; }
 .mx-console-n { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; color: var(--text-secondary); }
 .mx-console-n input { width: 72px; }
 .mx-knob-name { grid-template-columns: 1fr; }
