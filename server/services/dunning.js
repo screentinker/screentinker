@@ -140,8 +140,13 @@ const planNameOf = (planId) =>
   || (db.prepare('SELECT name FROM plans WHERE id = ?').get(planId) || {}).name
   || planId || 'paid';
 
-const screenCountOf = (userId) =>
-  db.prepare('SELECT COUNT(*) AS n FROM devices WHERE user_id = ?').get(userId).n;
+// `userId` throughout this file is the paying ACCOUNT's id: a user while the person pays, an
+// organization once it does (middleware/subscription.js billingTable; the billing_accounts view
+// gives both the same shape, with the owner as the contact).
+const BT = () => subscriptions.billingTable();
+const screenCountOf = (userId) => (BT() === 'organizations'
+  ? db.prepare('SELECT COUNT(*) AS n FROM devices d JOIN workspaces w ON w.id = d.workspace_id WHERE w.organization_id = ?').get(userId).n
+  : db.prepare('SELECT COUNT(*) AS n FROM devices WHERE user_id = ?').get(userId).n);
 
 /**
  * The "your payment failed" note, sent once per episode. Called from the webhook after it has
@@ -150,7 +155,7 @@ const screenCountOf = (userId) =>
 async function sendPaymentFailedEmail(userId) {
   if (!isEnabled() || !isHosted()) return { sent: false, reason: 'not_hosted' };
   const u = db.prepare(`SELECT id, email, name, plan_id, email_alerts, payment_failed_email_sent_at
-                          FROM users WHERE id = ?`).get(userId);
+                          FROM billing_accounts WHERE id = ?`).get(userId);
   if (!u) return { sent: false, reason: 'no_user' };
   if (u.payment_failed_email_sent_at) return { sent: false, reason: 'already_sent' };
   if (u.email_alerts === 0) return { sent: false, reason: 'opted_out' };
@@ -179,7 +184,7 @@ async function reconcileFromStripe() {
   if (!isEnabled() || !config.stripeSecretKey) return { checked: 0, corrected: 0, skipped: 'not_configured' };
   const stripe = require('../lib/stripe-client').create(config.stripeSecretKey);
   const rows = db.prepare(`SELECT id, plan_id, plan_comped, subscription_status, subscription_ends, stripe_subscription_id, past_due_since
-                             FROM users
+                             FROM ${BT()}
                             WHERE stripe_subscription_id IS NOT NULL AND stripe_subscription_id <> ''`).all();
   const out = { checked: 0, corrected: 0, errors: 0 };
   for (const u of rows) {
@@ -195,7 +200,7 @@ async function reconcileFromStripe() {
          * left the account on Pro for ever with nothing left to bill it — the mirror image of the
          * customer.subscription.deleted handler, which has always dropped the plan.
          */
-        db.prepare(`UPDATE users SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE 'free' END, subscription_status = 'cancelled',
+        db.prepare(`UPDATE ${BT()} SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE 'free' END, subscription_status = 'cancelled',
                                      stripe_subscription_id = NULL WHERE id = ?`).run(u.id);
         out.corrected++;
         console.log(`[DUNNING] reconcile: ${u.id} — subscription gone from Stripe, moved to Free`);
@@ -214,7 +219,7 @@ async function reconcileFromStripe() {
      * after: Pro for ever with nothing billing it. Terminal means the same as gone.
      */
     if (TERMINAL_STATUSES.has(sub.status)) {
-      db.prepare(`UPDATE users SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE 'free' END, subscription_status = 'cancelled',
+      db.prepare(`UPDATE ${BT()} SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE 'free' END, subscription_status = 'cancelled',
                                    stripe_subscription_id = NULL WHERE id = ?`).run(u.id);
       out.corrected++;
       console.log(`[DUNNING] reconcile: ${u.id} — subscription ${sub.status} in Stripe, moved to Free`);
@@ -251,7 +256,7 @@ async function reconcileFromStripe() {
     if (status !== u.subscription_status) changes.push(`status ${u.subscription_status} -> ${status}`);
     if (ends && ends !== u.subscription_ends) changes.push(`ends ${u.subscription_ends || 'null'} -> ${ends}`);
     if (!changes.length) continue;
-    db.prepare(`UPDATE users SET subscription_status = ?, subscription_ends = COALESCE(?, subscription_ends) WHERE id = ?`)
+    db.prepare(`UPDATE ${BT()} SET subscription_status = ?, subscription_ends = COALESCE(?, subscription_ends) WHERE id = ?`)
       .run(status, ends, u.id);
     /*
      * Stripe says this is paid and running: whatever we thought, the episode is over — and if a
@@ -300,7 +305,7 @@ async function runDunningSweep({ io = null } = {}) {
   // unsent note no longer knows it and says "subscription" instead of guessing.
   const lapsedFrom = new Map();
   for (const id of subscriptions.findLapsedSubscriberIds()) {
-    const before = db.prepare('SELECT plan_id FROM users WHERE id = ?').get(id);
+    const before = db.prepare(`SELECT plan_id FROM ${BT()} WHERE id = ?`).get(id);
     if (!subscriptions.downgradeLapsed(id)) continue;   // raced, or no longer eligible
     if (before) lapsedFrom.set(id, planNameOf(before.plan_id));
     out.downgraded++;
@@ -321,7 +326,7 @@ async function runDunningSweep({ io = null } = {}) {
   // the reconcile copy it straight in — so an account still INSIDE its grace, still on Pro, was
   // told "your plan has moved to Free", and the stamp then silenced the real notice on day 7.
   const lapsed = db.prepare(`
-    SELECT id, email, name, plan_id FROM users
+    SELECT id, email, name, plan_id FROM billing_accounts
      WHERE subscription_status = 'unpaid'
        AND plan_id = 'free'
        AND past_due_since IS NOT NULL

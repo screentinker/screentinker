@@ -417,7 +417,7 @@ router.post('/uploads', checkStorageLimit, (req, res) => {
    * passed (see uploadSession.reservedBytes). The check and the INSERT below run in one synchronous
    * stretch with no await between them, so two concurrent creates cannot both see the same room.
    */
-  const rawRoom = subscriptionLimits.storageRoomBytes(req.user.id);
+  const rawRoom = subscriptionLimits.storageRoomBytes(req.user.id, req.workspaceId);
   const reserved = rawRoom === null ? 0 : uploadSession.reservedBytes(req.user.id);
   const room = rawRoom === null ? null : rawRoom - reserved;
   if (room !== null && declared > room) {
@@ -554,7 +554,7 @@ router.post('/uploads/:id/finalize', async (req, res) => {
    * session is discarded on refusal: the client forgets a completed session and starts a new one
    * on retry, so keeping it would only pin a reservation until the sweeper.
    */
-  const room = subscriptionLimits.storageRoomBytes(session.user_id);
+  const room = subscriptionLimits.storageRoomBytes(session.user_id, session.workspace_id);
   if (room !== null && offset > room) {
     uploadSession.discard(session);
     return res.status(403).json({

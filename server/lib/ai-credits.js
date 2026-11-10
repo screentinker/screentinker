@@ -124,10 +124,20 @@ const _orgOwnerPlan = db.prepare(`
   SELECT u.plan_id, u.trial_plan, u.trial_started, u.stripe_subscription_id, u.subscription_status
     FROM organizations o JOIN users u ON u.id = o.owner_user_id
    WHERE o.id = ?`);
+// Once the organization pays (lib/org-billing.js), its own row is the answer: the owner's row is a
+// copy of only their OLDEST organization. Prepared on first use (the columns may be newly added).
+let _orgOwnPlan;
+function orgPlanRow(orgId) {
+  let orgPays = false;
+  try { orgPays = require('../middleware/subscription').billingSource() === 'org'; } catch { /* */ }
+  if (!orgPays) return _orgOwnerPlan.get(orgId);
+  if (!_orgOwnPlan) _orgOwnPlan = db.prepare('SELECT plan_id, trial_plan, trial_started, stripe_subscription_id, subscription_status FROM organizations WHERE id = ?');
+  return _orgOwnPlan.get(orgId);
+}
 const LAPSED = new Set(['past_due', 'unpaid', 'cancelled', 'canceled', 'incomplete', 'incomplete_expired']);
 function includedEligible(orgId, nowMs = Date.now()) {
   if (config.selfHosted) return true;
-  const u = _orgOwnerPlan.get(orgId);
+  const u = orgPlanRow(orgId);
   if (!u || !u.plan_id || u.plan_id === 'free') return false;
   const trialRunning = !!u.trial_started && u.plan_id === u.trial_plan && !u.stripe_subscription_id
     && u.trial_started + TRIAL_SECONDS > Math.floor(nowMs / 1000);

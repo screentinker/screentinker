@@ -94,11 +94,13 @@ function describeLocation(userAgent, ip) {
  */
 function limitRefusal(original) {
   try {
-    if (!original || !original.user_id) return null;
-    const { getUserPlan } = require('../middleware/subscription');
-    const plan = getUserPlan(original.user_id);
+    if (!original) return null;
+    const limits = require('../middleware/subscription');
+    const subject = limits.limitSubject(original.user_id, original.workspace_id);   // per person, or per organization
+    if (!subject.userId) return null;
+    const plan = limits.subjectPlan(subject);
     if (!plan || plan.max_devices === -1 || !(plan.max_devices > 0)) return null;
-    const count = db.prepare('SELECT COUNT(*) AS n FROM devices WHERE user_id = ?').get(original.user_id).n;
+    const count = limits.subjectDeviceCount(subject);
     if (count < plan.max_devices) return null;
     return { reason: 'mirror_limit', limit: plan.max_devices,
       error: `This display link is already showing somewhere else, and showing it here too needs one more screen on the plan (limit ${plan.max_devices}).` };

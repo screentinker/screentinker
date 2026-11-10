@@ -210,9 +210,9 @@ function cannotSync(db, folder) {
   return null;
 }
 
-function maxBytesFor(userId) {
+function maxBytesFor(userId, workspaceId) {
   let room = null;
-  try { room = require('../middleware/subscription').storageRoomBytes(userId); } catch { room = null; }
+  try { room = require('../middleware/subscription').storageRoomBytes(userId, workspaceId); } catch { room = null; }
   return { room, cap: config.maxFileSize };
 }
 
@@ -285,7 +285,7 @@ async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
         summary.unchanged++;
         continue;
       }
-      const { room, cap } = maxBytesFor(folder.user_id);
+      const { room, cap } = maxBytesFor(folder.user_id, folder.workspace_id);
       if ((cap && f.size > cap) || (room != null && f.size > room)) {
         summary.skipped_too_large++;
         if (summary.errors.length < 10) summary.errors.push(`${f.name}: ${cap && f.size > cap ? 'larger than this server accepts' : 'not enough storage left on the plan'}`);

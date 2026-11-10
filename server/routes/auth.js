@@ -260,7 +260,7 @@ router.post('/register', (req, res) => {
  * - ui_mode / onboarded_at: per-account, server-side (a new browser keeps both).
  * Any failure degrades to the 2.x shape rather than failing /me.
  */
-function accountSummary(userId) {
+function accountSummary(userId, workspaceId) {
   const out = { self_hosted: config.selfHosted, ui_mode: 'advanced', onboarded_at: null,
     sponsor_prompt: false };
   try {
@@ -270,7 +270,13 @@ function accountSummary(userId) {
     out.onboarded_at = row.onboarded_at || null;
     out.sponsor_prompt = sponsorEligible(row.created_at);
     out.subscription_status = row.subscription_status || null;
-    const plan = require('../middleware/subscription').getUserPlan(userId);
+    // Whose plan the shell talks about: the person's own, or (limits per organization) the plan of
+    // the organization they are working in. A member with a trial of their own, working in an
+    // organization on a paid plan, was shown "Pro trial: 14 days left" over that organization.
+    const limits = require('../middleware/subscription');
+    const subject = limits.limitSubject(userId, workspaceId);
+    const plan = limits.subjectPlan(subject);
+    if (plan && subject.scope === 'org') out.subscription_status = plan.subscription_status || null;
     if (plan) {
       out.plan_name = plan.plan_display_name || plan.plan_name || null;
       out.plan_limits = { max_devices: plan.max_devices, max_storage_mb: plan.max_storage_mb };
@@ -965,7 +971,7 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     // owner_plan_id: plans belong to the person who pays, the org owner. A workspace admin invited
     // into an Enterprise organization has a plan of their own (often free), so a check on their
     // plan alone hid Enterprise features such as white-label branding from them.
-    ? db.prepare(`SELECT o.id, o.name, COALESCE(o.widget_sandbox_isolation_disabled, 0) AS widget_sandbox_isolation_disabled, COALESCE(o.live_field_patch, 0) AS live_field_patch, COALESCE(o.pdf_max_edge, 1920) AS pdf_max_edge, u.plan_id AS owner_plan_id
+    ? db.prepare(`SELECT o.id, o.name, COALESCE(o.widget_sandbox_isolation_disabled, 0) AS widget_sandbox_isolation_disabled, COALESCE(o.live_field_patch, 0) AS live_field_patch, COALESCE(o.pdf_max_edge, 1920) AS pdf_max_edge, ${require('../middleware/subscription').billingSource() === 'org' ? 'o.plan_id' : 'u.plan_id'} AS owner_plan_id
         FROM organizations o LEFT JOIN users u ON u.id = o.owner_user_id WHERE o.id = ?`).get(req.organizationId)
     : null;
 
@@ -977,7 +983,7 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     hide_billing: config.hideBilling, // #116: client hides the Subscription nav + guards #/billing
     // 3.0: everything the app shell needs to pick a menu, a first-run route and a trial banner,
     // without a second request. See accountSummary().
-    ...accountSummary(req.user.id),
+    ...accountSummary(req.user.id, req.workspaceId),
     // #329: same idea as hide_billing above — a capability the client cannot infer without asking.
     // `enroll` decides whether the Servers nav appears (the honest "is this node part of a mesh in
     // any way?"); `hub` gates the aggregate reads (/mesh/orgs, /alerts, /uptime, /devices), which

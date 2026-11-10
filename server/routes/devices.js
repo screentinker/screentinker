@@ -94,19 +94,22 @@ function pausedByPlan(devices) {
   let check;
   try { check = require('../ws/deviceSocket').checkDeviceAccess; } catch { return out; }
   if (typeof check !== 'function') return out; // socket layer not set up (tests, CLI)
-  const { getUserPlan, getUserDeviceCount } = require('../middleware/subscription');
+  const limits = require('../middleware/subscription');
   const owners = new Map();
   for (const d of devices) {
-    if (!d.user_id) continue;
-    if (!owners.has(d.user_id)) {
+    // Whoever this screen's limits belong to: the person who paired it, or its organization.
+    const subject = limits.limitSubject(d.user_id, d.workspace_id);
+    if (!subject.userId) continue;
+    const key = subject.scope + ':' + (subject.orgId || subject.userId);
+    if (!owners.has(key)) {
       let over = false;
       try {
-        const plan = getUserPlan(d.user_id);
-        over = !!plan && plan.max_devices !== -1 && getUserDeviceCount(d.user_id) > plan.max_devices;
+        const plan = limits.subjectPlan(subject);
+        over = !!plan && plan.max_devices !== -1 && limits.subjectDeviceCount(subject) > plan.max_devices;
       } catch { /* unknown: do not mark */ }
-      owners.set(d.user_id, over);
+      owners.set(key, over);
     }
-    if (!owners.get(d.user_id)) continue;
+    if (!owners.get(key)) continue;
     try {
       const a = check(d.id);
       if (a && a.allowed === false) out[d.id] = { reason: a.reason || 'device_limit' };
