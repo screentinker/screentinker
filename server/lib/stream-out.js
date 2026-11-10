@@ -189,6 +189,8 @@ async function start(row, key, sound) {
     s.browser = await puppeteer().launch({
       executablePath: chromePath(), headless: 'new',
       env: s.sink ? { ...process.env, PULSE_SINK: s.sink.name } : process.env,
+      // puppeteer mutes a headless browser by default; with a sink to play into, it must not.
+      ignoreDefaultArgs: s.sink ? ['--mute-audio'] : [],
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', ...(s.sink ? [] : ['--mute-audio']), '--hide-scrollbars',
         '--autoplay-policy=no-user-gesture-required', `--window-size=${row.width},${row.height}`],
     });
