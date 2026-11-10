@@ -855,7 +855,24 @@ CREATE TABLE IF NOT EXISTS stream_outputs (
     height          INTEGER NOT NULL DEFAULT 720,
     fps             INTEGER NOT NULL DEFAULT 30,
     bitrate_k       INTEGER NOT NULL DEFAULT 3500,
+    audio_content_id TEXT,                                   -- the audio bed (an uploaded audio item), or none
+    audio_level     REAL NOT NULL DEFAULT 1,
+    audio_muted     INTEGER NOT NULL DEFAULT 0,
     feed_secret     TEXT NOT NULL UNIQUE,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_stream_outputs_ws ON stream_outputs(workspace_id);
+
+-- Scenes of the vision mixer (routes/mixer.js): a named look recalled with one key. A scene is a
+-- source (playlist), the graphic keyed over it (or none), and camera positions to recall.
+CREATE TABLE IF NOT EXISTS mixer_scenes (
+    id              TEXT PRIMARY KEY,
+    workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    playlist_id     TEXT,
+    gfx_json        TEXT,
+    ptz_json        TEXT,
+    sort_order      INTEGER NOT NULL DEFAULT 0,
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mixer_scenes_ws ON mixer_scenes(workspace_id);

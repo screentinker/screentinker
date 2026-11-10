@@ -26,6 +26,20 @@ const secretbox = require('../lib/secretbox');
 const streamOut = require('../lib/stream-out');
 const gfx = require('../lib/mixer-gfx');
 const { requireFleetWrite } = require('./mixer');
+const path = require('path');
+const fs = require('fs');
+const config = require('../config');
+
+/** An audio bed must be an uploaded audio item of this workspace whose file is on this server. */
+function bedOf(row) {
+  if (!row.audio_content_id) return { id: null, name: null, file: null };
+  const c = db.prepare('SELECT id, filename, filepath, mime_type, workspace_id FROM content WHERE id = ?').get(row.audio_content_id);
+  if (!c || c.workspace_id !== row.workspace_id || !/^audio\//.test(c.mime_type || '')) return { id: null, name: null, file: null };
+  const base = path.resolve(config.contentDir);
+  const file = c.filepath ? path.resolve(base, path.basename(String(c.filepath))) : null;
+  return { id: c.id, name: c.filename, file: file && file.startsWith(base + path.sep) && fs.existsSync(file) ? file : null };
+}
+const audioOf = (row) => ({ file: bedOf(row).file, level: row.audio_level, muted: !!row.audio_muted });
 
 const pub = (r) => ({
   id: r.id, name: r.name, kind: r.kind, kind_label: streamOut.KINDS[r.kind] ? streamOut.KINDS[r.kind].label : r.kind,
@@ -33,6 +47,7 @@ const pub = (r) => ({
   playlist_name: r.playlist_id ? ((db.prepare('SELECT name FROM playlists WHERE id = ?').get(r.playlist_id) || {}).name || null) : null,
   width: r.width, height: r.height, fps: r.fps, bitrate_k: r.bitrate_k,
   graphic: !!r.gfx_json,
+  audio: { content_id: bedOf(r).id, name: bedOf(r).name, level: r.audio_level, muted: !!r.audio_muted },
   status: { ...streamOut.status(r.id), last_error: streamOut.lastError(r.id) },
 });
 const mine = (req, id) => {
@@ -55,6 +70,8 @@ router.get('/', async (req, res) => {
     ffmpeg: a.ffmpeg ? { present: a.ffmpeg.present, licence: a.ffmpeg.licence, version: a.ffmpeg.version } : null,
     kinds: Object.entries(streamOut.KINDS).map(([kind, k]) => ({ kind, label: k.label, needs_url: !k.base })),
     sizes: streamOut.SIZES.map(([width, height]) => ({ width, height })),
+    max_level: streamOut.MAX_LEVEL,
+    audio_sources: a.reason === 'hosted' ? [] : db.prepare("SELECT id, filename AS name FROM content WHERE workspace_id = ? AND mime_type LIKE 'audio/%' ORDER BY LOWER(filename) LIMIT 200").all(req.workspaceId),
     outputs: rows.map(pub),
   });
 });
@@ -98,7 +115,7 @@ router.post('/:id/start', gate, requireFleetWrite, async (req, res) => {
   if (!r.playlist_id) return res.status(400).json({ error: 'Take a source to this stream first, so it has something to show.' });
   const key = secretbox.decrypt(r.key_enc) || '';
   if (r.key_enc && !key) return res.status(400).json({ error: 'The stored stream key can no longer be read. Enter it again.' });
-  try { res.json({ status: await streamOut.start(r, key) }); }
+  try { res.json({ status: await streamOut.start(r, key, audioOf(r)) }); }
   catch (e) { res.status(e.code === 'limit' ? 409 : 500).json({ error: e.message, code: e.code || null }); }
 });
 
@@ -106,6 +123,33 @@ router.post('/:id/stop', requireFleetWrite, async (req, res) => {
   const r = mine(req, req.params.id);
   if (!r) return res.status(404).json({ error: 'Stream not found' });
   res.json({ status: await streamOut.stop(r.id) });
+});
+
+// The stream's sound: which audio bed (or none), the fader and mute. Live on a running stream.
+router.post('/:id/audio', gate, requireFleetWrite, (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'Stream not found' });
+  const b = req.body || {};
+  const next = { audio_content_id: r.audio_content_id, audio_level: r.audio_level, audio_muted: r.audio_muted };
+  if ('content_id' in b) {
+    if (b.content_id == null || b.content_id === '') next.audio_content_id = null;
+    else {
+      const bed = bedOf({ ...r, audio_content_id: String(b.content_id) });
+      if (!bed.id) return res.status(404).json({ error: 'That audio item is not in this workspace.' });
+      if (!bed.file) return res.status(400).json({ error: 'That audio file is not stored on this server, so it cannot be mixed here.' });
+      next.audio_content_id = bed.id;
+    }
+  }
+  if ('level' in b) {
+    const l = Number(b.level);
+    if (!Number.isFinite(l) || l < 0 || l > streamOut.MAX_LEVEL) return res.status(400).json({ error: `level is 0 to ${streamOut.MAX_LEVEL}` });
+    next.audio_level = l;
+  }
+  if ('muted' in b) next.audio_muted = b.muted === true ? 1 : 0;
+  db.prepare('UPDATE stream_outputs SET audio_content_id = ?, audio_level = ?, audio_muted = ? WHERE id = ?').run(next.audio_content_id, next.audio_level, next.audio_muted, r.id);
+  const now = mine(req, r.id);
+  streamOut.setAudio(r.id, audioOf(now));
+  res.json(pub(now));
 });
 
 router.post('/:id/gfx', gate, requireFleetWrite, (req, res) => {

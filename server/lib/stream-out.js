@@ -17,8 +17,11 @@
  * the operator installed, as a separate program. Most distribution builds of ffmpeg are GPL
  * (x264). licenceOf() reads the build so the dashboard can say which one is installed.
  *
- * v1 sends video with a silent audio track (the services require one). Programme audio is not
- * captured yet.
+ * SOUND. The stream's sound is mixed here, in this process: 16-bit stereo PCM handed to ffmpeg at
+ * a steady rate beside the picture. Today the only source is an audio bed (an uploaded audio item,
+ * decoded by a second ffmpeg and looped); with none chosen the track is silence, which the
+ * services require anyway. Level and mute are applied to the samples as they go out, so the desk's
+ * fader is live. The sound of videos in the programme itself is not captured yet.
  */
 
 const { spawn, execFile } = require('child_process');
@@ -36,6 +39,8 @@ const KINDS = {
   srt: { label: 'SRT', base: null },
 };
 const SIZES = [[1280, 720], [1920, 1080]];
+const RATE = 44100, FRAME = 4;            // samples a second; bytes per stereo 16-bit sample
+const MAX_LEVEL = 1.5;
 
 function chromePath() { return process.env.CHROME_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || ''; }
 function puppeteer() { try { return require('puppeteer-core'); } catch { return null; } }
@@ -103,7 +108,7 @@ function ffmpegArgs({ width, height, fps, bitrate_k, target, kind, encoder = ENC
   return [
     '-hide_banner', '-loglevel', 'warning',
     '-f', 'image2pipe', '-framerate', String(fps), '-c:v', 'mjpeg', '-i', 'pipe:0',
-    '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+    '-f', 's16le', '-ar', String(RATE), '-ac', '2', '-i', 'pipe:3',
     '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,
     '-c:v', encoder, ...(encoder === 'libx264' ? ['-preset', 'veryfast', '-tune', 'zerolatency'] : []),
     '-b:v', `${bitrate_k}k`, '-maxrate', `${bitrate_k}k`, '-bufsize', `${bitrate_k * 2}k`,
@@ -126,16 +131,68 @@ const sessions = new Map();   // id -> session
 function status(id) {
   const s = sessions.get(id);
   if (!s) return { state: 'off' };
-  return { state: s.state, since: s.since, frames: s.sent, error: s.error || null };
+  return { state: s.state, since: s.since, frames: s.sent, error: s.error || null, audio_peak: Math.round((s.peak || 0) * 100) / 100 };
 }
 function localBaseUrl() { return global.__localApiOrigin || `http://127.0.0.1:${process.env.PORT || config.port || 3001}`; }
 
-async function start(row, key) {
+/** A chunk of sound with the fader applied. Returns the loudest sample in it, 0..1. */
+function applyGain(buf, gain) {
+  let peak = 0;
+  for (let i = 0; i + 1 < buf.length; i += 2) {
+    let v = buf.readInt16LE(i);
+    if (gain !== 1) { v = Math.max(-32768, Math.min(32767, Math.round(v * gain))); buf.writeInt16LE(v, i); }
+    const a = v < 0 ? -v : v; if (a > peak) peak = a;
+  }
+  return peak / 32768;
+}
+const cleanAudio = (a) => ({ file: (a && a.file) || null, level: Math.max(0, Math.min(MAX_LEVEL, Number(a && a.level != null ? a.level : 1) || 0)), muted: !!(a && a.muted) });
+
+/** The audio bed: a second ffmpeg decoding the chosen file to PCM, looped, at real time. */
+function startBed(s) {
+  stopBed(s);
+  if (!s.audio.file) return;
+  const bed = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-re', '-stream_loop', '-1', '-i', s.audio.file, '-vn', '-f', 's16le', '-ar', String(RATE), '-ac', '2', 'pipe:1'], { stdio: ['ignore', 'pipe', 'ignore'] });
+  s.bed = bed; s.bedQ = []; s.bedBytes = 0;
+  bed.on('error', () => {});
+  bed.stdout.on('data', (d) => {
+    if (s.bed !== bed) return;
+    s.bedQ.push(d); s.bedBytes += d.length;
+    if (s.bedBytes > RATE * FRAME) bed.stdout.pause();       // a second in hand is plenty
+  });
+}
+function stopBed(s) {
+  if (s.bed) { try { s.bed.kill('SIGKILL'); } catch { /* gone */ } }
+  s.bed = null; s.bedQ = []; s.bedBytes = 0;
+}
+/** `n` bytes of sound for right now: the bed where there is some, silence where there is not. */
+function nextAudio(s, n) {
+  const out = Buffer.alloc(n);
+  let at = 0;
+  while (at < n && s.bedQ && s.bedQ.length) {
+    const head = s.bedQ[0], take = Math.min(head.length, n - at);
+    head.copy(out, at, 0, take); at += take; s.bedBytes -= take;
+    if (take === head.length) s.bedQ.shift(); else s.bedQ[0] = head.subarray(take);
+  }
+  if (s.bed && s.bedBytes < RATE * FRAME / 2 && s.bed.stdout.isPaused()) s.bed.stdout.resume();
+  s.peak = applyGain(out, s.audio.muted ? 0 : s.audio.level);
+  return out;
+}
+/** Change a live stream's sound: the fader, mute, or the bed itself. */
+function setAudio(id, audio) {
+  const s = sessions.get(id);
+  if (!s) return false;
+  const next = cleanAudio(audio), changedFile = next.file !== s.audio.file;
+  s.audio = next;
+  if (changedFile) startBed(s);
+  return true;
+}
+
+async function start(row, key, audio) {
   const a = await availability();
   if (!a.available) throw Object.assign(new Error('Streaming out is not available on this server.'), { code: a.reason });
   if (sessions.has(row.id)) return status(row.id);
   if (sessions.size >= MAX_STREAMS) throw Object.assign(new Error(`This server runs at most ${MAX_STREAMS} stream(s) at once (STREAM_OUT_MAX).`), { code: 'limit' });
-  const s = { id: row.id, row, key, state: 'starting', since: Date.now(), sent: 0, last: null, wanted: true, retries: 0, error: null };
+  const s = { id: row.id, row, key, state: 'starting', since: Date.now(), sent: 0, last: null, wanted: true, retries: 0, error: null, audio: cleanAudio(audio), peak: 0 };
   sessions.set(row.id, s);
   try {
     s.browser = await puppeteer().launch({
@@ -154,6 +211,7 @@ async function start(row, key) {
     });
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 82, maxWidth: row.width, maxHeight: row.height, everyNthFrame: 1 });
     if (!s.wanted) return status(row.id);
+    startBed(s);
     encode(s);
   } catch (e) {
     s.error = e.message; await stop(row.id, 'error');
@@ -166,8 +224,19 @@ async function start(row, key) {
  *  page has not changed: a still image must not stall the stream. */
 function encode(s) {
   const { row } = s;
-  const ff = spawn('ffmpeg', ffmpegArgs({ ...row, target: targetUrl(row, s.key) }), { stdio: ['pipe', 'ignore', 'pipe'] });
+  const ff = spawn('ffmpeg', ffmpegArgs({ ...row, target: targetUrl(row, s.key) }), { stdio: ['pipe', 'ignore', 'pipe', 'pipe'] });
   s.ff = ff; s.t0 = Date.now(); s.written = 0;
+  // Sound, paced by the same clock as the picture: every 20 ms, the samples that are now due.
+  const snd = ff.stdio[3]; let sndBytes = 0;
+  snd.on('error', () => {});
+  s.sndTimer = setInterval(() => {
+    if (!snd.writable || snd.writableNeedDrain) return;
+    let due = Math.floor((Date.now() - s.t0) * RATE / 1000) * FRAME - sndBytes;
+    if (due > RATE * FRAME / 2) { sndBytes += due - RATE * FRAME / 5; due = RATE * FRAME / 5; }   // fell behind: skip ahead
+    due -= due % FRAME;
+    if (due <= 0) return;
+    snd.write(nextAudio(s, due)); sndBytes += due;
+  }, 20);
   let tail = '';
   ff.stderr.on('data', (d) => { tail = (tail + d).slice(-2000); });
   ff.stdin.on('error', () => {});
@@ -182,7 +251,7 @@ function encode(s) {
     if (s.state === 'reconnecting' && s.written > row.fps * 3) { s.state = 'live'; s.error = null; }
   }, Math.max(8, Math.floor(1000 / row.fps / 2)));
   ff.on('close', () => {
-    clearInterval(s.timer);
+    clearInterval(s.timer); clearInterval(s.sndTimer);
     if (!s.wanted || sessions.get(s.id) !== s) return;
     const ranFor = Date.now() - s.t0;
     if (ranFor > 60000) s.retries = 0;
@@ -200,13 +269,14 @@ async function stop(id, why) {
   s.wanted = false;
   sessions.delete(id);
   if (why === 'error' && s.error) stopped.set(id, { error: s.error, at: Date.now() }); else stopped.delete(id);
-  clearInterval(s.timer); clearTimeout(s.retry);
-  try { if (s.ff) { s.ff.stdin.end(); const ff = s.ff; setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* gone */ } }, 2000).unref(); } } catch { /* gone */ }
+  clearInterval(s.timer); clearInterval(s.sndTimer); clearTimeout(s.retry);
+  stopBed(s);
+  try { if (s.ff) { s.ff.stdin.end(); try { s.ff.stdio[3].end(); } catch { /* gone */ } const ff = s.ff; setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* gone */ } }, 2000).unref(); } } catch { /* gone */ }
   try { if (s.browser) await s.browser.close(); } catch { /* gone */ }
   return { state: 'off' };
 }
 function lastError(id) { const e = stopped.get(id); return e ? e.error : null; }
 async function stopAll() { await Promise.all([...sessions.keys()].map((id) => stop(id))); }
-process.on('exit', () => { for (const s of sessions.values()) { try { s.ff && s.ff.kill('SIGKILL'); } catch { /* */ } try { s.browser && s.browser.process() && s.browser.process().kill('SIGKILL'); } catch { /* */ } } });
+process.on('exit', () => { for (const s of sessions.values()) { try { s.ff && s.ff.kill('SIGKILL'); } catch { /* */ } try { s.bed && s.bed.kill('SIGKILL'); } catch { /* */ } try { s.browser && s.browser.process() && s.browser.process().kill('SIGKILL'); } catch { /* */ } } });
 
-module.exports = { KINDS, SIZES, MAX_STREAMS, availability, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };
+module.exports = { MAX_LEVEL, applyGain, setAudio, KINDS, SIZES, MAX_STREAMS, availability, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };

@@ -558,3 +558,45 @@
 .mx-note-top { margin-top: 0; }
 .mx-licence { padding: 10px 12px; border: 1px solid var(--warning); border-radius: var(--radius); background: var(--warning-dim); color: var(--text-primary); }
 :root[data-theme="control-room"] .mx-golive { background: linear-gradient(180deg, #ff5a4f, #d81e12); color: #fff; }
+
+/* Mixer: scenes, cameras, audio */
+.mx-scene-wrap { position: relative; display: grid; }
+.mx-scene-del { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border: 0; border-radius: 50%; background: transparent; color: var(--text-muted); font-size: 16px; line-height: 1; cursor: pointer; }
+.mx-scene-del:hover, .mx-scene-del:focus-visible { background: var(--danger); color: #fff; outline: none; }
+.mx-scene.is-pvw { background: color-mix(in srgb, var(--success) 82%, #000); color: #04140b; border-color: var(--success); }
+.mx-scene.is-pvw .mx-key-sub { color: #0b3320; }
+.mx-check { display: flex !important; align-items: center; gap: 8px; color: var(--text-primary) !important; font-size: 13px !important; }
+.mx-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+.mx-cam-desk { display: grid; grid-template-columns: auto auto 1fr; gap: 18px; align-items: start; margin-top: 14px; }
+.mx-pad { display: grid; grid-template-columns: repeat(3, 52px); grid-auto-rows: 52px; gap: 6px; }
+.mx-pad-key { display: grid; place-items: center; min-height: 44px; padding: 0 10px; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-light); border-radius: var(--radius); font: inherit; font-size: 18px; font-weight: 700; cursor: pointer; touch-action: none; user-select: none; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 -3px 0 rgba(0, 0, 0, 0.25); }
+.mx-pad-key:active { background: var(--accent); color: var(--on-accent, #fff); transform: translateY(1px); }
+.mx-pad-key:focus-visible, .mx-mute:focus-visible, .mx-fader:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mx-pad-home { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+.mx-cam-side { display: grid; gap: 12px; }
+.mx-zoom { display: grid; gap: 6px; }
+.mx-zoom .mx-pad-key { font-size: 12.5px; }
+.mx-speed { display: grid; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+.mx-presets { display: flex; flex-wrap: wrap; gap: 6px; align-content: start; }
+.mx-presets-label { flex-basis: 100%; font-size: 12px; color: var(--text-secondary); }
+.mx-preset { min-height: 44px; }
+.mx-strips { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; }
+.mx-strip { flex: none; width: 96px; display: grid; justify-items: center; gap: 8px; padding: 10px 8px; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: var(--radius); grid-template-columns: 1fr; position: relative; }
+.mx-strip-stream { width: 150px; border-style: dashed; }
+.mx-strip-name { max-width: 100%; font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mx-fader { writing-mode: vertical-lr; direction: rtl; width: 28px; height: 130px; accent-color: var(--accent); }
+.mx-strip.is-muted .mx-fader { opacity: 0.45; }
+.mx-strip-val { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.mx-mute { min-width: 64px; min-height: 30px; background: var(--bg-input); color: var(--text-secondary); border: 1px solid var(--border-light); border-radius: var(--radius); font: inherit; font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
+.mx-mute.is-on { background: var(--tally, var(--danger)); color: #fff; border-color: transparent; }
+.mx-meter { position: absolute; left: 16px; top: 36px; width: 8px; height: 130px; background: var(--bg-input); border-radius: 2px; overflow: hidden; display: flex; align-items: flex-end; }
+.mx-meter i { display: block; width: 100%; background: linear-gradient(0deg, var(--success) 0 70%, var(--warning) 70% 90%, var(--danger) 90%); background-size: 100% 130px; background-position: bottom; transition: height 0.2s linear; }
+.mx-bed { width: 100%; font-size: 12px; padding: 4px 6px; }
+@media (max-width: 1100px) { .mx-pair { grid-template-columns: 1fr; } .mx-cam-desk { grid-template-columns: auto 1fr; } .mx-presets { grid-column: 1 / -1; } }
+@media (prefers-reduced-motion: reduce) { .mx-meter i { transition: none; } .mx-pad-key:active { transform: none; } }
+/* The camera and audio panels share a row without either pushing the page wider. */
+.mx-pair { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+.mx-bank { min-width: 0; }
+.mx-cam-desk { grid-template-columns: auto minmax(0, 1fr); }
+.mx-presets { grid-column: 1 / -1; }
+@media (max-width: 1100px) { .mx-pair { grid-template-columns: minmax(0, 1fr); } }

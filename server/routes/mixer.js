@@ -55,7 +55,60 @@ router.get('/', (req, res) => {
            (SELECT COUNT(*) FROM playlist_items i WHERE i.playlist_id = p.id) AS items
       FROM playlists p WHERE p.workspace_id = ? AND COALESCE(p.is_auto_generated, 0) = 0
      ORDER BY LOWER(p.name)`).all(ws).filter((p) => p.items > 0);
-  res.json({ screens, groups, sources, graphics: gfx.KINDS.map((k) => ({ kind: k, box: gfx.BOX[k] })) });
+  // Cameras that can be steered (ONVIF, added in Content): the desk's camera control drives them
+  // through the existing camera API (routes/onvif.js).
+  let cameras = [];
+  try {
+    cameras = db.prepare("SELECT id, filename, onvif FROM content WHERE workspace_id = ? AND onvif IS NOT NULL AND onvif != '' ORDER BY LOWER(filename)").all(ws)
+      .map((c) => { let o = null; try { o = JSON.parse(c.onvif); } catch { o = null; } return o && o.ptz ? { id: c.id, name: c.filename } : null; }).filter(Boolean);
+  } catch { cameras = []; }
+  res.json({ screens, groups, sources, cameras, scenes: scenesOf(ws), graphics: gfx.KINDS.map((k) => ({ kind: k, box: gfx.BOX[k] })) });
+});
+
+// ── scenes: a named look recalled with one key ───────────────────────────────────────────────────
+const parse = (s) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
+function scenesOf(ws) {
+  return db.prepare('SELECT * FROM mixer_scenes WHERE workspace_id = ? ORDER BY sort_order, created_at').all(ws)
+    .map((s) => ({ id: s.id, name: s.name, playlist_id: s.playlist_id || null, graphic: parse(s.gfx_json), cameras: parse(s.ptz_json) || [] }));
+}
+/** Checks a scene as sent. Everything it names must belong to this workspace. */
+function cleanScene(req, b) {
+  const name = String(b.name || '').trim().slice(0, 60);
+  if (!name) return { error: 'Give the scene a name.' };
+  let playlist_id = null;
+  if (b.playlist_id) {
+    const p = db.prepare('SELECT id, workspace_id FROM playlists WHERE id = ?').get(String(b.playlist_id));
+    if (!p || p.workspace_id !== req.workspaceId) return { error: 'That source is not in this workspace.' };
+    playlist_id = p.id;
+  }
+  let graphic = null;
+  if (b.graphic && typeof b.graphic === 'object') {
+    if (!gfx.KINDS.includes(b.graphic.kind) || !String(b.graphic.a || '').trim()) return { error: 'A scene\'s graphic needs a kind and its text.' };
+    graphic = { kind: b.graphic.kind, a: String(b.graphic.a).slice(0, 120), b: String(b.graphic.b || '').slice(0, 200), accent: /^#[0-9a-fA-F]{6}$/.test(b.graphic.accent || '') ? b.graphic.accent : '#ff2a1f' };
+  }
+  const cameras = [];
+  for (const c of Array.isArray(b.cameras) ? b.cameras.slice(0, 16) : []) {
+    const row = c && typeof c.camera_id === 'string' && db.prepare('SELECT id, workspace_id, onvif FROM content WHERE id = ?').get(c.camera_id);
+    if (!row || row.workspace_id !== req.workspaceId || !row.onvif || typeof c.preset !== 'string' || !c.preset) return { error: 'A scene\'s camera position must be a camera of this workspace and one of its presets.' };
+    cameras.push({ camera_id: row.id, preset: c.preset.slice(0, 100), preset_name: String(c.preset_name || '').slice(0, 100) });
+  }
+  if (!playlist_id && !graphic && !cameras.length) return { error: 'A scene needs a source, a graphic or a camera position.' };
+  return { value: { name, playlist_id, graphic, cameras } };
+}
+router.post('/scenes', requireScope('full'), requireFleetWrite, (req, res) => {
+  const v = cleanScene(req, req.body || {});
+  if (v.error) return res.status(400).json({ error: v.error });
+  const n = db.prepare('SELECT COUNT(*) AS n, COALESCE(MAX(sort_order), 0) AS top FROM mixer_scenes WHERE workspace_id = ?').get(req.workspaceId);
+  if (n.n >= 100) return res.status(400).json({ error: 'That is the most scenes a workspace can keep.' });
+  const id = require('crypto').randomUUID(), x = v.value;
+  db.prepare('INSERT INTO mixer_scenes (id, workspace_id, name, playlist_id, gfx_json, ptz_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(id, req.workspaceId, x.name, x.playlist_id, x.graphic ? JSON.stringify(x.graphic) : null, x.cameras.length ? JSON.stringify(x.cameras) : null, n.top + 1);
+  res.status(201).json(scenesOf(req.workspaceId).find((s) => s.id === id));
+});
+router.delete('/scenes/:id', requireScope('full'), requireFleetWrite, (req, res) => {
+  const r = db.prepare('DELETE FROM mixer_scenes WHERE id = ? AND workspace_id = ?').run(req.params.id, req.workspaceId);
+  if (!r.changes) return res.status(404).json({ error: 'Scene not found' });
+  res.json({ success: true });
 });
 
 router.post('/take', requireScope('full'), requireFleetWrite, (req, res) => {

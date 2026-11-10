@@ -167,3 +167,46 @@ test('Broadcast is a view a person can choose and keep', async () => {
   await call('PUT', '/api/auth/me', A.jwt, { ui_mode: 'advanced' });
   assert.equal((await call('GET', '/api/auth/me', A.jwt)).body.ui_mode, 'advanced');
 });
+
+/*
+ * SCENES AND CAMERAS. A scene is a saved look (a source, a graphic, camera positions) recalled
+ * with one key. Everything a scene names has to be the caller's own; the desk lists the cameras
+ * that can be steered and no others.
+ */
+function camera(o, name, ptz) {
+  const id = crypto.randomUUID();
+  db.prepare(`INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, onvif) VALUES (?, ?, ?, ?, '', 'video/onvif', 0, ?)`)
+    .run(id, o.userId, o.wsId, name, JSON.stringify({ xaddr: 'http://192.0.2.1/onvif/device_service', profile_token: 'p1', ptz }));
+  return id;
+}
+
+test('the desk lists the cameras of this workspace that can be steered', async () => {
+  const mine = camera(A, 'Stage cam', true); camera(A, 'Fixed cam', false); camera(B, 'Their cam', true);
+  const r = await call('GET', '/api/mixer', A.jwt);
+  assert.deepEqual(r.body.cameras.map((c) => c.name), ['Stage cam']);
+  assert.equal(r.body.cameras[0].id, mine);
+  assert.doesNotMatch(r.text, /192\.0\.2\.1/, 'a camera\'s address is not part of the desk');
+});
+
+test('a scene keeps its source, graphic and camera positions, and is recalled as saved', async () => {
+  const src = await playlist(A, 'Interview'), cam = camera(A, 'Cam 1', true);
+  const made = await call('POST', '/api/mixer/scenes', A.jwt, { name: 'Interview wide', playlist_id: src,
+    graphic: { kind: 'lower-third', a: 'A name', b: 'A title', accent: '#00aaff' }, cameras: [{ camera_id: cam, preset: '3', preset_name: 'Wide' }] });
+  assert.equal(made.status, 201, made.text);
+  const got = (await call('GET', '/api/mixer', A.jwt)).body.scenes.find((s) => s.id === made.body.id);
+  assert.deepEqual(got, { id: made.body.id, name: 'Interview wide', playlist_id: src,
+    graphic: { kind: 'lower-third', a: 'A name', b: 'A title', accent: '#00aaff' }, cameras: [{ camera_id: cam, preset: '3', preset_name: 'Wide' }] });
+  assert.ok(!(await call('GET', '/api/mixer', B.jwt)).body.scenes.some((s) => s.id === made.body.id), 'another workspace does not see it');
+  assert.equal((await call('DELETE', `/api/mixer/scenes/${made.body.id}`, B.jwt)).status, 404, 'or delete it');
+  assert.equal((await call('DELETE', `/api/mixer/scenes/${made.body.id}`, A.jwt)).status, 200);
+});
+
+test('a scene cannot name another workspace\'s source or camera, be empty, or be saved by a read-only member', async () => {
+  const mine = await playlist(A, 'Mine2'), theirs = await playlist(B, 'Theirs2'), theirCam = camera(B, 'Their cam 2', true);
+  for (const body of [{ name: 'x', playlist_id: theirs }, { name: 'x', playlist_id: mine, cameras: [{ camera_id: theirCam, preset: '1' }] },
+    { name: 'x', playlist_id: mine, cameras: [{ camera_id: 'nope', preset: '1' }] }, { name: 'x' }, { name: '', playlist_id: mine },
+    { name: 'x', playlist_id: mine, graphic: { kind: 'nope', a: 'x' } }, { name: 'x', playlist_id: mine, graphic: { kind: 'bug', a: '' } }]) {
+    assert.equal((await call('POST', '/api/mixer/scenes', A.jwt, body)).status, 400, JSON.stringify(body));
+  }
+  assert.equal((await call('POST', '/api/mixer/scenes', V.jwt, { name: 'x', playlist_id: mine })).status, 403);
+});

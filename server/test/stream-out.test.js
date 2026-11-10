@@ -167,3 +167,43 @@ test('a keyed overlay is passed to the screen as keyed, and the web player draws
     assert.match(fs.readFileSync(path.join(__dirname, '..', 'player', f), 'utf8'), /keyed === true\)\s*\{\s*box\.style\.background = ['"]transparent['"]/, f);
   }
 });
+
+/*
+ * A STREAM'S SOUND. The fader and mute are applied to the samples as they go out; the bed has to
+ * be an audio item of the stream's own workspace whose file is on this server.
+ */
+test('the fader scales the samples, clips instead of wrapping, and reports the peak', () => {
+  const buf = (...v) => { const b = Buffer.alloc(v.length * 2); v.forEach((x, i) => b.writeInt16LE(x, i * 2)); return b; };
+  const read = (b) => Array.from({ length: b.length / 2 }, (_, i) => b.readInt16LE(i * 2));
+  let b = buf(1000, -2000, 0, 16384);
+  assert.equal(streamOut.applyGain(b, 0.5), 8192 / 32768);
+  assert.deepEqual(read(b), [500, -1000, 0, 8192]);
+  b = buf(30000, -30000); streamOut.applyGain(b, 1.5);
+  assert.deepEqual(read(b), [32767, -32768], 'loud is clipped, never wrapped round to the other sign');
+  b = buf(12345, -12345); assert.equal(streamOut.applyGain(b, 0), 0);
+  assert.deepEqual(read(b), [0, 0], 'mute is silence');
+  assert.equal(streamOut.setAudio('no-such-stream', { level: 1 }), false, 'nothing to change on a stream that is not running');
+});
+
+test('a stream\'s audio bed is an audio item of its own workspace, and its level stays in range', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
+  const item = (o, mime, onDisk) => {
+    const id = crypto.randomUUID(), file = id + '.bin';
+    if (onDisk) { fs.mkdirSync(path.join(DATA_DIR, 'uploads', 'content'), { recursive: true }); fs.writeFileSync(path.join(DATA_DIR, 'uploads', 'content', file), 'x'); }
+    db.prepare('INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size) VALUES (?, ?, ?, ?, ?, ?, 1)').run(id, o.userId, o.wsId, 'Bed ' + id.slice(0, 4), file, mime);
+    return id;
+  };
+  const bed = item(A, 'audio/mpeg', true);
+  const set = await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, { content_id: bed, level: 0.6, muted: true });
+  assert.equal(set.status, 200, set.text);
+  assert.deepEqual({ ...set.body.audio, name: null }, { content_id: bed, name: null, level: 0.6, muted: true });
+  assert.ok((await call('GET', '/api/stream-out', A.jwt)).body.audio_sources.some((a) => a.id === bed));
+  assert.doesNotMatch(set.text, /uploads|\.bin/, 'where the file is on disk is not sent');
+  for (const [body, status] of [[{ content_id: item(B, 'audio/mpeg', true) }, 404], [{ content_id: item(A, 'image/png', true) }, 404], [{ content_id: item(A, 'audio/mpeg', false) }, 400],
+    [{ level: 2 }, 400], [{ level: -0.1 }, 400], [{ level: 'loud' }, 400]]) {
+    assert.equal((await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, body)).status, status, JSON.stringify(body));
+  }
+  assert.equal((await call('POST', `/api/stream-out/${A.stream}/audio`, B.jwt, { level: 1 })).status, 404);
+  assert.equal((await call('POST', `/api/stream-out/${A.stream}/audio`, V.jwt, { level: 1 })).status, 403);
+  const cleared = await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, { content_id: null, muted: false });
+  assert.deepEqual(cleared.body.audio, { content_id: null, name: null, level: 0.6, muted: false });
+});
