@@ -41,14 +41,14 @@ const PALETTE = ['--bg-primary', '--bg-secondary', '--bg-card', '--bg-card-hover
   '--border', '--border-light', '--shadow', '--shadow-sm', '--bezel', '--screen-glow'];
 
 test('the picker and the stylesheet offer the same themes', () => {
-  assert.deepEqual(ids.map((t) => t.id), ['control-room', 'light', 'classic']);
+  assert.deepEqual(ids.map((t) => t.id), ['graphite', 'control-room', 'light', 'classic']);
   assert.equal(ids[0].attr, null, 'the default theme has no attribute');
   const inCss = [...vars.matchAll(/^:root\[data-theme="([a-z-]+)"\] \{/gm)].map((m) => m[1]).sort();
   assert.deepEqual(inCss, ids.filter((t) => t.attr).map((t) => t.attr).sort());
 });
 
 test('every theme defines the whole palette', () => {
-  for (const sel of [':root', ':root[data-theme="light"]', ':root[data-theme="classic"]']) {
+  for (const sel of [':root', ':root[data-theme="control-room"]', ':root[data-theme="light"]', ':root[data-theme="classic"]']) {
     const b = block(sel);
     for (const tok of PALETTE) assert.ok(b[tok], `${sel} sets ${tok}`);
   }
@@ -71,7 +71,7 @@ test('the Control room design layer never applies to Classic', () => {
   const offenders = rules.filter((sel) => !sel.startsWith('@') && !/^(from|to|\d+%)/.test(sel) && sel !== ''
     && sel.split(',').some((s) => {
       const one = s.trim();
-      return one && !one.startsWith(':root:not([data-theme="classic"])') && !one.startsWith(':root[data-theme="light"]') && !/^\.theme-/.test(one) && !/^(\d+%|from|to)$/.test(one);
+      return one && !one.startsWith(':root:not([data-theme="classic"])') && !one.startsWith(':root[data-theme="light"]') && !one.startsWith(':root[data-theme="control-room"]') && !/^\.theme-/.test(one) && one !== '.gallery-clock' && !/^(\d+%|from|to)$/.test(one);
     }));
   assert.deepEqual(offenders, [], 'selectors that would restyle Classic');
 });
@@ -83,13 +83,13 @@ test('the theme is applied before the first paint, and a stale value is the defa
   assert.ok(head.indexOf('/css/theme.css') > head.indexOf('/css/library.css'), 'and the design layer loads last');
   const run = (stored) => {
     const attrs = {};
-    const ctx = { localStorage: { getItem: () => stored }, document: { documentElement: { setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; } }, querySelector: () => null } };
+    const ctx = { setInterval: () => 0, localStorage: { getItem: () => stored }, document: { documentElement: { setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; } }, querySelector: () => null } };
     vm.runInNewContext(prime, ctx);
     return attrs['data-theme'] || null;
   };
-  assert.equal(run('light'), 'light'); assert.equal(run('classic'), 'classic');
-  for (const v of [null, 'control-room', 'neon', '', '<script>']) assert.equal(run(v), null, String(v));
-  const throwing = { localStorage: { getItem: () => { throw new Error('blocked'); } }, document: { documentElement: { setAttribute() {}, removeAttribute() {} }, querySelector: () => null } };
+  assert.equal(run('light'), 'light'); assert.equal(run('classic'), 'classic'); assert.equal(run('control-room'), 'control-room');
+  for (const v of [null, 'graphite', 'neon', '', '<script>']) assert.equal(run(v), null, String(v));
+  const throwing = { setInterval: () => 0, localStorage: { getItem: () => { throw new Error('blocked'); } }, document: { documentElement: { setAttribute() {}, removeAttribute() {} }, querySelector: () => null } };
   assert.doesNotThrow(() => vm.runInNewContext(prime, throwing), 'blocked storage is the default theme, not an error');
 });
 

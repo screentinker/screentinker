@@ -237,3 +237,211 @@
 :root[data-theme="light"] .btn-secondary { background: #ffffff; }
 :root[data-theme="light"] .device-status-badge { color: var(--text-primary); }
 :root[data-theme="light"] .device-card-status.is-liveness .device-status-badge { box-shadow: 0 2px 8px rgba(15, 23, 42, 0.25); }
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+   CONTROL ROOM: a television production gallery, played straight.
+
+   Everything above (Graphite) still applies; this is what turns the desk into a vision mixer and
+   the Screens page into a multiviewer. The vocabulary is the gallery's own:
+
+     tally          a red border and lamp mean ONE thing: this source is on air. A healthy screen
+                    is on air. Amber is standby (reconnecting, pairing). No lamp is no signal.
+     UMD            the under-monitor display: each screen's name on a black strip beneath it, in
+                    capitals, as on a real monitor wall. Capitals here are the genre, not shouting.
+     keys           buttons and the menu are backlit switcher keys: dark until selected, amber when lit.
+     timecode       the clock under the logo counts frames.
+
+   The status words on the wall ("ON AIR", "STANDBY", "NO SIGNAL") are drawn by this stylesheet in
+   English, as gallery jargon; the translated state is still in the element for screen readers and
+   in every other theme.
+   ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+.gallery-clock { display: none; }
+:root[data-theme="control-room"] .gallery-clock {
+  display: block; margin-top: 12px; padding: 7px 10px 6px;
+  background: #000; border: 1px solid var(--border); border-radius: 3px;
+  box-shadow: inset 0 0 14px rgba(255, 42, 31, 0.18);
+  color: var(--tally); text-shadow: 0 0 10px rgba(255, 42, 31, 0.75);
+  font-size: 21px; font-weight: 700; letter-spacing: 0.06em; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The room */
+:root[data-theme="control-room"] body {
+  background:
+    radial-gradient(1200px 500px at 60% -10%, rgba(255, 178, 31, 0.05), transparent 70%),
+    var(--bg-primary);
+}
+:root[data-theme="control-room"] .sidebar {
+  background: linear-gradient(180deg, #181a1d, #111315);
+  border-right: 1px solid #000; box-shadow: inset -1px 0 0 var(--border);
+}
+:root[data-theme="control-room"] .logo { text-transform: uppercase; letter-spacing: 0.08em; font-size: 15px; }
+:root[data-theme="control-room"] .logo svg { color: var(--tally); filter: drop-shadow(0 0 6px rgba(255, 42, 31, 0.7)); }
+
+/* The connection lamp becomes the gallery's ON AIR sign. */
+:root[data-theme="control-room"] .connection-status {
+  justify-content: center; gap: 0; padding: 6px 8px; border-radius: 3px;
+  background: #1a0b0a; border: 1px solid #3a1512; font-size: 0;
+}
+:root[data-theme="control-room"] .connection-status .status-dot { display: none; }
+:root[data-theme="control-room"] .connection-status::after {
+  content: 'OFF AIR'; font-size: 12px; font-weight: 700; letter-spacing: 0.22em; color: #6b3530;
+}
+:root[data-theme="control-room"] .connection-status:has(.status-dot.online) {
+  background: var(--tally); border-color: #ff7a70;
+  box-shadow: 0 0 18px rgba(255, 42, 31, 0.65), inset 0 0 10px rgba(255, 255, 255, 0.25);
+}
+:root[data-theme="control-room"] .connection-status:has(.status-dot.online)::after { content: 'ON AIR'; color: #fff; text-shadow: 0 0 8px rgba(255, 255, 255, 0.8); }
+
+/* Engraved bus labels over each bank of keys */
+:root[data-theme="control-room"] .nav-group-toggle {
+  text-transform: uppercase; letter-spacing: 0.16em; font-size: 10.5px; font-weight: 700; color: var(--text-muted);
+  border-bottom: 1px solid var(--border); border-radius: 0; padding-bottom: 6px; margin-bottom: 6px;
+}
+
+/* Keys: the menu and every button */
+:root[data-theme="control-room"] .nav-link,
+:root[data-theme="control-room"] .btn {
+  background: linear-gradient(180deg, #2a2e32, #1b1e21);
+  border: 1px solid #000;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), inset 0 -2px 0 rgba(0, 0, 0, 0.45), 0 1px 0 rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.07em; font-weight: 700;
+  border-radius: var(--radius);
+}
+:root[data-theme="control-room"] .nav-link { font-size: 12.5px; padding: 9px 12px; margin-bottom: 4px; }
+:root[data-theme="control-room"] .btn { font-size: 12px; }
+:root[data-theme="control-room"] .nav-link:hover,
+:root[data-theme="control-room"] .btn:hover { background: linear-gradient(180deg, #33383d, #202428); color: var(--text-primary); filter: none; }
+:root[data-theme="control-room"] .btn:active,
+:root[data-theme="control-room"] .nav-link:active { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.7); transform: translateY(1px); }
+/* A lit key */
+:root[data-theme="control-room"] .nav-link.active,
+:root[data-theme="control-room"] .btn-primary,
+:root[data-theme="control-room"] .members-tab.active,
+:root[data-theme="control-room"] .platform-tab.active {
+  background: linear-gradient(180deg, #ffc955, #f0a000);
+  color: var(--on-accent); border-color: #7a5200;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), inset 0 -2px 0 rgba(120, 70, 0, 0.5), 0 0 16px rgba(255, 178, 31, 0.45);
+}
+:root[data-theme="control-room"] .nav-link.active::before { content: none; }
+:root[data-theme="control-room"] .nav-link.active svg { color: var(--on-accent); }
+:root[data-theme="control-room"] .btn-primary:hover { background: linear-gradient(180deg, #ffd676, #ffb21f); color: var(--on-accent); }
+/* The one red key on a desk is the one that takes things off air. */
+:root[data-theme="control-room"] .btn-danger {
+  background: linear-gradient(180deg, #5a1712, #33100d); color: #ffb3ad; border-color: #000;
+}
+:root[data-theme="control-room"] .btn-danger:hover { background: linear-gradient(180deg, #ff4a3d, #c92318); color: #fff; box-shadow: 0 0 16px rgba(255, 42, 31, 0.5); }
+:root[data-theme="control-room"] .btn-icon { background: none; border: 0; box-shadow: none; text-transform: none; }
+
+/* Page titles are source names on a router panel */
+:root[data-theme="control-room"] .page-header h1 {
+  text-transform: uppercase; letter-spacing: 0.06em; font-size: 24px; font-weight: 700;
+  padding-left: 14px; border-left: 4px solid var(--tally);
+}
+:root[data-theme="control-room"] .page-header .subtitle { padding-left: 18px; }
+
+/* Rack panels */
+:root[data-theme="control-room"] .settings-section,
+:root[data-theme="control-room"] .info-card,
+:root[data-theme="control-room"] .modal {
+  background:
+    radial-gradient(circle at 10px 10px, #3a3e42 0 2px, transparent 2.5px),
+    radial-gradient(circle at calc(100% - 10px) 10px, #3a3e42 0 2px, transparent 2.5px),
+    radial-gradient(circle at 10px calc(100% - 10px), #3a3e42 0 2px, transparent 2.5px),
+    radial-gradient(circle at calc(100% - 10px) calc(100% - 10px), #3a3e42 0 2px, transparent 2.5px),
+    linear-gradient(180deg, #1c1f22, #16181a);
+  border: 1px solid #000; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 0 1px var(--border);
+}
+:root[data-theme="control-room"] .settings-section h3 {
+  text-transform: uppercase; letter-spacing: 0.14em; font-size: 12.5px; font-weight: 700; color: var(--accent);
+}
+:root[data-theme="control-room"] .input,
+:root[data-theme="control-room"] select.input,
+:root[data-theme="control-room"] textarea.input { background: #000; border-color: var(--border); box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.8); }
+
+/* ── The multiviewer ────────────────────────────────────────────────────────────────────────── */
+/* Summary strip: three readouts */
+:root[data-theme="control-room"] #dashStats { background: #000; border-color: var(--border); border-radius: 3px; }
+:root[data-theme="control-room"] #dashStats .info-card { background: transparent; box-shadow: none; border: 0; }
+:root[data-theme="control-room"] #dashStats .info-card + .info-card { border-left: 1px solid var(--border); }
+:root[data-theme="control-room"] #dashStats .info-card-label { text-transform: uppercase; letter-spacing: 0.14em; font-size: 11px; font-weight: 700; color: var(--text-muted); }
+:root[data-theme="control-room"] #dashStats .info-card-value { font-size: 24px; text-shadow: 0 0 12px currentColor; }
+
+/* A monitor: black glass, a hairline frame, and the tally border when it is on air */
+:root[data-theme="control-room"] .device-card-preview {
+  border: 3px solid #000; border-radius: 2px;
+  box-shadow: 0 0 0 1px #33373b;
+}
+:root[data-theme="control-room"] .device-card-preview img { border-radius: 0; }
+/* scanlines and a little glass */
+:root[data-theme="control-room"] .device-card-preview::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 1;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), transparent 22%),
+    repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.10) 0 1px, transparent 1px 3px);
+}
+:root[data-theme="control-room"] .device-card-status { z-index: 2; }
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.online) .device-card-preview,
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.healthy) .device-card-preview {
+  box-shadow: 0 0 0 3px var(--tally), 0 0 26px rgba(255, 42, 31, 0.45), var(--screen-glow);
+}
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.degraded) .device-card-preview,
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.provisioning) .device-card-preview {
+  box-shadow: 0 0 0 3px var(--warning), 0 0 20px rgba(255, 178, 31, 0.35);
+}
+:root[data-theme="control-room"] .device-card:hover .device-card-preview { transform: none; }
+:root[data-theme="control-room"] .device-card:hover:has(.device-status-badge.offline) .device-card-preview { box-shadow: 0 0 0 1px var(--accent); }
+
+/* No signal */
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.offline) .device-card-preview img,
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.offline) .device-card-preview .display-frame { filter: grayscale(1) brightness(0.16); }
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.offline) .device-card-preview::before {
+  content: 'NO SIGNAL'; position: absolute; inset: 0; z-index: 1; display: grid; place-items: center;
+  color: #7d8288; font-size: 15px; font-weight: 700; letter-spacing: 0.3em;
+}
+
+/* The lamp in the corner of each monitor */
+:root[data-theme="control-room"] .device-status-badge {
+  font-size: 0; gap: 0; padding: 4px 9px; border-radius: 2px; border: 1px solid #000; background: #000;
+}
+:root[data-theme="control-room"] .device-status-badge::before { display: none; }
+:root[data-theme="control-room"] .device-status-badge::after { font-size: 10.5px; font-weight: 700; letter-spacing: 0.2em; content: 'NO SIGNAL'; color: #7d8288; }
+:root[data-theme="control-room"] .device-status-badge.online,
+:root[data-theme="control-room"] .device-status-badge.healthy { background: var(--tally); border-color: #ff7a70; box-shadow: 0 0 14px rgba(255, 42, 31, 0.7); }
+:root[data-theme="control-room"] .device-status-badge.online::after,
+:root[data-theme="control-room"] .device-status-badge.healthy::after { content: 'ON AIR'; color: #fff; }
+:root[data-theme="control-room"] .device-status-badge.degraded,
+:root[data-theme="control-room"] .device-status-badge.provisioning { background: var(--warning); border-color: #ffd98a; }
+:root[data-theme="control-room"] .device-status-badge.degraded::after,
+:root[data-theme="control-room"] .device-status-badge.provisioning::after { content: 'STANDBY'; color: #1a1200; }
+
+/* The UMD: the name on a black strip under the glass, with a tally block at its left edge */
+:root[data-theme="control-room"] .device-card-body { padding: 0; margin-top: 3px; background: #000; border: 1px solid #33373b; }
+:root[data-theme="control-room"] .device-card-name {
+  position: relative; margin: 0; padding: 7px 10px 6px 22px;
+  text-transform: uppercase; letter-spacing: 0.12em; font-size: 13px; font-weight: 700; color: #f2f1ec;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:root[data-theme="control-room"] .device-card-name::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 12px; background: #2a2d30;
+}
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.online) .device-card-name::before,
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.healthy) .device-card-name::before { background: var(--tally); box-shadow: 0 0 10px rgba(255, 42, 31, 0.8); }
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.degraded) .device-card-name::before,
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.provisioning) .device-card-name::before { background: var(--warning); }
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.offline) .device-card-name { color: #7d8288; }
+:root[data-theme="control-room"] .device-card-meta { padding: 0 10px 7px 22px; color: var(--text-muted); }
+
+/* Theme picker stays readable as itself */
+:root[data-theme="control-room"] .theme-option { background: #16181a; border: 1px solid var(--border); box-shadow: none; text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-primary); }
+:root[data-theme="control-room"] .theme-option[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 16px rgba(255, 178, 31, 0.3); }
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="control-room"] .btn:active, :root[data-theme="control-room"] .nav-link:active { transform: none; }
+}
+
+/* Everything under the UMD lines up with it */
+:root[data-theme="control-room"] .device-card-body > *:not(.device-card-name) { padding-left: 22px; padding-right: 10px; }
+:root[data-theme="control-room"] .device-card-body > *:last-child { padding-bottom: 7px; }

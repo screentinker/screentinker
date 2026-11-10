@@ -7,8 +7,10 @@
  * colours, so each option shows ITS OWN look whichever theme is active.
  */
 export const THEMES = [
-  { id: 'control-room', attr: null, bar: '#15171a',
+  { id: 'graphite', attr: null, bar: '#15171a',
     swatch: { side: '#1b1e22', page: '#15171a', card: '#07080a', accent: '#3b82f6', ink: '#a6adb7' } },
+  { id: 'control-room', attr: 'control-room', bar: '#0a0b0c',
+    swatch: { side: '#141618', page: '#0a0b0c', card: '#000000', accent: '#ffb21f', ink: '#ff2a1f' } },
   { id: 'light', attr: 'light', bar: '#f3f4f6',
     swatch: { side: '#ffffff', page: '#f3f4f6', card: '#111317', accent: '#1f6feb', ink: '#7b8490' } },
   { id: 'classic', attr: 'classic', bar: '#111827',
@@ -20,7 +22,7 @@ const KEY = 'st_theme';
 export function currentTheme() {
   let v = null;
   try { v = localStorage.getItem(KEY); } catch { /* blocked */ }
-  return THEMES.some((t) => t.id === v) ? v : 'control-room';
+  return THEMES.some((t) => t.id === v) ? v : 'graphite';
 }
 
 /** Apply and remember a theme. Unknown ids are ignored. */
