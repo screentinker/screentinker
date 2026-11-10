@@ -219,6 +219,9 @@ router.post('/register', (req, res) => {
   const createOrgForUser = isFirstUser
     || (createOrg !== undefined ? !!createOrg : config.autoCreateOrgOnSignup);
   const workspaceId = ensureDefaultOrgForUser(user, { allowCreate: createOrgForUser });
+  // The sign-in routes sit outside the request logger, so an account's own events are written
+  // here, one row each, never with a password, code or token in it.
+  logActivity(user.id, 'auth:registered', null, null, getClientIp(req), workspaceId || null);
 
   // Welcome + admin-notify emails (hosted instance only, idempotent, async).
   sendSignupEmails(user, req);
@@ -539,7 +542,8 @@ function ensureVerificationEmail(user, req) {
 // The emailed link lands here (GET, unauthenticated — the user isn't logged in yet). We flip
 // the flag and redirect into the app with a flash flag, so there's no separate frontend route.
 router.get('/verify-email', (req, res) => {
-  const ok = emailVerify.consume(req.query.token);
+  const ok = emailVerify.consume(req.query.token);   // the user id, once; null for a used or unknown link
+  if (ok) logActivity(ok, 'auth:email_verified', null, null, getClientIp(req));
   return res.redirect(ok ? '/app#/login?verified=1' : '/app#/login?verify_error=1');
 });
 
@@ -785,6 +789,7 @@ router.post('/totp/enable', requireAuth, (req, res) => {
     .run(step, req.user.id);
   // 3.0: sessions that never passed the second factor end now; this one carries on with a new token.
   bumpTokenVersion(req.user.id);
+  logActivity(req.user.id, 'auth:totp_enabled', null, null, getClientIp(req));
   res.json({ enabled: true, recovery_codes: resetRecoveryCodes(req.user.id), token: generateToken(req.user, req.jwtWorkspaceId || null, { authTime: req.authTime }) }); // shown ONCE
 });
 
@@ -801,6 +806,7 @@ router.post('/totp/disable', requireAuth, (req, res) => {
     db.prepare('DELETE FROM totp_recovery_codes WHERE user_id = ?').run(req.user.id);
   })();
   bumpTokenVersion(req.user.id); // 3.0: see /totp/enable
+  logActivity(req.user.id, 'auth:totp_disabled', null, null, getClientIp(req));
   res.json({ enabled: false, token: generateToken(req.user, req.jwtWorkspaceId || null, { authTime: req.authTime }) });
 });
 
@@ -811,7 +817,9 @@ router.post('/totp/recovery-codes/regenerate', requireAuth, (req, res) => {
   const step = totp.verifyCode(req.body.code, totp.decryptSecret(u.totp_secret_enc), u.totp_last_step);
   if (!step) return res.status(400).json({ error: 'Invalid code' });
   db.prepare('UPDATE users SET totp_last_step = ? WHERE id = ?').run(step, req.user.id);
-  res.json({ recovery_codes: resetRecoveryCodes(req.user.id) });
+  const freshCodes = resetRecoveryCodes(req.user.id);
+  logActivity(req.user.id, 'auth:totp_recovery_codes_regenerated', null, null, getClientIp(req));
+  res.json({ recovery_codes: freshCodes });
 });
 
 // Second login step: exchange an mfa_pending token + a code (TOTP or recovery) for a
@@ -1088,6 +1096,7 @@ router.put('/me', requireAuth, (req, res) => {
     // `token` when present) so changing your password does not sign you out of the tab you did it in.
     bumpTokenVersion(req.user.id);
     freshToken = generateToken(req.user, req.jwtWorkspaceId || null, { authTime: req.authTime });
+    logActivity(req.user.id, 'auth:password_changed', null, null, getClientIp(req));
   }
   // ui_mode / onboarded_at are read back through GET /me (accountSummary), not here, so this keeps
   // the 2.x column list and works on any users table that has them.
@@ -1469,6 +1478,8 @@ router.post('/accept-invite/:inviteId', requireAuth, (req, res) => {
 
   // Stamp workspaceId so activityLogger captures tenant attribution.
   req.workspaceId = ws.id;
+  logActivity(req.user.id, 'workspace:invite_accepted',
+    `${ws.name} as ${existing ? existing.role + ' (already a member)' : invite.role}`, null, getClientIp(req), ws.id);
 
   res.json({
     workspace_id: ws.id,
