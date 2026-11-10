@@ -602,6 +602,10 @@
 .mx-meter { position: absolute; left: 16px; top: 36px; width: 8px; height: 130px; background: var(--bg-input); border-radius: 2px; overflow: hidden; display: flex; align-items: flex-end; }
 .mx-meter i { display: block; width: 100%; background: linear-gradient(0deg, var(--success) 0 70%, var(--warning) 70% 90%, var(--danger) 90%); background-size: 100% 130px; background-position: bottom; transition: height 0.12s linear; }
 .mx-meters-on { margin-left: auto; }
+.mx-console-n { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; color: var(--text-secondary); }
+.mx-console-n input { width: 72px; }
+.mx-knob-name { grid-template-columns: 1fr; }
+.mx-strips { flex-wrap: wrap; }
 .mx-mic.is-on { background: var(--danger); border-color: var(--danger); color: #fff; }
 .mx-group-state { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--text-secondary); }
 .mx-bed { width: 100%; font-size: 12px; padding: 4px 6px; }

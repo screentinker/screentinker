@@ -296,10 +296,10 @@ test('a live input that has piled up is brought back to now; a file is never dro
 
 test('sound inputs are read from the system\'s own list, and settings are made safe', () => {
   assert.deepEqual(audio.parseCapture(' 0 [NVidia         ]: HDA-Intel - HDA NVidia\n 2 [CODEC          ]: USB-Audio - USB AUDIO CODEC\n',
-    '00-03: HDMI 0 : HDMI 0 : playback 1\n02-00: USB Audio : USB Audio : playback 1 : capture 1\n'), [{ device: 'plughw:2,0', name: 'USB AUDIO CODEC: USB Audio' }]);
+    '00-03: HDMI 0 : HDMI 0 : playback 1\n02-00: USB Audio : USB Audio : playback 1 : capture 1\n'), [{ device: 'plughw:2,0', channels: 2, name: 'USB AUDIO CODEC: USB Audio' }]);
   assert.deepEqual(audio.parseCapture('', ''), []);
   const s = audio.cleanSettings({ line: { device: 'hw:0; rm -rf /', level: 99, eq: { low: 'x', mid: -50 }, gate: 7, denoise: -1 }, master: { muted: 1, level: -3, comp: 1 }, extra: { level: 1 }, net: { url: 'file:///etc/passwd' } });
-  assert.deepEqual(Object.keys(s).sort(), ['bed', 'fx', 'line', 'master', 'mic', 'net', 'net2', 'programme']);
+  assert.deepEqual(Object.keys(s).sort(), ['bed', 'console', 'fx', 'line', 'master', 'mic', 'net', 'net2', 'programme']);
   assert.deepEqual(s.master, { level: 0, muted: true, eq: { low: 0, mid: 0, high: 0 } });
   assert.deepEqual(s.line, { level: audio.MAX_LEVEL, muted: false, hpf: false, eq: { low: 0, mid: -12, high: 0 }, gate: 1, comp: 0, fx: 0, device: null, denoise: 0, noise: null });
   assert.equal(s.net.url, null);
@@ -546,5 +546,52 @@ test('the desk is told what graphic is over a stream, so its Program monitor can
   assert.equal((await call('GET', '/api/stream-out', A.jwt)).body.outputs.find((o) => o.id === so.id).graphic_on, null, 'only this server\'s own graphics pages are handed to the desk to frame');
   await call('POST', `/api/stream-out/${so.id}/gfx/clear`, A.jwt);
   assert.equal((await call('GET', '/api/stream-out', A.jwt)).body.outputs.find((o) => o.id === so.id).graphic_on, null);
+  await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+});
+
+/*
+ * A CONSOLE ON THE SERVER. A multichannel interface (a mixing console over USB) is captured once
+ * and each of its first N channels becomes a strip. What has to hold: every channel lands on its
+ * own strip and nowhere else, however the capture is cut into chunks; the device is one the
+ * server really has; and the number of strips is bounded.
+ */
+test('each channel of a multichannel capture feeds its own strip, whatever sizes the chunks arrive in', async () => {
+  const total = 6, count = 3, frames = 441;
+  const raw = Buffer.alloc(frames * total * 2);
+  for (let f = 0; f < frames; f++) for (let c = 0; c < total; c++) raw.writeInt16LE((c + 1) * 1000, (f * total + c) * 2);   // channel n carries the value n * 1000
+  const m = new audio.Mix({ console: { device: 'plughw:2,0', channels: total, count }, c2: { muted: true }, c3: { level: 0.5, label: ' Pulpit ' } });
+  assert.deepEqual(audio.inputNames(m.settings).slice(-3), ['c1', 'c2', 'c3']); assert.equal(m.settings.c3.label, 'Pulpit');
+  const src = new PassThrough(), names = audio.channelNames(count), got = { c1: [], c2: [], c3: [] };
+  for (const n of names) m.open(n);
+  audio.splitChannels(src, total, count, (i, buf) => { got[names[i]].push(...ints(buf)); m.push(names[i], buf); });
+  for (const cut of [1, 7, 100, 1001, raw.length]) src.write(raw.subarray(cut === 1 ? 0 : [0, 1, 8, 108, 1109][[1, 7, 100, 1001, raw.length].indexOf(cut)], Math.min(raw.length, [1, 8, 108, 1109, raw.length][[1, 7, 100, 1001, raw.length].indexOf(cut)])));
+  await tick(); await tick();
+  assert.equal(got.c1.length, frames * 2); assert.ok(got.c1.every((v) => v === 1000) && got.c2.every((v) => v === 2000) && got.c3.every((v) => v === 3000), 'no channel bleeds into another, and each is on both sides');
+  const out = ints(m.next(frames * 4));
+  assert.ok(out.every((v) => v === 1000 + 1500), 'the mix is channel 1, plus channel 3 at half, with channel 2 muted');
+  assert.ok(m.peaks.c1 > 0 && m.peaks.c2 === 0 && m.peaks.c3 > 0);
+});
+
+test('a console\'s settings are bounded, and it must be a device this server has', async () => {
+  const big = audio.cleanSettings({ console: { device: 'plughw:1,0', channels: 999, count: 999 } });
+  assert.deepEqual(big.console, { device: 'plughw:1,0', channels: 64, count: audio.MAX_CHANNELS });
+  assert.deepEqual(audio.cleanSettings({ console: { device: 'hw:0; reboot', channels: 8, count: 8 }, c1: { level: 1 } }).console, { device: null, channels: 8, count: 0 });
+  assert.ok(!('c1' in audio.cleanSettings({ c1: { level: 1 } })), 'a channel strip exists only while the console brings it in');
+  assert.equal(audio.cleanSettings({ console: { device: 'plughw:1,0', channels: 4, count: 16 } }).console.count, 4, 'no more strips than the device has channels');
+  const args = audio.consoleArgs('plughw:3,0', 18);
+  assert.deepEqual(args.slice(3, 9), ['-f', 'alsa', '-ac', '18', '-i', 'plughw:3,0']);
+  assert.equal(audio.captureChannels('Playback:\n  Interface 1\n    Channels: 4\nCapture:\n  Interface 2\n    Altset 1\n    Channels: 18\n    Altset 2\n    Channels: 2\n'), 18);
+  assert.equal(audio.captureChannels('Playback:\n    Channels: 2\n'), null);
+  assert.deepEqual(audio.parseCapture(' 2 [AR16c          ]: USB-Audio - StudioLive AR16c\n', '02-00: USB Audio : USB Audio : playback 1 : capture 1\n', { 2: 'Capture:\n    Channels: 18\n' }),
+    [{ device: 'plughw:2,0', channels: 18, name: 'StudioLive AR16c: USB Audio' }]);
+  const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Console', kind: 'record' })).body;
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { console_device: 'plughw:9,0', console_count: 8 })).status, 400, 'not a device of this server');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { console_count: 9999 })).status, 400);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { strips: [{ strip: 'c1', level: 1 }] })).status, 400, 'no console, no channel strips');
+  db.prepare('UPDATE stream_outputs SET audio_mix = ? WHERE id = ?').run(JSON.stringify({ console: { device: 'plughw:2,0', channels: 18, count: 2 } }), so.id);
+  const named = await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { strips: [{ strip: 'c2', level: 0.7, gate: 0.2, label: 'Pastor <b>' }] });
+  assert.equal(named.status, 200); assert.deepEqual([named.body.audio.mix.c2.level, named.body.audio.mix.c2.gate, named.body.audio.mix.c2.label], [0.7, 0.2, 'Pastor <b>']);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { strips: [{ strip: 'c3', level: 1 }] })).status, 400);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { strips: [{ strip: 'bed', label: 'x' }] })).body.audio.mix.bed.label, undefined, 'only console channels are named');
   await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
 });

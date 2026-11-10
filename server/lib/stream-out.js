@@ -201,7 +201,8 @@ const audio = require('./stream-audio');
 /** What an input is decoding from, as one string: when it changes, the input is restarted. */
 function inputKey(s, name) {
   const set = s.mix.settings[name];
-  if (name === 'mic') return '';                     // fed by the desk (pushMic), not started from settings
+  if (name === 'mic') return '';
+  if (name === 'console') { const c = s.mix.settings.console; return c.device && c.count ? `${c.device}|${c.channels}|${c.count}` : ''; }                     // fed by the desk (pushMic), not started from settings
   if (name === 'bed') return s.bedFile || '';
   if (name === 'line') return set.device || '';
   if (name === 'programme') return s.sink ? s.sink.name : '';
@@ -214,6 +215,21 @@ function startInput(s, name) {
   const key = inputKey(s, name);
   s.inputKeys[name] = key;
   if (!key) return;
+  if (name === 'console') {
+    // One capture of the whole device; each of its first `count` channels feeds a strip of its own.
+    const c = s.mix.settings.console, strips = audio.channelNames(c.count);
+    const proc = audio.decoder(audio.consoleArgs(c.device, c.channels));
+    s.inputs.console = proc;
+    for (const n of strips) s.mix.open(n, { live: true });
+    audio.splitChannels(proc.stdout, c.channels, c.count, (i, buf) => { if (s.inputs.console === proc) s.mix.push(strips[i], buf); });
+    proc.on('close', () => {
+      if (s.inputs.console !== proc) return;
+      delete s.inputs.console; for (const n of strips) s.mix.detach(n);
+      if (!s.wanted) return;
+      s.inputTimers.console = setTimeout(() => { if (s.wanted && sessions.get(s.id) === s && s.inputKeys.console === key) startInput(s, 'console'); }, 3000);
+    });
+    return;
+  }
   const proc = audio.decoder(name === 'bed' ? audio.bedArgs(s.bedFile)
     : name === 'line' ? audio.lineArgs(set.device)
       : name === 'programme' ? audio.programmeArgs(s.sink.name)
@@ -234,6 +250,7 @@ function stopInput(s, name) {
   const p = s.inputs[name];
   delete s.inputs[name];
   if (p) { try { p.kill('SIGKILL'); } catch { /* gone */ } }
+  if (name === 'console') { for (const n of audio.channelNames(audio.MAX_CHANNELS)) if (s.mix.inputs.has(n)) s.mix.detach(n); return; }
   s.mix.detach(name);
 }
 /** Change a live stream's sound: any control of any strip, the bed, the line or a network feed. */
@@ -242,7 +259,7 @@ function setAudio(id, next) {
   if (!s) return false;
   s.mix.setSettings(next && next.settings);
   s.bedFile = (next && next.file) || null;
-  for (const name of audio.INPUTS) if (inputKey(s, name) !== (s.inputKeys[name] || '')) startInput(s, name);
+  for (const name of [...audio.INPUTS, 'console']) if (inputKey(s, name) !== (s.inputKeys[name] || '')) startInput(s, name);
   return true;
 }
 
@@ -272,7 +289,7 @@ function stopMic(id) { const s = sessions.get(id); if (s) stopInput(s, 'mic'); }
 /** Listen to one input of a live stream as noise. Resolves with its print, or null (not live, no such input). */
 function learnNoise(id, name) {
   const s = sessions.get(id);
-  if (!s || !audio.INPUTS.includes(name)) return Promise.resolve(null);
+  if (!s || !audio.inputNames(s.mix.settings).includes(name)) return Promise.resolve(null);
   return Promise.race([s.mix.learnNoise(name, 1.5), new Promise((r) => setTimeout(() => r(null), 5000).unref())]);
 }
 
@@ -331,7 +348,7 @@ async function start(row, key, sound, { standby = false } = {}) {
     });
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 82, maxWidth: row.width, maxHeight: row.height, everyNthFrame: 1 });
     if (!s.wanted) return status(row.id);
-    for (const name of audio.INPUTS) startInput(s, name);
+    for (const name of [...audio.INPUTS, 'console']) startInput(s, name);
     s.ready = true;
     if (standby) idle(s); else encode(s);
   } catch (e) {
@@ -396,7 +413,7 @@ async function stop(id, why) {
   sessions.delete(id);
   if (why === 'error' && s.error) stopped.set(id, { error: s.error, at: Date.now() }); else stopped.delete(id);
   clearInterval(s.timer); clearInterval(s.sndTimer); clearInterval(s.idleTimer); clearTimeout(s.retry);
-  for (const name of audio.INPUTS) stopInput(s, name);
+  for (const name of [...audio.INPUTS, 'console']) stopInput(s, name);
   audio.removeSink(s.sink);
   try { if (s.ff) { s.ff.stdin.end(); try { s.ff.stdio[3].end(); } catch { /* gone */ } const ff = s.ff; setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* gone */ } }, 2000).unref(); } } catch { /* gone */ }
   try { if (s.browser) await s.browser.close(); } catch { /* gone */ }

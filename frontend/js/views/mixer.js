@@ -31,11 +31,22 @@ let cued = null;             // the scene waiting on TAKE, if one was recalled
 // The transition TAKE uses, remembered in this browser: { type: cut|fade|flash|wipe, ms }.
 let tx = (() => { try { const v = JSON.parse(localStorage.getItem('st_mixer_tx') || 'null'); if (v && typeof v.type === 'string' && Number(v.ms) >= 200) return { type: v.type, ms: Number(v.ms) }; } catch { /* default */ } return { type: 'cut', ms: 600 }; })();
 const RATES = [300, 600, 1000, 2000];
-const STRIPS = ['programme', 'bed', 'mic', 'line', 'net', 'net2', 'master'];
+const FIXED = ['programme', 'bed', 'mic', 'line', 'net', 'net2'];
+/** The strips of one stream, in desk order: the fixed inputs, the console's channels, the master. */
+const stripsOf = (s) => [...FIXED, ...Array.from({ length: (s.audio.mix.console && s.audio.mix.console.count) || 0 }, (_, i) => 'c' + (i + 1)), 'master'];
+/** What a strip is called: a console channel by the name it was given, or its number. */
+const stripName = (s, k) => (/^c\d+$/.test(k) ? (s.audio.mix[k].label || t('mixer.strip.channel', { n: k.slice(1) })) : t('mixer.strip.' + k));
 let meterBusy = false;
 // This computer's microphone, open into one stream: { sid, rec, media }. The browser records it
 // and the pieces are sent up in order, one request at a time.
 let mic = null;
+// Which of this computer's inputs the Desk mic uses (a USB console shows up here too), remembered in this browser.
+let micDevices = [];
+let micDeviceId = (() => { try { return localStorage.getItem('st_mixer_mic') || ''; } catch { return ''; } })();
+async function micList() {
+  try { micDevices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput' && d.deviceId); } catch { micDevices = []; }
+  if (micDeviceId && !micDevices.some((d) => d.deviceId === micDeviceId)) micDeviceId = '';
+}
 function micStop() {
   if (!mic) return;
   const m = mic; mic = null;
@@ -48,7 +59,8 @@ async function micStart(sid) {
   if (!navigator.mediaDevices || !window.MediaRecorder || !MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) throw new Error(t('mixer.mic_unsupported'));
   // Asking for it is what makes the browser show its "allow microphone" prompt. Its own processing
   // is off: the desk has a noise floor control, a gate and a compressor of its own.
-  const media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  const media = await navigator.mediaDevices.getUserMedia({ audio: { ...(micDeviceId ? { deviceId: { exact: micDeviceId } } : {}), channelCount: { ideal: 2 }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  await micList();                                          // the devices have names once the browser has said yes
   const rec = new MediaRecorder(media, { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 128000 });
   const me = { sid, rec, media }; mic = me;
   let first = true, chain = Promise.resolve(), misses = 0;
@@ -94,9 +106,10 @@ const pct = (v) => (v ? Math.round(v * 100) + '%' : t('mixer.audio_off'));
 /** The processing of one strip: what a desk channel has between its input and its fader. */
 function procPanel(s, strip) {
   const st = s.audio.mix[strip], master = strip === 'master';
-  return `<div class="mx-proc" role="group" aria-label="${esc(t('mixer.strip.' + strip))}">
-    <div class="mx-proc-title">${esc(t('mixer.audio_proc_of', { strip: t('mixer.strip.' + strip) }))}<button type="button" class="btn btn-secondary btn-sm" data-procreset="${esc(s.id)}" data-strip="${strip}">${esc(t('mixer.audio_flat'))}</button></div>
+  return `<div class="mx-proc" role="group" aria-label="${esc(stripName(s, strip))}">
+    <div class="mx-proc-title">${esc(t('mixer.audio_proc_of', { strip: stripName(s, strip) }))}<button type="button" class="btn btn-secondary btn-sm" data-procreset="${esc(s.id)}" data-strip="${strip}">${esc(t('mixer.audio_flat'))}</button></div>
     <div class="mx-knobs">
+      ${/^c\d+$/.test(strip) ? `<label class="mx-knob mx-knob-name">${esc(t('mixer.channel_name'))}<input class="input" maxlength="24" value="${esc(st.label || '')}" placeholder="${esc(t('mixer.strip.channel', { n: strip.slice(1) }))}" data-chname="${esc(s.id)}" data-strip="${strip}"></label>` : ''}
       ${master ? '' : `<label class="mx-knob mx-knob-check"><input type="checkbox" ${st.hpf ? 'checked' : ''} data-proc="${esc(s.id)}" data-strip="${strip}" data-ctl="hpf"> ${esc(t('mixer.audio_hpf'))}</label>`}
       ${knob(s, strip, 'eq.low', t('mixer.audio_eq_low'), st.eq.low, -12, 12, 1, dB(st.eq.low))}
       ${knob(s, strip, 'eq.mid', t('mixer.audio_eq_mid'), st.eq.mid, -12, 12, 1, dB(st.eq.mid))}
@@ -277,11 +290,11 @@ function draw(root) {
           ${streams().map((s) => { const mix = s.audio.mix, pk = s.status.audio_peaks || {}, live = s.status.inputs_live || []; return `
             <div class="mx-group">
               <div class="mx-group-name"><span class="mx-lamp mx-lamp-${streamTally(s)}"></span>${esc(s.name)}${s.status.state === 'off' && so.available ? `<button type="button" class="btn btn-secondary btn-sm mx-meters-on" data-standby="${esc(s.id)}" title="${esc(t('mixer.standby_tip'))}">${esc(t('mixer.meters_on'))}</button>` : `<span class="mx-group-state">${esc(t('mixer.stream_state.' + s.status.state))}</span>`}${s.status.limiting > 0.5 ? `<span class="mx-limiting">${esc(t('mixer.audio_limiting', { db: s.status.limiting }))}</span>` : ''}</div>
-              <div class="mx-strips">${STRIPS.map((k) => { const off = (k === 'programme' && !so.programme_audio) || (k === 'mic' && !(mic && mic.sid === s.id)) || (k === 'line' && !mix.line.device) || ((k === 'net' || k === 'net2') && !mix[k].url); const open = procOpen && procOpen.sid === s.id && procOpen.strip === k; return `
+              <div class="mx-strips">${stripsOf(s).map((k) => { const off = (/^c\d+$/.test(k) && !live.includes('console')) || (k === 'programme' && !so.programme_audio) || (k === 'mic' && !(mic && mic.sid === s.id)) || (k === 'line' && !mix.line.device) || ((k === 'net' || k === 'net2') && !mix[k].url); const open = procOpen && procOpen.sid === s.id && procOpen.strip === k; return `
                 <div class="mx-strip${mix[k].muted ? ' is-muted' : ''}${k === 'master' ? ' mx-strip-master' : ''}${off ? ' is-off' : ''}">
-                  <span class="mx-strip-name">${esc(t('mixer.strip.' + k))}</span>
+                  <span class="mx-strip-name">${esc(stripName(s, k))}</span>
                   <div class="mx-meter" aria-hidden="true"><i data-meter="${esc(s.id)}:${k}" style="height:${meterPct(pk[k] || 0)}%"></i></div>
-                  <input type="range" class="mx-fader" min="0" max="${Math.round((so.max_level || 1.5) * 100)}" value="${Math.round(mix[k].level * 100)}" data-svol="${esc(s.id)}" data-strip="${k}" aria-label="${esc(t('mixer.audio_level_of', { name: s.name + ', ' + t('mixer.strip.' + k) }))}">
+                  <input type="range" class="mx-fader" min="0" max="${Math.round((so.max_level || 1.5) * 100)}" value="${Math.round(mix[k].level * 100)}" data-svol="${esc(s.id)}" data-strip="${k}" aria-label="${esc(t('mixer.audio_level_of', { name: s.name + ', ' + stripName(s, k) }))}">
                   <span class="mx-strip-val">${mix[k].muted ? esc(t('mixer.audio_muted')) : Math.round(mix[k].level * 100) + '%'}</span>
                   <button type="button" class="mx-mute${mix[k].muted ? ' is-on' : ''}" data-smute="${esc(s.id)}" data-strip="${k}" aria-pressed="${mix[k].muted}">${esc(t('mixer.audio_mute'))}</button>
                   <button type="button" class="mx-mute mx-proc-open${open ? ' is-open' : ''}${shaped(mix[k]) ? ' is-shaped' : ''}" data-procopen="${esc(s.id)}" data-strip="${k}" aria-expanded="${open}">${esc(t('mixer.audio_eq'))}</button>
@@ -289,7 +302,10 @@ function draw(root) {
               </div>
               ${procOpen && procOpen.sid === s.id ? procPanel(s, procOpen.strip) : ''}
               <div class="mx-group-src">
-                <label>${esc(t('mixer.strip.mic'))}<button type="button" class="btn btn-secondary btn-sm mx-mic${mic && mic.sid === s.id ? ' is-on' : ''}" data-mic="${esc(s.id)}" aria-pressed="${!!(mic && mic.sid === s.id)}">${esc(t(mic && mic.sid === s.id ? 'mixer.mic_stop' : 'mixer.mic_start'))}</button></label>
+                <label>${esc(t('mixer.strip.mic'))}<button type="button" class="btn btn-secondary btn-sm mx-mic${mic && mic.sid === s.id ? ' is-on' : ''}" data-mic="${esc(s.id)}" aria-pressed="${!!(mic && mic.sid === s.id)}">${esc(t(mic && mic.sid === s.id ? 'mixer.mic_stop' : 'mixer.mic_start'))}</button>
+                  ${micDevices.length > 1 ? `<select class="input mx-bed" data-micdev aria-label="${esc(t('mixer.mic_device'))}">${micDevices.map((d) => `<option value="${esc(d.deviceId)}"${d.deviceId === micDeviceId ? ' selected' : ''}>${esc(d.label || t('mixer.mic_default'))}</option>`).join('')}</select>` : ''}</label>
+                <label>${esc(t('mixer.console'))}<select class="input mx-bed" data-console="${esc(s.id)}"><option value="">${esc(t('mixer.audio_none_opt'))}</option>${(so.line_inputs || []).map((x) => `<option value="${esc(x.device)}"${x.device === mix.console.device ? ' selected' : ''}>${esc(x.name)} (${x.channels} ch)</option>`).join('')}</select>
+                  ${mix.console.device ? `<span class="mx-console-n">${esc(t('mixer.console_channels'))} <input class="input" type="number" min="0" max="${Math.min(mix.console.channels, so.max_channels || 32)}" value="${mix.console.count}" data-consolen="${esc(s.id)}"></span>` : ((so.line_inputs || []).length ? '' : `<span class="mx-note">${esc(t('mixer.console_none'))}</span>`)}</label>
                 <label>${esc(t('mixer.audio_bed'))}<select class="input mx-bed" data-bed="${esc(s.id)}"><option value="">${esc(t('mixer.audio_none_opt'))}</option>${(so.audio_sources || []).map((x) => `<option value="${esc(x.id)}"${x.id === s.audio.content_id ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
                 <label>${esc(t('mixer.audio_line'))}<select class="input mx-bed" data-line="${esc(s.id)}"><option value="">${esc(t('mixer.audio_none_opt'))}</option>${(so.line_inputs || []).map((x) => `<option value="${esc(x.device)}"${x.device === mix.line.device ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
                 ${['net', 'net2'].map((n) => `<label>${esc(t('mixer.strip.' + n))}${live.includes(n) ? ` <span class="mx-live">${esc(t('mixer.audio_connected'))}</span>` : ''}<input class="input mx-bed" data-net="${esc(s.id)}" data-strip="${n}" value="${esc(mix[n].url || '')}" placeholder="srt://  rtsp://  rtp://  udp://" spellcheck="false" autocomplete="off"></label>`).join('')}
@@ -597,6 +613,14 @@ function bind(root) {
     try { so = await call('/stream-out'); } catch { /* keep */ }
     draw(root);
   }));
+  root.querySelectorAll('[data-micdev]').forEach((el) => el.addEventListener('change', async () => {
+    micDeviceId = el.value; try { localStorage.setItem('st_mixer_mic', micDeviceId); } catch { /* not kept */ }
+    if (mic) { const sid = mic.sid; try { await micStart(sid); } catch (err) { showToast(err.message || String(err), 'error'); } }   // reopen on the new device
+    draw(root);
+  }));
+  root.querySelectorAll('[data-console]').forEach((el) => el.addEventListener('change', async () => { await streamAudio(el.dataset.console, { console_device: el.value || null }); draw(root); }));
+  root.querySelectorAll('[data-consolen]').forEach((el) => el.addEventListener('change', async () => { await streamAudio(el.dataset.consolen, { console_count: Math.max(0, parseInt(el.value, 10) || 0) }); draw(root); }));
+  root.querySelectorAll('[data-chname]').forEach((el) => el.addEventListener('change', async () => { await streamAudio(el.dataset.chname, { strips: [{ strip: el.dataset.strip, label: el.value.trim() }] }); draw(root); }));
   root.querySelectorAll('[data-learn]').forEach((b) => b.addEventListener('click', async () => {
     b.disabled = true; b.textContent = t('mixer.audio_noise_learning');
     await streamAudio(b.dataset.learn, { learn_noise: b.dataset.strip }); draw(root);
@@ -698,7 +722,7 @@ export async function render(container, which) {
     try {
       const sig = () => JSON.stringify([state.screens.map((s) => [s.id, s.status, s.playlist_id]), state.sources.length, streams().map((s) => [s.id, s.status.state, s.status.error, s.playlist_id])]);
       const before = sig();
-      if (container.querySelector('#mxStreamForm, #mxSceneForm') || holdTimer || (document.activeElement && document.activeElement.matches && document.activeElement.matches('[data-net], [data-proc], .mx-fader'))) return;      // someone is typing or steering: leave the desk alone
+      if (container.querySelector('#mxStreamForm, #mxSceneForm') || holdTimer || (document.activeElement && document.activeElement.matches && document.activeElement.matches('[data-net], [data-proc], [data-chname], [data-consolen], .mx-fader'))) return;      // someone is typing or steering: leave the desk alone
       state = await load();
       if (sig() !== before && alive) draw(container);
     } catch { /* keep the desk as it is */ }
@@ -713,7 +737,7 @@ export async function render(container, which) {
       const { levels } = await call('/stream-out/levels');
       for (const s of streams()) {
         const l = levels[s.id], pk = l ? l.peaks : {};
-        for (const k of STRIPS) { const bar = container.querySelector(`[data-meter="${CSS.escape(s.id + ':' + k)}"]`); if (bar) bar.style.height = meterPct(pk[k] || 0) + '%'; }
+        for (const k of stripsOf(s)) { const bar = container.querySelector(`[data-meter="${CSS.escape(s.id + ':' + k)}"]`); if (bar) bar.style.height = meterPct(pk[k] || 0) + '%'; }
         s.status = { ...s.status, audio_peaks: pk };
       }
     } catch { /* next time */ }

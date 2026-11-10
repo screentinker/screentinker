@@ -12,6 +12,10 @@
  *   bed         an uploaded audio item, looped.
  *   mic         the microphone of the computer the desk is open on: the browser records it and
  *               sends it up a quarter of a second at a time (routes/stream-out.js /:id/mic).
+ *   c1..c32     the channels of a mixing console (or any multichannel interface) plugged into the
+ *               server over USB: a Yamaha TF, a PreSonus StudioLive, a multichannel sound card.
+ *               One capture reads every channel of the device and each of the first N becomes a
+ *               strip of its own (mono, in the centre), with its own name.
  *   line        a sound card input on the server (a USB audio interface, a desk's output),
  *               read through ALSA.
  *
@@ -40,6 +44,10 @@ const FRAME = 4;                 // bytes per stereo 16-bit sample
 const SECOND = RATE * FRAME;
 const MAX_LEVEL = 1.5;
 const INPUTS = ['programme', 'bed', 'mic', 'line', 'net', 'net2'];
+const MAX_CHANNELS = 32;
+const channelNames = (count) => Array.from({ length: Math.max(0, Math.min(MAX_CHANNELS, count | 0)) }, (_, i) => 'c' + (i + 1));
+/** Every input strip of a mix with these settings, in desk order: the fixed inputs, then the console's channels. */
+const inputNames = (settings) => [...INPUTS, ...channelNames(settings && settings.console ? settings.console.count : 0)];
 const NET_SCHEMES = ['srt:', 'rtmp:', 'rtmps:', 'rtsp:', 'rtsps:', 'rtp:', 'udp:', 'http:', 'https:'];
 
 const level = (v, dflt) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(MAX_LEVEL, n)) : dflt; };
@@ -58,9 +66,16 @@ function maskUrl(v) { return typeof v === 'string' ? v.replace(/(\/\/[^/@:]*):[^
 function cleanSettings(s) {
   const x = s && typeof s === 'object' ? s : {};
   const out = {};
-  for (const name of INPUTS) out[name] = strip(x[name]);
+  // A console on the server: its device, and how many of its channels are brought in as strips.
+  const con = x.console && typeof x.console === 'object' ? x.console : {};
+  const device = typeof con.device === 'string' && /^plughw:\d{1,2},\d{1,2}$/.test(con.device) ? con.device : null;
+  const total = Math.max(1, Math.min(64, parseInt(con.channels, 10) || 2));
+  out.console = { device, channels: total, count: device ? Math.max(0, Math.min(MAX_CHANNELS, total, parseInt(con.count, 10) || 0)) : 0 };
+  const names = inputNames(out);
+  for (const name of names) out[name] = strip(x[name]);
+  for (const name of channelNames(out.console.count)) out[name].label = typeof (x[name] && x[name].label) === 'string' ? x[name].label.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 24) : '';
   out.line.device = typeof (x.line && x.line.device) === 'string' && /^plughw:\d{1,2},\d{1,2}$/.test(x.line.device) ? x.line.device : null;
-  for (const name of INPUTS) {
+  for (const name of names) {
     out[name].denoise = unit(x[name] && x[name].denoise);
     out[name].noise = x[name] && dsp.isPrint(x[name].noise) ? x[name].noise : null;   // the learned noise print, packed
   }
@@ -75,8 +90,7 @@ class Mix {
   constructor(settings) {
     this.settings = cleanSettings(settings);
     this.inputs = new Map();     // name -> { q: Buffer[], bytes, stream, live, odd }
-    this.strips = Object.fromEntries(INPUTS.map((n) => [n, new dsp.Strip()]));
-    this.denoisers = Object.fromEntries(INPUTS.map((n) => [n, new dsp.Denoiser()]));
+    this.strips = {}; this.denoisers = {};        // made when a strip is first used: the console's channels come and go
     this.masterEq = new dsp.Strip();
     this.reverb = new dsp.Reverb();
     this.limiter = new dsp.Limiter();
@@ -98,26 +112,36 @@ class Mix {
     this.detach(name);
     const input = { q: [], bytes: 0, stream, live, odd: null };
     this.inputs.set(name, input);
-    stream.on('data', (d) => {
-      if (this.inputs.get(name) !== input) return;
-      // A pipe cuts where it likes; the queue only ever holds whole stereo samples.
-      if (input.odd) { d = Buffer.concat([input.odd, d]); input.odd = null; }
-      const whole = d.length - (d.length % FRAME);
-      if (whole < d.length) input.odd = d.subarray(whole);
-      if (!whole) return;
-      d = d.subarray(0, whole);
-      input.q.push(d); input.bytes += d.length;
-      if (live) {
-        while (input.bytes > SECOND / 2 && input.q.length > 1) input.bytes -= input.q.shift().length;
-      } else if (input.bytes > SECOND) stream.pause();
-    });
+    stream.on('data', (d) => { if (this.inputs.get(name) === input) this._take(input, d); });
     stream.on('error', () => {});
   }
 
-  detach(name) { this.inputs.delete(name); this.peaks[name] = 0; this.held[name] = 0; this.denoisers[name].cancelLearn(); }
+  detach(name) { this.inputs.delete(name); this.peaks[name] = 0; this.held[name] = 0; if (this.denoisers[name]) this.denoisers[name].cancelLearn(); }
+  _dn(name) { return this.denoisers[name] || (this.denoisers[name] = new dsp.Denoiser()); }
+
+  /** An input fed by push() instead of a stream of its own (one channel of the console's capture). */
+  open(name, { live = true } = {}) {
+    this.detach(name);
+    const input = { q: [], bytes: 0, stream: null, live, odd: null };
+    this.inputs.set(name, input);
+    return input;
+  }
+  push(name, d) { const input = this.inputs.get(name); if (input) this._take(input, d); }
+  _take(input, d) {
+    // A pipe cuts where it likes; the queue only ever holds whole stereo samples.
+    if (input.odd) { d = Buffer.concat([input.odd, d]); input.odd = null; }
+    const whole = d.length - (d.length % FRAME);
+    if (whole < d.length) input.odd = d.subarray(whole);
+    if (!whole) return;
+    d = d.subarray(0, whole);
+    input.q.push(d); input.bytes += d.length;
+    if (input.live) {
+      while (input.bytes > SECOND / 2 && input.q.length > 1) input.bytes -= input.q.shift().length;
+    } else if (input.bytes > SECOND && input.stream) input.stream.pause();
+  }
 
   /** Listen to an input for a moment as noise. Resolves with its print (packed), or null. */
-  learnNoise(name, seconds) { return this.inputs.has(name) ? this.denoisers[name].learn(seconds) : Promise.resolve(null); }
+  learnNoise(name, seconds) { return this.inputs.has(name) ? this._dn(name).learn(seconds) : Promise.resolve(null); }
 
   /** `n` bytes of mixed sound for right now. */
   next(n) {
@@ -125,7 +149,7 @@ class Mix {
     const len = n / 2;                                 // samples, both channels counted
     const sum = new Float32Array(len), send = new Float32Array(len);
     let sending = false;
-    for (const name of INPUTS) {
+    for (const name of inputNames(this.settings)) {
       const input = this.inputs.get(name);
       if (!input) { this.peaks[name] = 0; continue; }
       const set = this.settings[name];
@@ -138,10 +162,10 @@ class Mix {
         at += take / 2; input.bytes -= take;
         if (take === head.length) input.q.shift(); else input.q[0] = head.subarray(take);
       }
-      if (!input.live && input.bytes < SECOND / 2 && input.stream.isPaused && input.stream.isPaused()) input.stream.resume();
-      const dn = this.denoisers[name];
+      if (!input.live && input.stream && input.bytes < SECOND / 2 && input.stream.isPaused && input.stream.isPaused()) input.stream.resume();
+      const dn = this._dn(name);
       dn.setPrint(set.noise); dn.run(buf, set.denoise);
-      this.strips[name].run(buf, set);
+      (this.strips[name] || (this.strips[name] = new dsp.Strip())).run(buf, set);
       const gain = set.muted ? 0 : set.level;
       let peak = 0;
       if (gain !== 0) {
@@ -172,7 +196,7 @@ class Mix {
     }
     this.peaks.master = peak / 32768;
     const fall = Math.pow(10, -(len / 2 / RATE));          // 20 dB a second
-    for (const k in this.held) { const h = this.held[k] * fall; this.held[k] = this.peaks[k] > h ? this.peaks[k] : (h < 1e-5 ? 0 : h); }
+    for (const k in this.peaks) { const h = (this.held[k] || 0) * fall; this.held[k] = this.peaks[k] > h ? this.peaks[k] : (h < 1e-5 ? 0 : h); }
     return out;
   }
 }
@@ -193,6 +217,28 @@ function micDecoder() {
   return p;
 }
 const programmeArgs = (sink) => [...QUIET, '-f', 'pulse', '-i', `${sink}.monitor`, ...PCM_OUT];
+/** A console: every channel of the device, interleaved, as it comes. */
+const consoleArgs = (device, total) => [...QUIET, '-f', 'alsa', '-ac', String(total), '-i', device, '-f', 's16le', '-ar', String(RATE), '-ac', String(total), 'pipe:1'];
+/**
+ * Splits a capture of `total` interleaved channels into its first `count`: each is handed to
+ * onChunk(index, buffer) as stereo (the channel on both sides), which is what a strip takes.
+ */
+function splitChannels(stream, total, count, onChunk) {
+  const fb = total * 2; let odd = null;
+  stream.on('data', (d) => {
+    if (odd) { d = Buffer.concat([odd, d]); odd = null; }
+    const whole = d.length - (d.length % fb);
+    if (whole < d.length) odd = d.subarray(whole);
+    const frames = whole / fb;
+    if (!frames) return;
+    for (let c = 0; c < count; c++) {
+      const out = Buffer.allocUnsafe(frames * FRAME);
+      for (let f = 0, at = c * 2; f < frames; f++, at += fb) { const v = d.readInt16LE(at); out.writeInt16LE(v, f * 4); out.writeInt16LE(v, f * 4 + 2); }
+      onChunk(c, out);
+    }
+  });
+  stream.on('error', () => {});
+}
 function decoder(args) {
   const p = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'ignore'] });
   p.on('error', () => {});
@@ -201,20 +247,32 @@ function decoder(args) {
 
 // ── sound card inputs (ALSA) ─────────────────────────────────────────────────────────────────────
 /** From /proc/asound/cards and /proc/asound/pcm: the devices that can record. */
-function parseCapture(cardsText, pcmText) {
+/** How many capture channels a USB audio device has, from its /proc/asound/cardN/stream0 text. */
+function captureChannels(streamText) {
+  const cap = String(streamText || '').split(/^Capture:/m)[1];
+  if (!cap) return null;
+  const all = [...cap.matchAll(/^\s*Channels:\s*(\d+)/gm)].map((m) => Number(m[1]));
+  return all.length ? Math.max(...all) : null;
+}
+function parseCapture(cardsText, pcmText, streams) {
   const names = new Map();
+  streams = streams || {};
   for (const m of String(cardsText || '').matchAll(/^\s*(\d+)\s+\[[^\]]*\]:\s*\S+\s+-\s+(.+)$/gm)) names.set(Number(m[1]), m[2].trim());
   const out = [];
   for (const line of String(pcmText || '').split('\n')) {
     const m = line.match(/^(\d+)-(\d+):\s*([^:]*):/);
     if (!m || !/capture\s+\d+/.test(line)) continue;
     const card = Number(m[1]), dev = Number(m[2]);
-    out.push({ device: `plughw:${card},${dev}`, name: `${names.get(card) || 'Sound card ' + card}${m[3].trim() ? ': ' + m[3].trim() : ''}`.slice(0, 120) });
+    out.push({ device: `plughw:${card},${dev}`, channels: (dev === 0 && captureChannels(streams[card])) || 2, name: `${names.get(card) || 'Sound card ' + card}${m[3].trim() ? ': ' + m[3].trim() : ''}`.slice(0, 120) });
   }
   return out;
 }
 function captureDevices() {
-  try { return parseCapture(fs.readFileSync('/proc/asound/cards', 'utf8'), fs.readFileSync('/proc/asound/pcm', 'utf8')); } catch { return []; }
+  try {
+    const cards = fs.readFileSync('/proc/asound/cards', 'utf8'), streams = {};
+    for (const m of cards.matchAll(/^\s*(\d+)\s+\[/gm)) { try { streams[Number(m[1])] = fs.readFileSync(`/proc/asound/card${m[1]}/stream0`, 'utf8'); } catch { /* not a USB audio device */ } }
+    return parseCapture(cards, fs.readFileSync('/proc/asound/pcm', 'utf8'), streams);
+  } catch { return []; }
 }
 
 // ── programme sound (PulseAudio) ─────────────────────────────────────────────────────────────────
@@ -243,4 +301,4 @@ async function createSink(id) {
 }
 function removeSink(sink) { if (sink && /^\d+$/.test(sink.module)) run('pactl', ['unload-module', sink.module]); }
 
-module.exports = { RATE, FRAME, SECOND, MAX_LEVEL, INPUTS, NET_SCHEMES, Mix, cleanSettings, netUrl, maskUrl, netArgs, bedArgs, lineArgs, programmeArgs, micArgs, micDecoder, decoder, parseCapture, captureDevices, pulse, createSink, removeSink };
+module.exports = { MAX_CHANNELS, channelNames, inputNames, consoleArgs, splitChannels, captureChannels, RATE, FRAME, SECOND, MAX_LEVEL, INPUTS, NET_SCHEMES, Mix, cleanSettings, netUrl, maskUrl, netArgs, bedArgs, lineArgs, programmeArgs, micArgs, micDecoder, decoder, parseCapture, captureDevices, pulse, createSink, removeSink };

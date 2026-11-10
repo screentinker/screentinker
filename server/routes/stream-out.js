@@ -52,7 +52,7 @@ function mixOf(row) {
 /** The strips as the desk may see them: a network feed's password is not shown. */
 function shown(mix) {
   for (const n of ['net', 'net2']) mix[n].url = audio.maskUrl(mix[n].url);
-  for (const n of audio.INPUTS) mix[n].noise = !!mix[n].noise;   // whether a noise print is kept, not the print
+  for (const n of audio.inputNames(mix)) mix[n].noise = !!mix[n].noise;   // whether a noise print is kept, not the print
   return mix;
 }
 const audioOf = (row) => ({ file: bedOf(row).file, settings: mixOf(row) });
@@ -90,6 +90,7 @@ router.get('/', async (req, res) => {
     kinds: Object.entries(streamOut.KINDS).map(([kind, k]) => ({ kind, label: k.label, needs_url: !k.base && !k.file, file: !!k.file })),
     sizes: streamOut.SIZES.map(([width, height]) => ({ width, height })),
     max_level: streamOut.MAX_LEVEL,
+    max_channels: audio.MAX_CHANNELS,
     // What the mixer can take in on this server: sound card inputs, and the programme's own sound
     // (which needs PulseAudio here).
     line_inputs: a.reason === 'hosted' ? [] : audio.captureDevices(),
@@ -198,9 +199,23 @@ router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
   }
   // One strip at a time or several: { strip: 'programme' | 'bed' | 'line' | 'master', level, muted },
   // or the same fields without `strip` for the bed (how the first version of this was called).
+  // A console on this server (a multichannel interface): which device, and how many of its
+  // channels become strips. Set before the strips below, so a new channel can be named in the same call.
+  if ('console_device' in b || 'console_count' in b) {
+    const devs = audio.captureDevices();
+    const device = 'console_device' in b ? (b.console_device || null) : mix.console.device;
+    const dev = device ? devs.find((d) => d.device === device) : null;
+    if (device && !dev) return res.status(400).json({ error: 'That sound input is not on this server.' });
+    const want = 'console_count' in b ? Number(b.console_count) : (mix.console.count || (dev ? Math.min(dev.channels, 8) : 0));
+    if (!Number.isInteger(want) || want < 0 || want > audio.MAX_CHANNELS) return res.status(400).json({ error: `A console brings in 0 to ${audio.MAX_CHANNELS} channels.` });
+    const next = audio.cleanSettings({ ...mix, console: dev ? { device, channels: dev.channels, count: Math.min(want, dev.channels) } : null });
+    for (const k of Object.keys(mix)) delete mix[k];
+    Object.assign(mix, next);
+  }
+  const stripNames = [...audio.inputNames(mix), 'master'];
   const strips = Array.isArray(b.strips) ? b.strips : (b.strip !== undefined || b.level !== undefined || b.muted !== undefined ? [{ ...b, strip: b.strip || 'bed' }] : []);
   for (const st of strips) {
-    if (!st || ![...audio.INPUTS, 'master'].includes(st.strip)) return res.status(400).json({ error: `strip is one of: ${[...audio.INPUTS, 'master'].join(', ')}` });
+    if (!st || !stripNames.includes(st.strip)) return res.status(400).json({ error: `strip is one of: ${stripNames.join(', ')}` });
     const target = mix[st.strip];
     if (st.level !== undefined) {
       const l = Number(st.level);
@@ -213,6 +228,7 @@ router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
     if (st.strip !== 'master') {
       for (const k of ['hpf', 'gate', 'comp', 'fx']) if (st[k] !== undefined) target[k] = st[k];
       if (st.denoise !== undefined) target.denoise = st.denoise;
+      if (st.label !== undefined && /^c\d+$/.test(st.strip)) target.label = String(st.label);
     }
   }
   for (const n of ['net', 'net2']) {
@@ -227,11 +243,11 @@ router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
   // The noise print of a strip: learned from what the input is carrying right now (so the stream
   // must be live and whoever is on the microphone quiet), or forgotten.
   if (b.forget_noise !== undefined) {
-    if (!audio.INPUTS.includes(b.forget_noise)) return res.status(400).json({ error: 'No such strip.' });
+    if (!audio.inputNames(mix).includes(b.forget_noise)) return res.status(400).json({ error: 'No such strip.' });
     mix[b.forget_noise].noise = null;
   }
   if (b.learn_noise !== undefined) {
-    if (!audio.INPUTS.includes(b.learn_noise)) return res.status(400).json({ error: 'No such strip.' });
+    if (!audio.inputNames(mix).includes(b.learn_noise)) return res.status(400).json({ error: 'No such strip.' });
     const print = await streamOut.learnNoise(r.id, b.learn_noise);
     if (!print) return res.status(409).json({ error: 'The noise can only be learned while the stream is live or on standby, and that input is connected.' });
     mix[b.learn_noise].noise = print;
