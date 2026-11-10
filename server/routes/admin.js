@@ -132,13 +132,20 @@ router.post('/users', (req, res) => {
     // no SMTP configured that left them with a permanent "Please confirm your email address"
     // banner they could not clear, fixable only by editing the database by hand. An address chosen
     // by an administrator provisioning the account is as verified as this system can make it.
+  // The plan: what a signup on this instance starts on, minus any trial. Self-hosted signups start
+  // unrestricted (routes/auth.js signupPlan) unless the operator asked for the trial model; this
+  // wrote 'free' regardless, so a colleague ADDED on the operator's own server was held to two
+  // screens while one who signed up was not. Hosted, and the trial model, stay on 'free': an added
+  // user never gets a trial clock they did not ask for.
+  const cfg = require('../config');
+  const startPlan = (cfg.selfHosted && cfg.selfHostedSignupPlan === 'enterprise') ? 'enterprise' : 'free';
   const txn = db.transaction(() => {
     db.prepare(`
       INSERT INTO users (
         id, email, name, password_hash, auth_provider, role, plan_id,
         must_change_password, email_verified, welcome_email_sent_at, activation_nudge_sent_at
-      ) VALUES (?, ?, ?, ?, 'local', 'user', 'free', ?, 1, strftime('%s','now'), strftime('%s','now'))
-    `).run(id, email, name || email.split('@')[0], passwordHash, mustChangePassword ? 1 : 0);
+      ) VALUES (?, ?, ?, ?, 'local', 'user', ?, ?, 1, strftime('%s','now'), strftime('%s','now'))
+    `).run(id, email, name || email.split('@')[0], passwordHash, startPlan, mustChangePassword ? 1 : 0);
 
     // Same membership footprint as an accepted invite: one workspace_members
     // row, invited_by = the admin who created them.
