@@ -141,6 +141,12 @@ function ssoStartPath(user) {
 async function cancelSubscriptions(db, user, soloOrgIds, stripe) {
   if (!stripe) return [];
   const ids = new Set();
+  // Once the organization pays (lib/org-billing.js) the person's row is only a COPY of their oldest
+  // organization's state. Cancelling from it would end the subscription of an organization that
+  // outlives them; the organizations that go with them are handled just below.
+  let orgPays = false;
+  try { orgPays = require('../middleware/subscription').billingSource() === 'org'; } catch { /* */ }
+  if (orgPays) user = { ...user, stripe_subscription_id: null, stripe_customer_id: null };
   if (user.stripe_subscription_id) ids.add(user.stripe_subscription_id);
   if (soloOrgIds.length && tableHas(db, 'organizations', 'stripe_subscription_id')) {
     for (const r of db.prepare(`SELECT stripe_subscription_id AS s FROM organizations WHERE id IN (${soloOrgIds.map(() => '?').join(',')})`).all(...soloOrgIds)) {

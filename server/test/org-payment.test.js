@@ -51,7 +51,8 @@ const asHeaderUser = (req, res, next) => {
   if (!u) return res.status(401).json({ error: 'no test user' });
   req.user = u; next();
 };
-require.cache[authPath].exports = { ...realAuth, requireAuth: asHeaderUser };
+const superOnly = (req, res, next) => (req.user && req.user.role === 'platform_admin' ? next() : res.status(403).json({ error: 'platform admin only' }));
+require.cache[authPath].exports = { ...realAuth, requireAuth: asHeaderUser, requireSuperAdmin: superOnly };
 
 const { db } = require('../db/database');
 dbRef = db;
@@ -60,6 +61,7 @@ const orgBilling = require('../lib/org-billing');
 const emailSvc = require('../services/email');
 const setupDeviceSocket = require('../ws/deviceSocket');
 const stripeRouter = require('../routes/stripe');
+const subscriptionRouter = require('../routes/subscription');
 const dunning = require('../services/dunning');
 
 const DAY = 86400;
@@ -102,6 +104,8 @@ let server, base, io, ioServer; const sent = [];
 const post = (p, user, ws, body) => fetch(base + p, { method: 'POST',
   headers: { 'Content-Type': 'application/json', 'x-test-user': user, ...(ws ? { 'x-workspace-id': ws } : {}) }, body: JSON.stringify(body || {}) })
   .then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+const get = (p, user, ws) => fetch(base + p, { headers: { 'x-test-user': user, ...(ws ? { 'x-workspace-id': ws } : {}) } })
+  .then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
 const webhook = (type, object) => fetch(`${base}/api/stripe/webhook`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ type, data: { object } }) }).then((r) => r.json());
 const plays = (ids) => ids.map((d) => setupDeviceSocket.checkDeviceAccess(d).allowed);
@@ -141,6 +145,7 @@ before(async () => {
   const app = express();
   app.use(express.json());
   app.use('/api/stripe', stripeRouter);
+  app.use('/api/subscription', subscriptionRouter);
   server = http.createServer(app);
   await new Promise((res) => server.listen(0, res));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -273,6 +278,41 @@ test('cancelling drops the organization to Free and only the tracked subscriptio
   const o = orgRow(A.org.o);
   assert.equal(o.plan_id, 'free'); assert.equal(o.stripe_subscription_id, null); assert.equal(o.subscription_status, 'cancelled');
   assert.equal(userRow(A.owner).plan_id, 'free');
+});
+
+test('the subscription summary is the organization\'s, and says what this person may do about it', async () => {
+  const B = {}; B.owner = person('sumowner'); B.org = organization(B.owner, 'Summary');
+  B.member = person('summember'); joinWorkspace(B.org.w, B.member);
+  db.prepare("UPDATE organizations SET plan_id = 'starter', stripe_subscription_id = 'sub_sum', stripe_customer_id = 'cus_sum' WHERE id = ?").run(B.org.o);
+  screens(2, B.owner, B.org.w); screens(2, B.member, B.org.w);
+  const m = await get('/api/subscription/me', B.member, B.org.w);
+  assert.equal(m.status, 200, JSON.stringify(m.body));
+  assert.equal(m.body.plan.id, 'starter', 'the organization\'s plan, not the member\'s own Free');
+  assert.equal(m.body.usage.devices, 4, 'counted across the organization');
+  assert.equal(m.body.usage.devices_limit, 3);
+  assert.equal(m.body.subscription.stripe_subscription_id, 'sub_sum');
+  assert.deepEqual({ scope: m.body.billing.scope, org: m.body.billing.organization_id, name: m.body.billing.organization_name,
+    can_pay: m.body.billing.can_pay, can_manage: m.body.billing.can_manage },
+  { scope: 'org', org: B.org.o, name: 'Summary', can_pay: true, can_manage: false });
+  assert.equal(m.body.billing.owner_name, 'sumowner', 'so the page can say who to ask');
+  const o = await get('/api/subscription/me', B.owner, B.org.w);
+  assert.equal(o.body.billing.can_manage, true);
+});
+
+test('a plan assigned by the operator goes to the organization: by its id, or by naming its owner', async () => {
+  const op = person('operator', { role: 'platform_admin' });
+  const C = {}; C.owner = person('compowner', { plan_id: 'pro', trial_started: now() - DAY, trial_plan: 'pro' });
+  C.org = organization(C.owner, 'Comped'); C.org2 = organization(C.owner, 'Comped two');
+  const byOrg = await post('/api/subscription/assign', op, null, { organization_id: C.org2.o, plan_id: 'starter', renewal_at: now() + 90 * DAY });
+  assert.equal(byOrg.status, 200, JSON.stringify(byOrg.body));
+  assert.equal(orgRow(C.org2.o).plan_id, 'starter'); assert.equal(orgRow(C.org2.o).plan_comped, 1); assert.ok(orgRow(C.org2.o).renewal_at);
+  assert.equal(orgRow(C.org.o).plan_id, 'pro', 'the other organization is untouched');
+  const byOwner = await post('/api/subscription/assign', op, null, { user_id: C.owner, plan_id: 'pro' });
+  assert.equal(byOwner.status, 200);
+  const first = orgRow(C.org.o);
+  assert.equal(first.plan_comped, 1); assert.equal(first.trial_started, null, 'a comp ends the trial clock, on the organization');
+  assert.equal((await post('/api/subscription/assign', op, null, { organization_id: 'nope', plan_id: 'pro' })).status, 404);
+  assert.equal((await post('/api/subscription/assign', C.owner, null, { organization_id: C.org.o, plan_id: 'pro' })).status, 403, 'operators only');
 });
 
 test('one person\'s two organizations are separate accounts', async () => {
