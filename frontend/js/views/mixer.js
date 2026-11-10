@@ -67,6 +67,7 @@ async function guestsRefresh(force) {
   const sig = JSON.stringify(rooms) + streams().map((s) => s.status.state).join();
   if (sig === roomsSig && !force) return;
   roomsSig = sig;
+  guestLayer();
   const el = document.getElementById('mxGuests'); if (!el) return;
   if (el.contains(document.activeElement) && document.activeElement.matches('[data-glink]')) return;      // the link is being copied by hand
   el.innerHTML = guestsHtml(); guestsBind(el);
@@ -153,6 +154,27 @@ function gfxLayer(root, pgm) {
   f.style.width = (g.w * 100) + '%'; f.style.height = (g.h * 100) + '%';
   f.src = g.uri;
   screen.appendChild(f);
+}
+// Where on-air guests sit in the picture, in percent: the same boxes the stream's renderer uses (player/index.html guestRects).
+function guestRects(layout, n) {
+  if (layout === 'grid') {
+    if (n === 1) return [[0, 0, 100, 100]];
+    if (n === 2) return [[0, 0, 50, 100], [50, 0, 50, 100]];
+    return Array.from({ length: n }, (_, i) => [(i % 2) * 50 + (n === 3 && i === 2 ? 25 : 0), Math.floor(i / 2) * 50, 50, 50]);
+  }
+  if (layout === 'side') return Array.from({ length: n }, (_, i) => [60, i * (100 / n), 40, 100 / n]);
+  return Array.from({ length: n }, (_, i) => [100 - 2 - 24, 100 - 3 - (i + 1) * 24 - i * 2, 24, 24]);
+}
+/** The on-air guests of the stream on the Program monitor, where the stream shows them. Stills, renewed every two seconds: the moving picture is in the stream itself. */
+function guestLayer() {
+  const screen = document.getElementById('mxPgmScreen'); if (!screen) return;
+  const pgm = firstOutput(), room = pgm && isStream(pgm) ? rooms[pgm.id] : null;
+  const air = room ? room.guests.filter((g) => g.on_air) : [];
+  let layer = screen.querySelector('.mx-guest-layer');
+  if (!air.length) { if (layer) layer.remove(); return; }
+  if (!layer) { layer = document.createElement('div'); layer.className = 'mx-guest-layer'; layer.setAttribute('aria-hidden', 'true'); screen.appendChild(layer); }
+  const rects = guestRects(room.layout, air.length);
+  layer.innerHTML = air.map((g, i) => `<div class="mx-guest-tile" style="left:${rects[i][0]}%;top:${rects[i][1]}%;width:${rects[i][2]}%;height:${rects[i][3]}%">${g.thumb ? `<img src="${esc(g.thumb)}" alt="">` : ''}<span>${esc(g.name)}</span></div>`).join('');
 }
 let procOpen = null;         // the strip whose processing is open on the desk: { sid, strip }
 /** Whether a strip's processing does anything: its EQ key is lit when it does. */
@@ -351,6 +373,7 @@ function draw(root) {
   pgm && isStream(pgm) ? t('mixer.stream_no_source') : t('mixer.pick_output'), pgmFx);
   pgmFx = null;
   gfxLayer(root, pgm);
+  guestLayer();
   { const gel = root.querySelector('#mxGuests'); if (gel) guestsBind(gel); }
   root.querySelector('#mxRest').innerHTML = `
       <section class="mx-bank mx-scenes">
