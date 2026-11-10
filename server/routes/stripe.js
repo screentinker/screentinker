@@ -47,13 +47,71 @@ const appBase = (req) => {
 // STRIPE_SECRET_KEY is unset.
 const stripeClient = require('../lib/stripe-client');
 
+/*
+ * WHO IS PAYING (lib/org-billing.js). While the person pays, the account is the signed-in user,
+ * exactly as it always was. Once the organization pays (app_settings.billing_source = 'org'), the
+ * account is the ORGANIZATION of the workspace the request is made in:
+ *
+ *   - anyone who belongs to it may start a checkout for it;
+ *   - only its owner and its organization admins may open the portal, which is where a
+ *     subscription is changed or cancelled;
+ *   - the Stripe customer and subscription belong to the organization, and their metadata carries
+ *     org_id (and the user who clicked, for the funnel).
+ */
+const orgPays = () => subscriptions.billingSource() === 'org';
+const T = () => subscriptions.billingTable();
+const { resolveTenancy } = require('../lib/tenancy');
+const tenancyWhenOrgPays = (req, res, next) => (orgPays() ? resolveTenancy(req, res, next) : next());
+
+/** The paying account for this request: { id, row, org } or { error: [status, body] }. */
+function payerOf(req) {
+  if (!orgPays()) return { id: req.user.id, row: req.user, org: null };
+  if (!req.organizationId) return { error: [400, { error: 'Choose a workspace first: the plan belongs to its organization.' }] };
+  const org = db.prepare('SELECT * FROM organizations WHERE id = ?').get(req.organizationId);
+  if (!org) return { error: [404, { error: 'Organization not found' }] };
+  return { id: org.id, row: org, org };
+}
+/** May this person change or cancel the organization's subscription? Its owner and its admins. */
+function mayManageBilling(req, org) {
+  if (!org) return true;                                   // the person pays: it is their own
+  if (org.owner_user_id === req.user.id) return true;
+  try {
+    const m = db.prepare('SELECT role FROM organization_members WHERE organization_id = ? AND user_id = ?').get(org.id, req.user.id);
+    return !!m && (m.role === 'org_owner' || m.role === 'org_admin');
+  } catch { return false; }
+}
+
+/**
+ * The account a Stripe object belongs to. Person pays: metadata.user_id, as before. Organization
+ * pays: metadata.org_id; else the organization holding that subscription or customer (every
+ * subscription made before the switch carries only user_id, and was moved to the person's oldest
+ * organization); else that person's oldest organization.
+ */
+function accountOfStripe(meta, subId, custId) {
+  if (!orgPays()) return (meta && meta.user_id) || null;
+  const has = (id) => id && db.prepare('SELECT id FROM organizations WHERE id = ?').get(id);
+  if (meta && has(meta.org_id)) return meta.org_id;
+  const bySub = subId && db.prepare('SELECT id FROM organizations WHERE stripe_subscription_id = ?').get(subId);
+  if (bySub) return bySub.id;
+  const byCust = custId && db.prepare('SELECT id FROM organizations WHERE stripe_customer_id = ?').get(custId);
+  if (byCust) return byCust.id;
+  if (meta && meta.user_id) {
+    const o = db.prepare('SELECT id FROM organizations WHERE owner_user_id = ? ORDER BY created_at ASC, id ASC LIMIT 1').get(meta.user_id);
+    if (o) return o.id;
+  }
+  return null;
+}
+const ownerOf = (accountId) => subscriptions.accountOwnerId(accountId);
+
 // Create checkout session - user clicks "Upgrade" on a plan
-router.post('/checkout', requireAuth, async (req, res) => {
+router.post('/checkout', requireAuth, tenancyWhenOrgPays, async (req, res) => {
   const stripe = stripeClient.get();
   if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
 
   const { plan_id, interval } = req.body; // interval: 'monthly' or 'yearly'
   if (!plan_id) return res.status(400).json({ error: 'plan_id required' });
+  const payer = payerOf(req);
+  if (payer.error) return res.status(payer.error[0]).json(payer.error[1]);
 
   const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get(plan_id);
   if (!plan) return res.status(404).json({ error: 'Plan not found' });
@@ -66,18 +124,24 @@ router.post('/checkout', requireAuth, async (req, res) => {
 
   try {
     // Get or create Stripe customer
-    let customerId = req.user.stripe_customer_id;
+    const idMeta = payer.org ? { org_id: payer.org.id, user_id: req.user.id } : { user_id: req.user.id };
+    let customerId = payer.row.stripe_customer_id;
     if (!customerId) {
       const customer = await stripe.customers.create({
         email: req.user.email,
-        metadata: { user_id: req.user.id, name: req.user.name || '' },
+        ...(payer.org ? { name: payer.org.name } : {}),
+        metadata: { ...idMeta, name: (payer.org ? payer.org.name : req.user.name) || '' },
       });
       customerId = customer.id;
-      db.prepare('UPDATE users SET stripe_customer_id = ? WHERE id = ?').run(customerId, req.user.id);
+      db.prepare(`UPDATE ${T()} SET stripe_customer_id = ? WHERE id = ?`).run(customerId, payer.id);
     }
 
-    // If user already has an active subscription, create a portal session to manage it
-    if (req.user.stripe_subscription_id) {
+    // If the account already has a subscription, the portal is where it is changed. For an
+    // organization that is its owner's and admins' call; anyone else is told who to ask.
+    if (payer.row.stripe_subscription_id) {
+      if (!mayManageBilling(req, payer.org)) {
+        return res.status(403).json({ error: 'This organization already has a subscription. Its owner or an organization admin can change it.', code: 'BILLING_ADMIN_ONLY' });
+      }
       const portal = await stripe.billingPortal.sessions.create({
         customer: customerId,
         return_url: `${appBase(req)}#/billing`,
@@ -107,9 +171,9 @@ router.post('/checkout', requireAuth, async (req, res) => {
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${appBase(req)}#/billing?payment=success`,
       cancel_url: `${appBase(req)}#/billing?payment=cancelled`,
-      metadata: { user_id: req.user.id, plan_id, ...(promo ? { promotion_id: promo.id } : {}) },
+      metadata: { ...idMeta, plan_id, ...(promo ? { promotion_id: promo.id } : {}) },
       subscription_data: {
-        metadata: { user_id: req.user.id, plan_id },
+        metadata: { ...idMeta, plan_id },
       },
     });
 
@@ -121,11 +185,16 @@ router.post('/checkout', requireAuth, async (req, res) => {
 });
 
 // Customer portal - manage existing subscription (change plan, cancel, update payment)
-router.post('/portal', requireAuth, async (req, res) => {
+router.post('/portal', requireAuth, tenancyWhenOrgPays, async (req, res) => {
   const stripe = stripeClient.get();
   if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
 
-  const customerId = req.user.stripe_customer_id;
+  const payer = payerOf(req);
+  if (payer.error) return res.status(payer.error[0]).json(payer.error[1]);
+  if (!mayManageBilling(req, payer.org)) {
+    return res.status(403).json({ error: 'Only the organization\'s owner or an organization admin can manage its billing.', code: 'BILLING_ADMIN_ONLY' });
+  }
+  const customerId = payer.row.stripe_customer_id;
   if (!customerId) return res.status(400).json({ error: 'No billing account found' });
 
   try {
@@ -187,7 +256,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           }
           break;
         }
-        const userId = session.metadata?.user_id;
+        const userId = accountOfStripe(session.metadata, session.subscription, session.customer);   // the ACCOUNT: a user, or an organization
         const planId = session.metadata?.plan_id;
         if (userId && session.subscription) {
           // ⚠️ trial_started = NULL: a trial that converts is OVER. Left set, the account looked like
@@ -195,10 +264,10 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           // because the only other writer that clears it — expireTrial — skips anyone with a
           // subscription. trial_expired_at stays NULL: that column means "lapsed to Free", which
           // this is not.
-          db.prepare(`UPDATE users SET stripe_subscription_id = ?, plan_id = ?, plan_comped = 0, subscription_status = 'active', trial_started = NULL, updated_at = strftime('%s','now') WHERE id = ?`)
+          db.prepare(`UPDATE ${T()} SET stripe_subscription_id = ?, plan_id = ?, plan_comped = 0, subscription_status = 'active', trial_started = NULL, updated_at = strftime('%s','now') WHERE id = ?`)
             .run(session.subscription, planId || 'starter', userId);
           console.log(`User ${userId} subscribed to ${planId} (sub: ${session.subscription})`);
-          require('../lib/conversion-events').record(db, { userId, event: 'checkout_complete', meta: { plan: planId || 'starter' } });
+          require('../lib/conversion-events').record(db, { userId: ownerOf(userId), event: 'checkout_complete', meta: { plan: planId || 'starter' } });
         }
         break;
       }
@@ -219,7 +288,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
       case 'customer.subscription.created':
       case 'customer.subscription.updated': {
         const sub = event.data.object;
-        const userId = sub.metadata?.user_id;
+        const userId = accountOfStripe(sub.metadata, sub.id, sub.customer);
         if (!userId) break;
 
         /*
@@ -237,7 +306,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         const status = sub.status === 'active' ? 'active' : sub.status === 'past_due' ? 'past_due' : sub.status;
         const ends = periodEndOf(sub);   // moved to the item in Stripe 2025-03+; see lib/stripe-fields.js
 
-        db.prepare(`UPDATE users SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE COALESCE(?, plan_id) END, subscription_status = ?, subscription_ends = ?, updated_at = strftime('%s','now') WHERE id = ?`)
+        db.prepare(`UPDATE ${T()} SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE COALESCE(?, plan_id) END, subscription_status = ?, subscription_ends = ?, updated_at = strftime('%s','now') WHERE id = ?`)
           .run(planId, status, ends, userId);
         // Back in good standing: end the dunning episode, including its email stamps, so a lapse
         // next year is announced rather than silently suppressed by a stale one.
@@ -248,7 +317,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 
       case 'customer.subscription.deleted': {
         const sub = event.data.object;
-        const userId = sub.metadata?.user_id;
+        const userId = accountOfStripe(sub.metadata, sub.id, sub.customer);
         if (userId) {
           /*
            * ⚠️ Only the subscription we are TRACKING may drop the account. Two checkouts finished
@@ -258,13 +327,13 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
            * reconcile. `IS NULL` is kept so a deletion still lands when the checkout webhook that
            * would have stored the id was itself lost.
            */
-          const r = db.prepare(`UPDATE users SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE 'free' END, subscription_status = 'cancelled', stripe_subscription_id = NULL, updated_at = strftime('%s','now')
+          const r = db.prepare(`UPDATE ${T()} SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE 'free' END, subscription_status = 'cancelled', stripe_subscription_id = NULL, updated_at = strftime('%s','now')
                                  WHERE id = ? AND (stripe_subscription_id IS NULL OR stripe_subscription_id = ?)`)
             .run(userId, sub.id);
           if (r.changes) {
             console.log(`Subscription cancelled for ${userId}`);
             // When it happened, so the feedback loop can ask why (lib/feedback.js, the 'cancelled' moment).
-            require('../lib/conversion-events').record(db, { userId, event: 'subscription_cancelled', meta: { status: sub.status || '' } });
+            require('../lib/conversion-events').record(db, { userId: ownerOf(userId), event: 'subscription_cancelled', meta: { status: sub.status || '' } });
           }
           else console.log(`Subscription ${sub.id} deleted for ${userId}, but it is not the tracked one — account left as is`);
         }
@@ -294,15 +363,15 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           // A payment landing is the end of the episode, whichever invoice it was.
           const subId = subscriptionIdOf(pendingReceipt);
           const custId = pendingReceipt.customer || null;
-          const u = (subId && db.prepare('SELECT id FROM users WHERE stripe_subscription_id = ?').get(subId))
-            || (custId && db.prepare('SELECT id FROM users WHERE stripe_customer_id = ?').get(custId));
+          const u = (subId && db.prepare(`SELECT id FROM ${T()} WHERE stripe_subscription_id = ?`).get(subId))
+            || (custId && db.prepare(`SELECT id FROM ${T()} WHERE stripe_customer_id = ?`).get(custId));
           if (u) {
             /*
              * ⚠️ Restore the PLAN, not just the status. A previous sweep may have dropped them to
              * Free; clearing the grace alone would leave someone who has just paid on Free limits.
              * The plan comes from the price this invoice actually billed, so it needs no API call.
              */
-            const row = db.prepare('SELECT plan_id FROM users WHERE id = ?').get(u.id);
+            const row = db.prepare(`SELECT plan_id FROM ${T()} WHERE id = ?`).get(u.id);
             const priceId = invoicePriceIdOf(pendingReceipt);
             const plan = priceId && db.prepare('SELECT id FROM plans WHERE stripe_price_monthly = ? OR stripe_price_yearly = ?').get(priceId, priceId);
             if (row && row.plan_id === 'free' && plan) {
@@ -324,8 +393,8 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         const invoice = event.data.object;
         const subId = subscriptionIdOf(invoice);
         const custId = invoice.customer || null;
-        const user = (subId && db.prepare('SELECT id FROM users WHERE stripe_subscription_id = ?').get(subId))
-          || (custId && db.prepare('SELECT id FROM users WHERE stripe_customer_id = ?').get(custId))
+        const user = (subId && db.prepare(`SELECT id FROM ${T()} WHERE stripe_subscription_id = ?`).get(subId))
+          || (custId && db.prepare(`SELECT id FROM ${T()} WHERE stripe_customer_id = ?`).get(custId))
           || null;
         if (user) {
           // Starts the grace clock on the FIRST failure of an episode and leaves it alone on

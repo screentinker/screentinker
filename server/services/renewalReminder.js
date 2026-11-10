@@ -90,7 +90,7 @@ function renewalCandidates(database, now) {
   // a free plan has nothing to renew. Both would contradict "self-serve accounts are unaffected".
   const users = database.prepare(
     `SELECT id, email, name, plan_id, plan_comped, renewal_at, COALESCE(email_alerts,1) AS email_alerts
-       FROM users
+       FROM billing_accounts
       WHERE renewal_at IS NOT NULL
         AND renewal_at > CAST(? AS INTEGER)
         AND plan_id != 'free'

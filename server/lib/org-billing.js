@@ -66,6 +66,54 @@ const ORG_COLUMNS = {
   billing_follows_org: 'TEXT',
 };
 
+/*
+ * billing_accounts: ONE SHAPE FOR "THE THING THAT PAYS", whichever table that is.
+ *
+ * The sweeps and emails (trial expiry, dunning, renewal reminders, receipts) each read billing
+ * state AND who to write to from one row. With the person paying that row is `users`; with the
+ * organization paying, the state is on `organizations` and the contact is its owner. The view
+ * gives both the same columns, so those readers name the view and never the table:
+ *
+ *   id               the account: a user id (person pays) or an organization id (organization pays)
+ *   owner_user_id    the person to contact (the user themself, or the organization's owner)
+ *   organization_id  NULL when the person pays
+ *   email, name, role, email_alerts, auth_provider, origin_node_id   the contact's
+ *   ...every billing column
+ *
+ * Recreated by install() for the current billing_source. WRITES still name the table
+ * (middleware/subscription.js billingTable()).
+ */
+const VIEW = 'billing_accounts';
+const CONTACT = ['email', 'name', 'role', 'email_alerts', 'email_verified', 'last_login', 'auth_provider', 'created_at'];
+
+function createView(db, src, userCols, orgCols) {
+  db.exec(`DROP VIEW IF EXISTS ${VIEW}`);
+  const contact = CONTACT.filter((c) => userCols.includes(c));
+  if (src === 'org') {
+    const bill = MIRRORED.filter((c) => orgCols.includes(c));
+    db.exec(`CREATE VIEW ${VIEW} AS SELECT o.id AS id, o.owner_user_id AS owner_user_id, o.id AS organization_id,
+      ${contact.map((c) => `u.${c} AS ${c}`).join(', ')}, ${bill.map((c) => `o.${c} AS ${c}`).join(', ')}
+      FROM organizations o JOIN users u ON u.id = o.owner_user_id`);
+  } else {
+    const bill = MIRRORED.filter((c) => userCols.includes(c));
+    db.exec(`CREATE VIEW ${VIEW} AS SELECT u.id AS id, u.id AS owner_user_id, NULL AS organization_id,
+      ${contact.map((c) => `u.${c} AS ${c}`).join(', ')}, ${bill.map((c) => `u.${c} AS ${c}`).join(', ')}
+      FROM users u`);
+  }
+}
+
+/**
+ * Organization pays: the owner's `users` row is now the COPY, of their primary organization, so
+ * the many places that still read a person's plan (admin lists, profile payloads) are not stale
+ * while they are moved over one at a time.
+ */
+function reverseSql(cols) {
+  const primary = primaryOf('NEW.owner_user_id');
+  return `UPDATE users SET ${cols.map((c) => `${c} = NEW.${c}`).join(', ')}
+    WHERE id = NEW.owner_user_id AND NEW.id = ${primary}`;
+}
+
+const REVERSE_TRIGGERS = ['trg_org_billing_rev_upd', 'trg_org_billing_rev_ins'];
 const TRIGGERS = ['trg_org_billing_user_ins', 'trg_org_billing_user_upd', 'trg_org_billing_org_ins', 'trg_org_billing_org_owner', 'trg_org_billing_org_del'];
 
 const columnsOf = (db, table) => db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
@@ -101,7 +149,7 @@ function source(db) {
 }
 
 function dropTriggers(db) {
-  for (const t of TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${t}`);
+  for (const t of [...TRIGGERS, ...REVERSE_TRIGGERS]) db.exec(`DROP TRIGGER IF EXISTS ${t}`);
 }
 
 /**
@@ -117,19 +165,27 @@ function install(db, log = console) {
     const userCols = columnsOf(db, 'users');
     if (!userCols.includes('plan_id')) { out.reason = 'users has no plan column'; return out; }
 
-    if (source(db) === 'org') {
-      // The organization rows are the truth now: this mirror must not exist.
-      dropTriggers(db);
-      out.reason = 'billing_source is org';
-      return out;
-    }
-
     for (const [name, decl] of Object.entries(ORG_COLUMNS)) {
       if (orgCols.includes(name)) continue;
       db.exec(`ALTER TABLE organizations ADD COLUMN ${name} ${decl}`);
       out.added.push(name);
     }
     const cols = MIRRORED.filter((c) => userCols.includes(c));
+    const orgColsNow = columnsOf(db, 'organizations');
+
+    if (source(db) === 'org') {
+      // The organization rows are the truth now: the forward mirror must not exist, and the
+      // owner's row becomes the copy instead.
+      dropTriggers(db);
+      db.exec(`CREATE TRIGGER trg_org_billing_rev_upd AFTER UPDATE OF ${cols.join(', ')} ON organizations
+        BEGIN ${reverseSql(cols)}; END`);
+      db.exec(`CREATE TRIGGER trg_org_billing_rev_ins AFTER INSERT ON organizations
+        BEGIN ${reverseSql(cols)}; END`);
+      createView(db, 'org', userCols, orgColsNow);
+      out.reason = 'billing_source is org';
+      out.source = 'org';
+      return out;
+    }
 
     // Recreated every boot so a change to this file reaches a database that already has them.
     dropTriggers(db);
@@ -146,7 +202,9 @@ function install(db, log = console) {
       BEGIN ${syncSql(cols, 'organizations.owner_user_id = OLD.owner_user_id')}; END`);
 
     out.filled = db.prepare(syncSql(cols, '1 = 1')).run().changes;
+    createView(db, 'user', userCols, orgColsNow);
     out.installed = true;
+    out.source = 'user';
     if (out.added.length && log) log.log(`[migrate] organizations: added billing columns ${out.added.join(', ')}`);
   } catch (e) {
     out.reason = e.message;
@@ -183,4 +241,41 @@ function drift(db) {
   return out;
 }
 
-module.exports = { install, drift, source, MIRRORED, SHARED, PRIMARY_ONLY, TRIGGERS };
+/**
+ * Make the ORGANIZATION the source of truth. Refuses unless every organization currently agrees
+ * with its owner (so nothing is lost by the switch). After it: billing writes go to
+ * `organizations`, the owner's row is a copy of their primary organization, and an organization
+ * that was riding on a sibling's subscription (billing_follows_org) keeps its plan with no Stripe
+ * ids, to be dealt with by a person. Returns { ok } or { ok: false, drift }.
+ */
+function switchToOrganizations(db) {
+  if (source(db) === 'org') return { ok: true, already: true };
+  install(db, null);
+  const d = drift(db);
+  if (d.length) return { ok: false, drift: d };
+  db.prepare("INSERT INTO app_settings (key, value, updated_at) VALUES ('billing_source', 'org', strftime('%s','now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run();
+  try { require('./app-settings').__reload(); } catch { /* */ }
+  install(db, null);
+  return { ok: true };
+}
+
+/**
+ * Back to the person paying. Each owner's row takes its primary organization's state (it already
+ * holds it, through the reverse copy), and the forward mirror resumes.
+ * ⚠️ Anything written to a NON-primary organization while organizations paid is overwritten by its
+ * owner's state again. The caller is told which organizations that is, before deciding.
+ */
+function switchToPeople(db, { force = false } = {}) {
+  if (source(db) !== 'org') return { ok: true, already: true };
+  const userCols = columnsOf(db, 'users');
+  const cols = SHARED.filter((c) => userCols.includes(c));
+  const lost = db.prepare(`SELECT o.id FROM organizations o JOIN users u ON u.id = o.owner_user_id
+    WHERE o.id != ${primaryOf('o.owner_user_id')} AND (${cols.map((c) => `o.${c} IS NOT u.${c}`).join(' OR ')} OR o.stripe_subscription_id IS NOT NULL)`).all().map((r) => r.id);
+  if (lost.length && !force) return { ok: false, would_overwrite: lost };
+  db.prepare("DELETE FROM app_settings WHERE key = 'billing_source'").run();
+  try { require('./app-settings').__reload(); } catch { /* */ }
+  install(db, null);
+  return { ok: true, overwritten: lost };
+}
+
+module.exports = { install, drift, source, switchToOrganizations, switchToPeople, MIRRORED, SHARED, PRIMARY_ONLY, TRIGGERS, REVERSE_TRIGGERS, VIEW };

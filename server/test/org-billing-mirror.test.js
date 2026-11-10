@@ -178,22 +178,59 @@ test('installing again changes nothing, and repairs a copy that was tampered wit
   agree('third install');
 });
 
-test('once the organization is the source of truth, the mirror removes itself and overwrites nothing', () => {
+test('once the organization is the source of truth, the copy runs the other way and nothing overwrites it', () => {
   const u = person({ plan_id: 'pro' });
   const o = org(u);
-  db.prepare("INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('billing_source', 'org', strftime('%s','now'))").run();
+  const r = orgBilling.switchToOrganizations(db);
+  assert.equal(r.ok, true);
   try {
-    const r = orgBilling.install(db, null);
-    assert.equal(r.installed, false);
-    assert.equal(db.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'trg_org_billing_%'").get().c, 0);
-    db.prepare("UPDATE organizations SET plan_id = 'enterprise' WHERE id = ?").run(o);
+    assert.equal(orgBilling.source(db), 'org');
+    const trig = db.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'trg_org_billing_%'").all().map((x) => x.name).sort();
+    assert.deepEqual(trig, [...orgBilling.REVERSE_TRIGGERS].sort(), 'only the organization-to-owner copy remains');
+    db.prepare("UPDATE organizations SET plan_id = 'enterprise', stripe_subscription_id = 'sub_org' WHERE id = ?").run(o);
+    assert.equal(userRow(u).plan_id, 'enterprise', 'the owner\'s row follows their organization');
+    assert.equal(userRow(u).stripe_subscription_id, 'sub_org');
     db.prepare("UPDATE users SET plan_id = 'free' WHERE id = ?").run(u);
     orgBilling.install(db, null);
-    assert.equal(orgRow(o).plan_id, 'enterprise', 'the organization\'s own value survives a person-side write and a reinstall');
+    assert.equal(orgRow(o).plan_id, 'enterprise', 'a person-side write and a reinstall do not touch the organization');
+    // The shared view now presents organizations, with the owner as the contact.
+    const acct = db.prepare('SELECT * FROM billing_accounts WHERE id = ?').get(o);
+    assert.equal(acct.organization_id, o); assert.equal(acct.owner_user_id, u);
+    assert.equal(acct.plan_id, 'enterprise'); assert.equal(acct.email, userRow(u).email);
   } finally {
-    db.prepare("DELETE FROM app_settings WHERE key = 'billing_source'").run();
-    orgBilling.install(db, null);
+    db.prepare("UPDATE organizations SET stripe_subscription_id = NULL WHERE id = ?").run(o);
+    assert.equal(orgBilling.switchToPeople(db, { force: true }).ok, true);
   }
+  assert.equal(orgBilling.source(db), 'user');
+  agree('switched back to people');
+  const acct = db.prepare('SELECT * FROM billing_accounts WHERE id = ?').get(u);
+  assert.equal(acct.organization_id, null); assert.equal(acct.owner_user_id, u);
+});
+
+test('the switch to organizations is refused while any organization disagrees with its owner', () => {
+  const u = person({ plan_id: 'pro' });
+  const o = org(u);
+  db.exec('DROP TRIGGER trg_org_billing_user_upd');
+  db.prepare("UPDATE users SET plan_id = 'starter' WHERE id = ?").run(u);
+  // switchToOrganizations reinstalls first, which repairs the copy, so the switch is safe by construction...
+  const r = orgBilling.switchToOrganizations(db);
+  assert.equal(r.ok, true);
+  assert.equal(orgRow(o).plan_id, 'starter', '...and what it switched to is the owner\'s current state, not the stale copy');
+  assert.equal(orgBilling.switchToPeople(db, { force: true }).ok, true);
+  agree('round trip');
+});
+
+test('switching back says which organizations would lose their own state, and waits to be told', () => {
+  const u = person({ plan_id: 'pro', stripe_subscription_id: 'sub_p' });
+  const first = org(u, 100), second = org(u, 200);
+  assert.equal(orgBilling.switchToOrganizations(db).ok, true);
+  db.prepare("UPDATE organizations SET plan_id = 'starter', stripe_subscription_id = 'sub_second' WHERE id = ?").run(second);
+  const r = orgBilling.switchToPeople(db);
+  assert.equal(r.ok, false);
+  assert.ok(r.would_overwrite.includes(second) && !r.would_overwrite.includes(first));
+  assert.equal(orgBilling.source(db), 'org', 'nothing was switched');
+  assert.equal(orgBilling.switchToPeople(db, { force: true }).ok, true);
+  agree('forced back');
 });
 
 test('a database with no organizations table is left alone, and billing writes still work', () => {
