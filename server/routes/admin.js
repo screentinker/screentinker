@@ -738,6 +738,8 @@ router.get('/update-status', requirePlatformAdmin, (req, res) => {
 // to see it existed or who was on it. This returns EVERY plan plus how many accounts sit on each,
 // so a hidden tier is manageable rather than folklore.
 router.get('/plans', requirePlatformAdmin, (req, res) => {
+  let orgPays = false;
+  try { orgPays = require('../middleware/subscription').billingSource() === 'org'; } catch { /* */ }
   const plans = db.prepare(`
     SELECT p.*,
            (SELECT COUNT(*) FROM users u WHERE u.plan_id = p.id) AS user_count,
@@ -748,14 +750,15 @@ router.get('/plans', requirePlatformAdmin, (req, res) => {
             * actually pays. Counting it told an operator that all 477 accounts were on Pro while one
             * of them was paying for Home.
             */
+           /* ...until the organization itself pays (billing_source = 'org'), when its own row is the truth. */
            (SELECT COUNT(*) FROM organizations o
               JOIN users u3 ON u3.id = o.owner_user_id
-             WHERE u3.plan_id = p.id) AS org_count,
+             WHERE ${orgPays ? 'o.plan_id' : 'u3.plan_id'} = p.id) AS org_count,
            (SELECT COUNT(*) FROM devices d
               JOIN workspaces w ON w.id = d.workspace_id
               JOIN organizations o2 ON o2.id = w.organization_id
               JOIN users u2 ON u2.id = o2.owner_user_id
-             WHERE u2.plan_id = p.id) AS device_count
+             WHERE ${orgPays ? 'o2.plan_id' : 'u2.plan_id'} = p.id) AS device_count
       FROM plans p
      ORDER BY p.active DESC, p.sort_order ASC
   `).all();

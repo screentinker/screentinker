@@ -954,7 +954,7 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     // owner_plan_id: plans belong to the person who pays, the org owner. A workspace admin invited
     // into an Enterprise organization has a plan of their own (often free), so a check on their
     // plan alone hid Enterprise features such as white-label branding from them.
-    ? db.prepare(`SELECT o.id, o.name, COALESCE(o.widget_sandbox_isolation_disabled, 0) AS widget_sandbox_isolation_disabled, COALESCE(o.live_field_patch, 0) AS live_field_patch, COALESCE(o.pdf_max_edge, 1920) AS pdf_max_edge, u.plan_id AS owner_plan_id
+    ? db.prepare(`SELECT o.id, o.name, COALESCE(o.widget_sandbox_isolation_disabled, 0) AS widget_sandbox_isolation_disabled, COALESCE(o.live_field_patch, 0) AS live_field_patch, COALESCE(o.pdf_max_edge, 1920) AS pdf_max_edge, ${require('../middleware/subscription').billingSource() === 'org' ? 'o.plan_id' : 'u.plan_id'} AS owner_plan_id
         FROM organizations o LEFT JOIN users u ON u.id = o.owner_user_id WHERE o.id = ?`).get(req.organizationId)
     : null;
 
