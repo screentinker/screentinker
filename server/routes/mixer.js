@@ -27,6 +27,8 @@ const { requireScope } = require('../middleware/apiToken');
 const { resourceAccess } = require('../lib/tenancy');
 const gfx = require('../lib/mixer-gfx');
 
+const TRANSITIONS = ['cut', 'fade', 'flash', 'wipe'];
+
 function requireFleetWrite(req, res, next) {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context' });
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(req.workspaceId);
@@ -62,7 +64,7 @@ router.get('/', (req, res) => {
     cameras = db.prepare("SELECT id, filename, onvif FROM content WHERE workspace_id = ? AND onvif IS NOT NULL AND onvif != '' ORDER BY LOWER(filename)").all(ws)
       .map((c) => { let o = null; try { o = JSON.parse(c.onvif); } catch { o = null; } return o && o.ptz ? { id: c.id, name: c.filename } : null; }).filter(Boolean);
   } catch { cameras = []; }
-  res.json({ screens, groups, sources, cameras, scenes: scenesOf(ws), graphics: gfx.KINDS.map((k) => ({ kind: k, box: gfx.BOX[k] })) });
+  res.json({ screens, groups, sources, cameras, scenes: scenesOf(ws), transitions: TRANSITIONS, graphics: gfx.KINDS.map((k) => ({ kind: k, box: gfx.BOX[k] })) });
 });
 
 // ── scenes: a named look recalled with one key ───────────────────────────────────────────────────
@@ -121,6 +123,16 @@ router.post('/take', requireScope('full'), requireFleetWrite, (req, res) => {
   const playlist = db.prepare('SELECT id, name, workspace_id FROM playlists WHERE id = ?').get(b.playlist_id);
   if (!playlist || playlist.workspace_id !== req.workspaceId) return res.status(404).json({ error: 'Playlist not found in this workspace' });
 
+  // The transition: none is a cut. Players that do not know take_fx cut (or switch at their next item).
+  let fx = null;
+  if (b.transition != null) {
+    const tr = b.transition;
+    if (typeof tr !== 'object' || !TRANSITIONS.includes(tr.type)) return res.status(400).json({ error: `transition.type is one of: ${TRANSITIONS.join(', ')}` });
+    const ms = Number(tr.ms == null ? 600 : tr.ms);
+    if (!Number.isFinite(ms) || ms < 200 || ms > 3000) return res.status(400).json({ error: 'transition.ms is 200 to 3000' });
+    if (tr.type !== 'cut') fx = { type: tr.type, ms: Math.round(ms), ...(/^#[0-9a-fA-F]{6}$/.test(tr.color || '') ? { color: tr.color } : {}) };
+  }
+
   const corpGuard = require('../lib/corporate/guard');
   const taken = [], skipped = [];
   const io = req.app.get('io');
@@ -129,7 +141,7 @@ router.post('/take', requireScope('full'), requireFleetWrite, (req, res) => {
     const { buildPlaylistPayload } = require('../ws/deviceSocket');
     const commandQueue = require('../lib/command-queue');
     // cut_now: switch at once, not at the end of the current item (player/index.html).
-    const cutPayload = (id) => { const p = buildPlaylistPayload(id); return p && !p.suspended ? { ...p, cut_now: true } : p; };
+    const cutPayload = (id) => { const p = buildPlaylistPayload(id); return p && !p.suspended ? { ...p, cut_now: true, ...(fx ? { take_fx: fx } : {}) } : p; };
     if (io && typeof buildPlaylistPayload === 'function') push = (id) => commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), id, cutPayload);
   } catch { push = null; }
 
@@ -149,6 +161,7 @@ router.post('/take', requireScope('full'), requireFleetWrite, (req, res) => {
     const s = db.prepare('SELECT id, name, workspace_id, playlist_id FROM stream_outputs WHERE id = ?').get(id);
     if (!s || s.workspace_id !== req.workspaceId) { skipped.push({ stream_id: id, reason: 'not_found' }); continue; }
     db.prepare('UPDATE stream_outputs SET playlist_id = ? WHERE id = ?').run(playlist.id, id);
+    try { require('./stream-out').noteTake(id, fx); } catch { /* the stream still takes it, as a cut */ }
     streams.push({ stream_id: id, name: s.name, previous_playlist_id: s.playlist_id || null });
   }
   res.json({ success: taken.length + streams.length > 0, playlist: { id: playlist.id, name: playlist.name }, taken, streams, skipped });

@@ -716,6 +716,7 @@ const HOST = (() => {
 const VIEWER = window.__playerConfig && window.__playerConfig.viewer || null;
 const VIEWER_MODE = !!VIEWER;
 let viewerRev = null;
+let viewerTakeSeq = null;
 let viewerGfxId = null;
 let viewerTimer = null;
 let viewerEnded = false;
@@ -2861,6 +2862,10 @@ function viewerPoll(v, first) {
     if (body.server_ms) ingestClockSample(body.server_ms, sentAt);
     if (body.payload) {
       viewerRev = body.rev;
+      if (body.take && body.take.seq !== viewerTakeSeq) {
+        viewerTakeSeq = body.take.seq;
+        body.payload.take_fx = body.take;
+      }
       handlePlaylistUpdate(body.payload);
       viewerLastAnchor = null;
     }
@@ -3020,6 +3025,22 @@ function postPreviewState() {
   } catch (e) {
   }
 }
+function previewLoad(d) {
+  const u = String(d && d.url || "");
+  if (!/^\/api\/(playlists|devices)\/[A-Za-z0-9_-]{1,64}\/preview-payload(\?orientation=(landscape|portrait))?$/.test(u)) return;
+  let token = null;
+  try {
+    token = localStorage.getItem("token");
+  } catch (e) {
+  }
+  fetch(u, { headers: token ? { Authorization: "Bearer " + token } : {} }).then((r) => r.ok ? r.json() : null).then((p) => {
+    if (!p || !PREVIEW_MODE) return;
+    p.cut_now = true;
+    if (d.take_fx && typeof d.take_fx === "object") p.take_fx = { type: d.take_fx.type, ms: d.take_fx.ms, color: d.take_fx.color };
+    handlePlaylistUpdate(p);
+  }).catch(() => {
+  });
+}
 function installPreviewControlChannel() {
   window.addEventListener("message", (ev) => {
     if (!PREVIEW_MODE) return;
@@ -3029,6 +3050,7 @@ function installPreviewControlChannel() {
     if (d.action === "next") previewNavigate(1);
     else if (d.action === "prev") previewNavigate(-1);
     else if (d.action === "sync") postPreviewState();
+    else if (d.action === "load") previewLoad(d);
   });
 }
 function addWebpageNote(container) {
@@ -5265,6 +5287,80 @@ function styleWallStage(stageEl) {
 }
 function bindWallResizeOnce() {
 }
+let takeFx = null;
+function takeFxClear() {
+  if (!takeFx) return;
+  clearTimeout(takeFx.apply);
+  try {
+    if (takeFx.el && takeFx.el.parentNode) takeFx.el.parentNode.removeChild(takeFx.el);
+  } catch (e) {
+  }
+  takeFx = null;
+}
+function takeFxRun(data) {
+  const fx = data.take_fx;
+  delete data.take_fx;
+  try {
+    if (!fx || ["fade", "flash", "wipe"].indexOf(fx.type) < 0) return false;
+    const ms = Math.max(200, Math.min(3e3, Number(fx.ms) || 600));
+    const half = Math.round(ms / 2);
+    const colour = fx.type === "flash" ? "#ffffff" : fx.type === "wipe" && /^#[0-9a-fA-F]{6}$/.test(fx.color || "") ? fx.color : "#000000";
+    const el = document.createElement("div");
+    el.id = "takeFx";
+    el.style.cssText = "position:fixed;top:0;right:0;bottom:0;left:0;z-index:8900;pointer-events:none;background:" + colour + ";" + (fx.type === "wipe" ? "transform:translateX(-101%);transition:transform " + half + "ms cubic-bezier(.6,0,.4,1);" : "opacity:0;transition:opacity " + half + "ms ease-in-out;");
+    document.body.appendChild(el);
+    const mine = takeFx = { data, el, apply: null };
+    void el.offsetWidth;
+    if (fx.type === "wipe") el.style.transform = "translateX(0)";
+    else el.style.opacity = "1";
+    mine.apply = setTimeout(function() {
+      if (takeFx !== mine) return;
+      takeFx = null;
+      try {
+        handlePlaylistUpdate(data);
+      } finally {
+        const applied = Date.now();
+        const lift = function() {
+          try {
+            if (fx.type === "wipe") el.style.transform = "translateX(101%)";
+            else el.style.opacity = "0";
+          } catch (e) {
+          }
+          setTimeout(function() {
+            try {
+              if (el.parentNode) el.parentNode.removeChild(el);
+            } catch (e) {
+            }
+          }, half + 150);
+        };
+        const wait = function() {
+          let pending = false;
+          try {
+            document.querySelectorAll("img, video").forEach(function(m) {
+              if (m.closest && m.closest("#pipContainer")) return;
+              if (m.tagName === "IMG" ? !m.complete : m.readyState < 2) pending = true;
+            });
+          } catch (e) {
+            pending = false;
+          }
+          if (pending && Date.now() - applied < 1500) setTimeout(wait, 50);
+          else lift();
+        };
+        setTimeout(wait, 60);
+      }
+    }, half + 20);
+    setTimeout(function() {
+      try {
+        if (el.parentNode) el.parentNode.removeChild(el);
+      } catch (e) {
+      }
+    }, ms + 2600);
+    return true;
+  } catch (e) {
+    takeFxClear();
+    return false;
+  }
+}
 function handlePlaylistUpdate(data) {
   var _a;
   if (data && data.suspended) {
@@ -5285,6 +5381,8 @@ function handlePlaylistUpdate(data) {
     console.log("[Kiosk] playlist update parked until the interactive session ends");
     return;
   }
+  if (typeof takeFx !== "undefined" && takeFx && takeFx.data !== data) takeFxClear();
+  if (data && data.take_fx && !data.suspended && typeof takeFxRun === "function" && takeFxRun(data)) return;
   if (data.suspended) {
     teardownCurrentMedia();
     stopSlideVo();

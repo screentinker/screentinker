@@ -132,7 +132,7 @@ test('malformed takes are refused', async () => {
 test('a take is pushed as a cut, and the web player switches at once on it', () => {
   const route = fs.readFileSync(path.join(__dirname, '..', 'routes', 'mixer.js'), 'utf8');
   assert.match(route, /cut_now: true/, 'the pushed payload carries the flag');
-  assert.match(route, /p && !p\.suspended \? \{ \.\.\.p, cut_now: true \} : p/, 'and never dresses up a suspended screen\'s payload');
+  assert.match(route, /p && !p\.suspended \? \{ \.\.\.p, cut_now: true/, 'and never dresses up a suspended screen\'s payload');
   for (const f of ['index.html', 'legacy.html']) {
     const player = fs.readFileSync(path.join(__dirname, '..', 'player', f), 'utf8');
     assert.match(player, /cutNow = data\.cut_now === true/, `${f}: the flag is read`);
@@ -210,4 +210,37 @@ test('a scene cannot name another workspace\'s source or camera, be empty, or be
     assert.equal((await call('POST', '/api/mixer/scenes', A.jwt, body)).status, 400, JSON.stringify(body));
   }
   assert.equal((await call('POST', '/api/mixer/scenes', V.jwt, { name: 'x', playlist_id: mine })).status, 403);
+});
+
+/*
+ * TAKE TRANSITIONS. A take may ask for a fade, a flash or a wipe. The switch is the job and the
+ * transition is polish: an unknown one is refused at the door, and in the player any failure, or a
+ * newer update arriving mid-transition, applies the update plainly.
+ */
+test('a take accepts the known transitions within a sane rate and refuses the rest', async () => {
+  const s = screen(A, 'Tx'), p = await playlist(A, 'TxSource');
+  for (const transition of [{ type: 'cut' }, { type: 'fade', ms: 600 }, { type: 'flash', ms: 200 }, { type: 'wipe', ms: 3000, color: '#00aaff' }, undefined]) {
+    assert.equal((await call('POST', '/api/mixer/take', A.jwt, { device_ids: [s], playlist_id: p, transition })).status, 200, JSON.stringify(transition));
+  }
+  for (const transition of [{ type: 'spin' }, { type: 'fade', ms: 50 }, { type: 'fade', ms: 60000 }, { type: 'fade', ms: 'fast' }, 'fade', {}]) {
+    assert.equal((await call('POST', '/api/mixer/take', A.jwt, { device_ids: [s], playlist_id: p, transition })).status, 400, JSON.stringify(transition));
+  }
+  assert.deepEqual((await call('GET', '/api/mixer', A.jwt)).body.transitions, ['cut', 'fade', 'flash', 'wipe']);
+});
+
+test('the web player runs a transition as a cover under the graphics layer, once, and fails open', () => {
+  for (const f of ['index.html', 'legacy.html']) {
+    const player = fs.readFileSync(path.join(__dirname, '..', 'player', f), 'utf8');
+    const at = player.indexOf('function takeFxRun');
+    const run = player.slice(at, player.indexOf('function handlePlaylistUpdate', at));
+    assert.ok(at > 0 && run.length > 400, f);
+    assert.match(run, /delete data\.take_fx/, `${f}: used once, so a cached playlist never replays it`);
+    assert.match(run, /z-index:\s*8900/, `${f}: under the overlay layer (9000), so a keyed graphic stays up through it`);
+    assert.match(run, /pointer-events:\s*none/, `${f}: the cover never takes a touch`);
+    assert.match(run, /catch \(e\) \{\s*takeFxClear\(\);\s*return false;/, `${f}: an error means a plain switch`);
+    assert.match(run, /removeChild\(el\)[\s\S]*ms \+ 2600\)/, `${f}: the cover removes itself on its own timer`);
+    assert.match(run, /Date\.now\(\) - applied < 1500/, `${f}: it waits for the new picture, but not for ever`);
+    assert.match(player, /takeFx && takeFx\.data !== data\) takeFxClear\(\);/, `${f}: a newer update supersedes a transition in progress`);
+    assert.match(player, /data\.take_fx && !data\.suspended && typeof takeFxRun === ['"]function['"] && takeFxRun\(data\)/, `${f}: a suspension is never dressed up`);
+  }
 });

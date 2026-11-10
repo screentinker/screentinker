@@ -176,6 +176,7 @@ router.post('/:id/gfx/clear', requireFleetWrite, (req, res) => {
 
 // ── what the server's own renderer fetches ───────────────────────────────────────────────────────
 const feedCache = new Map();   // id -> { at, playlist_id, payload, rev }
+const lastTake = new Map();    // id -> { seq, type, ms, color }: the transition of the take that last changed it
 const viewAccess = require('../lib/view-access');
 function feedFor(r) {
   const hit = feedCache.get(r.id);
@@ -207,6 +208,8 @@ function renderer({ sendPlayer }) {
     const f = feedFor(row);
     let graphic = null; try { graphic = row.gfx_json ? JSON.parse(row.gfx_json) : null; } catch { graphic = null; }
     const out = { rev: f.rev, server_ms: Date.now(), now_playing: [], poll_ms: 1000, gfx: graphic };
+    const tk = lastTake.get(row.id);
+    if (tk && Date.now() - tk.at < 15000) out.take = { seq: tk.seq, type: tk.type, ms: tk.ms, color: tk.color };
     if (req.query.rev !== f.rev) out.payload = f.payload; else out.unchanged = true;
     res.json(out);
   });
@@ -216,3 +219,5 @@ function renderer({ sendPlayer }) {
 module.exports = router;
 module.exports.renderer = renderer;
 module.exports.forgetFeed = (id) => feedCache.delete(id);
+let takeSeq = 0;
+module.exports.noteTake = (id, fx) => { if (fx) lastTake.set(id, { ...fx, seq: ++takeSeq + '-' + Date.now(), at: Date.now() }); else lastTake.delete(id); };

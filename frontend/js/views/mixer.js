@@ -26,6 +26,9 @@ let state = null;            // { screens, groups, sources, graphics, streams }
 let so = null;               // GET /api/stream-out: what streaming is possible here, and the outputs
 let addingStream = false;
 let cued = null;             // the scene waiting on TAKE, if one was recalled
+// The transition TAKE uses, remembered in this browser: { type: cut|fade|flash|wipe, ms }.
+let tx = (() => { try { const v = JSON.parse(localStorage.getItem('st_mixer_tx') || 'null'); if (v && typeof v.type === 'string' && Number(v.ms) >= 200) return { type: v.type, ms: Number(v.ms) }; } catch { /* default */ } return { type: 'cut', ms: 600 }; })();
+const RATES = [300, 600, 1000, 2000];
 let savingScene = false;
 let cam = null;              // the camera being steered: { id, presets, last: { preset, name } | null }
 let camSpeed = 0.5;
@@ -40,7 +43,26 @@ let alive = false;
 
 const call = (path, opts) => api.desk(path, opts);
 
-const frame = (src) => `<iframe class="mx-frame" src="${src}" title="" tabindex="-1"></iframe>`;
+let pgmFx = null;            // the transition the Program monitor should show for the take just made
+const playlistFeed = (id, tag) => ({ page: `/player?preview=1&playlist=${encodeURIComponent(id)}&orientation=landscape`,
+  feed: `/api/playlists/${encodeURIComponent(id)}/preview-payload?orientation=landscape`, key: `${tag}:${id}` });
+/** Shows `src` in a monitor. A monitor that is already running is switched in place, with the
+ *  take's transition when there is one; it is only (re)loaded when it has no player yet. */
+function monitor(el, src, emptyText, fx) {
+  let f = el.querySelector('iframe');
+  if (!src) { el.innerHTML = `<div class="mx-empty">${esc(emptyText)}</div>`; el.dataset.key = ''; return; }
+  if (el.dataset.key === src.key && f) return;
+  el.dataset.key = src.key;
+  if (f && f.dataset.ready === '1') {
+    try { f.contentWindow.postMessage({ source: 'screentinker-preview', action: 'load', url: src.feed, take_fx: fx || null }, window.location.origin); return; } catch { /* reload it instead */ }
+  }
+  el.innerHTML = '';
+  f = document.createElement('iframe');
+  f.className = 'mx-frame'; f.title = ''; f.tabIndex = -1;
+  f.addEventListener('load', () => { f.dataset.ready = '1'; });
+  f.src = src.page;
+  el.appendChild(f);
+}
 const streams = () => (so && so.outputs) || [];
 const firstOutput = () => (state ? (state.screens.find((s) => outputs.has(s.id)) || streams().find((s) => outputs.has(s.id))) : null);
 const isStream = (o) => !!o && streams().includes(o);
@@ -63,26 +85,39 @@ function draw(root) {
   const pgm = firstOutput();
   const scene = cuedScene();
   const selScreens = state.screens.filter((s) => outputs.has(s.id));
-  root.innerHTML = `
+  // The monitors are built ONCE and switched in place (the preview player is told to load the new
+  // source): rebuilding them on every key press reloaded both pictures, which read as the screen
+  // resetting. Everything else on the desk is redrawn freely.
+  if (!root.querySelector('#mxPvwScreen')) {
+    root.innerHTML = `
     <div class="page-header">
       <div><h1>${esc(t('mixer.title'))}</h1><div class="subtitle">${esc(t('mixer.subtitle'))}</div></div>
     </div>
     <div class="mx">
       <section class="mx-monitors">
-        <div class="mx-mon mx-pvw">
-          <div class="mx-mon-label"><span class="mx-lamp mx-lamp-pvw"></span>${esc(t('mixer.preview'))}<b>${esc(pvw ? sourceName(pvw) : t('mixer.nothing_selected'))}</b></div>
-          <div class="mx-screen">${pvw ? frame(`/player?preview=1&playlist=${encodeURIComponent(pvw)}&orientation=landscape&t=${Date.now()}`) : `<div class="mx-empty">${esc(t('mixer.pick_source'))}</div>`}</div>
-        </div>
-        <div class="mx-take-col">
-          <button type="button" class="btn mx-take" id="mxTake" ${(pvw || scene) && outputs.size ? '' : 'disabled'}>${esc(t('mixer.take'))}</button>
-          <div class="mx-take-hint">${esc(outputs.size ? t('mixer.to_n_screens', { n: outputs.size }) : t('mixer.pick_output'))}${scene ? `<br><b>${esc(t('mixer.scene_cued', { name: scene.name }))}</b>` : ''}</div>
-        </div>
-        <div class="mx-mon mx-pgm">
-          <div class="mx-mon-label"><span class="mx-lamp mx-lamp-pgm"></span>${esc(t('mixer.program'))}<b>${esc(pgm ? `${pgm.name}${pgm.playlist_name ? ': ' + pgm.playlist_name : ''}` : t('mixer.nothing_selected'))}</b></div>
-          <div class="mx-screen">${pgm && isStream(pgm) ? (pgm.playlist_id ? frame(`/player?preview=1&playlist=${encodeURIComponent(pgm.playlist_id)}&orientation=landscape&t=${Date.now()}`) : `<div class="mx-empty">${esc(t('mixer.stream_no_source'))}</div>`) : pgm ? frame(`/player?preview=1&device=${encodeURIComponent(pgm.id)}&t=${Date.now()}`) : `<div class="mx-empty">${esc(t('mixer.pick_output'))}</div>`}</div>
-        </div>
+        <div class="mx-mon mx-pvw"><div class="mx-mon-label" id="mxPvwLabel"></div><div class="mx-screen" id="mxPvwScreen"></div></div>
+        <div class="mx-take-col" id="mxTakeCol"></div>
+        <div class="mx-mon mx-pgm"><div class="mx-mon-label" id="mxPgmLabel"></div><div class="mx-screen" id="mxPgmScreen"></div></div>
       </section>
-
+      <div class="mx-rest" id="mxRest"></div>
+    </div>`;
+  }
+  root.querySelector('#mxPvwLabel').innerHTML = `<span class="mx-lamp mx-lamp-pvw"></span>${esc(t('mixer.preview'))}<b>${esc(pvw ? sourceName(pvw) : t('mixer.nothing_selected'))}</b>`;
+  root.querySelector('#mxPgmLabel').innerHTML = `<span class="mx-lamp mx-lamp-pgm"></span>${esc(t('mixer.program'))}<b>${esc(pgm ? `${pgm.name}${pgm.playlist_name ? ': ' + pgm.playlist_name : ''}` : t('mixer.nothing_selected'))}</b>`;
+  root.querySelector('#mxTakeCol').innerHTML = `
+          <button type="button" class="btn mx-take" id="mxTake" ${(pvw || scene) && outputs.size ? '' : 'disabled'}>${esc(t('mixer.take'))}</button>
+          <div class="mx-tx" role="radiogroup" aria-label="${esc(t('mixer.transition'))}">
+            ${(state.transitions || ['cut']).map((k) => `<button type="button" role="radio" class="mx-tx-key${tx.type === k ? ' is-on' : ''}" aria-checked="${tx.type === k}" data-tx="${esc(k)}">${esc(t(`mixer.tx.${k}`))}</button>`).join('')}
+          </div>
+          <label class="mx-tx-rate${tx.type === 'cut' ? ' is-off' : ''}">${esc(t('mixer.tx_rate'))}
+            <select class="input" id="mxTxRate" ${tx.type === 'cut' ? 'disabled' : ''}>${RATES.map((r) => `<option value="${r}"${r === tx.ms ? ' selected' : ''}>${(r / 1000).toFixed(1)} s</option>`).join('')}</select></label>
+          <div class="mx-take-hint">${esc(outputs.size ? t('mixer.to_n_screens', { n: outputs.size }) : t('mixer.pick_output'))}${scene ? `<br><b>${esc(t('mixer.scene_cued', { name: scene.name }))}</b>` : ''}</div>`;
+  monitor(root.querySelector('#mxPvwScreen'), pvw ? playlistFeed(pvw, 'p') : null, t('mixer.pick_source'));
+  monitor(root.querySelector('#mxPgmScreen'), !pgm ? null : isStream(pgm) ? (pgm.playlist_id ? playlistFeed(pgm.playlist_id, 's:' + pgm.id) : null)
+    : { page: `/player?preview=1&device=${encodeURIComponent(pgm.id)}`, feed: `/api/devices/${encodeURIComponent(pgm.id)}/preview-payload`, key: `d:${pgm.id}:${pgm.playlist_id || ''}` },
+  pgm && isStream(pgm) ? t('mixer.stream_no_source') : t('mixer.pick_output'), pgmFx);
+  pgmFx = null;
+  root.querySelector('#mxRest').innerHTML = `
       <section class="mx-bank">
         <h3>${esc(t('mixer.scenes'))}<span class="mx-bank-actions"><button type="button" class="btn btn-secondary btn-sm" id="mxSaveScene">${esc(t('mixer.scene_save'))}</button></span></h3>
         ${savingScene ? `<form class="mx-stream-form" id="mxSceneForm">
@@ -208,7 +243,7 @@ function draw(root) {
         <p class="mx-note">${esc(t('mixer.audio_note'))}</p>` : `<p class="mx-note mx-note-top">${esc(t('mixer.audio_none'))}</p>`}
       </section>
       </div>
-    </div>`;
+`;
   bind(root);
 }
 
@@ -222,12 +257,14 @@ async function take(root) {
   if (btn) btn.disabled = true;
   try {
     const streamIds = streams().filter((s) => outputs.has(s.id)).map((s) => s.id);
-    const r = await call('/mixer/take', { method: 'POST', body: JSON.stringify({ device_ids: [...outputs].filter((id) => !streamIds.includes(id)), stream_ids: streamIds, playlist_id: pvw }) });
+    const r = await call('/mixer/take', { method: 'POST', body: JSON.stringify({ device_ids: [...outputs].filter((id) => !streamIds.includes(id)), stream_ids: streamIds, playlist_id: pvw,
+      transition: { type: tx.type, ms: tx.ms, color: (root.querySelector('#mxC') || {}).value || undefined } }) });
     for (const tk of r.streams || []) { const s = streams().find((x) => x.id === tk.stream_id); if (s) { s.playlist_id = r.playlist.id; s.playlist_name = r.playlist.name; } }
     const n = (r.taken || []).length + (r.streams || []).length, skipped = (r.skipped || []).length;
     showToast(skipped ? t('mixer.toast.taken_skipped', { n, name: r.playlist.name, skipped }) : t('mixer.toast.taken', { n, name: r.playlist.name }), n ? 'success' : 'warning');
     for (const tk of r.taken || []) { const s = state.screens.find((x) => x.id === tk.device_id); if (s) { s.playlist_id = r.playlist.id; s.playlist_name = r.playlist.name; } }
     // Flip-flop: what was on Program is now in Preview, one key press from going back.
+    if (tx.type !== 'cut') pgmFx = { type: tx.type, ms: tx.ms, color: (root.querySelector('#mxC') || {}).value };
     if (cutBackTo && state.sources.some((s) => s.id === cutBackTo)) pvw = cutBackTo;
     if (scene) { await applyScene(root, scene); cued = null; }
   } catch (err) { showToast(err.message, 'error'); }
@@ -398,6 +435,9 @@ function bind(root) {
   }
   const none = root.querySelector('#mxNone'); if (none) none.addEventListener('click', () => { outputs = new Set(); draw(root); });
   const tk = root.querySelector('#mxTake'); if (tk) tk.addEventListener('click', () => take(root));
+  const keepTx = () => { try { localStorage.setItem('st_mixer_tx', JSON.stringify(tx)); } catch { /* this page only */ } };
+  root.querySelectorAll('[data-tx]').forEach((b) => b.addEventListener('click', () => { tx = { ...tx, type: b.dataset.tx }; keepTx(); draw(root); }));
+  const rate = root.querySelector('#mxTxRate'); if (rate) rate.addEventListener('change', () => { tx = { ...tx, ms: Number(rate.value) }; keepTx(); });
   root.querySelectorAll('[data-gfx]').forEach((b) => b.addEventListener('click', () => key(root, b.dataset.gfx)));
   const cl = root.querySelector('#mxClear'); if (cl) cl.addEventListener('click', clearGfx);
   for (const [id, k] of [['mxA', 'mx_a'], ['mxB', 'mx_b'], ['mxC', 'mx_c']]) {

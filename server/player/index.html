@@ -578,6 +578,7 @@
     // ⚠️ Declared HERE, not beside bootViewer: the boot gate calls bootViewer from further up the
     // script than its body, and a `let` read before its line runs is a TDZ ReferenceError (1.9.32).
     let viewerRev = null;
+    let viewerTakeSeq = null;
     let viewerGfxId = null;      // the graphic a stream feed has keyed on, if any
     let viewerTimer = null;
     let viewerEnded = false;
@@ -3290,6 +3291,8 @@
         if (body.server_ms) ingestClockSample(body.server_ms, sentAt);
         if (body.payload) {
           viewerRev = body.rev;
+          // A stream output's feed names the transition of the take that changed it, once.
+          if (body.take && body.take.seq !== viewerTakeSeq) { viewerTakeSeq = body.take.seq; body.payload.take_fx = body.take; }
           handlePlaylistUpdate(body.payload);
           viewerLastAnchor = null;      // a new playlist: re-join wherever the screen is
         }
@@ -3458,6 +3461,26 @@
       } catch (e) { /* parent went away mid-preview */ }
     }
 
+    /*
+     * Switch what this preview shows without reloading the page (the vision mixer's Preview and
+     * Program monitors). Only ever a preview payload of this same server, fetched with the
+     * dashboard's own session like the first one was; optionally with the take's transition.
+     */
+    function previewLoad(d) {
+      const u = String((d && d.url) || '');
+      if (!/^\/api\/(playlists|devices)\/[A-Za-z0-9_-]{1,64}\/preview-payload(\?orientation=(landscape|portrait))?$/.test(u)) return;
+      let token = null; try { token = localStorage.getItem('token'); } catch (e) {}
+      fetch(u, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((p) => {
+          if (!p || !PREVIEW_MODE) return;
+          p.cut_now = true;
+          if (d.take_fx && typeof d.take_fx === 'object') p.take_fx = { type: d.take_fx.type, ms: d.take_fx.ms, color: d.take_fx.color };
+          handlePlaylistUpdate(p);
+        })
+        .catch(() => { /* the monitor keeps what it was showing */ });
+    }
+
     function installPreviewControlChannel() {
       window.addEventListener('message', (ev) => {
         if (!PREVIEW_MODE) return;                          // belt and braces: see previewNavigate
@@ -3467,6 +3490,7 @@
         if (d.action === 'next') previewNavigate(1);
         else if (d.action === 'prev') previewNavigate(-1);
         else if (d.action === 'sync') postPreviewState();   // parent (re)attached and wants the count
+        else if (d.action === 'load') previewLoad(d);        // the vision mixer's monitors: switch source in place
       });
     }
 
@@ -6282,6 +6306,77 @@
     function bindWallResizeOnce() {}
 
     // ==================== Playlist ====================
+    /*
+     * TAKE TRANSITIONS (the vision mixer, routes/mixer.js). A take may ask for a transition:
+     *   fade   down to black, switch, up from black        flash  the same through white, quick
+     *   wipe   a bar of colour sweeps across; the switch happens while it covers the picture
+     * All three are a COVER drawn over the picture (under the graphics layer, so a keyed lower
+     * third stays up through it): the switch itself is still the ordinary update, applied once the
+     * cover hides the picture. That is what makes them work for any content, zones included.
+     *
+     * ⚠️ FAIL-OPEN. A transition is polish; the switch is the job. Any error, an unknown type, or
+     * a newer update arriving mid-transition, and the update is applied plainly. The cover removes
+     * itself on a timer of its own, so it can never be left over the screen.
+     */
+    let takeFx = null;   // { data, apply: timer, el }
+    function takeFxClear() {
+      if (!takeFx) return;
+      clearTimeout(takeFx.apply);
+      try { if (takeFx.el && takeFx.el.parentNode) takeFx.el.parentNode.removeChild(takeFx.el); } catch (e) {}
+      takeFx = null;
+    }
+    /** Starts the transition a take asked for. Returns true when it has taken charge of the update. */
+    function takeFxRun(data) {
+      const fx = data.take_fx;
+      delete data.take_fx;                       // once: a cached copy of this playlist must not replay it
+      try {
+        if (!fx || ['fade', 'flash', 'wipe'].indexOf(fx.type) < 0) return false;
+        const ms = Math.max(200, Math.min(3000, Number(fx.ms) || 600));
+        const half = Math.round(ms / 2);
+        const colour = fx.type === 'flash' ? '#ffffff' : fx.type === 'wipe' && /^#[0-9a-fA-F]{6}$/.test(fx.color || '') ? fx.color : '#000000';
+        const el = document.createElement('div');
+        el.id = 'takeFx';
+        el.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;z-index:8900;pointer-events:none;background:' + colour + ';'
+          + (fx.type === 'wipe' ? 'transform:translateX(-101%);transition:transform ' + half + 'ms cubic-bezier(.6,0,.4,1);'
+                                : 'opacity:0;transition:opacity ' + half + 'ms ease-in-out;');
+        document.body.appendChild(el);
+        const mine = takeFx = { data: data, el: el, apply: null };
+        void el.offsetWidth;                     // commit the start state so the first half animates
+        if (fx.type === 'wipe') el.style.transform = 'translateX(0)'; else el.style.opacity = '1';
+        mine.apply = setTimeout(function () {
+          if (takeFx !== mine) return;           // superseded: the newer update has been applied
+          takeFx = null;
+          try { handlePlaylistUpdate(data); } finally {
+            // The cover lifts when the new picture is THERE, not on a fixed beat: lifting onto an
+            // image or video that is still loading shows the gap the transition exists to hide.
+            // Bounded: after a second and a half it lifts on whatever there is.
+            const applied = Date.now();
+            const lift = function () {
+              try { if (fx.type === 'wipe') el.style.transform = 'translateX(101%)'; else el.style.opacity = '0'; } catch (e) {}
+              setTimeout(function () { try { if (el.parentNode) el.parentNode.removeChild(el); } catch (e) {} }, half + 150);
+            };
+            const wait = function () {
+              let pending = false;
+              try {
+                document.querySelectorAll('img, video').forEach(function (m) {
+                  if (m.closest && m.closest('#pipContainer')) return;
+                  if (m.tagName === 'IMG' ? !m.complete : m.readyState < 2) pending = true;
+                });
+              } catch (e) { pending = false; }
+              if (pending && Date.now() - applied < 1500) setTimeout(wait, 50); else lift();
+            };
+            setTimeout(wait, 60);
+          }
+        }, half + 20);
+        // Its own timer, whatever happened above: the cover can never be left over the screen.
+        setTimeout(function () { try { if (el.parentNode) el.parentNode.removeChild(el); } catch (e) {} }, ms + 2600);
+        return true;
+      } catch (e) {
+        takeFxClear();
+        return false;
+      }
+    }
+
     function handlePlaylistUpdate(data) {
       // #473: a playlist update mid-session would restart the item under someone filling in a form.
       // Parked (latest wins) and applied by kioskRelease(). A suspension is not parked.
@@ -6298,6 +6393,11 @@
         console.log('[Kiosk] playlist update parked until the interactive session ends');
         return;
       }
+      // A take with a transition (after the kiosk park: a parked take keeps its transition for
+      // later): the cover goes up first and this runs again underneath it. Anything else arriving
+      // while one is in progress supersedes it and is applied at once.
+      if (typeof takeFx !== 'undefined' && takeFx && takeFx.data !== data) takeFxClear();
+      if (data && data.take_fx && !data.suspended && typeof takeFxRun === 'function' && takeFxRun(data)) return;
       // Check if device is suspended (trial expired / over limit)
       if (data.suspended) {
         /*
