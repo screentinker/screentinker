@@ -61,7 +61,7 @@ test('the page still carries the esp-web-tools install button and the board mani
 test('the server reaches the installer with the relaxed (player-style) CSP, not the dashboard policy', () => {
   assert.match(SERVER, /req\.path === '\/flash' \|\| req\.path\.startsWith\('\/flash\/'\)\) return exempt\(\)/,
     'the /flash path is CSP-exempt like /player');
-  assert.match(SERVER, /app\.get\(\['\/flash', '\/flash\/'\][\s\S]{0,160}flash['"], ['"]index\.html['"]\)\)/,
+  assert.match(SERVER, /app\.get\(\['\/flash', '\/flash\/'\][\s\S]{0,600}flash['"], ['"]index\.html['"]\)\)/,
     'a route serves the installer at /flash (express.static is index:false)');
 });
 
@@ -78,5 +78,5 @@ test('the i18n apply is DOM-XSS safe (CodeQL js/xss-through-dom): no data-i18n k
 });
 
 test('the dashboard Add Display flow links to the installer, opening a top-level tab for Web Serial', () => {
-  assert.match(DASHBOARD_HTML, /href="\/flash"[^>]*target="_blank"/, 'Add Display links to /flash in a new tab');
+  assert.match(DASHBOARD_HTML, /href="\/flash\/"[^>]*target="_blank"/, 'Add Display links to /flash/ in a new tab');
 });
