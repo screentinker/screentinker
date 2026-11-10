@@ -25,6 +25,8 @@ import { showToast } from '../components/toast.js';
 let state = null;            // { screens, groups, sources, graphics, streams }
 let so = null;               // GET /api/stream-out: what streaming is possible here, and the outputs
 let addingStream = false;
+let section = 'desk';         // which page of the desk: desk (everything), audio, cameras, graphics, streams
+const SECTIONS = ['desk', 'audio', 'cameras', 'graphics', 'streams'];
 let cued = null;             // the scene waiting on TAKE, if one was recalled
 // The transition TAKE uses, remembered in this browser: { type: cut|fade|flash|wipe, ms }.
 let tx = (() => { try { const v = JSON.parse(localStorage.getItem('st_mixer_tx') || 'null'); if (v && typeof v.type === 'string' && Number(v.ms) >= 200) return { type: v.type, ms: Number(v.ms) }; } catch { /* default */ } return { type: 'cut', ms: 600 }; })();
@@ -103,6 +105,8 @@ function draw(root) {
       <div class="mx-rest" id="mxRest"></div>
     </div>`;
   }
+  root.querySelector('.mx').dataset.section = section;
+  root.querySelector('.page-header h1').textContent = t('mixer.section.' + section);
   root.querySelector('#mxPvwLabel').innerHTML = `<span class="mx-lamp mx-lamp-pvw"></span>${esc(t('mixer.preview'))}<b>${esc(pvw ? sourceName(pvw) : t('mixer.nothing_selected'))}</b>`;
   root.querySelector('#mxPgmLabel').innerHTML = `<span class="mx-lamp mx-lamp-pgm"></span>${esc(t('mixer.program'))}<b>${esc(pgm ? `${pgm.name}${pgm.playlist_name ? ': ' + pgm.playlist_name : ''}` : t('mixer.nothing_selected'))}</b>`;
   root.querySelector('#mxTakeCol').innerHTML = `
@@ -119,7 +123,7 @@ function draw(root) {
   pgm && isStream(pgm) ? t('mixer.stream_no_source') : t('mixer.pick_output'), pgmFx);
   pgmFx = null;
   root.querySelector('#mxRest').innerHTML = `
-      <section class="mx-bank">
+      <section class="mx-bank mx-scenes">
         <h3>${esc(t('mixer.scenes'))}<span class="mx-bank-actions"><button type="button" class="btn btn-secondary btn-sm" id="mxSaveScene">${esc(t('mixer.scene_save'))}</button></span></h3>
         ${savingScene ? `<form class="mx-stream-form" id="mxSceneForm">
           <label>${esc(t('mixer.scene_name'))}<input class="input" name="name" maxlength="60" required placeholder="${esc(t('mixer.scene_name_ph'))}"></label>
@@ -133,36 +137,6 @@ function draw(root) {
             <div class="mx-scene-wrap"><button type="button" class="mx-key mx-scene${s.id === cued ? ' is-pvw' : ''}" data-scene="${esc(s.id)}" title="${esc(s.name)}">
               <span class="mx-key-name">${esc(s.name)}</span><span class="mx-key-sub">${esc([s.playlist_id ? sourceName(s.playlist_id) : '', s.graphic ? t(`mixer.gfx.${s.graphic.kind}`) : '', s.cameras.length ? t('mixer.scene_n_cameras', { n: s.cameras.length }) : ''].filter(Boolean).join(', '))}</span>
             </button><button type="button" class="mx-scene-del" data-scene-del="${esc(s.id)}" aria-label="${esc(t('mixer.scene_delete', { name: s.name }))}" title="${esc(t('mixer.scene_delete', { name: s.name }))}">×</button></div>`).join('') : (savingScene ? '' : `<p class="mx-note mx-note-top">${esc(t('mixer.scene_none'))}</p>`)}
-        </div>
-      </section>
-
-      <section class="mx-bank">
-        <h3>${esc(t('mixer.sources'))}</h3>
-        <div class="mx-keys">
-          ${state.sources.length ? state.sources.map((s, i) => `
-            <button type="button" class="mx-key mx-src${s.id === pvw ? ' is-pvw' : ''}${pgm && pgm.playlist_id === s.id ? ' is-pgm' : ''}" data-src="${esc(s.id)}" title="${esc(s.name)}">
-              <span class="mx-key-n">${i < 9 ? i + 1 : ''}</span><span class="mx-key-name">${esc(s.name)}</span><span class="mx-key-sub">${esc(t('mixer.n_items', { n: s.items }))}</span>
-            </button>`).join('') : `<p class="mx-note">${esc(t('mixer.no_sources'))}</p>`}
-        </div>
-      </section>
-
-      <section class="mx-bank">
-        <h3>${esc(t('mixer.outputs'))}
-          <span class="mx-bank-actions">
-            <button type="button" class="btn btn-secondary btn-sm" id="mxAll">${esc(t('mixer.all'))}</button>
-            <button type="button" class="btn btn-secondary btn-sm" id="mxNone">${esc(t('mixer.none'))}</button>
-            ${state.groups.filter((g) => g.device_ids.length).map((g) => `<button type="button" class="btn btn-secondary btn-sm" data-group="${esc(g.id)}">${esc(g.name)}</button>`).join('')}
-          </span>
-        </h3>
-        <div class="mx-keys">
-          ${state.screens.length ? state.screens.map((s) => `
-            <button type="button" class="mx-key mx-out mx-tally-${tallyOf(s)}${outputs.has(s.id) ? ' is-on' : ''}" data-out="${esc(s.id)}" aria-pressed="${outputs.has(s.id)}" title="${esc(s.name)}">
-              <span class="mx-key-tally"></span><span class="mx-key-name">${esc(s.name)}</span><span class="mx-key-sub">${esc(s.playlist_name || t('mixer.no_playlist'))}</span>
-            </button>`).join('') : (streams().length ? '' : `<p class="mx-note">${esc(t('mixer.no_screens'))}</p>`)}
-          ${streams().map((s) => `
-            <button type="button" class="mx-key mx-out mx-stream mx-tally-${streamTally(s)}${outputs.has(s.id) ? ' is-on' : ''}" data-out="${esc(s.id)}" aria-pressed="${outputs.has(s.id)}" title="${esc(s.name)}">
-              <span class="mx-key-tally"></span><span class="mx-key-name">${esc(s.name)}</span><span class="mx-key-sub">${esc(s.kind_label)}: ${esc(s.playlist_name || t('mixer.no_playlist'))}</span>
-            </button>`).join('')}
         </div>
       </section>
 
@@ -197,6 +171,36 @@ function draw(root) {
           </div>` : ''}
         </div>
         <p class="mx-note">${esc(t(so && so.available && !so.programme_audio && streams().length ? 'mixer.audio_note_no_programme' : 'mixer.audio_note'))}</p>` : `<p class="mx-note mx-note-top">${esc(t('mixer.audio_none'))}</p>`}
+      </section>
+
+      <section class="mx-bank mx-sources">
+        <h3>${esc(t('mixer.sources'))}</h3>
+        <div class="mx-keys">
+          ${state.sources.length ? state.sources.map((s, i) => `
+            <button type="button" class="mx-key mx-src${s.id === pvw ? ' is-pvw' : ''}${pgm && pgm.playlist_id === s.id ? ' is-pgm' : ''}" data-src="${esc(s.id)}" title="${esc(s.name)}">
+              <span class="mx-key-n">${i < 9 ? i + 1 : ''}</span><span class="mx-key-name">${esc(s.name)}</span><span class="mx-key-sub">${esc(t('mixer.n_items', { n: s.items }))}</span>
+            </button>`).join('') : `<p class="mx-note">${esc(t('mixer.no_sources'))}</p>`}
+        </div>
+      </section>
+
+      <section class="mx-bank mx-outputs">
+        <h3>${esc(t('mixer.outputs'))}
+          <span class="mx-bank-actions">
+            <button type="button" class="btn btn-secondary btn-sm" id="mxAll">${esc(t('mixer.all'))}</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="mxNone">${esc(t('mixer.none'))}</button>
+            ${state.groups.filter((g) => g.device_ids.length).map((g) => `<button type="button" class="btn btn-secondary btn-sm" data-group="${esc(g.id)}">${esc(g.name)}</button>`).join('')}
+          </span>
+        </h3>
+        <div class="mx-keys">
+          ${state.screens.length ? state.screens.map((s) => `
+            <button type="button" class="mx-key mx-out mx-tally-${tallyOf(s)}${outputs.has(s.id) ? ' is-on' : ''}" data-out="${esc(s.id)}" aria-pressed="${outputs.has(s.id)}" title="${esc(s.name)}">
+              <span class="mx-key-tally"></span><span class="mx-key-name">${esc(s.name)}</span><span class="mx-key-sub">${esc(s.playlist_name || t('mixer.no_playlist'))}</span>
+            </button>`).join('') : (streams().length ? '' : `<p class="mx-note">${esc(t('mixer.no_screens'))}</p>`)}
+          ${streams().map((s) => `
+            <button type="button" class="mx-key mx-out mx-stream mx-tally-${streamTally(s)}${outputs.has(s.id) ? ' is-on' : ''}" data-out="${esc(s.id)}" aria-pressed="${outputs.has(s.id)}" title="${esc(s.name)}">
+              <span class="mx-key-tally"></span><span class="mx-key-name">${esc(s.name)}</span><span class="mx-key-sub">${esc(s.kind_label)}: ${esc(s.playlist_name || t('mixer.no_playlist'))}</span>
+            </button>`).join('')}
+        </div>
       </section>
 
       ${so ? `<section class="mx-bank mx-streams">
@@ -463,8 +467,9 @@ function bind(root) {
   }
 }
 
-export async function render(container) {
+export async function render(container, which) {
   alive = true;
+  section = SECTIONS.includes(which) ? which : 'desk';
   container.innerHTML = `<div class="empty-state"><h3>${esc(t('common.loading'))}</h3></div>`;
   try { state = await load(); } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>${esc(t('mixer.title'))}</h3><p>${esc(err.message)}</p></div>`;

@@ -3462,3 +3462,9 @@ a.stock-credit:hover { text-decoration: underline; color: var(--text-secondary);
 .feedback-item { border-left: 3px solid var(--accent); padding: 6px 10px; font-size: 12px; background: var(--bg-primary); border-radius: 0 6px 6px 0; }
 .feedback-item.low { border-left-color: var(--danger); }
 .feedback-item .meta { color: var(--text-muted); }
+
+/* Broadcast view (js/components/ui-mode.js): the menu is the production desk's sections, and the
+   signage menu is put away until the view is switched back. */
+.nav-broadcast { display: none; }
+.ui-broadcast .nav-broadcast { display: block; }
+.ui-broadcast .nav-links > .nav-group { display: none !important; }

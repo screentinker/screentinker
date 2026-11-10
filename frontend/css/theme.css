@@ -629,3 +629,13 @@
 .mx-group .mx-strip:has(.mx-meter) { padding-left: 24px; }
 .mx-group .mx-strip-name { font-size: 11.5px; }
 .mx-group .mx-mute { min-width: 0; width: 100%; }
+
+/* Broadcast view: the menu is the desk's sections, and each section is a page of the same desk.
+   The main Mixer page shows everything; a section page shows its own panels under the monitors. */
+.mx[data-section="audio"] .mx-rest > :not(.mx-audio):not(.mx-outputs),
+.mx[data-section="cameras"] .mx-rest > :not(.mx-pair),
+.mx[data-section="graphics"] .mx-rest > :not(.mx-gfx):not(.mx-outputs),
+.mx[data-section="streams"] .mx-rest > :not(.mx-streams) { display: none; }
+/* A section page keeps an eye on the pictures without giving them the whole screen. */
+.mx:not([data-section="desk"]) .mx-monitors { grid-template-columns: minmax(0, 320px) auto minmax(0, 320px); justify-content: start; }
+.mx:not([data-section="desk"]) .mx-take-col { display: none; }
