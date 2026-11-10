@@ -118,6 +118,55 @@ let cam = null;              // the camera being steered: { id, presets, last: {
 let camSpeed = 0.5;
 let holdTimer = null;
 let meterTimer = null;
+// ── audio bars on the Preview and Program monitors ───────────────────────────────────────────────
+// Measured here, in this browser, from the monitor's own player: each video or audio element it
+// is playing is tapped (captureStream) into an analyser. Nothing is routed to the speakers by
+// this, and a monitor that plays muted still shows its level: the bar says what the source
+// carries, not what this computer is playing out loud.
+let monTimer = null, actx = null;
+const taps = new WeakMap();  // media element -> { ms, an } | null (cannot be tapped)
+const monHeld = { mxPvwScreen: 0, mxPgmScreen: 0 };
+const monBuf = new Float32Array(1024);
+function tapOf(m) {
+  let tp = taps.get(m);
+  if (tp === null) return null;
+  try {
+    if (!tp) {
+      if (m.readyState < 2) return null;
+      const ms = m.captureStream ? m.captureStream() : (m.mozCaptureStream ? m.mozCaptureStream() : null);
+      if (!ms) { taps.set(m, null); return null; }
+      tp = { ms, an: null }; taps.set(m, tp);
+    }
+    if (!tp.an) {
+      if (!tp.ms.getAudioTracks().length) return null;       // no sound track (yet)
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      tp.an = actx.createAnalyser(); tp.an.fftSize = 1024;
+      actx.createMediaStreamSource(tp.ms).connect(tp.an);
+    }
+    return tp.an;
+  } catch { taps.set(m, null); return null; }
+}
+function monitorLevels() {
+  for (const id of Object.keys(monHeld)) {
+    const screen = document.getElementById(id); if (!screen) continue;
+    const bar = screen.parentNode.querySelector('.mx-mon-meter i'); if (!bar) continue;
+    let peak = 0, any = false, doc = null;
+    const f = screen.querySelector('iframe.mx-frame');
+    try { doc = f && f.contentDocument; } catch { doc = null; }
+    if (doc) for (const m of doc.querySelectorAll('video, audio')) {
+      const an = tapOf(m); if (!an) continue;
+      any = true;
+      if (m.paused) continue;
+      an.getFloatTimeDomainData(monBuf);
+      for (let i = 0; i < monBuf.length; i++) { const v = monBuf[i] < 0 ? -monBuf[i] : monBuf[i]; if (v > peak) peak = v; }
+    }
+    monHeld[id] = Math.max(peak, monHeld[id] * 0.8);
+    bar.parentNode.classList.toggle('has-audio', any);
+    bar.style.height = meterPct(monHeld[id]) + '%';
+  }
+}
+// An AudioContext only runs after the person has done something on the page; any click on the desk is that.
+const wakeAudio = () => { if (actx && actx.state === 'suspended') actx.resume().catch(() => {}); };
 const volumes = new Map();   // screen id -> { level 0..100, muted } as last set from this desk
 let pvw = null;              // playlist id in Preview
 let outputs = new Set();     // selected screen ids
@@ -179,9 +228,9 @@ function draw(root) {
     </div>
     <div class="mx">
       <section class="mx-monitors">
-        <div class="mx-mon mx-pvw"><div class="mx-mon-label" id="mxPvwLabel"></div><div class="mx-screen" id="mxPvwScreen"></div></div>
+        <div class="mx-mon mx-pvw"><div class="mx-mon-label" id="mxPvwLabel"></div><div class="mx-screen" id="mxPvwScreen"></div><div class="mx-mon-meter" aria-hidden="true"><i></i></div></div>
         <div class="mx-take-col" id="mxTakeCol"></div>
-        <div class="mx-mon mx-pgm"><div class="mx-mon-label" id="mxPgmLabel"></div><div class="mx-screen" id="mxPgmScreen"></div></div>
+        <div class="mx-mon mx-pgm"><div class="mx-mon-label" id="mxPgmLabel"></div><div class="mx-screen" id="mxPgmScreen"></div><div class="mx-mon-meter" aria-hidden="true"><i></i></div></div>
       </section>
       <div class="mx-rest" id="mxRest"></div>
     </div>`;
@@ -655,6 +704,8 @@ export async function render(container, which) {
     } catch { /* keep the desk as it is */ }
   }, 10000);
   // Level meters of running streams (live or on standby), moved in place five times a second (no redraw).
+  monTimer = setInterval(() => { if (alive && !document.hidden) monitorLevels(); }, 100);
+  document.addEventListener('pointerdown', wakeAudio);
   meterTimer = setInterval(async () => {
     if (!alive || document.hidden || meterBusy || !streams().some((s) => s.status.state !== 'off')) return;
     meterBusy = true;
@@ -679,5 +730,6 @@ export function cleanup() {
   onKey = null;
   clearInterval(refreshTimer); refreshTimer = null;
   clearInterval(meterTimer); meterTimer = null;
+  clearInterval(monTimer); monTimer = null; document.removeEventListener('pointerdown', wakeAudio);
   releaseMove();
 }

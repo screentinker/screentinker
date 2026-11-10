@@ -462,6 +462,10 @@
 .mx-gfx-layer { position: absolute; border: 0; background: transparent; pointer-events: none; z-index: 3; color-scheme: normal; }
 .mx-gfx-top-left { top: 0; left: 0; } .mx-gfx-top-right { top: 0; right: 0; } .mx-gfx-bottom-left { bottom: 0; left: 0; } .mx-gfx-bottom-right { bottom: 0; right: 0; }
 .mx-gfx-center { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+.mx-mon { position: relative; }
+.mx-mon-meter { position: absolute; right: 12px; bottom: 12px; width: 8px; height: 55%; max-height: 220px; background: rgba(0, 0, 0, 0.55); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 2px; overflow: hidden; display: none; align-items: flex-end; z-index: 4; pointer-events: none; }
+.mx-mon-meter.has-audio { display: flex; }
+.mx-mon-meter i { display: block; width: 100%; background: linear-gradient(0deg, var(--success) 0 70%, var(--warning) 70% 90%, var(--danger) 90%); background-size: 100% 220px; background-position: bottom; transition: height 0.1s linear; }
 .mx-pvw .mx-screen { box-shadow: 0 0 0 3px var(--success), 0 0 24px color-mix(in srgb, var(--success) 40%, transparent); }
 .mx-pgm .mx-screen { box-shadow: 0 0 0 3px var(--tally, var(--danger)), 0 0 24px color-mix(in srgb, var(--tally, var(--danger)) 45%, transparent); }
 .mx-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; pointer-events: none; }
