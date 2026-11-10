@@ -2841,6 +2841,7 @@ function renderPreviewFromUrl(url) {
 }
 function bootViewer(v) {
   PREVIEW_MODE = true;
+  if (v && v.sound === true) userHasInteracted = true;
   config.serverUrl = window.location.origin;
   const setup = document.getElementById("setupScreen");
   if (setup) setup.style.display = "none";

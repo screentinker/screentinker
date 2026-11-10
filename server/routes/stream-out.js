@@ -222,7 +222,7 @@ function renderer({ sendPlayer }) {
   r.get('/stream-render/:secret', (req, res) => {
     quiet(res);
     if (!bySecret(req.params.secret)) return res.status(404).type('text/plain').send('not found');
-    sendPlayer(res, 'index.html', { viewer: { payload_url: `/api/stream-feed/${req.params.secret}`, poll_ms: 1000, fast: true } });
+    sendPlayer(res, 'index.html', { viewer: { payload_url: `/api/stream-feed/${req.params.secret}`, poll_ms: 1000, fast: true, sound: true } });
   });
   r.get('/api/stream-feed/:secret', (req, res) => {
     quiet(res);

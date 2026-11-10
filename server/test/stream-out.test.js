@@ -158,7 +158,10 @@ test('a stream shows what was taken to it, with its graphic, to whoever holds it
   assert.equal((await call('GET', '/api/stream-feed/' + 'x'.repeat(43))).status, 404);
   assert.equal((await call('GET', `/api/stream-feed/${A.stream}`)).status, 404, 'the id is not the secret');
   assert.equal((await call('GET', '/stream-render/' + 'x'.repeat(43))).status, 404);
-  assert.match((await call('GET', `/stream-render/${secret}`)).text, /stream-feed/);
+  const renderPage = (await call('GET', `/stream-render/${secret}`)).text;
+  assert.match(renderPage, /stream-feed/);
+  assert.match(renderPage, /"sound":true/, 'the renderer plays with sound from the first item: a live stream never waits on a click to unmute');
+  assert.match(renderPage, /if \(v && v\.sound === true\) userHasInteracted = true;/);
 });
 
 test('a keyed overlay is passed to the screen as keyed, and the web player draws it with no box', () => {

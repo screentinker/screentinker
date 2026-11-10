@@ -3272,6 +3272,10 @@
 
     function bootViewer(v) {
       PREVIEW_MODE = true;
+      // A stream output's renderer (routes/stream-out.js): nobody will ever touch this page, and
+      // its browser is started with autoplay allowed, so sound is on from the first item. A live
+      // stream must never wait on a "click to unmute".
+      if (v && v.sound === true) userHasInteracted = true;
       config.serverUrl = window.location.origin;
       const setup = document.getElementById('setupScreen');
       if (setup) setup.style.display = 'none';
