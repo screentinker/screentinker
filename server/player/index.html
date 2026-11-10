@@ -6767,7 +6767,17 @@
       // whole wall switches together instead of the leader holding out for up to 60 s.
       const interruptNow = interruptChanged(oldPlaylist, playlist);
       if (interruptNow) console.log('Emergency alert raised/cleared — swapping now, not at the next advance');
-      if (isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow) {
+      /*
+       * The STAGE changed shape (a different layout, or none; a wall joined or left). The deferral
+       * waits for the fullscreen item's own advance, and a screen that was showing zones has no
+       * such advance: every zone runs its own timer and nothing ever calls nextItem. So leaving a
+       * multi-zone playlist for a fullscreen one with no item in common sat on the old zones until
+       * the 60 s safety net, and each further push re-armed it, while the dashboard showed the new
+       * playlist assigned. A changed stage is rebuilt now, exactly as the surviving-item branch
+       * above already does for the same change ("Layout or wall changed with the same items").
+       */
+      const stageChanged = layoutChanged || wallChanged;
+      if (isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow && !stageChanged) {
         deferredRotation = true;
         deferredSuccessorId = itemIdentity(playlist[nextIdx]);
         console.log('#157: current item removed but still live — deferring rotation-out');
