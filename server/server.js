@@ -1365,7 +1365,13 @@ app.get('/scripts/:name', (req, res) => {
   // Default to text/plain: a .sh or .bat is meant to be read in a browser before it is run, which
   // is the whole reason someone clicks one of these links rather than piping it to a shell.
   res.setHeader('Content-Type', SCRIPT_TYPES[ext] || 'text/plain; charset=utf-8');
-  res.sendFile(path.join(__dirname, '..', 'scripts', req.params.name));
+  // The deployment-supplied archives are absent on most instances. Without the callback an absent
+  // one went down the framework's error path, which prints the whole ENOENT object to the log for
+  // every request, from anyone (a provisioning player retries).
+  res.sendFile(path.join(__dirname, '..', 'scripts', req.params.name), (err) => {
+    if (!err || res.headersSent) return;
+    res.status(404).type('text/plain').send('not found');
+  });
 });
 
 // Serve socket.io client
