@@ -36,6 +36,7 @@ let procOpen = null;         // the strip whose processing is open on the desk: 
 /** Whether a strip's processing does anything: its EQ key is lit when it does. */
 const shaped = (st) => !!(st.hpf || st.gate || st.comp || st.fx || st.denoise || (st.eq && (st.eq.low || st.eq.mid || st.eq.high)));
 const knob = (s, strip, ctl, label, value, min, max, step, show) => `<label class="mx-knob">${esc(label)}<input type="range" min="${min}" max="${max}" step="${step}" value="${value}" data-proc="${esc(s.id)}" data-strip="${strip}" data-ctl="${ctl}"><output>${esc(show)}</output></label>`;
+const sizeOf = (n) => (n >= 1024 ** 3 ? (n / 1024 ** 3).toFixed(2) + ' GB' : (n / 1024 ** 2).toFixed(1) + ' MB');
 const dB = (v) => (v > 0 ? '+' : '') + v + ' dB';
 const pct = (v) => (v ? Math.round(v * 100) + '%' : t('mixer.audio_off'));
 /** The processing of one strip: what a desk channel has between its input and its fader. */
@@ -52,9 +53,12 @@ function procPanel(s, strip) {
         ${knob(s, strip, 'gate', t('mixer.audio_gate'), st.gate, 0, 1, 0.05, pct(st.gate))}
         ${knob(s, strip, 'comp', t('mixer.audio_comp'), st.comp, 0, 1, 0.05, pct(st.comp))}
         ${knob(s, strip, 'fx', t('mixer.audio_reverb'), st.fx, 0, 1, 0.05, pct(st.fx))}
-        ${'denoise' in st ? knob(s, strip, 'denoise', t('mixer.audio_denoise'), st.denoise, 0, 1, 0.1, pct(st.denoise)) : ''}`}
+        ${knob(s, strip, 'denoise', t('mixer.audio_denoise'), st.denoise, 0, 1, 0.05, pct(st.denoise))}
+        <span class="mx-knob mx-noise">${esc(t(st.noise ? 'mixer.audio_noise_learned' : 'mixer.audio_noise_auto'))}
+          <span class="mx-noise-keys"><button type="button" class="btn btn-secondary btn-sm" data-learn="${esc(s.id)}" data-strip="${strip}" ${s.status.state === 'live' ? '' : 'disabled'} title="${esc(t('mixer.audio_noise_learn_tip'))}">${esc(t('mixer.audio_noise_learn'))}</button>
+          ${st.noise ? `<button type="button" class="btn btn-secondary btn-sm" data-forget="${esc(s.id)}" data-strip="${strip}">${esc(t('mixer.audio_noise_forget'))}</button>` : ''}</span></span>`}
     </div>
-    <p class="mx-note">${esc(t(master ? 'mixer.audio_proc_master_note' : 'denoise' in st ? 'mixer.audio_proc_note_denoise' : 'mixer.audio_proc_note'))}</p>
+    <p class="mx-note">${esc(t(master ? 'mixer.audio_proc_master_note' : 'mixer.audio_proc_note'))}</p>
   </div>`;
 }
 let savingScene = false;
@@ -239,6 +243,8 @@ function draw(root) {
               <span class="mx-lamp mx-lamp-${streamTally(s)}"></span>
               <div class="mx-stream-what"><b>${esc(s.name)}</b><span>${esc(s.kind_label)}${s.url ? ' · ' + esc(s.url) : ''} · ${s.height}p${s.fps} · ${s.bitrate_k} kbps</span>
                 ${s.status.error || s.status.last_error ? `<span class="mx-stream-err">${esc(s.status.error || s.status.last_error)}</span>` : ''}</div>
+              ${s.status.recording ? `<span class="mx-rec" title="${esc(s.status.recording)}">${esc(t('mixer.rec_on'))}</span>` : (s.status.record_skipped ? `<span class="mx-stream-err">${esc(t('mixer.rec_skipped'))}</span>` : '')}
+              ${s.file_only ? '' : `<label class="mx-rec-check"><input type="checkbox" data-record="${esc(s.id)}" ${s.record ? 'checked' : ''} ${s.status.state === 'off' ? '' : 'disabled'}> ${esc(t('mixer.rec_also'))}</label>`}
               <span class="mx-stream-state">${esc(t('mixer.stream_state.' + s.status.state))}</span>
               ${s.status.state === 'off'
                 ? `<button type="button" class="btn btn-sm mx-golive" data-go="${esc(s.id)}">${esc(t('mixer.stream_go'))}</button><button type="button" class="btn btn-secondary btn-sm" data-del="${esc(s.id)}">${esc(t('common.delete'))}</button>`
@@ -246,12 +252,19 @@ function draw(root) {
             </div>`).join('')}</div>` : (addingStream ? '' : `<p class="mx-note mx-note-top">${esc(t('mixer.stream_none'))}</p>`)}
           ${addingStream ? `<form class="mx-stream-form" id="mxStreamForm">
             <label>${esc(t('mixer.stream_name'))}<input class="input" name="name" maxlength="80" required placeholder="${esc(t('mixer.stream_name_ph'))}"></label>
-            <label>${esc(t('mixer.stream_to'))}<select class="input" name="kind">${so.kinds.map((k) => `<option value="${esc(k.kind)}" data-url="${k.needs_url ? 1 : 0}">${esc(k.label)}</option>`).join('')}</select></label>
+            <label>${esc(t('mixer.stream_to'))}<select class="input" name="kind">${so.kinds.map((k) => `<option value="${esc(k.kind)}" data-url="${k.needs_url ? 1 : 0}" data-file="${k.file ? 1 : 0}">${esc(k.label)}</option>`).join('')}</select></label>
             <label class="mx-stream-url" hidden>${esc(t('mixer.stream_url'))}<input class="input" name="url" maxlength="500" placeholder="rtmp://"></label>
-            <label>${esc(t('mixer.stream_key'))}<input class="input" name="key" type="password" autocomplete="off" maxlength="600"></label>
+            <label class="mx-stream-key">${esc(t('mixer.stream_key'))}<input class="input" name="key" type="password" autocomplete="off" maxlength="600"></label>
             <label>${esc(t('mixer.stream_size'))}<select class="input" name="size">${so.sizes.map((z) => `<option value="${z.width}x${z.height}">${z.height}p</option>`).join('')}</select></label>
+            <label class="mx-rec-check mx-stream-rec"><input type="checkbox" name="record"> ${esc(t('mixer.rec_also'))}</label>
             <div class="mx-stream-form-actions"><button type="submit" class="btn btn-primary btn-sm">${esc(t('mixer.stream_save'))}</button><button type="button" class="btn btn-secondary btn-sm" id="mxStreamCancel">${esc(t('common.cancel'))}</button></div>
           </form>` : ''}
+          ${(so.recordings || []).length ? `<h4 class="mx-sub">${esc(t('mixer.recordings'))}</h4><div class="mx-stream-list">${so.recordings.map((r) => `
+            <div class="mx-stream-row">
+              <span class="mx-lamp mx-lamp-${r.recording ? 'air' : 'idle'}"></span>
+              <div class="mx-stream-what"><b>${esc(r.name)}</b><span>${esc(new Date(r.at).toLocaleString())} · ${esc(sizeOf(r.bytes))}</span></div>
+              ${r.recording ? `<span class="mx-rec">${esc(t('mixer.rec_on'))}</span>` : `<button type="button" class="btn btn-secondary btn-sm" data-recget="${esc(r.name)}">${esc(t('mixer.rec_download'))}</button><button type="button" class="btn btn-secondary btn-sm" data-recdel="${esc(r.name)}">${esc(t('common.delete'))}</button>`}
+            </div>`).join('')}</div>` : ''}
           <p class="mx-note">${esc(t('mixer.stream_note', { max: so.max }))}</p>
           ${so.ffmpeg && so.ffmpeg.licence && so.ffmpeg.licence !== 'lgpl' ? `<p class="mx-note mx-licence" role="note"><b>${esc(t('mixer.licence.title'))}</b> ${esc(t('mixer.licence.' + so.ffmpeg.licence, { version: so.ffmpeg.version || '' }))}</p>`
             : `<p class="mx-note">${esc(t('mixer.licence.lgpl'))}</p>`}`}
@@ -332,6 +345,7 @@ async function key(root, kind, given) {
   const b = given ? given.b : root.querySelector('#mxB').value.trim();
   const accent = given ? given.accent : root.querySelector('#mxC').value;
   if (!a) { showToast(t('mixer.gfx_need_text'), 'info'); root.querySelector('#mxA').focus(); return; }
+  if (kind === 'countdown' && !/^(\d{1,4}|\d{1,5}s|\d{1,3}:[0-5]\d|\d:[0-5]\d:[0-5]\d)$/i.test(a)) { showToast(t('mixer.gfx_need_time'), 'info'); root.querySelector('#mxA').focus(); return; }
   const g = state.graphics.find((x) => x.kind === kind);
   const W = 1920, H = 1080;
   const uri = `${window.location.origin}/gfx/${encodeURIComponent(kind)}?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}&accent=${encodeURIComponent(accent)}`;
@@ -461,6 +475,11 @@ function bind(root) {
   root.querySelectorAll('[data-procreset]').forEach((b) => b.addEventListener('click', async () => {
     await streamAudio(b.dataset.procreset, { strips: [{ strip: b.dataset.strip, hpf: false, eq: { low: 0, mid: 0, high: 0 }, gate: 0, comp: 0, fx: 0, denoise: 0 }] }); draw(root);
   }));
+  root.querySelectorAll('[data-learn]').forEach((b) => b.addEventListener('click', async () => {
+    b.disabled = true; b.textContent = t('mixer.audio_noise_learning');
+    await streamAudio(b.dataset.learn, { learn_noise: b.dataset.strip }); draw(root);
+  }));
+  root.querySelectorAll('[data-forget]').forEach((b) => b.addEventListener('click', async () => { await streamAudio(b.dataset.forget, { forget_noise: b.dataset.strip }); draw(root); }));
   root.querySelectorAll('[data-net]').forEach((el) => el.addEventListener('change', async () => { await streamAudio(el.dataset.net, { [el.dataset.strip + '_url']: el.value.trim() || null }); draw(root); }));
   root.querySelectorAll('[data-bed]').forEach((el) => el.addEventListener('change', async () => { await streamAudio(el.dataset.bed, { content_id: el.value || null }); draw(root); }));
   root.querySelectorAll('[data-out]').forEach((b) => b.addEventListener('click', () => {
@@ -481,18 +500,37 @@ function bind(root) {
   act('[data-go]', 'go', async (id) => { await call(`/stream-out/${encodeURIComponent(id)}/start`, { method: 'POST' }); showToast(t('mixer.toast.stream_starting'), 'success'); });
   act('[data-stop]', 'stop', (id) => call(`/stream-out/${encodeURIComponent(id)}/stop`, { method: 'POST' }));
   act('[data-del]', 'del', async (id) => { await call(`/stream-out/${encodeURIComponent(id)}`, { method: 'DELETE' }); outputs.delete(id); });
+  root.querySelectorAll('[data-record]').forEach((el) => el.addEventListener('change', async () => {
+    try { await call(`/stream-out/${encodeURIComponent(el.dataset.record)}`, { method: 'PUT', body: JSON.stringify({ record: el.checked }) }); } catch (err) { showToast(err.message, 'error'); }
+    redo();
+  }));
+  root.querySelectorAll('[data-recget]').forEach((b) => b.addEventListener('click', async () => {
+    try {
+      const { url } = await call(`/stream-out/recordings/${encodeURIComponent(b.dataset.recget)}/link`, { method: 'POST' });
+      const a = document.createElement('a'); a.href = url; a.download = b.dataset.recget; document.body.appendChild(a); a.click(); a.remove();
+    } catch (err) { showToast(err.message, 'error'); }
+  }));
+  root.querySelectorAll('[data-recdel]').forEach((b) => b.addEventListener('click', async () => {
+    if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = t('mixer.rec_delete_sure'); return; }   // second press deletes
+    try { await call(`/stream-out/recordings/${encodeURIComponent(b.dataset.recdel)}`, { method: 'DELETE' }); showToast(t('mixer.toast.rec_deleted'), 'info'); } catch (err) { showToast(err.message, 'error'); }
+    redo();
+  }));
   const add = root.querySelector('#mxAddStream'); if (add) add.addEventListener('click', () => { addingStream = true; draw(root); const f = root.querySelector('#mxStreamForm [name=name]'); if (f) f.focus(); });
   const form = root.querySelector('#mxStreamForm');
   if (form) {
     const kindSel = form.querySelector('[name=kind]'), urlRow = form.querySelector('.mx-stream-url');
-    const sync = () => { urlRow.hidden = kindSel.selectedOptions[0].dataset.url !== '1'; };
+    const sync = () => {
+      const o = kindSel.selectedOptions[0].dataset;
+      urlRow.hidden = o.url !== '1';
+      form.querySelector('.mx-stream-key').hidden = o.file === '1'; form.querySelector('.mx-stream-rec').hidden = o.file === '1';
+    };
     kindSel.addEventListener('change', sync); sync();
     root.querySelector('#mxStreamCancel').addEventListener('click', () => { addingStream = false; draw(root); });
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const f = new FormData(form); const [width, height] = String(f.get('size')).split('x').map(Number);
       try {
-        const made = await call('/stream-out', { method: 'POST', body: JSON.stringify({ name: f.get('name'), kind: f.get('kind'), url: f.get('url'), key: f.get('key'), width, height }) });
+        const made = await call('/stream-out', { method: 'POST', body: JSON.stringify({ name: f.get('name'), kind: f.get('kind'), url: f.get('url'), key: f.get('key'), width, height, record: f.get('record') === 'on' }) });
         addingStream = false; outputs.add(made.id);
         showToast(t('mixer.toast.stream_added'), 'success'); redo();
       } catch (err) { showToast(err.message, 'error'); }

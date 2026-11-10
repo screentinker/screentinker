@@ -86,7 +86,7 @@ test('the desk lists this workspace\'s screens and its playlists that have somet
   assert.ok(!r.body.screens.some((s) => s.name === 'Theirs'), 'not another workspace\'s screens');
   assert.ok(r.body.sources.some((p) => p.id === full));
   assert.ok(!r.body.sources.some((p) => p.id === empty), 'an empty playlist is not a source');
-  assert.deepEqual(r.body.graphics.map((g) => g.kind), ['lower-third', 'crawl', 'bug', 'title']);
+  assert.deepEqual(r.body.graphics.map((g) => g.kind), ['lower-third', 'crawl', 'bug', 'title', 'countdown', 'comment']);
 });
 
 test('a take puts the playlist on every chosen screen and says what each was showing', async () => {
@@ -142,7 +142,7 @@ test('a take is pushed as a cut, and the web player switches at once on it', () 
 
 test('a graphics page shows the text it is given as text, runs nothing, and can be framed by any player', async () => {
   const evil = '<img src=x onerror=alert(1)>"\'</style><script>alert(2)</script>';
-  for (const kind of ['lower-third', 'crawl', 'bug', 'title']) {
+  for (const kind of ['lower-third', 'crawl', 'bug', 'title', 'countdown', 'comment']) {
     const r = await call('GET', `/gfx/${kind}?a=${encodeURIComponent(evil)}&b=${encodeURIComponent(evil)}&accent=${encodeURIComponent('red;}</style>')}`);
     assert.equal(r.status, 200, kind);
     assert.match(r.headers.get('content-type') || '', /text\/html/);
@@ -157,6 +157,21 @@ test('a graphics page shows the text it is given as text, runs nothing, and can 
   assert.equal((await call('GET', '/gfx/nope?a=x')).status, 404);
   const long = await call('GET', '/gfx/title?a=' + 'A'.repeat(5000));
   assert.ok(long.text.length < 4000, 'text is capped');
+});
+
+test('a countdown reads its time, shows the right digits from the first second, and stops at zero', () => {
+  const gfx = require('../lib/mixer-gfx');
+  assert.deepEqual(['5', '5:00', '90s', '1:30:00', '0', '100:00', '5:75', 'soon', '', null].map(gfx.seconds), [300, 300, 90, 5400, null, null, null, null, null, null]);
+  // What a digit column shows at second t: the cell its stepped animation has reached. The cells run n-1 down to 0.
+  const shown = (html) => (t) => [...html.matchAll(/animation:roll(\d+) (\d+)s steps\(\d+\) -(\d+)s ([\d.]+) both/g)].map(([, n, cycle, offset, count]) => {
+    const at = Math.min(t, Number(count) * Number(cycle) - Number(offset) - 1e-6) + Number(offset);      // held where it ends
+    return Number(n) - 1 - Math.floor((at % Number(cycle)) / (Number(cycle) / Number(n)));
+  }).join('');
+  const at = shown(gfx.page('countdown', { a: '1:05' }));
+  assert.deepEqual([0.2, 4.5, 5.5, 64.5, 65.5, 500].map(at), ['105', '101', '100', '001', '000', '000']);
+  const long = shown(gfx.page('countdown', { a: '12:00' }));
+  assert.deepEqual([0.5, 1.5, 719.5, 9999].map(long), ['1200', '1159', '0001', '0000']);
+  assert.doesNotMatch(gfx.page('countdown', { a: 'x' }), /<script/i);
 });
 
 test('Broadcast is a view a person can choose and keep', async () => {

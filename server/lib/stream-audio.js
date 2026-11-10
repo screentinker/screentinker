@@ -17,10 +17,10 @@
  *               remote contributor, a wireless link's receiver, an AES67/RTP source or another
  *               studio comes in.
  *
- * Every input strip has the processing a desk channel has (lib/stream-dsp.js): high-pass, a
- * three-band EQ, a gate, a compressor, the fader, and a send to the reverb. The line and network
- * inputs can also have noise reduction, which takes a room's steady noise (air handling, hum,
- * hiss) out of the signal as it is decoded. The master has its own EQ and fader and ends in a
+ * Every input strip has the processing a desk channel has (lib/stream-dsp.js): noise floor
+ * subtraction (a room's steady noise, air handling, hum, hiss, taken out by frequency, from a
+ * learned print of the noise or a running estimate), high-pass, a three-band EQ, a gate, a
+ * compressor, the fader, and a send to the reverb. The master has its own EQ and fader and ends in a
  * limiter, so the sum is held under full scale instead of clipping.
  *
  * Each input is a child process that writes PCM to its stdout (ffmpeg in all three cases). The
@@ -58,7 +58,10 @@ function cleanSettings(s) {
   const out = {};
   for (const name of INPUTS) out[name] = strip(x[name]);
   out.line.device = typeof (x.line && x.line.device) === 'string' && /^plughw:\d{1,2},\d{1,2}$/.test(x.line.device) ? x.line.device : null;
-  for (const name of ['line', 'net', 'net2']) out[name].denoise = unit(x[name] && x[name].denoise);
+  for (const name of INPUTS) {
+    out[name].denoise = unit(x[name] && x[name].denoise);
+    out[name].noise = x[name] && dsp.isPrint(x[name].noise) ? x[name].noise : null;   // the learned noise print, packed
+  }
   for (const name of ['net', 'net2']) out[name].url = netUrl(x[name] && x[name].url);
   const m = x.master && typeof x.master === 'object' ? x.master : {};
   out.master = { level: level(m.level, 1), muted: !!m.muted, eq: dsp.cleanProcessing(m).eq };
@@ -71,6 +74,7 @@ class Mix {
     this.settings = cleanSettings(settings);
     this.inputs = new Map();     // name -> { q: Buffer[], bytes, stream, live, odd }
     this.strips = Object.fromEntries(INPUTS.map((n) => [n, new dsp.Strip()]));
+    this.denoisers = Object.fromEntries(INPUTS.map((n) => [n, new dsp.Denoiser()]));
     this.masterEq = new dsp.Strip();
     this.reverb = new dsp.Reverb();
     this.limiter = new dsp.Limiter();
@@ -105,7 +109,10 @@ class Mix {
     stream.on('error', () => {});
   }
 
-  detach(name) { this.inputs.delete(name); this.peaks[name] = 0; }
+  detach(name) { this.inputs.delete(name); this.peaks[name] = 0; this.denoisers[name].cancelLearn(); }
+
+  /** Listen to an input for a moment as noise. Resolves with its print (packed), or null. */
+  learnNoise(name, seconds) { return this.inputs.has(name) ? this.denoisers[name].learn(seconds) : Promise.resolve(null); }
 
   /** `n` bytes of mixed sound for right now. */
   next(n) {
@@ -127,6 +134,8 @@ class Mix {
         if (take === head.length) input.q.shift(); else input.q[0] = head.subarray(take);
       }
       if (!input.live && input.bytes < SECOND / 2 && input.stream.isPaused && input.stream.isPaused()) input.stream.resume();
+      const dn = this.denoisers[name];
+      dn.setPrint(set.noise); dn.run(buf, set.denoise);
       this.strips[name].run(buf, set);
       const gain = set.muted ? 0 : set.level;
       let peak = 0;
@@ -165,12 +174,10 @@ class Mix {
 const PCM_OUT = ['-vn', '-f', 's16le', '-ar', String(RATE), '-ac', '2', 'pipe:1'];
 const QUIET = ['-hide_banner', '-loglevel', 'error'];
 const bedArgs = (file) => [...QUIET, '-re', '-stream_loop', '-1', '-i', file, ...PCM_OUT];
-/** Noise reduction for an input that comes from a room: ffmpeg's FFT denoiser, set by one amount. */
-const denoise = (amount) => (amount > 0 ? ['-af', `afftdn=nr=${Math.round(6 + 30 * amount)}:nf=-${Math.round(50 - 15 * amount)}`] : []);
-const lineArgs = (device, amount = 0) => [...QUIET, '-f', 'alsa', '-ac', '2', '-i', device, ...denoise(amount), ...PCM_OUT];
+const lineArgs = (device) => [...QUIET, '-f', 'alsa', '-ac', '2', '-i', device, ...PCM_OUT];
 // The protocol list is closed: a playlist or session description fetched from the network cannot
 // point the decoder at a local file.
-const netArgs = (url, amount = 0) => [...QUIET, '-protocol_whitelist', 'srt,rtmp,rtmps,rtsp,rtp,udp,tcp,tls,http,https,crypto', '-fflags', 'nobuffer', '-i', url, ...denoise(amount), ...PCM_OUT];
+const netArgs = (url) => [...QUIET, '-protocol_whitelist', 'srt,rtmp,rtmps,rtsp,rtp,udp,tcp,tls,http,https,crypto', '-fflags', 'nobuffer', '-i', url, ...PCM_OUT];
 const programmeArgs = (sink) => [...QUIET, '-f', 'pulse', '-i', `${sink}.monitor`, ...PCM_OUT];
 function decoder(args) {
   const p = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'ignore'] });

@@ -21,10 +21,16 @@
  * as PCM at a steady rate beside the picture: the programme's own sound (when PulseAudio is on
  * the server), an audio bed, and a sound card input, each with a fader and mute, into a master.
  * With nothing to play the track is silence, which the services require anyway.
+ *
+ * RECORDING. An output can also be written to a file on this server while it streams (the same
+ * encode, sent to both: ffmpeg's tee), or only recorded (kind `record`). Files are Matroska, which
+ * stays playable when the encoder is killed mid-file, and live in <uploads>/recordings/<workspace>,
+ * a directory nothing serves: a recording is fetched through routes/stream-out.js.
  */
 
 const { spawn, execFile } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 const config = require('../config');
 
 const MAX_STREAMS = Math.max(1, Math.min(8, parseInt(process.env.STREAM_OUT_MAX || '2', 10) || 2));
@@ -36,6 +42,7 @@ const KINDS = {
   twitch: { label: 'Twitch', base: 'rtmp://live.twitch.tv/app' },
   rtmp: { label: 'Custom RTMP / RTMPS', base: null },
   srt: { label: 'SRT', base: null },
+  record: { label: 'Record to a file (no stream)', base: null, file: true },
 };
 const SIZES = [[1280, 720], [1920, 1080]];
 const { RATE, FRAME, MAX_LEVEL } = require('./stream-audio');
@@ -78,6 +85,12 @@ function validate(input, { needKey = true } = {}) {
   const name = String(input.name || '').trim().slice(0, 80);
   if (!name) return { error: 'Give the stream a name.' };
   let url = null;
+  if (KINDS[kind].file) {
+    const size = SIZES.find(([w, h]) => w === Number(input.width) && h === Number(input.height)) || SIZES[0];
+    const fps = Number(input.fps) === 60 ? 60 : (Number(input.fps) === 25 ? 25 : 30);
+    const bitrate = Math.max(800, Math.min(12000, Math.round(Number(input.bitrate_k) || (size[0] === 1920 ? 6000 : 3500))));
+    return { ok: true, value: { kind, name, url: null, key: '', width: size[0], height: size[1], fps, bitrate_k: bitrate, record: true } };
+  }
   if (!KINDS[kind].base) {
     let u; try { u = new URL(String(input.url || '').trim()); } catch { return { error: 'That address is not a URL.' }; }
     const okProto = kind === 'srt' ? ['srt:'] : ['rtmp:', 'rtmps:'];
@@ -92,7 +105,7 @@ function validate(input, { needKey = true } = {}) {
   const size = SIZES.find(([w, h]) => w === Number(input.width) && h === Number(input.height)) || SIZES[0];
   const fps = Number(input.fps) === 60 ? 60 : (Number(input.fps) === 25 ? 25 : 30);
   const bitrate = Math.max(800, Math.min(12000, Math.round(Number(input.bitrate_k) || (size[0] === 1920 ? 6000 : 3500))));
-  return { ok: true, value: { kind, name, url, key, width: size[0], height: size[1], fps, bitrate_k: bitrate } };
+  return { ok: true, value: { kind, name, url, key, width: size[0], height: size[1], fps, bitrate_k: bitrate, record: input.record === true || input.record === 1 } };
 }
 
 /** The address ffmpeg is given. It contains the key: never log it, never return it. */
@@ -102,7 +115,44 @@ function targetUrl(row, key) {
   return key ? `${base}/${key}` : base;
 }
 
-function ffmpegArgs({ width, height, fps, bitrate_k, target, kind, encoder = ENCODER }) {
+// ── recordings ───────────────────────────────────────────────────────────────────────────────────
+const REC_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.mkv$/;
+const MIN_FREE = 2 * 1024 ** 3;      // a recording is not started with less than this free
+function recordingsDir(workspaceId) { return path.join(config.uploadsDir, 'recordings', String(workspaceId).replace(/[^A-Za-z0-9_-]/g, '')); }
+/** The path of a recording by name, or null when the name is not one this module writes. */
+function recordingPath(workspaceId, name) {
+  if (typeof name !== 'string' || !REC_NAME.test(name)) return null;
+  const dir = recordingsDir(workspaceId), file = path.join(dir, name);
+  return path.dirname(file) === dir ? file : null;
+}
+/** A new file for this output, or null when the disk is too full (or cannot be written). */
+function newRecording(row, now = new Date()) {
+  const dir = recordingsDir(row.workspace_id);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    if (typeof fs.statfsSync === 'function') { const st = fs.statfsSync(dir); if (st.bavail * st.bsize < MIN_FREE) return null; }
+  } catch { return null; }
+  const stamp = now.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+  const base = String(row.name).normalize('NFKD').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'recording';
+  return path.join(dir, `${base}-${stamp}.mkv`);
+}
+function listRecordings(workspaceId) {
+  const dir = recordingsDir(workspaceId), live = new Set([...sessions.values()].map((s) => s.recFile).filter(Boolean));
+  let names = []; try { names = fs.readdirSync(dir); } catch { return []; }
+  return names.filter((n) => REC_NAME.test(n)).map((n) => {
+    try { const st = fs.statSync(path.join(dir, n)); return { name: n, bytes: st.size, at: Math.round(st.mtimeMs), recording: live.has(path.join(dir, n)) }; } catch { return null; }
+  }).filter(Boolean).sort((a, b) => b.at - a.at);
+}
+/** One slave of ffmpeg's tee muxer: the characters tee reads as syntax are escaped. */
+const teeSlave = (opts, target) => `[${opts}]${String(target).replace(/[\\'|\[\]]/g, '\\$&')}`;
+
+function ffmpegArgs({ width, height, fps, bitrate_k, target, kind, recordFile = null, encoder = ENCODER }) {
+  // Where it goes: a service, a file, or both from the one encode. When both, the stream is the
+  // one that matters: it ending ends ffmpeg (and the reconnect starts); the file failing does not.
+  const out = !target ? ['-f', 'matroska', recordFile]
+    : !recordFile ? ['-f', kind === 'srt' ? 'mpegts' : 'flv', target]
+      : ['-map', '0:v', '-map', '1:a', '-flags', '+global_header', '-f', 'tee',
+        `${teeSlave(`f=${kind === 'srt' ? 'mpegts' : 'flv'}:onfail=abort`, target)}|${teeSlave('f=matroska:onfail=ignore', recordFile)}`];
   return [
     '-hide_banner', '-loglevel', 'warning',
     '-f', 'image2pipe', '-framerate', String(fps), '-c:v', 'mjpeg', '-i', 'pipe:0',
@@ -112,14 +162,14 @@ function ffmpegArgs({ width, height, fps, bitrate_k, target, kind, encoder = ENC
     '-b:v', `${bitrate_k}k`, '-maxrate', `${bitrate_k}k`, '-bufsize', `${bitrate_k * 2}k`,
     '-g', String(fps * 2), '-r', String(fps),
     '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
-    '-shortest', '-f', kind === 'srt' ? 'mpegts' : 'flv', target,
+    '-shortest', ...out,
   ];
 }
 
 /** ffmpeg's last words, with the key and the address taken out. */
 function redact(text, row, key) {
   let s = String(text || '');
-  for (const secret of [targetUrl(row, key), key].filter((x) => x && x.length >= 4)) s = s.split(secret).join('[hidden]');
+  for (const secret of [KINDS[row.kind].file ? '' : targetUrl(row, key), key].filter((x) => x && x.length >= 4)) s = s.split(secret).join('[hidden]');
   return s.replace(/\s+/g, ' ').trim().slice(-300);
 }
 
@@ -131,7 +181,8 @@ function status(id) {
   if (!s) return { state: 'off' };
   return { state: s.state, since: s.since, frames: s.sent, error: s.error || null, audio_peak: Math.round(s.mix.peaks.master * 100) / 100,
     audio_peaks: Object.fromEntries(Object.entries(s.mix.peaks).map(([k, v]) => [k, Math.round(v * 100) / 100])), programme_audio: !!s.sink,
-    limiting: Math.round(s.mix.limiting * 10) / 10, inputs_live: Object.keys(s.inputs) };
+    limiting: Math.round(s.mix.limiting * 10) / 10, inputs_live: Object.keys(s.inputs),
+    recording: s.recFile ? path.basename(s.recFile) : null, record_skipped: !!s.recSkipped };
 }
 function localBaseUrl() { return global.__localApiOrigin || `http://127.0.0.1:${process.env.PORT || config.port || 3001}`; }
 
@@ -151,9 +202,9 @@ const audio = require('./stream-audio');
 function inputKey(s, name) {
   const set = s.mix.settings[name];
   if (name === 'bed') return s.bedFile || '';
-  if (name === 'line') return set.device ? `${set.device}|${set.denoise}` : '';
+  if (name === 'line') return set.device || '';
   if (name === 'programme') return s.sink ? s.sink.name : '';
-  return set.url ? `${set.url}|${set.denoise}` : '';
+  return set.url || '';
 }
 /** (Re)start one input of a running stream from its settings. */
 function startInput(s, name) {
@@ -163,9 +214,9 @@ function startInput(s, name) {
   s.inputKeys[name] = key;
   if (!key) return;
   const proc = audio.decoder(name === 'bed' ? audio.bedArgs(s.bedFile)
-    : name === 'line' ? audio.lineArgs(set.device, set.denoise)
+    : name === 'line' ? audio.lineArgs(set.device)
       : name === 'programme' ? audio.programmeArgs(s.sink.name)
-        : audio.netArgs(set.url, set.denoise));
+        : audio.netArgs(set.url));
   s.inputs[name] = proc;
   s.mix.attach(name, proc.stdout, { live: name !== 'bed' });
   // An input that ends (a network feed dropping, a device unplugged) is tried again while the
@@ -192,6 +243,13 @@ function setAudio(id, next) {
   s.bedFile = (next && next.file) || null;
   for (const name of audio.INPUTS) if (inputKey(s, name) !== (s.inputKeys[name] || '')) startInput(s, name);
   return true;
+}
+
+/** Listen to one input of a live stream as noise. Resolves with its print, or null (not live, no such input). */
+function learnNoise(id, name) {
+  const s = sessions.get(id);
+  if (!s || !audio.INPUTS.includes(name)) return Promise.resolve(null);
+  return Promise.race([s.mix.learnNoise(name, 1.5), new Promise((r) => setTimeout(() => r(null), 5000).unref())]);
 }
 
 async function start(row, key, sound) {
@@ -241,7 +299,12 @@ async function start(row, key, sound) {
  *  page has not changed: a still image must not stall the stream. */
 function encode(s) {
   const { row } = s;
-  const ff = spawn('ffmpeg', ffmpegArgs({ ...row, target: targetUrl(row, s.key) }), { stdio: ['pipe', 'ignore', 'pipe', 'pipe'] });
+  // Each run of the encoder (the first, and each reconnect) writes a recording of its own.
+  const fileOnly = !!KINDS[row.kind].file;
+  s.recFile = row.record || fileOnly ? newRecording(row) : null;
+  s.recSkipped = !!(row.record || fileOnly) && !s.recFile;
+  if (fileOnly && !s.recFile) { s.error = 'There is not enough free disk space on this server to record.'; setImmediate(() => stop(s.id, 'error')); return; }
+  const ff = spawn('ffmpeg', ffmpegArgs({ ...row, target: fileOnly ? null : targetUrl(row, s.key), recordFile: s.recFile }), { stdio: ['pipe', 'ignore', 'pipe', 'pipe'] });
   s.ff = ff; s.t0 = Date.now(); s.written = 0;
   // Sound, paced by the same clock as the picture: every 20 ms, the samples that are now due.
   const snd = ff.stdio[3]; let sndBytes = 0;
@@ -297,4 +360,4 @@ function lastError(id) { const e = stopped.get(id); return e ? e.error : null; }
 async function stopAll() { await Promise.all([...sessions.keys()].map((id) => stop(id))); }
 process.on('exit', () => { for (const s of sessions.values()) { try { s.ff && s.ff.kill('SIGKILL'); } catch { /* */ } try { Object.values(s.inputs).forEach((p) => p.kill('SIGKILL')); } catch { /* */ } try { s.browser && s.browser.process() && s.browser.process().kill('SIGKILL'); } catch { /* */ } } });
 
-module.exports = { MAX_LEVEL, applyGain, setAudio, KINDS, SIZES, MAX_STREAMS, availability, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };
+module.exports = { recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };

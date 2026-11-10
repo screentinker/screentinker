@@ -554,6 +554,9 @@
 .mx-stream-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: end; margin-top: 12px; padding: 12px; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: var(--radius); }
 .mx-stream-form label { display: grid; gap: 4px; font-size: 12px; color: var(--text-secondary); }
 .mx-stream-form label[hidden] { display: none; }
+.mx-stream-form .mx-rec-check, .mx-rec-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+.mx-rec { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: #fff; background: var(--danger); border-radius: 3px; padding: 2px 6px; }
+.mx-sub { margin: 16px 0 8px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .mx-stream-form-actions { display: flex; gap: 8px; }
 .mx-note-top { margin-top: 0; }
 .mx-licence { padding: 10px 12px; border: 1px solid var(--warning); border-radius: var(--radius); background: var(--warning-dim); color: var(--text-primary); }
@@ -651,6 +654,8 @@
 .mx-knob { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-size: 12px; color: var(--text-secondary); }
 .mx-knob input[type="range"] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
 .mx-knob output { grid-row: 1; grid-column: 2; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.mx-noise { grid-template-columns: 1fr; }
+.mx-noise-keys { display: flex; gap: 6px; flex-wrap: wrap; }
 .mx-knob-check { display: flex; align-items: center; gap: 8px; grid-column: 1 / -1; color: var(--text-primary); }
 .mx-group-src { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
 .mx-live { color: var(--success); font-weight: 700; }

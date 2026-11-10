@@ -859,6 +859,7 @@ CREATE TABLE IF NOT EXISTS stream_outputs (
     audio_level     REAL NOT NULL DEFAULT 1,
     audio_muted     INTEGER NOT NULL DEFAULT 0,
     audio_mix       TEXT,                                    -- JSON: the mixer's strips (lib/stream-audio.js cleanSettings)
+    record          INTEGER NOT NULL DEFAULT 0,              -- also write the stream to a file on this server
     feed_secret     TEXT NOT NULL UNIQUE,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );

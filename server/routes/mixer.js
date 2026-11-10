@@ -92,6 +92,7 @@ function cleanScene(req, b) {
   let graphic = null;
   if (b.graphic && typeof b.graphic === 'object') {
     if (!gfx.KINDS.includes(b.graphic.kind) || !String(b.graphic.a || '').trim()) return { error: 'A scene\'s graphic needs a kind and its text.' };
+    if (b.graphic.kind === 'countdown' && !gfx.seconds(b.graphic.a)) return { error: 'A countdown needs a time on line 1, like 5:00 or 10 (minutes).' };
     graphic = { kind: b.graphic.kind, a: String(b.graphic.a).slice(0, 120), b: String(b.graphic.b || '').slice(0, 200), accent: /^#[0-9a-fA-F]{6}$/.test(b.graphic.accent || '') ? b.graphic.accent : '#ff2a1f' };
   }
   const cameras = [];

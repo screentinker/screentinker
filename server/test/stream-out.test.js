@@ -301,13 +301,12 @@ test('sound inputs are read from the system\'s own list, and settings are made s
   const s = audio.cleanSettings({ line: { device: 'hw:0; rm -rf /', level: 99, eq: { low: 'x', mid: -50 }, gate: 7, denoise: -1 }, master: { muted: 1, level: -3, comp: 1 }, extra: { level: 1 }, net: { url: 'file:///etc/passwd' } });
   assert.deepEqual(Object.keys(s).sort(), ['bed', 'fx', 'line', 'master', 'net', 'net2', 'programme']);
   assert.deepEqual(s.master, { level: 0, muted: true, eq: { low: 0, mid: 0, high: 0 } });
-  assert.deepEqual(s.line, { level: audio.MAX_LEVEL, muted: false, hpf: false, eq: { low: 0, mid: -12, high: 0 }, gate: 1, comp: 0, fx: 0, device: null, denoise: 0 });
+  assert.deepEqual(s.line, { level: audio.MAX_LEVEL, muted: false, hpf: false, eq: { low: 0, mid: -12, high: 0 }, gate: 1, comp: 0, fx: 0, device: null, denoise: 0, noise: null });
   assert.equal(s.net.url, null);
-  const args = audio.netArgs('udp://239.0.0.1:5004', 0.5);
+  const args = audio.netArgs('udp://239.0.0.1:5004');
   assert.equal(args[args.indexOf('-i') + 1], 'udp://239.0.0.1:5004', 'the feed is one argument');
   assert.doesNotMatch(args[args.indexOf('-protocol_whitelist') + 1], /file|concat|pipe/, 'the decoder cannot be pointed at a local file by what it fetches');
-  assert.match(args.join(' '), /-af afftdn=/, 'noise reduction is part of the decode');
-  assert.ok(!audio.netArgs('udp://239.0.0.1:5004', 0).includes('-af'));
+  assert.ok(!args.includes('-af'), 'the decode is plain: noise is taken out in the mixer, where the control is live');
   assert.equal(audio.cleanSettings({ line: { device: 'plughw:2,0' } }).line.device, 'plughw:2,0');
   assert.deepEqual(audio.lineArgs('plughw:2,0').slice(3, 9), ['-f', 'alsa', '-ac', '2', '-i', 'plughw:2,0'], 'the device is one argument');
 });
@@ -366,4 +365,125 @@ test('a channel\'s reverb send and EQ are heard in the mix', async () => {
   const after = (m) => { const o = ints(m.next(audio.SECOND / 2)); return Math.max(...o.map(Math.abs)); };
   assert.equal(after(dry), 0, 'dry: nothing after the sound ends');
   assert.ok(after(wet) > 200, 'with the send up, the room is still ringing');
+});
+
+/*
+ * NOISE FLOOR SUBTRACTION (lib/stream-dsp.js Denoiser). Measured on known signals: steady noise
+ * has to go down by a real amount, what stands above the noise has to come through at its level,
+ * and with the control at zero the strip is untouched.
+ */
+let seed = 7; const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32 - 0.5; };
+const hiss = (amp, sec) => { const b = new Float32Array(dsp.RATE * sec * 2); for (let i = 0; i < b.length; i++) b[i] = rnd() * amp; return b; };
+const inBlocks = (dn, buf, amount) => { for (let i = 0; i < buf.length; i += 1764) dn.run(buf.subarray(i, Math.min(buf.length, i + 1764)), amount); return buf; };
+
+test('noise subtraction takes steady noise down, with a learned print or without one, and leaves the signal at its level', async () => {
+  const dn = new dsp.Denoiser();
+  const learning = dn.learn(1.5);
+  const heard = hiss(0.02, 2), was = Float32Array.from(heard);
+  inBlocks(dn, heard, 0);
+  assert.ok(heard.every((v, i) => v === was[i]), 'learning with the control at zero does not change the sound');
+  const print = await learning;
+  assert.ok(dsp.isPrint(print), 'the print is a short string that can be stored');
+  dn.setPrint(print);
+  const noise = hiss(0.02, 2), level = rmsDb(noise, 0);
+  assert.ok(rmsDb(inBlocks(dn, noise, 0.6)) < level - 12, 'noise alone goes down by more than 12 dB');
+  const both = hiss(0.02, 2), tone = sine(1000, 0.3, 2); for (let i = 0; i < both.length; i++) both[i] += tone[i];
+  assert.ok(Math.abs(rmsDb(inBlocks(dn, both, 0.6)) - rmsDb(tone)) < 0.5, 'a tone over the noise comes through at its own level');
+  // Speech-like: bursts of tone with gaps. The bursts keep their level.
+  const bursts = hiss(0.02, 3); let burstSum = 0, n = 0;
+  for (let i = 0; i < bursts.length / 2; i++) { if (Math.floor(i / (dsp.RATE * 0.25)) % 2 === 0) { const v = 0.3 * Math.sin(2 * Math.PI * 700 * i / dsp.RATE); bursts[2 * i] += v; bursts[2 * i + 1] += v; } }
+  inBlocks(dn, bursts, 0.6);
+  for (let i = dsp.RATE; i < bursts.length / 2; i++) { const j = i - dsp.NFFT; if (Math.floor(j / (dsp.RATE * 0.25)) % 2 === 0 && (j % (dsp.RATE * 0.25)) > 2000) { burstSum += bursts[2 * i] ** 2; n++; } }
+  assert.ok(Math.abs(10 * Math.log10(burstSum / n) - 20 * Math.log10(0.3 / Math.SQRT2)) < 1, 'bursts between gaps keep their level');
+  // No print: the estimate comes from the signal itself.
+  const auto = new dsp.Denoiser(), n2 = hiss(0.02, 4);
+  assert.ok(rmsDb(inBlocks(auto, n2, 0.6)) < level - 12, 'and without a print the running estimate finds the floor');
+  // Off is off.
+  const off = sine(440, 0.4), ref = Float32Array.from(off); new dsp.Denoiser().run(off, 0);
+  assert.ok(off.every((v, i) => v === ref[i]));
+});
+
+test('a noise print is kept only when it is one, belongs to its strip, and is never sent to the desk', async () => {
+  const print = Buffer.alloc(513, 90).toString('base64');
+  const s = audio.cleanSettings({ line: { noise: print, denoise: 0.4 }, bed: { noise: '../../etc/passwd' }, net: { noise: { a: 1 } }, programme: { denoise: 2 } });
+  assert.equal(s.line.noise, print); assert.equal(s.bed.noise, null); assert.equal(s.net.noise, null); assert.equal(s.programme.denoise, 1);
+  const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Noise', kind: 'rtmp', url: 'rtmp://ingest.example.com/live', key: KEY })).body;
+  const off = await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { learn_noise: 'line' });
+  assert.equal(off.status, 409, 'there is nothing to listen to while the stream is off');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { learn_noise: 'master' })).status, 400);
+  db.prepare('UPDATE stream_outputs SET audio_mix = ? WHERE id = ?').run(JSON.stringify({ line: { noise: print, denoise: 0.4 } }), so.id);
+  const seen = await call('GET', '/api/stream-out', A.jwt);
+  const mix = seen.body.outputs.find((o) => o.id === so.id).audio.mix;
+  assert.equal(mix.line.noise, true); assert.equal(mix.bed.noise, false);
+  assert.ok(!seen.text.includes(print), 'the desk is told a print is kept, not handed it');
+  const turned = await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { strips: [{ strip: 'line', denoise: 0.7 }] });
+  assert.equal(turned.body.audio.mix.line.denoise, 0.7);
+  assert.equal(JSON.parse(db.prepare('SELECT audio_mix FROM stream_outputs WHERE id = ?').get(so.id).audio_mix).line.noise, print, 'turning a control keeps the print');
+  const gone = await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { forget_noise: 'line' });
+  assert.equal(gone.body.audio.mix.line.noise, false);
+  await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+});
+
+/*
+ * RECORDING. A stream can be written to a file on the server as well, or only recorded. What has
+ * to hold: the file goes where nothing serves it, a workspace reaches only its own recordings and
+ * only by a name this module could have written, a download link is a random ticket for one file,
+ * and the stream key cannot break out of the encoder's output syntax.
+ */
+test('an output can be recorded, or be a recording only, and the encoder is told so safely', () => {
+  const rec = streamOut.validate({ kind: 'record', name: 'Tape' });
+  assert.ok(rec.ok); assert.deepEqual([rec.value.url, rec.value.key, rec.value.record], [null, '', true]);
+  assert.equal(streamOut.validate({ kind: 'youtube', name: 'Y', key: 'k', record: true }).value.record, true);
+  assert.equal(streamOut.validate({ kind: 'youtube', name: 'Y', key: 'k', record: 'yes' }).value.record, false);
+  const base = { width: 1280, height: 720, fps: 30, bitrate_k: 3500 };
+  const only = streamOut.ffmpegArgs({ ...base, kind: 'record', target: null, recordFile: '/r/a.mkv' });
+  assert.deepEqual(only.slice(-3), ['-f', 'matroska', '/r/a.mkv']);
+  const plain = streamOut.ffmpegArgs({ ...base, kind: 'rtmp', target: 'rtmp://h/live/k' });
+  assert.deepEqual(plain.slice(-3), ['-f', 'flv', 'rtmp://h/live/k'], 'without recording nothing changes');
+  const both = streamOut.ffmpegArgs({ ...base, kind: 'rtmp', target: "rtmp://h/live/a|b[f=null]'c\\d", recordFile: '/r/a.mkv' });
+  assert.deepEqual(both.slice(-3, -1), ['-f', 'tee']);
+  assert.equal(both[both.length - 1], "[f=flv:onfail=abort]rtmp://h/live/a\\|b\\[f=null\\]\\'c\\\\d|[f=matroska:onfail=ignore]/r/a.mkv",
+    'a key cannot add an output or an option: the stream ending ends the encoder, the file failing does not');
+  const srt = streamOut.ffmpegArgs({ ...base, kind: 'srt', target: 'srt://h:9000?streamid=x', recordFile: '/r/a.mkv' });
+  assert.match(srt[srt.length - 1], /^\[f=mpegts:onfail=abort\]srt:/);
+});
+
+test('a recording is named by this server, lives in its workspace\'s own directory, and only such names resolve', () => {
+  const ws = 'ws-1234', dir = streamOut.recordingsDir(ws);
+  assert.ok(dir.endsWith(path.join('uploads', 'recordings', ws)));
+  assert.ok(!dir.includes(path.join('uploads', 'content')), 'not under the directory the server serves');
+  assert.equal(streamOut.recordingPath(ws, 'Show-20261110-101500.mkv'), path.join(dir, 'Show-20261110-101500.mkv'));
+  for (const bad of ['../x.mkv', '..%2Fx.mkv', 'a/b.mkv', 'x.mp4', '.mkv', '', null, 'a\0.mkv', 'x.mkv/..', '../../db/remote_display.db']) assert.equal(streamOut.recordingPath(ws, bad), null, String(bad));
+  assert.equal(streamOut.recordingsDir('../../etc'), streamOut.recordingsDir('etc'), 'a workspace id cannot climb either');
+});
+
+test('recordings are listed, linked and deleted per workspace; a link is a ticket for one file', async () => {
+  const dirA = path.join(DATA_DIR, 'uploads', 'recordings', A.wsId); fs.mkdirSync(dirA, { recursive: true });
+  fs.writeFileSync(path.join(dirA, 'Show-20261110-101500.mkv'), 'matroska-bytes'); fs.writeFileSync(path.join(dirA, 'notes.txt'), 'x');
+  const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Rec', kind: 'record' })).body;
+  assert.deepEqual([so.kind, so.has_key, so.record, so.file_only], ['record', false, true, true]);
+  const yt = (await call('POST', '/api/stream-out', A.jwt, { name: 'Both', kind: 'youtube', key: KEY, record: true })).body;
+  assert.equal(yt.record, true);
+  assert.equal((await call('PUT', `/api/stream-out/${yt.id}`, A.jwt, { record: false })).body.record, false);
+  assert.equal((await call('PUT', `/api/stream-out/${yt.id}`, A.jwt, { name: 'Both again' })).body.record, false, 'a change that does not mention it leaves it');
+  assert.equal((await call('PUT', `/api/stream-out/${yt.id}`, V.jwt, { record: true })).status, 403);
+  const mineList = await call('GET', '/api/stream-out/recordings', A.jwt);
+  assert.deepEqual(mineList.body.recordings.map((r) => [r.name, r.bytes, r.recording]), [['Show-20261110-101500.mkv', 14, false]], 'only recordings are listed');
+  assert.deepEqual((await call('GET', '/api/stream-out', A.jwt)).body.recordings.map((r) => r.name), ['Show-20261110-101500.mkv']);
+  assert.deepEqual((await call('GET', '/api/stream-out/recordings', B.jwt)).body.recordings, [], 'another workspace sees none of them');
+  assert.equal((await call('POST', '/api/stream-out/recordings/Show-20261110-101500.mkv/link', B.jwt)).status, 404);
+  assert.equal((await call('DELETE', '/api/stream-out/recordings/Show-20261110-101500.mkv', B.jwt)).status, 404);
+  assert.equal((await call('DELETE', '/api/stream-out/recordings/Show-20261110-101500.mkv', V.jwt)).status, 403, 'a read-only member cannot delete');
+  assert.equal((await call('POST', '/api/stream-out/recordings/notes.txt/link', A.jwt)).status, 404);
+  assert.equal((await call('POST', '/api/stream-out/recordings/' + encodeURIComponent('../../db/remote_display.db') + '/link', A.jwt)).status, 404);
+  assert.equal((await call('GET', '/api/stream-out/recordings')).status, 401);
+  const link = await call('POST', '/api/stream-out/recordings/Show-20261110-101500.mkv/link', A.jwt);
+  assert.match(link.body.url, /^\/stream-recording\/[A-Za-z0-9_-]{43}$/);
+  const got = await call('GET', link.body.url);
+  assert.equal(got.status, 200); assert.equal(got.text, 'matroska-bytes');
+  assert.equal((await call('GET', '/stream-recording/' + 'A'.repeat(43))).status, 404, 'a guessed ticket is nothing');
+  assert.equal((await call('DELETE', '/api/stream-out/recordings/Show-20261110-101500.mkv', A.jwt)).status, 200);
+  assert.ok(!fs.existsSync(path.join(dirA, 'Show-20261110-101500.mkv'))); assert.ok(fs.existsSync(path.join(dirA, 'notes.txt')), 'and nothing else is touched');
+  assert.equal((await call('GET', link.body.url)).status, 404, 'the ticket does not outlive the file');
+  for (const id of [so.id, yt.id]) await call('DELETE', `/api/stream-out/${id}`, A.jwt);
 });

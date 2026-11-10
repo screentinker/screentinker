@@ -5,6 +5,7 @@
  *
  * What a channel strip on a broadcast desk does, in the order a desk does it:
  *
+ *   noise       subtracts the steady noise floor under the signal (Denoiser, below)
  *   high-pass   takes out rumble and handling noise below 80 Hz
  *   EQ          three bands: low shelf (120 Hz), mid bell (1.2 kHz), high shelf (8 kHz), ±12 dB
  *   gate        closes the channel when it falls below a threshold: the room between sentences
@@ -178,4 +179,161 @@ class Limiter {
   }
 }
 
-module.exports = { RATE, Biquad, Strip, Reverb, Limiter, cleanProcessing, dbToLin };
+// ── noise floor subtraction ──────────────────────────────────────────────────────────────────────
+const NFFT = 1024, HOP = NFFT / 4, BINS = NFFT / 2 + 1;
+const HANN = Float32Array.from({ length: NFFT }, (_, i) => 0.5 - 0.5 * Math.cos(2 * Math.PI * i / NFFT));
+const COS = Float32Array.from({ length: NFFT / 2 }, (_, i) => Math.cos(2 * Math.PI * i / NFFT));
+const SIN = Float32Array.from({ length: NFFT / 2 }, (_, i) => Math.sin(2 * Math.PI * i / NFFT));
+const REV = Uint16Array.from({ length: NFFT }, (_, i) => { let r = 0; for (let b = 0, x = i; b < 10; b++, x >>= 1) r = (r << 1) | (x & 1); return r; });
+/** In-place radix-2 FFT of NFFT points. `inv` gives the inverse, scaled. */
+function fft(re, im, inv) {
+  for (let i = 0; i < NFFT; i++) { const j = REV[i]; if (j > i) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+  for (let size = 2; size <= NFFT; size <<= 1) {
+    const half = size >> 1, step = NFFT / size;
+    for (let i = 0; i < NFFT; i += size) {
+      for (let j = 0, k = 0; j < half; j++, k += step) {
+        const wr = COS[k], wi = inv ? SIN[k] : -SIN[k];
+        const xr = re[i + j + half] * wr - im[i + j + half] * wi, xi = re[i + j + half] * wi + im[i + j + half] * wr;
+        re[i + j + half] = re[i + j] - xr; im[i + j + half] = im[i + j] - xi;
+        re[i + j] += xr; im[i + j] += xi;
+      }
+    }
+  }
+  if (inv) for (let i = 0; i < NFFT; i++) { re[i] /= NFFT; im[i] /= NFFT; }
+}
+
+/** A noise print as stored: one byte per frequency bin, in half-dB steps up from -127.5 dB, base64. */
+const PRINT_LEN = Math.ceil(BINS / 3) * 4;
+const isPrint = (v) => typeof v === 'string' && v.length === PRINT_LEN && /^[A-Za-z0-9+/]+=*$/.test(v);
+function packPrint(power) {
+  const b = Buffer.alloc(BINS);
+  for (let k = 0; k < BINS; k++) b[k] = Math.max(0, Math.min(255, Math.round((10 * Math.log10(power[k] + 1e-20) + 127.5) * 2)));
+  return b.toString('base64');
+}
+function unpackPrint(text) {
+  const b = Buffer.from(text, 'base64'), p = new Float32Array(BINS);
+  for (let k = 0; k < BINS; k++) p[k] = Math.pow(10, (b[k] / 2 - 127.5) / 10);
+  return p;
+}
+
+/**
+ * NOISE FLOOR SUBTRACTION: takes the steady noise under a signal (air handling, hum, hiss, a
+ * camera's preamp) out of it, by frequency.
+ *
+ * The sound is cut into overlapping 23 ms frames and each is taken to its spectrum. In every
+ * frequency bin, the noise that is known to be there is subtracted from what arrived, and the bin
+ * is turned down by the result: a bin that is all noise goes down to the floor, a bin with signal
+ * well above the noise is left alone. The frames are then put back together.
+ *
+ * What "the noise that is known to be there" is:
+ *   a learned print   learn() listens for a second and a half while nobody speaks and keeps the
+ *                     average spectrum. The most exact, and it does not move afterwards.
+ *   or, with no print,  a running estimate: the quietest each bin has been in the last second or
+ *                     two, which is the noise as long as the signal has gaps in it (speech does;
+ *                     continuous music does not, so learn a print for that).
+ *
+ * It delays the strip by one frame (23 ms). It is not echo cancellation and does not remove a
+ * room's reverberation.
+ */
+class Denoiser {
+  constructor() {
+    const ch = () => ({ inp: new Float32Array(NFFT), out: new Float32Array(NFFT), re: new Float32Array(NFFT), im: new Float32Array(NFFT) });
+    this.c = [ch(), ch()];
+    this.w = 0; this.since = 0;
+    this.gain = new Float32Array(BINS).fill(1);
+    this.snr = new Float32Array(BINS);                     // each bin's signal-to-noise as last concluded
+    this.smooth = new Float32Array(BINS);                  // smoothed power per bin, for the running estimate
+    this.minNow = new Float32Array(BINS).fill(Infinity); this.minOld = new Float32Array(BINS).fill(Infinity);
+    this.frames = 0;
+    this.print = null; this.printKey = null;               // learned noise power per bin
+    this.learning = null;                                  // { sum, left, done }
+    this.on = false;
+  }
+
+  /** Use a stored print (or none). Decoded only when it changes. */
+  setPrint(text) {
+    const key = isPrint(text) ? text : null;
+    if (key === this.printKey) return;
+    this.printKey = key; this.print = key ? unpackPrint(key) : null;
+  }
+
+  /** Listen to the next `seconds` of this strip as noise. Resolves with the print, packed. */
+  learn(seconds = 1.5) {
+    return new Promise((resolve) => {
+      if (this.learning) this.learning.done(null);
+      this.learning = { sum: new Float64Array(BINS), n: 0, left: Math.max(8, Math.round(seconds * RATE / HOP)), done: resolve };
+    });
+  }
+  cancelLearn() { if (this.learning) { const l = this.learning; this.learning = null; l.done(null); } }
+
+  _frame(amount) {
+    const [L, R] = this.c, w = this.w;
+    for (const c of [L, R]) {
+      for (let i = 0; i < NFFT; i++) { c.re[i] = c.inp[(w + i) & (NFFT - 1)] * HANN[i]; c.im[i] = 0; }
+      fft(c.re, c.im, false);
+    }
+    const lr = this.learning;
+    const over = 1 + 3 * amount, floor = dbToLin(-6 - 30 * amount);
+    this.frames++;
+    const turn = this.frames % 70 === 0;                   // every 0.4 s the "quietest so far" starts again
+    for (let k = 0; k < BINS; k++) {
+      const p = (L.re[k] * L.re[k] + L.im[k] * L.im[k] + R.re[k] * R.re[k] + R.im[k] * R.im[k]) * 0.5;
+      const sm = this.smooth[k] = this.frames === 1 ? p : 0.8 * this.smooth[k] + 0.2 * p;
+      if (sm < this.minNow[k]) this.minNow[k] = sm;
+      if (lr) lr.sum[k] += p;
+      // The quietest a smoothed bin has been sits under the noise's average: 1.7 brings it back up.
+      const noise = this.print ? this.print[k] : Math.min(this.minNow[k], this.minOld[k]) * 1.7;
+      // How far the bin stands above its noise, judged over time as well as now ("decision
+      // directed": mostly what the last frame concluded, a little of this one). A single frame's
+      // spectrum of noise is ragged; judging each frame alone lets isolated bins flicker open,
+      // which is what sounds like water.
+      let g = 1;
+      if (amount > 0 && noise > 0 && Number.isFinite(noise)) {
+        const post = p / (over * noise + 1e-20);
+        const prio = 0.96 * this.snr[k] + 0.04 * Math.max(0, post - 1);
+        g = prio / (1 + prio);
+        if (g < floor) g = floor;
+        this.snr[k] = Math.min(1e6, g * g * post);
+      } else this.snr[k] = 0;
+      this.gain[k] = g;
+    }
+    if (turn) { this.minOld.set(this.minNow); this.minNow.fill(Infinity); }
+    if (lr) {
+      lr.n++;
+      if (--lr.left <= 0) {
+        const mean = new Float32Array(BINS); for (let k = 0; k < BINS; k++) mean[k] = lr.sum[k] / lr.n;
+        this.learning = null; lr.done(packPrint(mean));
+      }
+    }
+    for (const c of [L, R]) {
+      for (let k = 0; k < BINS; k++) {
+        const g = this.gain[k]; c.re[k] *= g; c.im[k] *= g;
+        if (k > 0 && k < NFFT / 2) { c.re[NFFT - k] *= g; c.im[NFFT - k] *= g; }
+      }
+      fft(c.re, c.im, true);
+      // Four frames overlap at every sample; with a Hann window on the way in and on the way out they sum to 1.5.
+      for (let i = 0; i < NFFT; i++) c.out[(w + i) & (NFFT - 1)] += c.re[i] * HANN[i] / 1.5;
+    }
+  }
+
+  /** In place, interleaved stereo. `amount` 0 while nothing is being learned costs nothing. */
+  run(buf, amount) {
+    if (!(amount > 0) && !this.learning) {
+      if (this.on) { this.on = false; for (const c of this.c) { c.inp.fill(0); c.out.fill(0); } this.gain.fill(1); this.snr.fill(0); this.frames = 0; this.minNow.fill(Infinity); this.minOld.fill(Infinity); }
+      return;
+    }
+    this.on = true;
+    const [L, R] = this.c;
+    for (let i = 0; i + 1 < buf.length; i += 2) {
+      const w = this.w;
+      L.inp[w] = buf[i]; R.inp[w] = buf[i + 1];
+      // Learning with the control at zero listens without changing the sound.
+      if (amount > 0) { buf[i] = L.out[w]; buf[i + 1] = R.out[w]; }
+      L.out[w] = 0; R.out[w] = 0;
+      this.w = (w + 1) & (NFFT - 1);
+      if (++this.since === HOP) { this.since = 0; this._frame(amount > 0 ? amount : 0); }
+    }
+  }
+}
+
+module.exports = { RATE, Biquad, Strip, Reverb, Limiter, Denoiser, cleanProcessing, dbToLin, isPrint, NFFT };

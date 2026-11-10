@@ -8,6 +8,9 @@
  *   DELETE /api/stream-out/:id         remove it (stops it first)
  *   POST   /api/stream-out/:id/start   go live                  POST /:id/stop
  *   POST   /api/stream-out/:id/gfx     key a graphic over it    POST /:id/gfx/clear
+ *   GET    /api/stream-out/recordings  this workspace's recordings
+ *   POST   /api/stream-out/recordings/:name/link   a one-minute download link
+ *   DELETE /api/stream-out/recordings/:name
  *
  * Session only (not reachable with an API token): it holds stream keys and starts encoders on the
  * server. The key is write-only: stored encrypted, never sent back. Self-hosted instances only;
@@ -46,14 +49,19 @@ function mixOf(row) {
   return audio.cleanSettings(saved || { bed: { level: row.audio_level, muted: !!row.audio_muted } });
 }
 /** The strips as the desk may see them: a network feed's password is not shown. */
-function shown(mix) { for (const n of ['net', 'net2']) mix[n].url = audio.maskUrl(mix[n].url); return mix; }
+function shown(mix) {
+  for (const n of ['net', 'net2']) mix[n].url = audio.maskUrl(mix[n].url);
+  for (const n of audio.INPUTS) mix[n].noise = !!mix[n].noise;   // whether a noise print is kept, not the print
+  return mix;
+}
 const audioOf = (row) => ({ file: bedOf(row).file, settings: mixOf(row) });
 
 const pub = (r) => ({
   id: r.id, name: r.name, kind: r.kind, kind_label: streamOut.KINDS[r.kind] ? streamOut.KINDS[r.kind].label : r.kind,
   url: r.url || null, has_key: !!r.key_enc, playlist_id: r.playlist_id || null,
   playlist_name: r.playlist_id ? ((db.prepare('SELECT name FROM playlists WHERE id = ?').get(r.playlist_id) || {}).name || null) : null,
-  width: r.width, height: r.height, fps: r.fps, bitrate_k: r.bitrate_k,
+  width: r.width, height: r.height, fps: r.fps, bitrate_k: r.bitrate_k, record: !!r.record || !!(streamOut.KINDS[r.kind] && streamOut.KINDS[r.kind].file),
+  file_only: !!(streamOut.KINDS[r.kind] && streamOut.KINDS[r.kind].file),
   graphic: !!r.gfx_json,
   audio: { content_id: bedOf(r).id, name: bedOf(r).name, level: mixOf(r).bed.level, muted: mixOf(r).bed.muted, mix: shown(mixOf(r)) },
   status: { ...streamOut.status(r.id), last_error: streamOut.lastError(r.id) },
@@ -76,7 +84,7 @@ router.get('/', async (req, res) => {
     available: a.available, reason: a.reason, max: streamOut.MAX_STREAMS,
     // Which ffmpeg this server has, so the desk can say what licence it is under.
     ffmpeg: a.ffmpeg ? { present: a.ffmpeg.present, licence: a.ffmpeg.licence, version: a.ffmpeg.version } : null,
-    kinds: Object.entries(streamOut.KINDS).map(([kind, k]) => ({ kind, label: k.label, needs_url: !k.base })),
+    kinds: Object.entries(streamOut.KINDS).map(([kind, k]) => ({ kind, label: k.label, needs_url: !k.base && !k.file, file: !!k.file })),
     sizes: streamOut.SIZES.map(([width, height]) => ({ width, height })),
     max_level: streamOut.MAX_LEVEL,
     // What the mixer can take in on this server: sound card inputs, and the programme's own sound
@@ -85,7 +93,29 @@ router.get('/', async (req, res) => {
     programme_audio: a.available ? await audio.pulse().catch(() => false) : false,
     audio_sources: a.reason === 'hosted' ? [] : db.prepare("SELECT id, filename AS name FROM content WHERE workspace_id = ? AND mime_type LIKE 'audio/%' ORDER BY LOWER(filename) LIMIT 200").all(req.workspaceId),
     outputs: rows.map(pub),
+    recordings: a.reason === 'hosted' ? [] : streamOut.listRecordings(req.workspaceId),
   });
+});
+
+// ── recordings ───────────────────────────────────────────────────────────────────────────────────
+// A recording is gigabytes, so the browser downloads it itself with a link, not through a session
+// request: the link is a random ticket for that one file, good for a minute.
+const tickets = new Map();   // ticket -> { file, name, until }
+router.get('/recordings', (req, res) => res.json({ recordings: streamOut.listRecordings(req.workspaceId) }));
+router.post('/recordings/:name/link', (req, res) => {
+  const file = streamOut.recordingPath(req.workspaceId, req.params.name);
+  if (!file || !fs.existsSync(file)) return res.status(404).json({ error: 'Recording not found' });
+  for (const [k, v] of tickets) if (v.until < Date.now()) tickets.delete(k);
+  const ticket = crypto.randomBytes(32).toString('base64url');
+  tickets.set(ticket, { file, name: req.params.name, until: Date.now() + 60000 });
+  res.json({ url: `/stream-recording/${ticket}` });
+});
+router.delete('/recordings/:name', requireFleetWrite, (req, res) => {
+  const file = streamOut.recordingPath(req.workspaceId, req.params.name);
+  if (!file || !fs.existsSync(file)) return res.status(404).json({ error: 'Recording not found' });
+  if (streamOut.listRecordings(req.workspaceId).some((x) => x.name === req.params.name && x.recording)) return res.status(409).json({ error: 'That recording is still being written. Stop the stream first.' });
+  try { fs.unlinkSync(file); } catch (e) { return res.status(500).json({ error: 'The file could not be removed.' }); }
+  res.json({ success: true });
 });
 
 router.post('/', gate, requireFleetWrite, (req, res) => {
@@ -93,9 +123,9 @@ router.post('/', gate, requireFleetWrite, (req, res) => {
   if (!v.ok) return res.status(400).json({ error: v.error });
   if (db.prepare('SELECT COUNT(*) AS n FROM stream_outputs WHERE workspace_id = ?').get(req.workspaceId).n >= 20) return res.status(400).json({ error: 'That is the most stream destinations a workspace can keep.' });
   const id = crypto.randomUUID(), x = v.value;
-  db.prepare(`INSERT INTO stream_outputs (id, workspace_id, name, kind, url, key_enc, width, height, fps, bitrate_k, feed_secret)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, req.workspaceId, x.name, x.kind, x.url, secretbox.encrypt(x.key), x.width, x.height, x.fps, x.bitrate_k, crypto.randomBytes(32).toString('base64url'));
+  db.prepare(`INSERT INTO stream_outputs (id, workspace_id, name, kind, url, key_enc, width, height, fps, bitrate_k, record, feed_secret)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, req.workspaceId, x.name, x.kind, x.url, x.key ? secretbox.encrypt(x.key) : null, x.width, x.height, x.fps, x.bitrate_k, x.record ? 1 : 0, crypto.randomBytes(32).toString('base64url'));
   res.status(201).json(pub(mine(req, id)));
 });
 
@@ -105,11 +135,11 @@ router.put('/:id', gate, requireFleetWrite, (req, res) => {
   if (streamOut.status(r.id).state !== 'off') return res.status(409).json({ error: 'Stop the stream before changing it.' });
   const b = req.body || {};
   // An empty key field means "keep the key that is stored".
-  const v = streamOut.validate({ ...r, ...b, key: b.key || 'kept' }, { needKey: false });
+  const v = streamOut.validate({ ...r, record: !!r.record, ...b, key: b.key || 'kept' }, { needKey: false });
   if (!v.ok) return res.status(400).json({ error: v.error });
   const x = v.value;
-  db.prepare('UPDATE stream_outputs SET name = ?, kind = ?, url = ?, key_enc = ?, width = ?, height = ?, fps = ?, bitrate_k = ? WHERE id = ?')
-    .run(x.name, x.kind, x.url, b.key ? secretbox.encrypt(x.key) : r.key_enc, x.width, x.height, x.fps, x.bitrate_k, r.id);
+  db.prepare('UPDATE stream_outputs SET name = ?, kind = ?, url = ?, key_enc = ?, width = ?, height = ?, fps = ?, bitrate_k = ?, record = ? WHERE id = ?')
+    .run(x.name, x.kind, x.url, b.key ? secretbox.encrypt(x.key) : r.key_enc, x.width, x.height, x.fps, x.bitrate_k, x.record ? 1 : 0, r.id);
   res.json(pub(mine(req, r.id)));
 });
 
@@ -138,7 +168,7 @@ router.post('/:id/stop', requireFleetWrite, async (req, res) => {
 });
 
 // The stream's sound: which audio bed (or none), the fader and mute. Live on a running stream.
-router.post('/:id/audio', gate, requireFleetWrite, (req, res) => {
+router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
   const r = mine(req, req.params.id);
   if (!r) return res.status(404).json({ error: 'Stream not found' });
   const b = req.body || {};
@@ -169,7 +199,7 @@ router.post('/:id/audio', gate, requireFleetWrite, (req, res) => {
     if (st.eq && typeof st.eq === 'object') target.eq = { ...target.eq, ...st.eq };
     if (st.strip !== 'master') {
       for (const k of ['hpf', 'gate', 'comp', 'fx']) if (st[k] !== undefined) target[k] = st[k];
-      if (st.denoise !== undefined && 'denoise' in target) target.denoise = st.denoise;
+      if (st.denoise !== undefined) target.denoise = st.denoise;
     }
   }
   for (const n of ['net', 'net2']) {
@@ -181,6 +211,19 @@ router.post('/:id/audio', gate, requireFleetWrite, (req, res) => {
     else mix[n].url = audio.netUrl(b[field]);
   }
   if (b.fx && typeof b.fx === 'object' && b.fx.decay !== undefined) mix.fx = { decay: b.fx.decay };
+  // The noise print of a strip: learned from what the input is carrying right now (so the stream
+  // must be live and whoever is on the microphone quiet), or forgotten.
+  if (b.forget_noise !== undefined) {
+    if (!audio.INPUTS.includes(b.forget_noise)) return res.status(400).json({ error: 'No such strip.' });
+    mix[b.forget_noise].noise = null;
+  }
+  if (b.learn_noise !== undefined) {
+    if (!audio.INPUTS.includes(b.learn_noise)) return res.status(400).json({ error: 'No such strip.' });
+    const print = await streamOut.learnNoise(r.id, b.learn_noise);
+    if (!print) return res.status(409).json({ error: 'The noise can only be learned while the stream is live and that input is connected.' });
+    mix[b.learn_noise].noise = print;
+    if (!mix[b.learn_noise].denoise) mix[b.learn_noise].denoise = 0.5;
+  }
   if ('line_device' in b) {
     if (b.line_device == null || b.line_device === '') mix.line.device = null;
     else if (!audio.captureDevices().some((d) => d.device === b.line_device)) return res.status(400).json({ error: 'That sound input is not on this server.' });
@@ -199,6 +242,7 @@ router.post('/:id/gfx', gate, requireFleetWrite, (req, res) => {
   const b = req.body || {};
   if (!gfx.KINDS.includes(b.kind)) return res.status(400).json({ error: 'Unknown graphic' });
   if (!String(b.a || '').trim()) return res.status(400).json({ error: 'A graphic needs its text.' });
+  if (b.kind === 'countdown' && !gfx.seconds(b.a)) return res.status(400).json({ error: 'A countdown needs a time on line 1, like 5:00 or 10 (minutes).' });
   const q = new URLSearchParams({ a: String(b.a).slice(0, 120), b: String(b.b || '').slice(0, 200), accent: String(b.accent || '') });
   const box = gfx.BOX[b.kind];
   db.prepare('UPDATE stream_outputs SET gfx_json = ? WHERE id = ?').run(JSON.stringify({
@@ -241,6 +285,12 @@ function renderer({ sendPlayer }) {
     quiet(res);
     if (!bySecret(req.params.secret)) return res.status(404).type('text/plain').send('not found');
     sendPlayer(res, 'index.html', { viewer: { payload_url: `/api/stream-feed/${req.params.secret}`, poll_ms: 1000, fast: true, sound: true } });
+  });
+  r.get('/stream-recording/:ticket', (req, res) => {
+    quiet(res);
+    const t = tickets.get(req.params.ticket);
+    if (!t || t.until < Date.now() || !fs.existsSync(t.file)) return res.status(404).type('text/plain').send('This download link has expired. Ask for it again from the mixer.');
+    res.download(t.file, t.name);
   });
   r.get('/api/stream-feed/:secret', (req, res) => {
     quiet(res);
