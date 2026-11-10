@@ -78,15 +78,17 @@ router.get('/:orgId/ownership', requireAuth, loadOrg, (req, res) => {
   });
 });
 
-router.post('/:orgId/ownership', requireAuth, loadOrg, (req, res) => {
-  if (!req.mayTransfer) return res.status(403).json({ error: 'Only the organization\'s owner can hand it to someone else.' });
-  const org = req.org;
-  const targetId = req.body && typeof req.body.user_id === 'string' ? req.body.user_id : null;
-  if (!targetId) return res.status(400).json({ error: 'user_id required' });
-  if (targetId === org.owner_user_id) return res.status(400).json({ error: 'That person already owns this organization.' });
+/**
+ * Make `targetId` the owner of `org`. Every rule of a hand-over lives here, for the two routes
+ * that can cause one (handing over, and the owner leaving with a successor).
+ * Returns { refuse: [status, body] } having changed nothing, or { target, previous, orgPays }.
+ */
+function handOver(req, org, targetId) {
+  if (!targetId) return { refuse: [400, { error: 'user_id required' }] };
+  if (targetId === org.owner_user_id) return { refuse: [400, { error: 'That person already owns this organization.' }] };
   const target = peopleIn(org.id).find((p) => p.id === targetId);
-  if (!target) return res.status(400).json({ error: 'Choose someone who is already in this organization. Invite them first if they are not.' });
-  if (isDisabled(targetId)) return res.status(400).json({ error: 'That account is deactivated.' });
+  if (!target) return { refuse: [400, { error: 'Choose someone who is already in this organization. Invite them first if they are not.' }] };
+  if (isDisabled(targetId)) return { refuse: [400, { error: 'That account is deactivated.' }] };
 
   const previousId = org.owner_user_id;
   const orgPays = limits.billingSource() === 'org';
@@ -95,10 +97,10 @@ router.post('/:orgId/ownership', requireAuth, loadOrg, (req, res) => {
     const from = limits.getUserPlan(previousId), to = limits.getUserPlan(targetId);
     const fromId = from ? from.plan_id : null, toId = to ? to.plan_id : null;
     if (fromId !== toId && !(req.body && req.body.acknowledge_plan_change === true)) {
-      return res.status(409).json({
+      return { refuse: [409, {
         error: `This organization runs on its owner's plan. Handing it over moves it from ${from ? from.plan_display_name : 'no plan'} to ${to ? to.plan_display_name : 'no plan'}; the current subscription stays with the person paying for it.`,
         code: 'PLAN_FOLLOWS_OWNER', from_plan: fromId, to_plan: toId,
-      });
+      }] };
     }
   }
 
@@ -115,9 +117,9 @@ router.post('/:orgId/ownership', requireAuth, loadOrg, (req, res) => {
     }
   })();
 
-  const prevUser = db.prepare('SELECT id, name, email FROM users WHERE id = ?').get(previousId);
+  const previous = db.prepare('SELECT id, name, email FROM users WHERE id = ?').get(previousId);
   logActivity(req.user.id, 'org:ownership_transferred',
-    `${org.name}: from ${prevUser ? prevUser.email : previousId} to ${target.email}`, null, getClientIp(req));
+    `${org.name}: from ${previous ? previous.email : previousId} to ${target.email}`, null, getClientIp(req));
 
   // The organization's Stripe customer writes to its owner. Best effort, after the answer.
   if (orgPays) {
@@ -129,13 +131,116 @@ router.post('/:orgId/ownership', requireAuth, loadOrg, (req, res) => {
       } catch (e) { console.warn(`[org-ownership] could not move the Stripe contact for ${org.id}: ${e.message}`); }
     });
   }
+  return { target, previous, orgPays };
+}
 
+router.post('/:orgId/ownership', requireAuth, loadOrg, (req, res) => {
+  if (!req.mayTransfer) return res.status(403).json({ error: 'Only the organization\'s owner can hand it to someone else.' });
+  const org = req.org;
+  const r = handOver(req, org, req.body && typeof req.body.user_id === 'string' ? req.body.user_id : null);
+  if (r.refuse) return res.status(r.refuse[0]).json(r.refuse[1]);
   res.json({
     organization: { id: org.id, name: org.name },
-    owner: publicUser(target),
-    previous_owner: publicUser(prevUser),
-    plan_follows_owner: !orgPays,
+    owner: publicUser(r.target),
+    previous_owner: publicUser(r.previous),
+    plan_follows_owner: !r.orgPays,
   });
+});
+
+/*
+ * LEAVING.
+ *
+ * Membership could only be ended by an administrator, so a member who wanted out had to ask and
+ * the owner could not go at all. Leaving is the person's own decision:
+ *
+ *   GET  /api/organizations/mine          the organizations I am in, and what leaving each needs
+ *   POST /api/organizations/:orgId/leave  { new_owner_id?, acknowledge_plan_change? }
+ *
+ * THE OWNER leaves only by naming a successor in the same request (409 OWNER_MUST_HAND_OVER
+ * otherwise): the hand-over happens first, by every rule above, and if it is refused nothing has
+ * changed and they are still the owner and still a member.
+ * A WORKSPACE IS NOT LEFT HEADLESS: someone who is the only administrator of a workspace other
+ * people are still in has to make one of them an administrator first (409 LAST_WORKSPACE_ADMIN).
+ * What they made stays: screens, content and playlists belong to the workspace.
+ */
+const candidatesFor = (org) => peopleIn(org.id).filter((p) => p.id !== org.owner_user_id && !isDisabled(p.id))
+  .map((p) => ({ id: p.id, name: p.name || null, email: p.email, org_role: p.org_role || null }));
+
+/** Workspaces of this organization where `userId` is the ONLY administrator and others remain. */
+function headlessIfGone(orgId, userId) {
+  return db.prepare(`
+    SELECT w.id, w.name FROM workspaces w
+      JOIN workspace_members me ON me.workspace_id = w.id AND me.user_id = ? AND me.role = 'workspace_admin'
+     WHERE w.organization_id = ?
+       AND NOT EXISTS (SELECT 1 FROM workspace_members a WHERE a.workspace_id = w.id AND a.role = 'workspace_admin' AND a.user_id != ?)
+       AND EXISTS (SELECT 1 FROM workspace_members o WHERE o.workspace_id = w.id AND o.user_id != ?)`).all(userId, orgId, userId, userId);
+}
+
+router.get('/mine', requireAuth, (req, res) => {
+  const orgs = db.prepare(`
+    SELECT o.id, o.name, o.owner_user_id FROM organizations o
+     WHERE o.id IN (SELECT organization_id FROM organization_members WHERE user_id = ?
+                    UNION SELECT w.organization_id FROM workspace_members wm JOIN workspaces w ON w.id = wm.workspace_id WHERE wm.user_id = ?)
+     ORDER BY LOWER(o.name)`).all(req.user.id, req.user.id);
+  res.json({ organizations: orgs.map((o) => {
+    const isOwner = o.owner_user_id === req.user.id;
+    const blocking = isOwner ? [] : headlessIfGone(o.id, req.user.id);
+    const candidates = isOwner ? candidatesFor(o) : [];
+    return {
+      id: o.id, name: o.name, is_owner: isOwner,
+      needs_new_owner: isOwner,
+      candidates,
+      last_admin_of: blocking,
+      // The owner can leave once they pick someone; a sole owner has nobody to pick.
+      can_leave: isOwner ? candidates.length > 0 : blocking.length === 0,
+      plan_follows_owner: limits.billingSource() !== 'org',
+    };
+  }) });
+});
+
+router.post('/:orgId/leave', requireAuth, (req, res) => {
+  const org = db.prepare('SELECT id, name, owner_user_id FROM organizations WHERE id = ?').get(req.params.orgId);
+  if (!org || !peopleIn(org.id).some((p) => p.id === req.user.id)) return res.status(404).json({ error: 'Organization not found' });
+  const me = req.user.id;
+
+  if (org.owner_user_id === me) {
+    const successor = req.body && typeof req.body.new_owner_id === 'string' ? req.body.new_owner_id : null;
+    if (!successor) {
+      const candidates = candidatesFor(org);
+      return res.status(409).json({
+        error: candidates.length
+          ? 'You own this organization. Choose who takes it over, then you can leave.'
+          : 'You own this organization and nobody else is in it. Invite someone to take it over, or delete it.',
+        code: 'OWNER_MUST_HAND_OVER', candidates,
+      });
+    }
+    const r = handOver(req, org, successor);
+    if (r.refuse) return res.status(r.refuse[0]).json(r.refuse[1]);
+  } else {
+    const blocking = headlessIfGone(org.id, me);
+    if (blocking.length) {
+      return res.status(409).json({
+        error: `You are the only administrator of ${blocking.map((w) => w.name).join(', ')}. Make someone else an administrator there first.`,
+        code: 'LAST_WORKSPACE_ADMIN', workspaces: blocking,
+      });
+    }
+  }
+
+  const wsIds = db.prepare(`SELECT wm.workspace_id AS id FROM workspace_members wm JOIN workspaces w ON w.id = wm.workspace_id
+                             WHERE w.organization_id = ? AND wm.user_id = ?`).all(org.id, me).map((r) => r.id);
+  db.transaction(() => {
+    db.prepare('DELETE FROM organization_members WHERE organization_id = ? AND user_id = ?').run(org.id, me);
+    if (wsIds.length) {
+      db.prepare(`DELETE FROM workspace_members WHERE user_id = ? AND workspace_id IN (${wsIds.map(() => '?').join(',')})`).run(me, ...wsIds);
+      // What they set up under their own name goes with the membership (lib/user-deletion.js).
+      require('../lib/user-deletion').releaseWorkspaceMember(db, { userId: me, workspaceIds: wsIds });
+    }
+  })();
+  for (const id of wsIds) { try { require('../ws/dashboardSocket').dropUserFromWorkspace(me, id); } catch (_) { /* best effort */ } }
+  logActivity(me, 'org:member_left', `${org.name} (${wsIds.length} workspace${wsIds.length === 1 ? '' : 's'})`, null, getClientIp(req));
+  const now = db.prepare('SELECT owner_user_id FROM organizations WHERE id = ?').get(org.id);
+  res.json({ success: true, organization: { id: org.id, name: org.name }, left_workspaces: wsIds.length,
+    owner: publicUser(db.prepare('SELECT id, name, email FROM users WHERE id = ?').get(now.owner_user_id)) });
 });
 
 module.exports = router;
