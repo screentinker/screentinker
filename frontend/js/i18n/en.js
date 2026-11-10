@@ -3099,6 +3099,14 @@ export default {
 
   // Settings
   'settings.title': 'Settings',
+  'appearance.title': 'Appearance',
+  'appearance.intro': 'Choose how the dashboard looks in this browser. Your screens are not affected.',
+  'appearance.theme.control-room.name': 'Control room',
+  'appearance.theme.control-room.desc': 'Dim graphite, so your screens are the brightest thing on the page.',
+  'appearance.theme.light.name': 'Light',
+  'appearance.theme.light.desc': 'The same design for a bright room.',
+  'appearance.theme.classic.name': 'Classic',
+  'appearance.theme.classic.desc': 'The look from version 3, with its gradients.',
   'settings.subtitle': 'Server configuration and setup information',
   'settings.account': 'Account',
   // API Tokens

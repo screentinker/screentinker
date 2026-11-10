@@ -32,16 +32,18 @@
     // Same rule as branding.js applyAccent (this is a plain script, so it cannot import it): the
     // default colour is not a brand, so only a customised one flattens the gradient palette.
     if (wl.primary_color) {
-      root.style.setProperty('--accent', wl.primary_color);
       var custom = String(wl.primary_color).trim().toLowerCase() !== '#3b82f6';
-      ['--accent-2', '--accent-3'].forEach(function (v) {
+      ['--accent', '--accent-2', '--accent-3'].forEach(function (v) {
         if (custom) root.style.setProperty(v, wl.primary_color); else root.style.removeProperty(v);
       });
     }
-    if (wl.bg_color) {
+    // The server's default background (#111827) is not a choice: leave the page to the theme.
+    if (wl.bg_color && String(wl.bg_color).trim().toLowerCase() !== '#111827') {
       root.style.setProperty('--bg-primary', wl.bg_color);
       var meta = document.querySelector('meta[name="theme-color"]');
       if (meta) meta.setAttribute('content', wl.bg_color);
+    } else {
+      root.style.removeProperty('--bg-primary');
     }
     if (wl.brand_name) {
       document.title = wl.brand_name;

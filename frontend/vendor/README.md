@@ -117,3 +117,11 @@ be kept as a separate file next to it. Record the licence below and add a `<name
   curl -sL https://unpkg.com/leaflet@1.9.4/dist/leaflet.css -o frontend/vendor/leaflet/leaflet.css
   curl -sL https://raw.githubusercontent.com/Leaflet/Leaflet/v1.9.4/LICENSE -o frontend/vendor/leaflet/leaflet.LICENSE
   ```
+
+## Barlow (`fonts/barlow/`)
+
+- **What:** the dashboard's typeface in the Control room and Light themes (css/variables.css).
+- **Version / licence:** from `@fontsource/barlow` 5.3.0, SIL Open Font License 1.1 (`OFL.txt` beside the files).
+- **Files:** `barlow-latin-{400,500,600,700}-normal.woff2`, `barlow-latin-ext-{400,500,600,700}-normal.woff2`.
+- **Why committed:** a self-hosted or offline instance must look the same; nothing is fetched from a font service.
+- **Regenerate / update:** download the `@fontsource/barlow` tarball from the npm registry and copy those eight files and its `LICENSE`.

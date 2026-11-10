@@ -19,6 +19,7 @@ import { mountBrandKit } from '../components/brand-kit-editor.js';
 import { formatRow, buyPack, usd } from '../components/ai-hosted-picker.js';
 import { mountDeleteAccountCard } from '../components/delete-account.js';
 import { mountLeaveOrganizations } from '../components/leave-organization.js';
+import { mountThemePicker } from '../components/theme-picker.js';
 
 export async function render(container) {
   const serverUrl = `${window.location.protocol}//${window.location.host}`;
@@ -55,6 +56,13 @@ export async function render(container) {
       </div>
     </div>
 
+    <!-- How the dashboard looks (components/theme-picker.js). First, because it is the setting people
+         look for on their first visit here. -->
+    <div class="settings-section" id="appearanceCard">
+      <h3>${t('appearance.title')}</h3>
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">${t('appearance.intro')}</p>
+      <div id="appearanceBody"></div>
+    </div>
     <div class="settings-section">
       <h3>${t('settings.account')}</h3>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
@@ -601,6 +609,7 @@ export async function render(container) {
   });
 
   // Export data handler
+  mountThemePicker(document.getElementById('appearanceBody'));
   mountLeaveOrganizations(document.getElementById('leaveOrganizationsBody'));
   mountDeleteAccountCard(document.getElementById('deleteAccountBody'));
   if (new URLSearchParams(window.location.hash.split('?')[1] || '').get('section') === 'delete-account') {

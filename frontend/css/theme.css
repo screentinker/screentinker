@@ -1,0 +1,239 @@
+/*
+ * The Control room design (and its Light variant): everything about it that is not a colour.
+ * Colours live in css/variables.css; this file is shape, type and the few pieces of structure the
+ * design is built around. Loaded after main.css and library.css, and scoped so the Classic theme
+ * is untouched: every rule below starts from `:root:not([data-theme="classic"])`.
+ *
+ * The idea, in one line: the room is dim and quiet so the screens are the brightest things in it.
+ *   - Chrome is flat graphite. No gradients, no bar on top of every card, no drop shadow under
+ *     every box. Depth comes from three steps of lightness.
+ *   - A screen thumbnail is drawn as a monitor: a dark bezel, and the light it throws on the desk.
+ *   - State is a tally light: a lit dot and a plain word, the same everywhere a screen is named.
+ *   - One typeface, Barlow, from the world of signage. Numbers are tabular so counts do not jitter.
+ *   - Labels are written in sentence case. Nothing shouts.
+ */
+
+/* ── Type ───────────────────────────────────────────────────────────────────────────────────── */
+:root:not([data-theme="classic"]) body,
+:root:not([data-theme="classic"]) button,
+:root:not([data-theme="classic"]) input,
+:root:not([data-theme="classic"]) select,
+:root:not([data-theme="classic"]) textarea {
+  font-family: var(--font-ui);
+}
+:root:not([data-theme="classic"]) body {
+  font-size: 14.5px;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+:root:not([data-theme="classic"]) h1,
+:root:not([data-theme="classic"]) h2,
+:root:not([data-theme="classic"]) h3,
+:root:not([data-theme="classic"]) h4 { font-weight: 600; letter-spacing: -0.005em; }
+
+/* Small labels were uppercase and letter-spaced all over. Sentence case, a touch heavier instead. */
+:root:not([data-theme="classic"]) .nav-group-toggle,
+:root:not([data-theme="classic"]) .info-card-label,
+:root:not([data-theme="classic"]) .member-badge,
+:root:not([data-theme="classic"]) .nav-new-pill,
+:root:not([data-theme="classic"]) .workspace-switcher-static::before {
+  text-transform: none;
+  letter-spacing: 0;
+}
+:root:not([data-theme="classic"]) .nav-group-toggle { font-size: 12.5px; font-weight: 600; color: var(--text-muted); }
+:root:not([data-theme="classic"]) .info-card-label { font-size: 12.5px; font-weight: 500; color: var(--text-secondary); }
+:root:not([data-theme="classic"]) .workspace-switcher-static::before { font-size: 11.5px; }
+
+/* ── The room: sidebar and page ─────────────────────────────────────────────────────────────── */
+:root:not([data-theme="classic"]) .sidebar { background: var(--bg-secondary); border-right-color: var(--border); }
+:root:not([data-theme="classic"]) .logo { color: var(--text-primary); font-weight: 700; font-size: 17px; letter-spacing: -0.01em; }
+:root:not([data-theme="classic"]) .logo svg { color: var(--accent); }
+
+:root:not([data-theme="classic"]) .nav-link {
+  position: relative; padding: 8px 12px; border-radius: var(--radius); font-weight: 500;
+}
+:root:not([data-theme="classic"]) .nav-link:hover { background: var(--bg-card); }
+/* Where you are: a lit bar at the edge, not a painted pill. */
+:root:not([data-theme="classic"]) .nav-link.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+:root:not([data-theme="classic"]) .nav-link.active::before {
+  content: ''; position: absolute; left: -8px; top: 6px; bottom: 6px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--accent);
+}
+:root:not([data-theme="classic"]) .nav-link.active svg { color: var(--accent); }
+:root:not([data-theme="classic"]) .nav-link.active .nav-new-pill { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent-hover); }
+
+:root:not([data-theme="classic"]) .page-header h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.015em; padding-bottom: 0; }
+:root:not([data-theme="classic"]) .page-header h1::after { content: none; }
+:root:not([data-theme="classic"]) .page-header .subtitle { color: var(--text-secondary); }
+
+/* ── Controls ───────────────────────────────────────────────────────────────────────────────── */
+:root:not([data-theme="classic"]) .btn { border-radius: var(--radius); font-weight: 600; }
+:root:not([data-theme="classic"]) .btn-primary {
+  background: var(--accent); color: var(--on-accent); box-shadow: none;
+}
+:root:not([data-theme="classic"]) .btn-primary:hover { background: var(--accent-hover); filter: none; }
+:root:not([data-theme="classic"]) .btn-secondary { background: var(--bg-card); border-color: var(--border-light); }
+:root:not([data-theme="classic"]) .btn-secondary:hover { background: var(--bg-card-hover); border-color: var(--text-muted); }
+:root:not([data-theme="classic"]) .btn:focus-visible,
+:root:not([data-theme="classic"]) .nav-link:focus-visible,
+:root:not([data-theme="classic"]) .tab:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+:root:not([data-theme="classic"]) .input:focus,
+:root:not([data-theme="classic"]) select.input:focus,
+:root:not([data-theme="classic"]) textarea.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+:root:not([data-theme="classic"]) .tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+:root:not([data-theme="classic"]) .members-tab.active,
+:root:not([data-theme="classic"]) .platform-tab.active { background: var(--accent); color: var(--on-accent); }
+
+/* ── Things on the desk: sections, summary cards, dialogs ───────────────────────────────────── */
+:root:not([data-theme="classic"]) .settings-section::before,
+:root:not([data-theme="classic"]) .info-card::before,
+:root:not([data-theme="classic"]) .modal::before { content: none; }
+:root:not([data-theme="classic"]) .settings-section:hover,
+:root:not([data-theme="classic"]) .info-card:hover { border-color: var(--border-light); }
+:root:not([data-theme="classic"]) .settings-section h3 { font-size: 16px; }
+:root:not([data-theme="classic"]) .info-card { background: var(--bg-card); border-color: var(--border); }
+:root:not([data-theme="classic"]) .info-card-value { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
+:root:not([data-theme="classic"]) .info-card-value.small { font-size: 14.5px; font-weight: 600; letter-spacing: 0; }
+:root:not([data-theme="classic"]) .empty-state svg { color: var(--text-muted); opacity: 0.9; }
+:root:not([data-theme="classic"]) .modal { box-shadow: var(--shadow); border-color: var(--border-light); }
+:root:not([data-theme="classic"]) .modal-overlay { background: rgba(4, 5, 7, 0.66); backdrop-filter: blur(3px); }
+:root[data-theme="light"] .modal-overlay { background: rgba(15, 23, 42, 0.38); }
+
+/* ── Tally lights: one way to say what state a screen is in ─────────────────────────────────── */
+:root:not([data-theme="classic"]) .device-status-badge {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 3px 10px 3px 8px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 600;
+  background: color-mix(in srgb, var(--bg-input) 86%, transparent);
+  color: var(--text-primary);
+  border: 1px solid var(--border-light);
+}
+:root:not([data-theme="classic"]) .device-status-badge::before {
+  content: ''; width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-muted);
+}
+:root:not([data-theme="classic"]) .device-status-badge.online,
+:root:not([data-theme="classic"]) .device-status-badge.healthy { background: color-mix(in srgb, var(--bg-input) 86%, transparent); color: var(--text-primary); }
+:root:not([data-theme="classic"]) .device-status-badge.online::before,
+:root:not([data-theme="classic"]) .device-status-badge.healthy::before { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent), 0 0 10px var(--success); }
+:root:not([data-theme="classic"]) .device-status-badge.degraded,
+:root:not([data-theme="classic"]) .device-status-badge.provisioning { background: color-mix(in srgb, var(--bg-input) 86%, transparent); color: var(--text-primary); }
+:root:not([data-theme="classic"]) .device-status-badge.degraded::before,
+:root:not([data-theme="classic"]) .device-status-badge.provisioning::before { background: var(--warning); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 22%, transparent); }
+:root:not([data-theme="classic"]) .device-status-badge.offline { background: color-mix(in srgb, var(--bg-input) 86%, transparent); color: var(--text-secondary); }
+:root:not([data-theme="classic"]) .device-status-badge.offline::before { background: var(--danger); }
+:root[data-theme="light"] .device-status-badge { background: #ffffff; }
+:root:not([data-theme="classic"]) .device-card-status.is-liveness .device-status-badge { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5); backdrop-filter: blur(6px); }
+
+/* ── The monitor: how a screen is drawn ─────────────────────────────────────────────────────── */
+:root:not([data-theme="classic"]) .device-card {
+  background: transparent; border: 0; border-radius: 0; overflow: visible;
+  transition: transform var(--transition);
+}
+:root:not([data-theme="classic"]) .device-card:hover { border: 0; box-shadow: none; transform: none; }
+:root:not([data-theme="classic"]) .device-card-preview {
+  background: var(--bezel);
+  border: 5px solid var(--bezel);
+  border-radius: 9px;
+  box-shadow: 0 0 0 1px var(--border-light), var(--screen-glow);
+  transition: box-shadow var(--transition), transform var(--transition);
+}
+:root:not([data-theme="classic"]) .device-card-preview img { border-radius: 3px; }
+:root:not([data-theme="classic"]) .device-card:hover .device-card-preview {
+  box-shadow: 0 0 0 1px var(--accent), 0 22px 44px -18px color-mix(in srgb, var(--accent) 55%, transparent);
+  transform: translateY(-2px);
+}
+:root:not([data-theme="classic"]) .device-card.selected { outline: 0; }
+:root:not([data-theme="classic"]) .device-card.selected .device-card-preview { box-shadow: 0 0 0 2px var(--accent), var(--screen-glow); }
+:root:not([data-theme="classic"]) .device-card-preview .no-preview { color: var(--text-muted); background: var(--bezel); }
+:root:not([data-theme="classic"]) .device-card-body { padding: 12px 4px 4px; }
+:root:not([data-theme="classic"]) .device-card-name { font-size: 16px; font-weight: 600; letter-spacing: -0.005em; }
+
+/* The one flourish: when the page arrives, each monitor comes on. Left to right, once. */
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-theme="classic"]) .device-card-preview img,
+  :root:not([data-theme="classic"]) .device-card-preview .display-frame {
+    animation: st-power-on 520ms cubic-bezier(.2, .7, .2, 1) backwards;   /* backwards only: a held end state would overrule the dimming of an offline screen */
+  }
+  :root:not([data-theme="classic"]) .device-card:nth-child(2) .device-card-preview img,
+  :root:not([data-theme="classic"]) .device-card:nth-child(2) .display-frame { animation-delay: 70ms; }
+  :root:not([data-theme="classic"]) .device-card:nth-child(3) .device-card-preview img,
+  :root:not([data-theme="classic"]) .device-card:nth-child(3) .display-frame { animation-delay: 140ms; }
+  :root:not([data-theme="classic"]) .device-card:nth-child(4) .device-card-preview img,
+  :root:not([data-theme="classic"]) .device-card:nth-child(4) .display-frame { animation-delay: 210ms; }
+  :root:not([data-theme="classic"]) .device-card:nth-child(n+5) .device-card-preview img,
+  :root:not([data-theme="classic"]) .device-card:nth-child(n+5) .display-frame { animation-delay: 280ms; }
+}
+@keyframes st-power-on {
+  0%   { opacity: 0; filter: brightness(2.2) saturate(0.2); transform: scaleY(0.02); }
+  45%  { opacity: 1; filter: brightness(1.6) saturate(0.6); transform: scaleY(1); }
+  100% { opacity: 1; transform: none; }
+}
+
+/* ── Settings > Appearance: the theme picker ────────────────────────────────────────────────── */
+.theme-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.theme-option {
+  display: grid; gap: 10px; padding: 10px; text-align: left; cursor: pointer;
+  background: var(--bg-card); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  font: inherit;
+}
+.theme-option:hover { border-color: var(--border-light); }
+.theme-option[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.theme-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.theme-swatch {
+  display: grid; grid-template-columns: 26% 1fr; height: 84px; border-radius: 6px; overflow: hidden;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+}
+.theme-swatch-side { display: grid; align-content: start; gap: 5px; padding: 8px 6px; }
+.theme-swatch-side i { display: block; height: 5px; border-radius: 3px; opacity: 0.55; }
+.theme-swatch-main { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 10px 8px; align-content: center; }
+.theme-swatch-main b { display: block; aspect-ratio: 16 / 9; border-radius: 3px; }
+.theme-option-name { font-weight: 600; font-size: 14px; }
+.theme-option-desc { font-size: 12.5px; color: var(--text-secondary); line-height: 1.35; }
+
+/* ── A screen that is off looks off ─────────────────────────────────────────────────────────── */
+:root:not([data-theme="classic"]) .device-card:has(.device-status-badge.offline) .device-card-preview img,
+:root:not([data-theme="classic"]) .device-card:has(.device-status-badge.offline) .device-card-preview .display-frame {
+  filter: grayscale(0.85) brightness(0.38) contrast(0.9);
+}
+:root:not([data-theme="classic"]) .device-card:has(.device-status-badge.offline) .device-card-preview { box-shadow: 0 0 0 1px var(--border); }
+:root:not([data-theme="classic"]) .device-card:has(.device-status-badge.offline) .device-card-name { color: var(--text-secondary); }
+
+/* ── The Screens summary: one quiet strip, not three boxes ──────────────────────────────────── */
+:root:not([data-theme="classic"]) #dashStats {
+  gap: 0 !important; padding: 2px 4px;
+  background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-lg);
+}
+:root:not([data-theme="classic"]) #dashStats .info-card {
+  display: flex; flex-direction: row-reverse; justify-content: flex-end; align-items: baseline; gap: 9px;
+  flex: 0 1 auto !important; min-width: 0 !important;
+  padding: 10px 22px 10px 16px; background: transparent; border: 0; border-radius: 0;
+}
+:root:not([data-theme="classic"]) #dashStats .info-card + .info-card { border-left: 1px solid var(--border); }
+:root:not([data-theme="classic"]) #dashStats .info-card-label { margin: 0; font-size: 14px; }
+:root:not([data-theme="classic"]) #dashStats .info-card-value { font-size: 22px; }
+
+/* ── Remaining small labels that shouted ────────────────────────────────────────────────────── */
+:root:not([data-theme="classic"]) .lib-nav-heading,
+:root:not([data-theme="classic"]) .lib-section-label,
+:root:not([data-theme="classic"]) .rl-table th,
+:root:not([data-theme="classic"]) table th {
+  text-transform: none; letter-spacing: 0; font-weight: 600; font-size: 12.5px;
+}
+
+/* ── Light: the few places a dark assumption was baked in ───────────────────────────────────── */
+:root[data-theme="light"] .sidebar { border-right-color: var(--border); }
+:root[data-theme="light"] .nav-link.active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+:root[data-theme="light"] .btn-secondary { background: #ffffff; }
+:root[data-theme="light"] .device-status-badge { color: var(--text-primary); }
+:root[data-theme="light"] .device-card-status.is-liveness .device-status-badge { box-shadow: 0 2px 8px rgba(15, 23, 42, 0.25); }

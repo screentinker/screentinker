@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#111827">
+  <meta name="theme-color" content="#15171a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -11,10 +11,14 @@
   <link rel="icon" href="/assets/icon-192.png">
   <link rel="apple-touch-icon" href="/assets/icon-192.png">
   <title>ScreenTinker</title>
+  <!-- The chosen theme goes on <html> before any stylesheet paints (classic script; see the file). -->
+  <script src="/js/theme-prime.js"></script>
   <link rel="stylesheet" href="/css/variables.css">
   <link rel="stylesheet" href="/css/reset.css">
   <link rel="stylesheet" href="/css/main.css">
   <link rel="stylesheet" href="/css/library.css">
+  <!-- The Control room design: shape and type on top of the tokens. Last, and inert for Classic. -->
+  <link rel="stylesheet" href="/css/theme.css">
   <!-- Before the first paint: hides the sidebar on the screens the router will hide it on, so it
        does not flash there (classic script, not a module, so it runs now; see the file). -->
   <script src="/js/nav-prime.js"></script>

@@ -35,8 +35,7 @@ export async function applyBranding() {
 
   const root = document.documentElement;
   applyAccent(root, wl.primary_color);
-  if (wl.bg_color) {
-    root.style.setProperty('--bg-primary', wl.bg_color);
+  if (applyBackground(root, wl.bg_color)) {
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', wl.bg_color);
   }
@@ -81,9 +80,20 @@ export function resetBranding() {
  */
 export function applyAccent(root, color) {
   if (!color) return;
-  root.style.setProperty('--accent', color);
   const custom = String(color).trim().toLowerCase() !== '#3b82f6';
-  for (const v of ['--accent-2', '--accent-3']) {
+  // The default colour is not a brand: leave every accent to the THEME (css/variables.css), whose
+  // own accent may differ (Light uses a deeper blue). Writing the default inline pinned it.
+  for (const v of ['--accent', '--accent-2', '--accent-3']) {
     if (custom) root.style.setProperty(v, color); else root.style.removeProperty(v);
   }
+}
+
+/**
+ * Same rule for the background. The server answers #111827 (the Classic page colour) for everyone
+ * who never chose one; applied inline it repainted every theme's page in Classic navy.
+ */
+export function applyBackground(root, color) {
+  const custom = !!color && String(color).trim().toLowerCase() !== '#111827';
+  if (custom) root.style.setProperty('--bg-primary', color); else root.style.removeProperty('--bg-primary');
+  return custom;
 }
