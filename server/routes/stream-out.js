@@ -45,6 +45,8 @@ function mixOf(row) {
   let saved = null; try { saved = row.audio_mix ? JSON.parse(row.audio_mix) : null; } catch { saved = null; }
   return audio.cleanSettings(saved || { bed: { level: row.audio_level, muted: !!row.audio_muted } });
 }
+/** The strips as the desk may see them: a network feed's password is not shown. */
+function shown(mix) { for (const n of ['net', 'net2']) mix[n].url = audio.maskUrl(mix[n].url); return mix; }
 const audioOf = (row) => ({ file: bedOf(row).file, settings: mixOf(row) });
 
 const pub = (r) => ({
@@ -53,7 +55,7 @@ const pub = (r) => ({
   playlist_name: r.playlist_id ? ((db.prepare('SELECT name FROM playlists WHERE id = ?').get(r.playlist_id) || {}).name || null) : null,
   width: r.width, height: r.height, fps: r.fps, bitrate_k: r.bitrate_k,
   graphic: !!r.gfx_json,
-  audio: { content_id: bedOf(r).id, name: bedOf(r).name, level: mixOf(r).bed.level, muted: mixOf(r).bed.muted, mix: mixOf(r) },
+  audio: { content_id: bedOf(r).id, name: bedOf(r).name, level: mixOf(r).bed.level, muted: mixOf(r).bed.muted, mix: shown(mixOf(r)) },
   status: { ...streamOut.status(r.id), last_error: streamOut.lastError(r.id) },
 });
 const mine = (req, id) => {
@@ -153,23 +155,39 @@ router.post('/:id/audio', gate, requireFleetWrite, (req, res) => {
   }
   // One strip at a time or several: { strip: 'programme' | 'bed' | 'line' | 'master', level, muted },
   // or the same fields without `strip` for the bed (how the first version of this was called).
-  const strips = Array.isArray(b.strips) ? b.strips : [{ strip: b.strip || 'bed', level: b.level, muted: b.muted }];
+  const strips = Array.isArray(b.strips) ? b.strips : (b.strip !== undefined || b.level !== undefined || b.muted !== undefined ? [{ ...b, strip: b.strip || 'bed' }] : []);
   for (const st of strips) {
-    if (!st || !['programme', 'bed', 'line', 'master'].includes(st.strip)) return res.status(400).json({ error: 'strip is programme, bed, line or master' });
+    if (!st || ![...audio.INPUTS, 'master'].includes(st.strip)) return res.status(400).json({ error: `strip is one of: ${[...audio.INPUTS, 'master'].join(', ')}` });
+    const target = mix[st.strip];
     if (st.level !== undefined) {
       const l = Number(st.level);
       if (typeof st.level === 'string' || !Number.isFinite(l) || l < 0 || l > streamOut.MAX_LEVEL) return res.status(400).json({ error: `level is 0 to ${streamOut.MAX_LEVEL}` });
-      mix[st.strip].level = l;
+      target.level = l;
     }
-    if (st.muted !== undefined) mix[st.strip].muted = st.muted === true;
+    if (st.muted !== undefined) target.muted = st.muted === true;
+    // The processing controls (lib/stream-dsp.js). Out-of-range values are brought into range when stored.
+    if (st.eq && typeof st.eq === 'object') target.eq = { ...target.eq, ...st.eq };
+    if (st.strip !== 'master') {
+      for (const k of ['hpf', 'gate', 'comp', 'fx']) if (st[k] !== undefined) target[k] = st[k];
+      if (st.denoise !== undefined && 'denoise' in target) target.denoise = st.denoise;
+    }
   }
+  for (const n of ['net', 'net2']) {
+    const field = n + '_url';
+    if (!(field in b)) continue;
+    if (b[field] == null || b[field] === '') mix[n].url = null;
+    else if (typeof b[field] === 'string' && /:\*{3,}@/.test(b[field])) { /* the masked address the desk was shown: unchanged */ }
+    else if (!audio.netUrl(b[field])) return res.status(400).json({ error: 'A network feed is an srt://, rtmp://, rtsp://, rtp://, udp:// or http(s):// address.' });
+    else mix[n].url = audio.netUrl(b[field]);
+  }
+  if (b.fx && typeof b.fx === 'object' && b.fx.decay !== undefined) mix.fx = { decay: b.fx.decay };
   if ('line_device' in b) {
     if (b.line_device == null || b.line_device === '') mix.line.device = null;
     else if (!audio.captureDevices().some((d) => d.device === b.line_device)) return res.status(400).json({ error: 'That sound input is not on this server.' });
     else mix.line.device = b.line_device;
   }
   db.prepare('UPDATE stream_outputs SET audio_content_id = ?, audio_level = ?, audio_muted = ?, audio_mix = ? WHERE id = ?')
-    .run(bedId, mix.bed.level, mix.bed.muted ? 1 : 0, JSON.stringify(mix), r.id);
+    .run(bedId, mix.bed.level, mix.bed.muted ? 1 : 0, JSON.stringify(audio.cleanSettings(mix)), r.id);
   const now = mine(req, r.id);
   streamOut.setAudio(r.id, audioOf(now));
   res.json(pub(now));

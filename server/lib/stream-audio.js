@@ -4,8 +4,7 @@
  * THE SOUND OF A STREAM OUTPUT (lib/stream-out.js): a small audio mixer.
  *
  * A stream's sound is mixed in this process, as 16-bit stereo PCM at 44.1 kHz, and handed to the
- * encoder beside the picture. There are three inputs, each with its own fader and mute, summed
- * into a master with its own:
+ * encoder beside the picture. Its inputs, each a strip with its own fader and mute, are summed into a master:
  *
  *   programme   what the programme itself is playing (the sound of its videos and audio tracks).
  *               The renderer's browser plays into a PulseAudio sink of its own and this reads the
@@ -13,6 +12,16 @@
  *   bed         an uploaded audio item, looped.
  *   line        a sound card input on the server (a USB audio interface, a desk's output),
  *               read through ALSA.
+ *
+ *   net, net2   a network feed: SRT, RTMP, RTSP, RTP or UDP, or an HTTP audio stream. This is how a
+ *               remote contributor, a wireless link's receiver, an AES67/RTP source or another
+ *               studio comes in.
+ *
+ * Every input strip has the processing a desk channel has (lib/stream-dsp.js): high-pass, a
+ * three-band EQ, a gate, a compressor, the fader, and a send to the reverb. The line and network
+ * inputs can also have noise reduction, which takes a room's steady noise (air handling, hum,
+ * hiss) out of the signal as it is decoded. The master has its own EQ and fader and ends in a
+ * limiter, so the sum is held under full scale instead of clipping.
  *
  * Each input is a child process that writes PCM to its stdout (ffmpeg in all three cases). The
  * mixer never waits for an input: at each tick it takes what is there and fills the rest with
@@ -22,36 +31,58 @@
 
 const { execFile, spawn } = require('child_process');
 const fs = require('fs');
+const dsp = require('./stream-dsp');
 
 const RATE = 44100;
 const FRAME = 4;                 // bytes per stereo 16-bit sample
 const SECOND = RATE * FRAME;
 const MAX_LEVEL = 1.5;
-const INPUTS = ['programme', 'bed', 'line'];
+const INPUTS = ['programme', 'bed', 'line', 'net', 'net2'];
+const NET_SCHEMES = ['srt:', 'rtmp:', 'rtmps:', 'rtsp:', 'rtsps:', 'rtp:', 'udp:', 'http:', 'https:'];
 
 const level = (v, dflt) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(MAX_LEVEL, n)) : dflt; };
-const strip = (s, dflt = 1) => ({ level: level(s && s.level, dflt), muted: !!(s && s.muted) });
+const unit = (v) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; };
+const strip = (s) => ({ level: level(s && s.level, 1), muted: !!(s && s.muted), ...dsp.cleanProcessing(s) });
 
-/** Settings as stored and as sent, made safe: every strip present, every level in range. */
+/** A network feed's address, or null when it is not one this mixer takes. */
+function netUrl(v) {
+  if (typeof v !== 'string' || !v.trim() || v.length > 500 || /[\s\u0000-\u001f]/.test(v.trim())) return null;
+  try { const u = new URL(v.trim()); return NET_SCHEMES.includes(u.protocol) && (u.hostname || u.protocol === 'udp:' || u.protocol === 'rtp:' || u.protocol === 'srt:') ? v.trim() : null; } catch { return null; }
+}
+/** The same address with any password hidden, for showing on the desk. */
+function maskUrl(v) { return typeof v === 'string' ? v.replace(/(\/\/[^/@:]*):[^/@]*@/, '$1:***@') : null; }
+
+/** Settings as stored and as sent, made safe: every strip present, every control in range. */
 function cleanSettings(s) {
   const x = s && typeof s === 'object' ? s : {};
-  const out = { master: strip(x.master), programme: strip(x.programme), bed: strip(x.bed), line: strip(x.line) };
+  const out = {};
+  for (const name of INPUTS) out[name] = strip(x[name]);
   out.line.device = typeof (x.line && x.line.device) === 'string' && /^plughw:\d{1,2},\d{1,2}$/.test(x.line.device) ? x.line.device : null;
+  for (const name of ['line', 'net', 'net2']) out[name].denoise = unit(x[name] && x[name].denoise);
+  for (const name of ['net', 'net2']) out[name].url = netUrl(x[name] && x[name].url);
+  const m = x.master && typeof x.master === 'object' ? x.master : {};
+  out.master = { level: level(m.level, 1), muted: !!m.muted, eq: dsp.cleanProcessing(m).eq };
+  out.fx = { decay: x.fx && Number.isFinite(Number(x.fx.decay)) ? unit(x.fx.decay) : 0.5 };
   return out;
 }
 
 class Mix {
   constructor(settings) {
     this.settings = cleanSettings(settings);
-    this.inputs = new Map();     // name -> { q: Buffer[], bytes, stream, live }
-    this.peaks = { master: 0, programme: 0, bed: 0, line: 0 };
+    this.inputs = new Map();     // name -> { q: Buffer[], bytes, stream, live, odd }
+    this.strips = Object.fromEntries(INPUTS.map((n) => [n, new dsp.Strip()]));
+    this.masterEq = new dsp.Strip();
+    this.reverb = new dsp.Reverb();
+    this.limiter = new dsp.Limiter();
+    this.peaks = Object.fromEntries([...INPUTS, 'master'].map((n) => [n, 0]));
+    this.limiting = 0;           // dB the limiter is holding back right now
   }
 
   setSettings(s) { this.settings = cleanSettings(s); }
 
   /**
-   * Attach an input's PCM stream. `live` inputs (programme, line) are happening now: when more
-   * than half a second is waiting, the oldest is dropped so the sound stays with the picture.
+   * Attach an input's PCM stream. `live` inputs (everything but the bed) are happening now: when
+   * more than half a second is waiting, the oldest is dropped so the sound stays with the picture.
    * A file (the bed) is paused instead, so none of it is lost.
    */
   attach(name, stream, { live = false } = {}) {
@@ -79,39 +110,51 @@ class Mix {
   /** `n` bytes of mixed sound for right now. */
   next(n) {
     n -= n % FRAME;
-    const samples = n / 2;
-    const sum = new Int32Array(samples);
+    const len = n / 2;                                 // samples, both channels counted
+    const sum = new Float32Array(len), send = new Float32Array(len);
+    let sending = false;
     for (const name of INPUTS) {
       const input = this.inputs.get(name);
-      let peak = 0;
-      if (input) {
-        const set = this.settings[name];
-        const gain = set.muted ? 0 : set.level;
-        let at = 0;                                    // sample index
-        while (at < samples && input.q.length) {
-          const head = input.q[0], takeBytes = Math.min(head.length, (samples - at) * 2);
-          if (gain !== 0) {
-            for (let i = 0; i < takeBytes; i += 2) {
-              const v = head.readInt16LE(i) * gain;
-              sum[at + i / 2] += v;
-              const m = v < 0 ? -v : v; if (m > peak) peak = m;
-            }
-          }
-          at += takeBytes / 2; input.bytes -= takeBytes;
-          if (takeBytes === head.length) input.q.shift(); else input.q[0] = head.subarray(takeBytes);
-        }
-        if (!input.live && input.bytes < SECOND / 2 && input.stream.isPaused && input.stream.isPaused()) input.stream.resume();
+      if (!input) { this.peaks[name] = 0; continue; }
+      const set = this.settings[name];
+      // Always taken from the queue, muted or not: a muted input must still be at "now" when it is opened.
+      const buf = new Float32Array(len);
+      let at = 0;
+      while (at < len && input.q.length) {
+        const head = input.q[0], take = Math.min(head.length, (len - at) * 2);
+        for (let i = 0; i < take; i += 2) buf[at + i / 2] = head.readInt16LE(i) / 32768;
+        at += take / 2; input.bytes -= take;
+        if (take === head.length) input.q.shift(); else input.q[0] = head.subarray(take);
       }
-      this.peaks[name] = Math.min(1, peak / 32768);
+      if (!input.live && input.bytes < SECOND / 2 && input.stream.isPaused && input.stream.isPaused()) input.stream.resume();
+      this.strips[name].run(buf, set);
+      const gain = set.muted ? 0 : set.level;
+      let peak = 0;
+      if (gain !== 0) {
+        const fx = set.fx;
+        for (let i = 0; i < len; i++) {
+          const v = buf[i] * gain; sum[i] += v;
+          const m = v < 0 ? -v : v; if (m > peak) peak = m;
+          if (fx) send[i] += v * fx;
+        }
+        if (fx && peak > 0) sending = true;
+      }
+      this.peaks[name] = Math.min(1, peak);
     }
+    this.reverb.run(send, sum, this.settings.fx.decay, sending);
+    const master = this.settings.master;
+    this.masterEq.run(sum, { hpf: false, eq: master.eq, gate: 0, comp: 0, fx: 0 });
+    const mg = master.muted ? 0 : master.level;
+    if (mg !== 1) for (let i = 0; i < len; i++) sum[i] *= mg;
+    this.limiter.run(sum);                             // loud is held under full scale; it never wraps
+    this.limiting = this.limiter.reduction;
     const out = Buffer.alloc(n);
-    const master = this.settings.master.muted ? 0 : this.settings.master.level;
     let peak = 0;
-    for (let i = 0; i < samples; i++) {
-      let v = Math.round(sum[i] * master);
-      if (v > 32767) v = 32767; else if (v < -32768) v = -32768;   // loud clips; it never wraps
+    for (let i = 0; i < len; i++) {
+      let v = Math.round(sum[i] * 32768);
+      if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
       out.writeInt16LE(v, i * 2);
-      const a = v < 0 ? -v : v; if (a > peak) peak = a;
+      const m = v < 0 ? -v : v; if (m > peak) peak = m;
     }
     this.peaks.master = peak / 32768;
     return out;
@@ -122,7 +165,12 @@ class Mix {
 const PCM_OUT = ['-vn', '-f', 's16le', '-ar', String(RATE), '-ac', '2', 'pipe:1'];
 const QUIET = ['-hide_banner', '-loglevel', 'error'];
 const bedArgs = (file) => [...QUIET, '-re', '-stream_loop', '-1', '-i', file, ...PCM_OUT];
-const lineArgs = (device) => [...QUIET, '-f', 'alsa', '-ac', '2', '-i', device, ...PCM_OUT];
+/** Noise reduction for an input that comes from a room: ffmpeg's FFT denoiser, set by one amount. */
+const denoise = (amount) => (amount > 0 ? ['-af', `afftdn=nr=${Math.round(6 + 30 * amount)}:nf=-${Math.round(50 - 15 * amount)}`] : []);
+const lineArgs = (device, amount = 0) => [...QUIET, '-f', 'alsa', '-ac', '2', '-i', device, ...denoise(amount), ...PCM_OUT];
+// The protocol list is closed: a playlist or session description fetched from the network cannot
+// point the decoder at a local file.
+const netArgs = (url, amount = 0) => [...QUIET, '-protocol_whitelist', 'srt,rtmp,rtmps,rtsp,rtp,udp,tcp,tls,http,https,crypto', '-fflags', 'nobuffer', '-i', url, ...denoise(amount), ...PCM_OUT];
 const programmeArgs = (sink) => [...QUIET, '-f', 'pulse', '-i', `${sink}.monitor`, ...PCM_OUT];
 function decoder(args) {
   const p = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'ignore'] });
@@ -174,4 +222,4 @@ async function createSink(id) {
 }
 function removeSink(sink) { if (sink && /^\d+$/.test(sink.module)) run('pactl', ['unload-module', sink.module]); }
 
-module.exports = { RATE, FRAME, SECOND, MAX_LEVEL, INPUTS, Mix, cleanSettings, bedArgs, lineArgs, programmeArgs, decoder, parseCapture, captureDevices, pulse, createSink, removeSink };
+module.exports = { RATE, FRAME, SECOND, MAX_LEVEL, INPUTS, NET_SCHEMES, Mix, cleanSettings, netUrl, maskUrl, netArgs, bedArgs, lineArgs, programmeArgs, decoder, parseCapture, captureDevices, pulse, createSink, removeSink };

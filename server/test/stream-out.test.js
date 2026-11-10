@@ -199,7 +199,7 @@ test('a stream\'s audio bed is an audio item of its own workspace, and its level
   const set = await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, { content_id: bed, level: 0.6, muted: true });
   assert.equal(set.status, 200, set.text);
   assert.deepEqual({ ...set.body.audio, name: null, mix: null }, { content_id: bed, name: null, level: 0.6, muted: true, mix: null });
-  assert.deepEqual(set.body.audio.mix.bed, { level: 0.6, muted: true });
+  assert.deepEqual([set.body.audio.mix.bed.level, set.body.audio.mix.bed.muted], [0.6, true]);
   assert.ok((await call('GET', '/api/stream-out', A.jwt)).body.audio_sources.some((a) => a.id === bed));
   assert.doesNotMatch(set.text, /uploads|\.bin/, 'where the file is on disk is not sent');
   for (const [body, status] of [[{ content_id: item(B, 'audio/mpeg', true) }, 404], [{ content_id: item(A, 'image/png', true) }, 404], [{ content_id: item(A, 'audio/mpeg', false) }, 400],
@@ -214,8 +214,27 @@ test('a stream\'s audio bed is an audio item of its own workspace, and its level
   // sound input that is on this server.
   const strips = await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, { strips: [{ strip: 'master', level: 0.8 }, { strip: 'programme', muted: true }, { strip: 'line', level: 1.2 }] });
   assert.equal(strips.status, 200, strips.text);
-  assert.deepEqual(strips.body.audio.mix, { master: { level: 0.8, muted: false }, programme: { level: 1, muted: true }, bed: { level: 0.6, muted: false }, line: { level: 1.2, muted: false, device: null } });
-  assert.deepEqual((await call('GET', '/api/stream-out', A.jwt)).body.outputs.find((o) => o.id === A.stream).audio.mix.master, { level: 0.8, muted: false }, 'kept');
+  const mx = strips.body.audio.mix, lm = (s) => [s.level, s.muted];
+  assert.deepEqual([lm(mx.master), lm(mx.programme), lm(mx.bed), lm(mx.line), mx.line.device], [[0.8, false], [1, true], [0.6, false], [1.2, false], null]);
+  assert.deepEqual(lm((await call('GET', '/api/stream-out', A.jwt)).body.outputs.find((o) => o.id === A.stream).audio.mix.master), [0.8, false], 'kept');
+  // A strip's processing, and the network feeds. Out-of-range controls are brought into range;
+  // a feed is a network address and nothing else; its password is never sent back.
+  const proc = await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, { strips: [{ strip: 'line', hpf: true, eq: { low: -6, high: 99 }, gate: 0.4, comp: 2, fx: 0.25, denoise: 0.5 }, { strip: 'master', eq: { mid: 3 }, gate: 1 }],
+    net_url: 'rtsp://cam:hunter2@192.0.2.9/audio', fx: { decay: 0.8 } });
+  assert.equal(proc.status, 200, proc.text);
+  const pm = proc.body.audio.mix;
+  assert.deepEqual({ hpf: pm.line.hpf, eq: pm.line.eq, gate: pm.line.gate, comp: pm.line.comp, fx: pm.line.fx, denoise: pm.line.denoise }, { hpf: true, eq: { low: -6, mid: 0, high: 12 }, gate: 0.4, comp: 1, fx: 0.25, denoise: 0.5 });
+  assert.deepEqual(pm.master, { level: 0.8, muted: false, eq: { low: 0, mid: 3, high: 0 } }, 'the master has an EQ and a fader, no gate');
+  assert.equal(pm.fx.decay, 0.8);
+  assert.match(pm.net.url, /^rtsp:\/\/cam:\*{3,}@192\.0\.2\.9\/audio$/);
+  assert.doesNotMatch(proc.text, /hunter2/, 'a feed\'s password is not sent back');
+  assert.match(db.prepare('SELECT audio_mix FROM stream_outputs WHERE id = ?').get(A.stream).audio_mix, /hunter2/, 'but is kept');
+  await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, { net_url: pm.net.url });
+  assert.match(db.prepare('SELECT audio_mix FROM stream_outputs WHERE id = ?').get(A.stream).audio_mix, /hunter2/, 'saving the masked address changes nothing');
+  for (const net_url of ['file:///etc/passwd', 'javascript:alert(1)', 'ftp://x/y', 'not a url', 'concat:/etc/passwd|x']) {
+    assert.equal((await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, { net_url })).status, 400, net_url);
+  }
+  assert.equal((await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, { net_url: null, net2_url: 'srt://0.0.0.0:9000?mode=listener' })).body.audio.mix.net2.url, 'srt://0.0.0.0:9000?mode=listener');
   for (const body of [{ strip: 'aux', level: 1 }, { strip: 'master', level: 5 }, { strips: [{ strip: 'bed', level: 1 }, { strip: 'nope' }] }, { line_device: 'plughw:99,0' }, { line_device: 'default; rm -rf /' }]) {
     assert.equal((await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, body)).status, 400, JSON.stringify(body));
   }
@@ -246,12 +265,16 @@ test('inputs are summed with their faders into the master, whatever sizes the ch
 });
 
 test('a loud sum clips, a muted strip is silent, and a muted master silences everything', async () => {
-  const m = new audio.Mix({});
+  const loud = new audio.Mix({});
+  const la = new PassThrough(), lb = new PassThrough();
+  loud.attach('programme', la, { live: true }); loud.attach('bed', lb);
+  la.write(pcm(30000, 4)); lb.write(pcm(30000, 4)); await tick();
+  const held = ints(loud.next(8));
+  assert.ok(held.every((v) => v > 31000 && v <= 32767), 'the limiter holds a sum of 60000 just under full scale: ' + held);
+  assert.ok(loud.limiting > 5, 'and says how much it is holding back');
+  const m = new audio.Mix({ programme: { muted: true } });
   const a = new PassThrough(), b = new PassThrough();
   m.attach('programme', a, { live: true }); m.attach('bed', b);
-  a.write(pcm(30000, 4)); b.write(pcm(30000, 4)); await tick();
-  assert.deepEqual(ints(m.next(8)), [32767, 32767, 32767, 32767]);
-  m.setSettings({ programme: { muted: true } });
   a.write(pcm(-30000, 4)); b.write(pcm(-20000, 4)); await tick();
   assert.deepEqual(ints(m.next(8)), [-20000, -20000, -20000, -20000]);
   assert.equal(m.peaks.programme, 0);
@@ -275,8 +298,72 @@ test('sound inputs are read from the system\'s own list, and settings are made s
   assert.deepEqual(audio.parseCapture(' 0 [NVidia         ]: HDA-Intel - HDA NVidia\n 2 [CODEC          ]: USB-Audio - USB AUDIO CODEC\n',
     '00-03: HDMI 0 : HDMI 0 : playback 1\n02-00: USB Audio : USB Audio : playback 1 : capture 1\n'), [{ device: 'plughw:2,0', name: 'USB AUDIO CODEC: USB Audio' }]);
   assert.deepEqual(audio.parseCapture('', ''), []);
-  const s = audio.cleanSettings({ line: { device: 'hw:0; rm -rf /', level: 99 }, master: { muted: 1, level: -3 }, extra: { level: 1 } });
-  assert.deepEqual(s, { master: { level: 0, muted: true }, programme: { level: 1, muted: false }, bed: { level: 1, muted: false }, line: { level: audio.MAX_LEVEL, muted: false, device: null } });
+  const s = audio.cleanSettings({ line: { device: 'hw:0; rm -rf /', level: 99, eq: { low: 'x', mid: -50 }, gate: 7, denoise: -1 }, master: { muted: 1, level: -3, comp: 1 }, extra: { level: 1 }, net: { url: 'file:///etc/passwd' } });
+  assert.deepEqual(Object.keys(s).sort(), ['bed', 'fx', 'line', 'master', 'net', 'net2', 'programme']);
+  assert.deepEqual(s.master, { level: 0, muted: true, eq: { low: 0, mid: 0, high: 0 } });
+  assert.deepEqual(s.line, { level: audio.MAX_LEVEL, muted: false, hpf: false, eq: { low: 0, mid: -12, high: 0 }, gate: 1, comp: 0, fx: 0, device: null, denoise: 0 });
+  assert.equal(s.net.url, null);
+  const args = audio.netArgs('udp://239.0.0.1:5004', 0.5);
+  assert.equal(args[args.indexOf('-i') + 1], 'udp://239.0.0.1:5004', 'the feed is one argument');
+  assert.doesNotMatch(args[args.indexOf('-protocol_whitelist') + 1], /file|concat|pipe/, 'the decoder cannot be pointed at a local file by what it fetches');
+  assert.match(args.join(' '), /-af afftdn=/, 'noise reduction is part of the decode');
+  assert.ok(!audio.netArgs('udp://239.0.0.1:5004', 0).includes('-af'));
   assert.equal(audio.cleanSettings({ line: { device: 'plughw:2,0' } }).line.device, 'plughw:2,0');
   assert.deepEqual(audio.lineArgs('plughw:2,0').slice(3, 9), ['-f', 'alsa', '-ac', '2', '-i', 'plughw:2,0'], 'the device is one argument');
+});
+
+/*
+ * THE CHANNEL STRIP (lib/stream-dsp.js): high-pass, three-band EQ, gate, compressor, reverb send,
+ * and the limiter on the way out. Measured, not asserted on faith: each stage has to do what its
+ * name says to a known tone, and a strip with every control at neutral has to change nothing.
+ */
+const dsp = require('../lib/stream-dsp');
+const sine = (f, amp, sec = 1) => { const b = new Float32Array(dsp.RATE * sec * 2); for (let i = 0; i < b.length / 2; i++) { const v = amp * Math.sin(2 * Math.PI * f * i / dsp.RATE); b[2 * i] = v; b[2 * i + 1] = v; } return b; };
+const rmsDb = (b, from = 0.5) => { let s = 0, n = 0; for (let i = Math.floor(b.length * from); i < b.length; i++) { s += b[i] * b[i]; n++; } return 20 * Math.log10(Math.sqrt(s / n) || 1e-12); };
+const through = (f, amp, p) => { const b = sine(f, amp); new dsp.Strip().run(b, dsp.cleanProcessing(p)); return rmsDb(b); };
+
+test('a strip with every control at neutral changes nothing, and the mixer then passes samples exactly', async () => {
+  const b = sine(1000, 0.25), before = Float32Array.from(b);
+  new dsp.Strip().run(b, dsp.cleanProcessing({}));
+  assert.ok(b.every((v, i) => v === before[i]));
+  const m = new audio.Mix({});
+  const src = new PassThrough(); m.attach('net', src, { live: true });
+  src.write(pcm(-12345, 4)); await tick();
+  assert.deepEqual(ints(m.next(8)), [-12345, -12345, -12345, -12345]);
+});
+
+test('each stage of the strip does what its name says to a known tone', () => {
+  const ref = through(1000, 0.25, {});
+  assert.ok(through(40, 0.25, { hpf: true }) < ref - 9, 'the high-pass takes out rumble');
+  assert.ok(Math.abs(through(1000, 0.25, { hpf: true }) - ref) < 0.3, 'and leaves speech alone');
+  assert.ok(through(60, 0.25, { eq: { low: 12 } }) > ref + 9 && Math.abs(through(5000, 0.25, { eq: { low: 12 } }) - ref) < 0.5, 'low shelf lifts the bottom only');
+  assert.ok(through(1200, 0.25, { eq: { mid: -12 } }) < ref - 10, 'the mid bell cuts its band');
+  assert.ok(through(12000, 0.25, { eq: { high: 6 } }) > ref + 4.5, 'high shelf lifts the top');
+  assert.ok(through(1000, 0.001, { gate: 0.5 }) < -100, 'the gate closes on a signal under its threshold');
+  assert.ok(Math.abs(through(1000, 0.25, { gate: 0.5 }) - ref) < 0.3, 'and is open for one over it');
+  const loud = through(1000, 0.7, { comp: 0.5 }), quiet = through(1000, 0.01, { comp: 0.5 });
+  assert.ok((rmsDb(sine(1000, 0.7)) - rmsDb(sine(1000, 0.01))) - (loud - quiet) > 8, 'the compressor brings loud and quiet closer together');
+});
+
+test('the limiter holds a hot sum under full scale and leaves anything below alone; the reverb has a tail', () => {
+  const hot = sine(1000, 1.8); const lim = new dsp.Limiter(); lim.run(hot);
+  assert.ok(hot.every((v) => Math.abs(v) <= 0.9801)); assert.ok(lim.reduction > 4);
+  const fine = sine(1000, 0.5), was = Float32Array.from(fine); new dsp.Limiter().run(fine);
+  assert.ok(fine.every((v, i) => v === was[i]));
+  const rv = new dsp.Reverb(), wet = new Float32Array(dsp.RATE * 2), tail = new Float32Array(dsp.RATE * 2), later = new Float32Array(dsp.RATE * 2);
+  rv.run(sine(1000, 0.5), wet, 0.5, true); rv.run(new Float32Array(dsp.RATE * 2), tail, 0.5, false);
+  assert.ok(rmsDb(wet) > -30, 'it sounds'); assert.ok(rmsDb(tail, 0) > -60, 'and rings on after the input stops');
+  for (let i = 0; i < 6; i++) rv.run(new Float32Array(dsp.RATE * 2), later, 0.5, false);
+  const silent = new Float32Array(dsp.RATE * 2); rv.run(new Float32Array(dsp.RATE * 2), silent, 0.5, false);
+  assert.ok(silent.every((v) => v === 0), 'then stops costing anything');
+});
+
+test('a channel\'s reverb send and EQ are heard in the mix', async () => {
+  const dry = new audio.Mix({}), wet = new audio.Mix({ bed: { fx: 1 }, fx: { decay: 0.9 } });
+  for (const m of [dry, wet]) { const s = new PassThrough({ highWaterMark: 1 << 22 }); m.attach('bed', s); const tone = sine(440, 0.3, 0.5), raw = Buffer.alloc(tone.length * 2); tone.forEach((v, i) => raw.writeInt16LE(Math.round(v * 32767), i * 2)); s.write(raw); }
+  await tick(); await tick();
+  dry.next(audio.SECOND / 2); wet.next(audio.SECOND / 2);
+  const after = (m) => { const o = ints(m.next(audio.SECOND / 2)); return Math.max(...o.map(Math.abs)); };
+  assert.equal(after(dry), 0, 'dry: nothing after the sound ends');
+  assert.ok(after(wet) > 200, 'with the send up, the room is still ringing');
 });

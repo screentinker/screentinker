@@ -130,7 +130,8 @@ function status(id) {
   const s = sessions.get(id);
   if (!s) return { state: 'off' };
   return { state: s.state, since: s.since, frames: s.sent, error: s.error || null, audio_peak: Math.round(s.mix.peaks.master * 100) / 100,
-    audio_peaks: Object.fromEntries(Object.entries(s.mix.peaks).map(([k, v]) => [k, Math.round(v * 100) / 100])), programme_audio: !!s.sink };
+    audio_peaks: Object.fromEntries(Object.entries(s.mix.peaks).map(([k, v]) => [k, Math.round(v * 100) / 100])), programme_audio: !!s.sink,
+    limiting: Math.round(s.mix.limiting * 10) / 10, inputs_live: Object.keys(s.inputs) };
 }
 function localBaseUrl() { return global.__localApiOrigin || `http://127.0.0.1:${process.env.PORT || config.port || 3001}`; }
 
@@ -146,31 +147,50 @@ function applyGain(buf, gain) {
 }
 const audio = require('./stream-audio');
 
+/** What an input is decoding from, as one string: when it changes, the input is restarted. */
+function inputKey(s, name) {
+  const set = s.mix.settings[name];
+  if (name === 'bed') return s.bedFile || '';
+  if (name === 'line') return set.device ? `${set.device}|${set.denoise}` : '';
+  if (name === 'programme') return s.sink ? s.sink.name : '';
+  return set.url ? `${set.url}|${set.denoise}` : '';
+}
 /** (Re)start one input of a running stream from its settings. */
 function startInput(s, name) {
   stopInput(s, name);
-  let proc = null;
-  if (name === 'bed' && s.bedFile) proc = audio.decoder(audio.bedArgs(s.bedFile));
-  else if (name === 'line' && s.mix.settings.line.device) proc = audio.decoder(audio.lineArgs(s.mix.settings.line.device));
-  else if (name === 'programme' && s.sink) proc = audio.decoder(audio.programmeArgs(s.sink.name));
-  if (!proc) return;
+  const set = s.mix.settings[name];
+  const key = inputKey(s, name);
+  s.inputKeys[name] = key;
+  if (!key) return;
+  const proc = audio.decoder(name === 'bed' ? audio.bedArgs(s.bedFile)
+    : name === 'line' ? audio.lineArgs(set.device, set.denoise)
+      : name === 'programme' ? audio.programmeArgs(s.sink.name)
+        : audio.netArgs(set.url, set.denoise));
   s.inputs[name] = proc;
   s.mix.attach(name, proc.stdout, { live: name !== 'bed' });
+  // An input that ends (a network feed dropping, a device unplugged) is tried again while the
+  // stream is live and still wants it. The rest of the mix carries on meanwhile.
+  proc.on('close', () => {
+    if (s.inputs[name] !== proc) return;
+    delete s.inputs[name]; s.mix.detach(name);
+    if (!s.wanted) return;
+    s.inputTimers[name] = setTimeout(() => { if (s.wanted && sessions.get(s.id) === s && s.inputKeys[name] === key) startInput(s, name); }, 3000);
+  });
 }
 function stopInput(s, name) {
+  clearTimeout(s.inputTimers[name]);
   const p = s.inputs[name];
-  if (p) { try { p.kill('SIGKILL'); } catch { /* gone */ } }
   delete s.inputs[name];
+  if (p) { try { p.kill('SIGKILL'); } catch { /* gone */ } }
   s.mix.detach(name);
 }
-/** Change a live stream's sound: any fader or mute, the bed, or the line input. */
+/** Change a live stream's sound: any control of any strip, the bed, the line or a network feed. */
 function setAudio(id, next) {
   const s = sessions.get(id);
   if (!s) return false;
-  const before = s.mix.settings.line.device;
   s.mix.setSettings(next && next.settings);
-  if (((next && next.file) || null) !== s.bedFile) { s.bedFile = (next && next.file) || null; startInput(s, 'bed'); }
-  if (s.mix.settings.line.device !== before) startInput(s, 'line');
+  s.bedFile = (next && next.file) || null;
+  for (const name of audio.INPUTS) if (inputKey(s, name) !== (s.inputKeys[name] || '')) startInput(s, name);
   return true;
 }
 
@@ -180,7 +200,7 @@ async function start(row, key, sound) {
   if (sessions.has(row.id)) return status(row.id);
   if (sessions.size >= MAX_STREAMS) throw Object.assign(new Error(`This server runs at most ${MAX_STREAMS} stream(s) at once (STREAM_OUT_MAX).`), { code: 'limit' });
   const s = { id: row.id, row, key, state: 'starting', since: Date.now(), sent: 0, last: null, wanted: true, retries: 0, error: null,
-    mix: new audio.Mix(sound && sound.settings), bedFile: (sound && sound.file) || null, inputs: {}, sink: null };
+    mix: new audio.Mix(sound && sound.settings), bedFile: (sound && sound.file) || null, inputs: {}, inputKeys: {}, inputTimers: {}, sink: null };
   sessions.set(row.id, s);
   try {
     // Programme sound: the browser plays into a sink of its own, which the mixer reads back.
@@ -267,7 +287,7 @@ async function stop(id, why) {
   sessions.delete(id);
   if (why === 'error' && s.error) stopped.set(id, { error: s.error, at: Date.now() }); else stopped.delete(id);
   clearInterval(s.timer); clearInterval(s.sndTimer); clearTimeout(s.retry);
-  for (const name of Object.keys(s.inputs)) stopInput(s, name);
+  for (const name of audio.INPUTS) stopInput(s, name);
   audio.removeSink(s.sink);
   try { if (s.ff) { s.ff.stdin.end(); try { s.ff.stdio[3].end(); } catch { /* gone */ } const ff = s.ff; setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* gone */ } }, 2000).unref(); } } catch { /* gone */ }
   try { if (s.browser) await s.browser.close(); } catch { /* gone */ }
