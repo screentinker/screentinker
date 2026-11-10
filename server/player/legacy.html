@@ -2847,9 +2847,175 @@ function bootViewer(v) {
   if (setup) setup.style.display = "none";
   viewerPoll(v, true);
 }
+var guestConns = {};
+var guestThumbAt = 0;
+function guestHave() {
+  var out = [];
+  for (var id in guestConns) out.push(id + ":" + guestConns[id].seq);
+  return out.join(",");
+}
+function guestPost(v, body) {
+  try {
+    fetch(v.payload_url + "/guest", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "omit", body: JSON.stringify(body) }).catch(function() {
+    });
+  } catch (e) {
+  }
+}
+function guestDrop(id) {
+  var c = guestConns[id];
+  if (!c) return;
+  delete guestConns[id];
+  try {
+    c.pc.close();
+  } catch (e) {
+  }
+  try {
+    c.video.srcObject = null;
+    c.tile.remove();
+  } catch (e) {
+  }
+}
+function guestLayerEl() {
+  var el = document.getElementById("guestLayer");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "guestLayer";
+    el.style.cssText = "position:fixed;inset:0;z-index:8000;pointer-events:none;";
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function guestConnect(g, ice, v) {
+  guestDrop(g.id);
+  var tile = document.createElement("div");
+  tile.style.cssText = "position:absolute;display:none;overflow:hidden;background:#000;box-shadow:0 0 0 2px rgba(255,255,255,.85),0 6px 24px rgba(0,0,0,.5);";
+  var video = document.createElement("video");
+  video.autoplay = true;
+  video.playsInline = true;
+  video.muted = true;
+  video.__stOverlay = true;
+  video.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
+  var label = document.createElement("div");
+  label.style.cssText = "position:absolute;left:0;bottom:0;max-width:90%;padding:.35em .8em;background:rgba(11,12,14,.82);color:#fff;font:600 1.6vh/1.2 'Barlow','Helvetica Neue',Arial,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+  label.textContent = g.name || "";
+  tile.appendChild(video);
+  tile.appendChild(label);
+  guestLayerEl().appendChild(tile);
+  var pc = new RTCPeerConnection({ iceServers: ice || [] });
+  var c = guestConns[g.id] = { seq: g.seq, pc, video, tile, label, onAir: false };
+  var stream = new MediaStream();
+  video.srcObject = stream;
+  pc.ontrack = function(e) {
+    try {
+      stream.addTrack(e.track);
+      video.play().catch(function() {
+      });
+    } catch (err) {
+    }
+  };
+  pc.onconnectionstatechange = function() {
+    if (guestConns[g.id] !== c) return;
+    guestPost(v, { guest_id: g.id, state: pc.connectionState });
+    if (pc.connectionState === "failed" || pc.connectionState === "closed") guestDrop(g.id);
+  };
+  pc.setRemoteDescription({ type: "offer", sdp: g.offer }).then(function() {
+    return pc.createAnswer();
+  }).then(function(a) {
+    return pc.setLocalDescription(a);
+  }).then(function() {
+    return new Promise(function(resolve) {
+      if (pc.iceGatheringState === "complete") return resolve();
+      var t = setTimeout(resolve, 3e3);
+      pc.addEventListener("icegatheringstatechange", function() {
+        if (pc.iceGatheringState === "complete") {
+          clearTimeout(t);
+          resolve();
+        }
+      });
+    });
+  }).then(function() {
+    if (guestConns[g.id] === c && pc.localDescription) guestPost(v, { guest_id: g.id, seq: g.seq, answer: pc.localDescription.sdp });
+  }).catch(function(e) {
+    console.warn("[guests] answer failed", e && e.message);
+    guestDrop(g.id);
+  });
+}
+function guestRects(layout2, n) {
+  var out = [], i;
+  if (layout2 === "grid") {
+    if (n === 1) return [[0, 0, 100, 100]];
+    if (n === 2) return [[0, 0, 50, 100], [50, 0, 50, 100]];
+    for (i = 0; i < n; i++) out.push([i % 2 * 50 + (n === 3 && i === 2 ? 25 : 0), Math.floor(i / 2) * 50, 50, 50]);
+    return out;
+  }
+  if (layout2 === "side") {
+    for (i = 0; i < n; i++) out.push([60, i * (100 / n), 40, 100 / n]);
+    return out;
+  }
+  for (i = 0; i < n; i++) out.push([100 - 2 - 24, 100 - 3 - (i + 1) * 24 - i * 2, 24, 24]);
+  return out;
+}
+function guestSync(gs, v) {
+  var id, list = gs && gs.list || [], seen = {}, i, g, c;
+  for (i = 0; i < list.length; i++) {
+    g = list[i];
+    seen[g.id] = true;
+    c = guestConns[g.id];
+    if (g.offer && (!c || c.seq !== g.seq)) {
+      guestConnect(g, gs.ice_servers, v);
+      c = guestConns[g.id];
+    }
+    if (c) {
+      c.onAir = !!g.on_air;
+      if (c.label.textContent !== (g.name || "")) c.label.textContent = g.name || "";
+    }
+  }
+  for (id in guestConns) if (!seen[id]) guestDrop(id);
+  var air = [];
+  for (i = 0; i < list.length; i++) if (guestConns[list[i].id] && guestConns[list[i].id].onAir) air.push(guestConns[list[i].id]);
+  var rects = guestRects(gs ? gs.layout : "pip", air.length);
+  var layer = document.getElementById("guestLayer");
+  if (layer) layer.style.background = gs && gs.layout === "grid" && air.length ? "#000" : "transparent";
+  for (id in guestConns) {
+    c = guestConns[id];
+    i = air.indexOf(c);
+    if (i < 0) {
+      c.tile.style.display = "none";
+      if (!c.video.muted) c.video.muted = true;
+      continue;
+    }
+    c.tile.style.left = rects[i][0] + "%";
+    c.tile.style.top = rects[i][1] + "%";
+    c.tile.style.width = rects[i][2] + "%";
+    c.tile.style.height = rects[i][3] + "%";
+    if (c.tile.style.display !== "block") {
+      c.tile.style.display = "block";
+      c.video.muted = false;
+      c.video.play().catch(function() {
+      });
+    }
+  }
+  if (Date.now() - guestThumbAt > 2e3) {
+    guestThumbAt = Date.now();
+    for (id in guestConns) {
+      c = guestConns[id];
+      if (!c.video.videoWidth) continue;
+      try {
+        var cv = document.createElement("canvas");
+        cv.width = 192;
+        cv.height = 108;
+        var ctx = cv.getContext("2d"), vw = c.video.videoWidth, vh = c.video.videoHeight, sc = Math.max(192 / vw, 108 / vh);
+        ctx.drawImage(c.video, (192 - vw * sc) / 2, (108 - vh * sc) / 2, vw * sc, vh * sc);
+        guestPost(v, { guest_id: id, thumb: cv.toDataURL("image/jpeg", 0.55), state: c.pc.connectionState });
+      } catch (e) {
+      }
+    }
+  }
+}
 function viewerPoll(v, first) {
   if (viewerEnded) return;
-  const url = v.payload_url + (viewerRev ? "?rev=" + encodeURIComponent(viewerRev) : "");
+  const have = guestHave();
+  const url = v.payload_url + (viewerRev ? "?rev=" + encodeURIComponent(viewerRev) : "") + (have ? (viewerRev ? "&" : "?") + "have=" + encodeURIComponent(have) : "");
   const sentAt = Date.now();
   fetch(url, { cache: "no-store", credentials: "omit" }).then(function(res) {
     if (res.status === 404 || res.status === 403 || res.status === 410) {
@@ -2880,6 +3046,11 @@ function viewerPoll(v, first) {
         } catch (e) {
         }
       }
+    }
+    try {
+      guestSync(body.guests || null, v);
+    } catch (e) {
+      console.warn("[guests]", e && e.message);
     }
     viewerAlign(body.now_playing);
   }).catch(function(e) {

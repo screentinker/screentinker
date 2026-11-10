@@ -44,6 +44,9 @@ function bedOf(row) {
   return { id: c.id, name: c.filename, file: file && file.startsWith(base + path.sep) && fs.existsSync(file) ? file : null };
 }
 const audio = require('../lib/stream-audio');
+const guests = require('../lib/mixer-guests');
+const orgWebrtc = require('../lib/org-webrtc');
+const running = (id) => streamOut.status(id).state !== 'off';
 /** The mixer's strips for a row. Rows from before the mixer had only a bed level and mute. */
 function mixOf(row) {
   let saved = null; try { saved = row.audio_mix ? JSON.parse(row.audio_mix) : null; } catch { saved = null; }
@@ -160,6 +163,7 @@ router.delete('/:id', requireFleetWrite, async (req, res) => {
   const r = mine(req, req.params.id);
   if (!r) return res.status(404).json({ error: 'Stream not found' });
   await streamOut.stop(r.id);
+  guests.revoke(r.id);
   db.prepare('DELETE FROM stream_outputs WHERE id = ?').run(r.id);
   res.json({ success: true });
 });
@@ -279,6 +283,47 @@ router.post('/:id/mic', gate, requireFleetWrite, (req, res) => {
   res.json({ success: true });
 });
 
+// ── guests (lib/mixer-guests.js) ─────────────────────────────────────────────────────────────────
+// The green rooms of this workspace's outputs: who has come in by each invite, and who is on air.
+router.get('/guests', (req, res) => {
+  const out = {};
+  for (const { id } of db.prepare('SELECT id FROM stream_outputs WHERE workspace_id = ?').all(req.workspaceId)) {
+    const g = guests.forDesk(id);
+    if (g.invite || g.guests.length) out[id] = { ...g, invite: undefined, invite_url: g.invite ? `/guest/${g.invite}` : null };
+  }
+  res.json({ rooms: out });
+});
+router.post('/:id/guests/invite', gate, requireFleetWrite, (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'Stream not found' });
+  res.json({ invite_url: `/guest/${guests.invite(r)}` });
+});
+router.delete('/:id/guests/invite', requireFleetWrite, (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'Stream not found' });
+  guests.revoke(r.id);
+  res.json({ success: true });
+});
+router.post('/:id/guests/layout', gate, requireFleetWrite, (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'Stream not found' });
+  if (!guests.setLayout(r.id, (req.body || {}).layout)) return res.status(400).json({ error: `layout is one of: ${guests.LAYOUTS.join(', ')}` });
+  res.json({ success: true });
+});
+router.post('/:id/guests/:gid', gate, requireFleetWrite, (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'Stream not found' });
+  const x = guests.setOnAir(r.id, req.params.gid, (req.body || {}).on_air === true);
+  if (!x.ok) return res.status(x.status).json({ error: x.error });
+  res.json({ success: true });
+});
+router.delete('/:id/guests/:gid', requireFleetWrite, (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'Stream not found' });
+  if (!guests.remove(r.id, req.params.gid)) return res.status(404).json({ error: 'That guest has left.' });
+  res.json({ success: true });
+});
+
 router.post('/:id/gfx', gate, requireFleetWrite, (req, res) => {
   const r = mine(req, req.params.id);
   if (!r) return res.status(404).json({ error: 'Stream not found' });
@@ -329,6 +374,44 @@ function renderer({ sendPlayer }) {
     if (!bySecret(req.params.secret)) return res.status(404).type('text/plain').send('not found');
     sendPlayer(res, 'index.html', { viewer: { payload_url: `/api/stream-feed/${req.params.secret}`, poll_ms: 1000, fast: true, sound: true } });
   });
+  // The guest's side: the page, and the four things it does. Addressed by the invite token; a
+  // guest who has joined also proves who they are with the key they were given.
+  r.get('/guest/:token', (req, res) => {
+    quiet(res);
+    res.sendFile(path.join(config.frontendDir, 'guest.html'));
+  });
+  const limiter = require('../lib/backstop-limiter');
+  const rowOf = (inv) => db.prepare('SELECT id, name, workspace_id FROM stream_outputs WHERE id = ?').get(inv.outputId);
+  r.post('/api/stream-guest/:token/join', limiter, (req, res) => {
+    quiet(res);
+    const j = guests.join(req.params.token, (req.body || {}).name);
+    if (j.error) return res.status(j.status).json({ error: j.error });
+    const row = rowOf(guests.invited(req.params.token));
+    if (!row) { guests.leave(j.guest); return res.status(404).json({ error: 'This invitation is no longer open. Ask for a new link.' }); }
+    res.json({ guest_id: j.guest.id, key: j.guest.key, name: j.guest.name, ice_servers: orgWebrtc.guestIceServers(orgWebrtc.orgIdForWorkspace(row.workspace_id)), ...guests.stateFor(j.guest, running(row.id)) });
+  });
+  const me = (req, res) => {
+    quiet(res);
+    const b = req.method === 'GET' ? req.query : (req.body || {});
+    const g = guests.who(req.params.token, b.guest_id, b.key);
+    if (!g) { res.status(404).json({ error: 'gone' }); return null; }
+    return g;
+  };
+  r.post('/api/stream-guest/:token/offer', limiter, (req, res) => {
+    const g = me(req, res); if (!g) return;
+    if (!guests.setOffer(g, (req.body || {}).sdp)) return res.status(400).json({ error: 'That is not a session description.' });
+    res.json(guests.stateFor(g, running(g.outputId)));
+  });
+  r.get('/api/stream-guest/:token/state', limiter, (req, res) => { const g = me(req, res); if (g) res.json(guests.stateFor(g, running(g.outputId))); });
+  r.post('/api/stream-guest/:token/leave', limiter, (req, res) => { const g = me(req, res); if (g) { guests.leave(g); res.json({ success: true }); } });
+  // The renderer's side: its answer to a guest, the state of that connection, a thumbnail.
+  r.post('/api/stream-feed/:secret/guest', (req, res) => {
+    quiet(res);
+    const row = bySecret(req.params.secret);
+    if (!row) return res.status(404).json({ error: 'not found' });
+    if (!guests.fromRenderer(row.id, req.body || {})) return res.status(400).json({ error: 'refused' });
+    res.json({ success: true });
+  });
   r.get('/stream-recording/:ticket', (req, res) => {
     quiet(res);
     const t = tickets.get(req.params.ticket);
@@ -344,6 +427,8 @@ function renderer({ sendPlayer }) {
     const out = { rev: f.rev, server_ms: Date.now(), now_playing: [], poll_ms: 1000, gfx: graphic };
     const tk = lastTake.get(row.id);
     if (tk && Date.now() - tk.at < 15000) out.take = { seq: tk.seq, type: tk.type, ms: tk.ms, color: tk.color };
+    // Guests: who is in the green room, who is on air, and the offer of anyone the renderer is not yet connected to.
+    if (guests.inviteOf(row.id)) out.guests = { ...guests.forRenderer(row.id, req.query.have), ice_servers: orgWebrtc.iceServersForWorkspace(row.workspace_id) };
     if (req.query.rev !== f.rev) out.payload = f.payload; else out.unchanged = true;
     res.json(out);
   });

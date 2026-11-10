@@ -332,7 +332,9 @@ async function start(row, key, sound, { standby = false } = {}) {
       // puppeteer mutes a headless browser by default; with a sink to play into, it must not.
       ignoreDefaultArgs: s.sink ? ['--mute-audio'] : [],
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', ...(s.sink ? [] : ['--mute-audio']), '--hide-scrollbars',
-        '--autoplay-policy=no-user-gesture-required', `--window-size=${row.width},${row.height}`],
+        '--autoplay-policy=no-user-gesture-required',
+        // Guests connect to this browser directly: it must offer its real addresses, not names only its own network can resolve.
+        '--disable-features=WebRtcHideLocalIpsWithMdns', `--window-size=${row.width},${row.height}`],
     });
     s.browser.on('disconnected', () => { if (s.wanted) { s.error = 'The renderer stopped.'; stop(row.id, 'error'); } });
     const page = await s.browser.newPage();
@@ -414,6 +416,7 @@ async function stop(id, why) {
   if (why === 'error' && s.error) stopped.set(id, { error: s.error, at: Date.now() }); else stopped.delete(id);
   clearInterval(s.timer); clearInterval(s.sndTimer); clearInterval(s.idleTimer); clearTimeout(s.retry);
   for (const name of [...audio.INPUTS, 'console']) stopInput(s, name);
+  try { require('./mixer-guests').rendererGone(id); } catch { /* no guests */ }
   audio.removeSink(s.sink);
   try { if (s.ff) { s.ff.stdin.end(); try { s.ff.stdio[3].end(); } catch { /* gone */ } const ff = s.ff; setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* gone */ } }, 2000).unref(); } } catch { /* gone */ }
   try { if (s.browser) await s.browser.close(); } catch { /* gone */ }

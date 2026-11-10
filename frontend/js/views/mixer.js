@@ -37,6 +37,60 @@ const stripsOf = (s) => [...FIXED, ...Array.from({ length: (s.audio.mix.console 
 /** What a strip is called: a console channel by the name it was given, or its number. */
 const stripName = (s, k) => (/^c\d+$/.test(k) ? (s.audio.mix[k].label || t('mixer.strip.channel', { n: k.slice(1) })) : t('mixer.strip.' + k));
 let meterBusy = false;
+// ── guests ───────────────────────────────────────────────────────────────────────────────────────
+// The green room of each stream: who came in by its invite link, a still of each, who is on air.
+let rooms = {};              // stream id -> { invite_url, layout, layouts, guests: [...] }
+let roomsSig = '', guestTimer = null;
+function guestsHtml() {
+  if (!so || !so.available || !streams().length) return '';
+  return `<h3>${esc(t('mixer.guests'))}</h3>
+    ${streams().map((s) => { const r = rooms[s.id], url = r && r.invite_url ? window.location.origin + r.invite_url : ''; return `
+      <div class="mx-room">
+        <div class="mx-group-name"><span class="mx-lamp mx-lamp-${streamTally(s)}"></span>${esc(s.name)}
+          ${url ? `<span class="mx-room-keys">${(r.layouts || []).map((l) => `<button type="button" class="mx-key mx-key-sm${r.layout === l ? ' is-on' : ''}" data-glayout="${esc(s.id)}" data-layout="${esc(l)}" aria-pressed="${r.layout === l}">${esc(t('mixer.guest_layout.' + l))}</button>`).join('')}</span>` : ''}
+          <button type="button" class="btn btn-secondary btn-sm mx-meters-on" data-ginvite="${esc(s.id)}">${esc(t(url ? 'mixer.guest_copy' : 'mixer.guest_invite'))}</button>
+          ${url ? `<button type="button" class="btn btn-secondary btn-sm" data-grevoke="${esc(s.id)}">${esc(t('mixer.guest_close'))}</button>` : ''}</div>
+        ${url ? `<input class="input mx-room-link" readonly value="${esc(url)}" aria-label="${esc(t('mixer.guest_link'))}" data-glink>
+          ${s.status.state === 'off' ? `<p class="mx-note">${esc(t('mixer.guest_need_standby'))}</p>` : ''}
+          ${r.guests.length ? `<div class="mx-guest-list">${r.guests.map((g) => `
+            <div class="mx-guest${g.on_air ? ' is-air' : ''}">
+              <div class="mx-guest-pic">${g.thumb ? `<img src="${esc(g.thumb)}" alt="">` : `<span>${esc(t('mixer.guest_state.' + (g.state === 'connected' ? 'connected' : 'connecting')))}</span>`}${g.on_air ? `<b>${esc(t('mixer.guest_on_air'))}</b>` : ''}</div>
+              <div class="mx-guest-name" title="${esc(g.name)}">${esc(g.name)}</div>
+              <div class="mx-guest-keys"><button type="button" class="btn btn-sm ${g.on_air ? 'btn-secondary' : 'mx-golive'}" data-gair="${esc(s.id)}" data-gid="${esc(g.id)}" data-on="${g.on_air ? 0 : 1}">${esc(t(g.on_air ? 'mixer.guest_off' : 'mixer.guest_put_on'))}</button>
+                <button type="button" class="btn btn-secondary btn-sm" data-gdel="${esc(s.id)}" data-gid="${esc(g.id)}">${esc(t('mixer.guest_remove'))}</button></div>
+            </div>`).join('')}</div>` : `<p class="mx-note">${esc(t('mixer.guest_none'))}</p>`}` : ''}
+      </div>`; }).join('')}
+    <p class="mx-note">${esc(t('mixer.guest_note'))}</p>`;
+}
+async function guestsRefresh(force) {
+  try { rooms = (await call('/stream-out/guests')).rooms || {}; } catch { return; }
+  const sig = JSON.stringify(rooms) + streams().map((s) => s.status.state).join();
+  if (sig === roomsSig && !force) return;
+  roomsSig = sig;
+  const el = document.getElementById('mxGuests'); if (!el) return;
+  if (el.contains(document.activeElement) && document.activeElement.matches('[data-glink]')) return;      // the link is being copied by hand
+  el.innerHTML = guestsHtml(); guestsBind(el);
+}
+function guestsBind(el) {
+  const act = (sel, fn) => el.querySelectorAll(sel).forEach((b) => b.addEventListener('click', async () => {
+    b.disabled = true;
+    try { await fn(b); } catch (err) { showToast(err.message, 'error'); }
+    guestsRefresh(true);
+  }));
+  act('[data-ginvite]', async (b) => {
+    const r = await call(`/stream-out/${encodeURIComponent(b.dataset.ginvite)}/guests/invite`, { method: 'POST' });
+    const url = window.location.origin + r.invite_url;
+    try { await navigator.clipboard.writeText(url); showToast(t('mixer.toast.guest_copied'), 'success'); } catch { showToast(t('mixer.toast.guest_link_ready'), 'info'); }
+  });
+  act('[data-grevoke]', async (b) => {
+    if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = t('mixer.guest_close_sure'); b.disabled = false; throw new Error(t('mixer.guest_close_warn')); }
+    await call(`/stream-out/${encodeURIComponent(b.dataset.grevoke)}/guests/invite`, { method: 'DELETE' });
+  });
+  act('[data-glayout]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.glayout)}/guests/layout`, { method: 'POST', body: JSON.stringify({ layout: b.dataset.layout }) }));
+  act('[data-gair]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.gair)}/guests/${encodeURIComponent(b.dataset.gid)}`, { method: 'POST', body: JSON.stringify({ on_air: b.dataset.on === '1' }) }));
+  act('[data-gdel]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.gdel)}/guests/${encodeURIComponent(b.dataset.gid)}`, { method: 'DELETE' }));
+  el.querySelectorAll('[data-glink]').forEach((i) => i.addEventListener('focus', () => i.select()));
+}
 // This computer's microphone, open into one stream: { sid, rec, media }. The browser records it
 // and the pieces are sent up in order, one request at a time.
 let mic = null;
@@ -291,6 +345,7 @@ function draw(root) {
   pgm && isStream(pgm) ? t('mixer.stream_no_source') : t('mixer.pick_output'), pgmFx);
   pgmFx = null;
   gfxLayer(root, pgm);
+  { const gel = root.querySelector('#mxGuests'); if (gel) guestsBind(gel); }
   root.querySelector('#mxRest').innerHTML = `
       <section class="mx-bank mx-scenes">
         <h3>${esc(t('mixer.scenes'))}<span class="mx-bank-actions"><button type="button" class="btn btn-secondary btn-sm" id="mxSaveScene">${esc(t('mixer.scene_save'))}</button></span></h3>
@@ -378,6 +433,8 @@ function draw(root) {
             </button>`).join('')}
         </div>
       </section>
+
+      <section class="mx-bank mx-guests" id="mxGuests">${guestsHtml()}</section>
 
       ${so ? `<section class="mx-bank mx-streams">
         <h3>${esc(t('mixer.streams'))}${so.available ? `<span class="mx-bank-actions"><button type="button" class="btn btn-secondary btn-sm" id="mxAddStream">${esc(t('mixer.stream_add'))}</button></span>` : ''}</h3>
@@ -756,6 +813,7 @@ export async function render(container, which) {
     } catch { /* keep the desk as it is */ }
   }, 10000);
   // Level meters of running streams (live or on standby), moved in place five times a second (no redraw).
+  guestsRefresh(true); guestTimer = setInterval(() => { if (alive && !document.hidden) guestsRefresh(false); }, 2000);
   monTimer = setInterval(() => { if (alive && !document.hidden) monitorLevels(); }, 100);
   document.addEventListener('pointerdown', wakeAudio);
   meterTimer = setInterval(async () => {
@@ -782,6 +840,7 @@ export function cleanup() {
   onKey = null;
   clearInterval(refreshTimer); refreshTimer = null;
   clearInterval(meterTimer); meterTimer = null;
+  clearInterval(guestTimer); guestTimer = null;
   clearInterval(monTimer); monTimer = null; document.removeEventListener('pointerdown', wakeAudio);
   releaseMove();
 }

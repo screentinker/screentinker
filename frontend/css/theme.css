@@ -657,7 +657,20 @@
 .mx[data-section="audio"] .mx-rest > :not(.mx-audio):not(.mx-outputs),
 .mx[data-section="cameras"] .mx-rest > :not(.mx-pair),
 .mx[data-section="graphics"] .mx-rest > :not(.mx-gfx):not(.mx-outputs),
-.mx[data-section="streams"] .mx-rest > :not(.mx-streams) { display: none; }
+.mx[data-section="streams"] .mx-rest > :not(.mx-streams):not(.mx-guests) { display: none; }
+.mx-guests:empty { display: none; }
+.mx-room { padding: 12px; margin-bottom: 10px; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: var(--radius); }
+.mx-room-keys { display: flex; gap: 6px; margin-left: 12px; }
+.mx-key-sm { padding: 4px 10px; font-size: 11px; min-height: 0; }
+.mx-room-link { margin-top: 10px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.mx-guest-list { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.mx-guest { width: 208px; }
+.mx-guest-pic { position: relative; aspect-ratio: 16 / 9; background: #000; border: 2px solid var(--border-light); border-radius: 3px; overflow: hidden; display: grid; place-items: center; font-size: 12px; color: var(--text-secondary); }
+.mx-guest.is-air .mx-guest-pic { border-color: var(--tally, var(--danger)); box-shadow: 0 0 14px color-mix(in srgb, var(--tally, var(--danger)) 45%, transparent); }
+.mx-guest-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mx-guest-pic b { position: absolute; left: 6px; top: 6px; padding: 2px 6px; border-radius: 2px; font-size: 10px; letter-spacing: 0.08em; color: #fff; background: var(--danger); }
+.mx-guest-name { margin: 6px 0; font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mx-guest-keys { display: flex; gap: 6px; }
 /* A section page keeps an eye on the pictures without giving them the whole screen. */
 .mx:not([data-section="desk"]) .mx-monitors { grid-template-columns: minmax(0, 320px) auto minmax(0, 320px); justify-content: start; }
 .mx:not([data-section="desk"]) .mx-take-col { display: none; }
