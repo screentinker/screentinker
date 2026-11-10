@@ -3314,6 +3314,9 @@
       var video = newVideoElement();
       video.autoplay = true; video.playsInline = true; video.muted = true; video.__stOverlay = true;
       video.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+      // A phone held upright sends a tall picture: show all of it between black bars instead of cropping to the middle.
+      var fit = function () { video.style.objectFit = video.videoHeight > video.videoWidth ? 'contain' : 'cover'; };
+      video.addEventListener('loadedmetadata', fit); video.addEventListener('resize', fit);
       var label = document.createElement('div');
       label.style.cssText = "position:absolute;left:0;bottom:0;max-width:90%;padding:.35em .8em;background:rgba(11,12,14,.82);color:#fff;font:600 1.6vh/1.2 'Barlow','Helvetica Neue',Arial,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
       label.textContent = g.name || '';
@@ -3378,7 +3381,8 @@
           if (!c.video.videoWidth) continue;
           try {
             var cv = document.createElement('canvas'); cv.width = 192; cv.height = 108;
-            var ctx = cv.getContext('2d'), vw = c.video.videoWidth, vh = c.video.videoHeight, sc = Math.max(192 / vw, 108 / vh);
+            var ctx = cv.getContext('2d'), vw = c.video.videoWidth, vh = c.video.videoHeight, sc = vh > vw ? Math.min(192 / vw, 108 / vh) : Math.max(192 / vw, 108 / vh);
+            ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 192, 108);
             ctx.drawImage(c.video, (192 - vw * sc) / 2, (108 - vh * sc) / 2, vw * sc, vh * sc);
             guestPost(v, { guest_id: id, thumb: cv.toDataURL('image/jpeg', 0.55), state: c.pc.connectionState });
           } catch (e) {}

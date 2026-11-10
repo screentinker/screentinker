@@ -145,3 +145,6 @@ setInterval(tick, 1000);
 
 if (!navigator.mediaDevices || !window.RTCPeerConnection) say('This browser cannot join a broadcast. Use a current Chrome, Edge, Firefox or Safari.', true);
 else openMedia().catch((e) => say(e.name === 'NotAllowedError' ? 'Allow the camera and microphone for this page, then press Join.' : 'No camera or microphone was found: ' + e.message, true));
+
+// A tall picture (a phone held upright) is shown whole, and the guest is told how to fill the frame.
+{ const v = $('gsVideo'), tall = () => { $('gsTurn').hidden = !(v.videoHeight > v.videoWidth); }; v.addEventListener('loadedmetadata', tall); v.addEventListener('resize', tall); }
