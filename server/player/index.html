@@ -6776,7 +6776,8 @@
       // whole wall switches together instead of the leader holding out for up to 60 s.
       // cut_now: the vision mixer's TAKE (routes/mixer.js). An operator pressed a key to put this
       // on air; waiting out the current item is exactly what they did not ask for.
-      const interruptNow = interruptChanged(oldPlaylist, playlist) || data.cut_now === true;
+      const interruptNow = interruptChanged(oldPlaylist, playlist);
+      const cutNow = data.cut_now === true;
       if (interruptNow) console.log('Emergency alert raised/cleared — swapping now, not at the next advance');
       /*
        * The STAGE changed shape (a different layout, or none; a wall joined or left). The deferral
@@ -6788,7 +6789,7 @@
        * above already does for the same change ("Layout or wall changed with the same items").
        */
       const stageChanged = layoutChanged || wallChanged;
-      if (isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow && !stageChanged) {
+      if (isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow && !stageChanged && !cutNow) {
         deferredRotation = true;
         deferredSuccessorId = itemIdentity(playlist[nextIdx]);
         console.log('#157: current item removed but still live — deferring rotation-out');

@@ -135,7 +135,8 @@ test('a take is pushed as a cut, and the web player switches at once on it', () 
   assert.match(route, /p && !p\.suspended \? \{ \.\.\.p, cut_now: true \} : p/, 'and never dresses up a suspended screen\'s payload');
   for (const f of ['index.html', 'legacy.html']) {
     const player = fs.readFileSync(path.join(__dirname, '..', 'player', f), 'utf8');
-    assert.match(player, /interruptChanged\(oldPlaylist, playlist\) \|\| data\.cut_now === true/, `${f}: cut_now skips the wait for the current item`);
+    assert.match(player, /cutNow = data\.cut_now === true/, `${f}: the flag is read`);
+    assert.match(player, /!interruptNow && !stageChanged && !cutNow\) \{\s*deferredRotation = true;/, `${f}: and a cut skips the wait for the current item`);
   }
 });
 

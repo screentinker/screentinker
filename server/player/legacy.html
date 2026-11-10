@@ -5532,10 +5532,11 @@ function handlePlaylistUpdate(data) {
   if (nextIdx === -1) nextIdx = 0;
   const scheduleDriven = isWallFollower() || !!groupSync;
   const outgoingNeverAdvances = oldPlaylist.length <= 1;
-  const interruptNow = interruptChanged(oldPlaylist, playlist) || data.cut_now === true;
+  const interruptNow = interruptChanged(oldPlaylist, playlist);
+  const cutNow = data.cut_now === true;
   if (interruptNow) console.log("Emergency alert raised/cleared \u2014 swapping now, not at the next advance");
   const stageChanged = layoutChanged || wallChanged;
-  if (isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow && !stageChanged) {
+  if (isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow && !stageChanged && !cutNow) {
     deferredRotation = true;
     deferredSuccessorId = itemIdentity(playlist[nextIdx]);
     console.log("#157: current item removed but still live \u2014 deferring rotation-out");
