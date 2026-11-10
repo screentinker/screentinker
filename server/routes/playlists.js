@@ -1256,7 +1256,9 @@ router.get('/:id/layout-zone-map', requirePlaylistRead, (req, res) => {
 // gated + workspace-scoped by requirePlaylistRead. The dashboard iframes /player
 // with ?preview=1&playlist=:id and renders this with the unmodified player renderer.
 const PREVIEW_ORIENTATIONS = new Set(['landscape', 'portrait', 'landscape-flipped', 'portrait-flipped']);
-router.get('/:id/preview-payload', requirePlaylistRead, (req, res) => {
+/** What the web player is handed to preview a playlist (also what a stream output shows). */
+function previewPayload(playlistRow, orientationIn) {
+  const req = { params: { id: playlistRow.id }, playlist: playlistRow, query: { orientation: orientationIn } };
   const { assemblePayload } = require('../ws/deviceSocket');
   // 3.0 campaigns: built once with the layout markers kept; the preview player (the web player, which
   // plays campaigns) gets the structure as a screen would, and `assignments` stays the fallback.
@@ -1283,7 +1285,10 @@ router.get('/:id/preview-payload', requirePlaylistRead, (req, res) => {
     const c = camp.payloadCampaign(db, campaignObj, { orientation }, (l) => l);
     if (c) out.campaign = c;
   }
-  res.json(out);
+  return out;
+}
+router.get('/:id/preview-payload', requirePlaylistRead, (req, res) => {
+  res.json(previewPayload(req.playlist, req.query.orientation));
 });
 
 // Update playlist
@@ -2746,3 +2751,4 @@ module.exports = router;
  */
 module.exports.publishPlaylist = publishPlaylist; // #73: shared with the agency auto-publish path
 module.exports.buildSnapshotItems = buildSnapshotItems;
+module.exports.previewPayload = previewPayload;

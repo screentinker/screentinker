@@ -92,6 +92,8 @@ const PUBLIC_ROUTERS = [
 ];
 
 const JWT_ONLY_ROUTERS = [
+  // Stream outputs of the vision mixer: holds stream keys and starts encoders, so session only.
+  { path: '/api/stream-out',  mod: './routes/stream-out',   tenancy: true },
   /*
    * Hosted AI images paid in org credits (docs/ai-credits.md). BEFORE /api/ai: Express walks mounts
    * in order, and listing it after would run /api/ai's auth + tenancy first for every hosted call.

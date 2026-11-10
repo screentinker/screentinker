@@ -837,3 +837,25 @@ CREATE TABLE IF NOT EXISTS device_diagnostic_logs (
 CREATE INDEX IF NOT EXISTS idx_device_diagnostic_logs_dev
     ON device_diagnostic_logs(device_id, uploaded_at DESC);
 
+
+-- Stream outputs (lib/stream-out.js, routes/stream-out.js): a program output of the vision mixer
+-- that goes to a streaming service instead of a screen. Self-hosted instances only. The stream key
+-- is stored encrypted (lib/secretbox.js) and never returned by the API; feed_secret is what the
+-- server's own renderer uses to fetch what this output is showing.
+CREATE TABLE IF NOT EXISTS stream_outputs (
+    id              TEXT PRIMARY KEY,
+    workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    url             TEXT,
+    key_enc         TEXT,
+    playlist_id     TEXT,
+    gfx_json        TEXT,
+    width           INTEGER NOT NULL DEFAULT 1280,
+    height          INTEGER NOT NULL DEFAULT 720,
+    fps             INTEGER NOT NULL DEFAULT 30,
+    bitrate_k       INTEGER NOT NULL DEFAULT 3500,
+    feed_secret     TEXT NOT NULL UNIQUE,
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_stream_outputs_ws ON stream_outputs(workspace_id);

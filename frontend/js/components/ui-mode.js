@@ -16,6 +16,7 @@
  * reason: never hide something from someone who did not ask.
  */
 import { api } from '../api.js';
+import { setTheme, currentTheme } from '../lib/themes.js';
 import { t } from '../i18n.js';
 import { showToast } from './toast.js';
 import { inManagerApp, openOutsideApp } from '../utils.js';
@@ -39,6 +40,7 @@ function setBodyMode(mode) {
   if (root.contains('ui-simple') === simple && root.contains('ui-broadcast') === broadcast) return;
   root.toggle('ui-simple', simple);
   root.toggle('ui-broadcast', broadcast);
+  setTheme(currentTheme());   // Broadcast wears the gallery look; leaving it gives the chosen theme back
   // nav-groups.js re-counts which groups still have a visible link.
   window.dispatchEvent(new CustomEvent('st:ui-mode', { detail: { mode } }));
 }

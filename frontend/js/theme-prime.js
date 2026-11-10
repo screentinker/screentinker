@@ -5,6 +5,8 @@
 (function () {
   try {
     var t = localStorage.getItem('st_theme');
+    // Broadcast view is always the production gallery; the chosen theme is for the other views.
+    try { if ((JSON.parse(localStorage.getItem('user') || '{}') || {}).ui_mode === 'broadcast') t = 'control-room'; } catch (e2) { /* no cached account */ }
     if (t === 'light' || t === 'classic' || t === 'control-room') document.documentElement.setAttribute('data-theme', t);
     else document.documentElement.removeAttribute('data-theme');
     var bar = { light: '#f3f4f6', classic: '#111827', 'control-room': '#0a0b0c' }[t] || '#15171a';

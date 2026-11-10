@@ -716,6 +716,7 @@ const HOST = (() => {
 const VIEWER = window.__playerConfig && window.__playerConfig.viewer || null;
 const VIEWER_MODE = !!VIEWER;
 let viewerRev = null;
+let viewerGfxId = null;
 let viewerTimer = null;
 let viewerEnded = false;
 let viewerLastAnchor = null;
@@ -2863,6 +2864,17 @@ function viewerPoll(v, first) {
       handlePlaylistUpdate(body.payload);
       viewerLastAnchor = null;
     }
+    if (Object.prototype.hasOwnProperty.call(body, "gfx")) {
+      var gid = body.gfx && body.gfx.pip_id ? body.gfx.pip_id : null;
+      if (gid !== viewerGfxId) {
+        viewerGfxId = gid;
+        try {
+          if (gid) pipShow(body.gfx);
+          else pipClear();
+        } catch (e) {
+        }
+      }
+    }
     viewerAlign(body.now_playing);
   }).catch(function(e) {
     console.warn("[viewer] poll failed", e && e.message);
@@ -2871,7 +2883,7 @@ function viewerPoll(v, first) {
     clearTimeout(viewerTimer);
     viewerTimer = setTimeout(function() {
       viewerPoll(v, false);
-    }, Math.max(2e3, Number(v.poll_ms) || 4e3));
+    }, Math.max(v.fast === true ? 500 : 2e3, Number(v.poll_ms) || 4e3));
   });
 }
 function viewerAlign(list) {
@@ -4487,8 +4499,12 @@ function pipShow(p) {
     if (p.border_radius != null && isFinite(Number(p.border_radius))) box.style.borderRadius = pipPx(p.border_radius, 0);
     const pos = PIP_POS[p.position] || PIP_POS["top-right"];
     Object.keys(pos).forEach((k) => {
-      box.style[k] = pos[k];
+      box.style[k] = p.keyed === true && pos[k] === "4%" ? "0" : pos[k];
     });
+    if (p.keyed === true) {
+      box.style.background = "transparent";
+      box.style.boxShadow = "none";
+    }
     const hasTitle = p.title != null && p.title !== "";
     if (hasTitle) {
       const bar = document.createElement("div");

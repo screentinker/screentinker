@@ -208,6 +208,7 @@ app.use((req, res, next) => {
   if (req.path === '/' || req.path === '/landing.html') return exempt();
   if (req.path.startsWith('/player')) return exempt();
   if (req.path.startsWith('/view/')) return exempt(); // view-only display page: the web player (routes/view.js)
+  if (req.path.startsWith('/stream-render/')) return exempt(); // the web player, rendered by this server for a stream output
   if (req.path.startsWith('/listen/')) return exempt(); // visitor audio-guide page, inline JS like the player (routes/view.js)
   if (req.path === '/docs') return exempt(); // Redoc API reference needs a relaxed CSP
   // #flash: the ESP32 web-serial firmware installer (frontend/flash/) is René's esp-web-tools page,
@@ -1601,6 +1602,8 @@ app.use('/api/public/requests', rateLimit(60000, 1500), require('./routes/reques
 // token is folded out of the key), and a venue puts every visitor's phone behind one Wi-Fi NAT: at
 // the old shared 240/min, ~16 audio-guide phones at a 4s poll exhausted it for the whole venue.
 // 2400/min covers ~160 phones; the lite poll it serves is a token check plus a cached lookup.
+// Stream outputs (routes/stream-out.js): the page this server's own renderer opens, and its feed.
+app.use(require('./routes/stream-out').renderer({ sendPlayer }));
 app.get('/api/view/:kind/:key/payload', rateLimit(60000, 2400));
 app.get(['/view/:key', '/view/screen/:id', '/listen/:key', '/listen/screen/:id'], rateLimit(60000, 240));
 app.get(['/view/:key', '/view/screen/:id', '/api/view/:kind/:key/payload', '/listen/:key', '/listen/screen/:id'], require('./routes/view')({ sendPlayer }));
@@ -3204,6 +3207,8 @@ ghcrCheck.startPolling(config.ghcrCheckIntervalHours, VERSION);
 // Graceful shutdown: stop the checkpointer worker (closes its own DB handle) + flush + close.
 let _shuttingDown = false;
 function gracefulShutdown(sig) {
+  // Running stream outputs own an ffmpeg and a browser each: take them down with the server.
+  try { require('./lib/stream-out').stopAll().catch(() => {}); } catch (_) { /* never loaded */ }
   if (_shuttingDown) return; _shuttingDown = true;
   console.log(`[shutdown] ${sig} — stopping WAL checkpointer + closing DB`);
   Promise.resolve(stopWalCheckpointer()).catch(() => {}).finally(() => {

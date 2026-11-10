@@ -22,7 +22,9 @@ import { t } from '../i18n.js';
 import { esc } from '../utils.js';
 import { showToast } from '../components/toast.js';
 
-let state = null;            // { screens, groups, sources, graphics }
+let state = null;            // { screens, groups, sources, graphics, streams }
+let so = null;               // GET /api/stream-out: what streaming is possible here, and the outputs
+let addingStream = false;
 let pvw = null;              // playlist id in Preview
 let outputs = new Set();     // selected screen ids
 let onKey = null;
@@ -34,7 +36,14 @@ const call = (path, opts) => api.request ? api.request(path, opts) : fetch('/api
 }).then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d; });
 
 const frame = (src) => `<iframe class="mx-frame" src="${src}" title="" tabindex="-1"></iframe>`;
-const firstOutput = () => (state ? state.screens.find((s) => outputs.has(s.id)) : null);
+const streams = () => (so && so.outputs) || [];
+const firstOutput = () => (state ? (state.screens.find((s) => outputs.has(s.id)) || streams().find((s) => outputs.has(s.id))) : null);
+const isStream = (o) => !!o && streams().includes(o);
+const streamTally = (s) => (s.status.state === 'live' ? 'air' : s.status.state === 'off' ? 'idle' : 'standby');
+async function load() {
+  const [m, s] = await Promise.all([call('/mixer'), call('/stream-out').catch(() => null)]);
+  so = s; return m;
+}
 const sourceName = (id) => { const s = state && state.sources.find((x) => x.id === id); return s ? s.name : ''; };
 
 function tallyOf(s) {
@@ -60,7 +69,7 @@ function draw(root) {
         </div>
         <div class="mx-mon mx-pgm">
           <div class="mx-mon-label"><span class="mx-lamp mx-lamp-pgm"></span>${esc(t('mixer.program'))}<b>${esc(pgm ? `${pgm.name}${pgm.playlist_name ? ': ' + pgm.playlist_name : ''}` : t('mixer.nothing_selected'))}</b></div>
-          <div class="mx-screen">${pgm ? frame(`/player?preview=1&device=${encodeURIComponent(pgm.id)}&t=${Date.now()}`) : `<div class="mx-empty">${esc(t('mixer.pick_output'))}</div>`}</div>
+          <div class="mx-screen">${pgm && isStream(pgm) ? (pgm.playlist_id ? frame(`/player?preview=1&playlist=${encodeURIComponent(pgm.playlist_id)}&orientation=landscape&t=${Date.now()}`) : `<div class="mx-empty">${esc(t('mixer.stream_no_source'))}</div>`) : pgm ? frame(`/player?preview=1&device=${encodeURIComponent(pgm.id)}&t=${Date.now()}`) : `<div class="mx-empty">${esc(t('mixer.pick_output'))}</div>`}</div>
         </div>
       </section>
 
@@ -86,9 +95,39 @@ function draw(root) {
           ${state.screens.length ? state.screens.map((s) => `
             <button type="button" class="mx-key mx-out mx-tally-${tallyOf(s)}${outputs.has(s.id) ? ' is-on' : ''}" data-out="${esc(s.id)}" aria-pressed="${outputs.has(s.id)}" title="${esc(s.name)}">
               <span class="mx-key-tally"></span><span class="mx-key-name">${esc(s.name)}</span><span class="mx-key-sub">${esc(s.playlist_name || t('mixer.no_playlist'))}</span>
-            </button>`).join('') : `<p class="mx-note">${esc(t('mixer.no_screens'))}</p>`}
+            </button>`).join('') : (streams().length ? '' : `<p class="mx-note">${esc(t('mixer.no_screens'))}</p>`)}
+          ${streams().map((s) => `
+            <button type="button" class="mx-key mx-out mx-stream mx-tally-${streamTally(s)}${outputs.has(s.id) ? ' is-on' : ''}" data-out="${esc(s.id)}" aria-pressed="${outputs.has(s.id)}" title="${esc(s.name)}">
+              <span class="mx-key-tally"></span><span class="mx-key-name">${esc(s.name)}</span><span class="mx-key-sub">${esc(s.kind_label)}: ${esc(s.playlist_name || t('mixer.no_playlist'))}</span>
+            </button>`).join('')}
         </div>
       </section>
+
+      ${so ? `<section class="mx-bank mx-streams">
+        <h3>${esc(t('mixer.streams'))}${so.available ? `<span class="mx-bank-actions"><button type="button" class="btn btn-secondary btn-sm" id="mxAddStream">${esc(t('mixer.stream_add'))}</button></span>` : ''}</h3>
+        ${!so.available ? `<p class="mx-note mx-note-top">${esc(t('mixer.stream_unavailable.' + so.reason))}</p>` : `
+          ${streams().length ? `<div class="mx-stream-list">${streams().map((s) => `
+            <div class="mx-stream-row" data-stream-row="${esc(s.id)}">
+              <span class="mx-lamp mx-lamp-${streamTally(s)}"></span>
+              <div class="mx-stream-what"><b>${esc(s.name)}</b><span>${esc(s.kind_label)}${s.url ? ' · ' + esc(s.url) : ''} · ${s.height}p${s.fps} · ${s.bitrate_k} kbps</span>
+                ${s.status.error || s.status.last_error ? `<span class="mx-stream-err">${esc(s.status.error || s.status.last_error)}</span>` : ''}</div>
+              <span class="mx-stream-state">${esc(t('mixer.stream_state.' + s.status.state))}</span>
+              ${s.status.state === 'off'
+                ? `<button type="button" class="btn btn-sm mx-golive" data-go="${esc(s.id)}">${esc(t('mixer.stream_go'))}</button><button type="button" class="btn btn-secondary btn-sm" data-del="${esc(s.id)}">${esc(t('common.delete'))}</button>`
+                : `<button type="button" class="btn btn-secondary btn-sm" data-stop="${esc(s.id)}">${esc(t('mixer.stream_stop'))}</button>`}
+            </div>`).join('')}</div>` : (addingStream ? '' : `<p class="mx-note mx-note-top">${esc(t('mixer.stream_none'))}</p>`)}
+          ${addingStream ? `<form class="mx-stream-form" id="mxStreamForm">
+            <label>${esc(t('mixer.stream_name'))}<input class="input" name="name" maxlength="80" required placeholder="${esc(t('mixer.stream_name_ph'))}"></label>
+            <label>${esc(t('mixer.stream_to'))}<select class="input" name="kind">${so.kinds.map((k) => `<option value="${esc(k.kind)}" data-url="${k.needs_url ? 1 : 0}">${esc(k.label)}</option>`).join('')}</select></label>
+            <label class="mx-stream-url" hidden>${esc(t('mixer.stream_url'))}<input class="input" name="url" maxlength="500" placeholder="rtmp://"></label>
+            <label>${esc(t('mixer.stream_key'))}<input class="input" name="key" type="password" autocomplete="off" maxlength="600"></label>
+            <label>${esc(t('mixer.stream_size'))}<select class="input" name="size">${so.sizes.map((z) => `<option value="${z.width}x${z.height}">${z.height}p</option>`).join('')}</select></label>
+            <div class="mx-stream-form-actions"><button type="submit" class="btn btn-primary btn-sm">${esc(t('mixer.stream_save'))}</button><button type="button" class="btn btn-secondary btn-sm" id="mxStreamCancel">${esc(t('common.cancel'))}</button></div>
+          </form>` : ''}
+          <p class="mx-note">${esc(t('mixer.stream_note', { max: so.max }))}</p>
+          ${so.ffmpeg && so.ffmpeg.licence && so.ffmpeg.licence !== 'lgpl' ? `<p class="mx-note mx-licence" role="note"><b>${esc(t('mixer.licence_title'))}</b> ${esc(t('mixer.licence_' + so.ffmpeg.licence, { version: so.ffmpeg.version || '' }))}</p>`
+            : `<p class="mx-note">${esc(t('mixer.licence_lgpl'))}</p>`}`}
+      </section>` : ''}
 
       <section class="mx-bank mx-gfx">
         <h3>${esc(t('mixer.graphics'))}</h3>
@@ -114,8 +153,10 @@ async function take(root) {
   const btn = root.querySelector('#mxTake');
   if (btn) btn.disabled = true;
   try {
-    const r = await call('/mixer/take', { method: 'POST', body: JSON.stringify({ device_ids: [...outputs], playlist_id: pvw }) });
-    const n = (r.taken || []).length, skipped = (r.skipped || []).length;
+    const streamIds = streams().filter((s) => outputs.has(s.id)).map((s) => s.id);
+    const r = await call('/mixer/take', { method: 'POST', body: JSON.stringify({ device_ids: [...outputs].filter((id) => !streamIds.includes(id)), stream_ids: streamIds, playlist_id: pvw }) });
+    for (const tk of r.streams || []) { const s = streams().find((x) => x.id === tk.stream_id); if (s) { s.playlist_id = r.playlist.id; s.playlist_name = r.playlist.name; } }
+    const n = (r.taken || []).length + (r.streams || []).length, skipped = (r.skipped || []).length;
     showToast(skipped ? t('mixer.toast.taken_skipped', { n, name: r.playlist.name, skipped }) : t('mixer.toast.taken', { n, name: r.playlist.name }), n ? 'success' : 'warning');
     for (const tk of r.taken || []) { const s = state.screens.find((x) => x.id === tk.device_id); if (s) { s.playlist_id = r.playlist.id; s.playlist_name = r.playlist.name; } }
     // Flip-flop: what was on Program is now in Preview, one key press from going back.
@@ -136,7 +177,8 @@ async function key(root, kind) {
   let ok = 0, failed = 0;
   await Promise.all([...outputs].map(async (id) => {
     try {
-      await call('/pip', { method: 'POST', body: JSON.stringify({ device_id: id, type: 'web', uri, position: g.box.position,
+      if (streams().some((s) => s.id === id)) await call(`/stream-out/${encodeURIComponent(id)}/gfx`, { method: 'POST', body: JSON.stringify({ kind, a, b, accent }) });
+      else await call('/pip', { method: 'POST', body: JSON.stringify({ device_id: id, type: 'web', uri, position: g.box.position, keyed: true,
         width: Math.round(W * g.box.w), height: Math.round(H * g.box.h), duration: 0, opacity: 1, border_radius: 0 }) });
       ok++;
     } catch { failed++; }
@@ -146,7 +188,9 @@ async function key(root, kind) {
 
 async function clearGfx() {
   if (!outputs.size) return;
-  await Promise.all([...outputs].map((id) => call('/pip/clear', { method: 'POST', body: JSON.stringify({ device_id: id }) }).catch(() => null)));
+  await Promise.all([...outputs].map((id) => (streams().some((s) => s.id === id)
+    ? call(`/stream-out/${encodeURIComponent(id)}/gfx/clear`, { method: 'POST' })
+    : call('/pip/clear', { method: 'POST', body: JSON.stringify({ device_id: id }) })).catch(() => null)));
   showToast(t('mixer.toast.gfx_off'), 'info');
 }
 
@@ -160,6 +204,33 @@ function bind(root) {
     outputs = new Set(g.device_ids.filter((id) => state.screens.some((s) => s.id === id))); draw(root);
   }));
   const all = root.querySelector('#mxAll'); if (all) all.addEventListener('click', () => { outputs = new Set(state.screens.map((s) => s.id)); draw(root); });
+  // Streams: add a destination, go live, stop, remove.
+  const redo = async () => { try { so = await call('/stream-out'); } catch { /* keep */ } if (alive) draw(root); };
+  const act = (sel, attr, fn) => root.querySelectorAll(sel).forEach((b) => b.addEventListener('click', async () => {
+    b.disabled = true;
+    try { await fn(b.dataset[attr]); } catch (err) { showToast(err.message, 'error'); }
+    redo();
+  }));
+  act('[data-go]', 'go', async (id) => { await call(`/stream-out/${encodeURIComponent(id)}/start`, { method: 'POST' }); showToast(t('mixer.toast.stream_starting'), 'success'); });
+  act('[data-stop]', 'stop', (id) => call(`/stream-out/${encodeURIComponent(id)}/stop`, { method: 'POST' }));
+  act('[data-del]', 'del', async (id) => { await call(`/stream-out/${encodeURIComponent(id)}`, { method: 'DELETE' }); outputs.delete(id); });
+  const add = root.querySelector('#mxAddStream'); if (add) add.addEventListener('click', () => { addingStream = true; draw(root); const f = root.querySelector('#mxStreamForm [name=name]'); if (f) f.focus(); });
+  const form = root.querySelector('#mxStreamForm');
+  if (form) {
+    const kindSel = form.querySelector('[name=kind]'), urlRow = form.querySelector('.mx-stream-url');
+    const sync = () => { urlRow.hidden = kindSel.selectedOptions[0].dataset.url !== '1'; };
+    kindSel.addEventListener('change', sync); sync();
+    root.querySelector('#mxStreamCancel').addEventListener('click', () => { addingStream = false; draw(root); });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = new FormData(form); const [width, height] = String(f.get('size')).split('x').map(Number);
+      try {
+        const made = await call('/stream-out', { method: 'POST', body: JSON.stringify({ name: f.get('name'), kind: f.get('kind'), url: f.get('url'), key: f.get('key'), width, height }) });
+        addingStream = false; outputs.add(made.id);
+        showToast(t('mixer.toast.stream_added'), 'success'); redo();
+      } catch (err) { showToast(err.message, 'error'); }
+    });
+  }
   const none = root.querySelector('#mxNone'); if (none) none.addEventListener('click', () => { outputs = new Set(); draw(root); });
   const tk = root.querySelector('#mxTake'); if (tk) tk.addEventListener('click', () => take(root));
   root.querySelectorAll('[data-gfx]').forEach((b) => b.addEventListener('click', () => key(root, b.dataset.gfx)));
@@ -172,12 +243,12 @@ function bind(root) {
 export async function render(container) {
   alive = true;
   container.innerHTML = `<div class="empty-state"><h3>${esc(t('common.loading'))}</h3></div>`;
-  try { state = await call('/mixer'); } catch (err) {
+  try { state = await load(); } catch (err) {
     container.innerHTML = `<div class="empty-state"><h3>${esc(t('mixer.title'))}</h3><p>${esc(err.message)}</p></div>`;
     return;
   }
   if (!alive) return;
-  outputs = new Set([...outputs].filter((id) => state.screens.some((s) => s.id === id)));
+  outputs = new Set([...outputs].filter((id) => state.screens.some((s) => s.id === id) || streams().some((s) => s.id === id)));
   if (pvw && !state.sources.some((s) => s.id === pvw)) pvw = null;
   draw(container);
 
@@ -193,11 +264,11 @@ export async function render(container) {
   refreshTimer = setInterval(async () => {
     if (!alive || document.hidden) return;
     try {
-      const fresh = await call('/mixer');
-      const changed = JSON.stringify(fresh.screens.map((s) => [s.id, s.status, s.playlist_id])) !== JSON.stringify(state.screens.map((s) => [s.id, s.status, s.playlist_id]))
-        || fresh.sources.length !== state.sources.length;
-      state = fresh;
-      if (changed && alive) draw(container);
+      const sig = () => JSON.stringify([state.screens.map((s) => [s.id, s.status, s.playlist_id]), state.sources.length, streams().map((s) => [s.id, s.status.state, s.status.error, s.playlist_id])]);
+      const before = sig();
+      if (container.querySelector('#mxStreamForm')) return;      // someone is typing a stream key: leave the desk alone
+      state = await load();
+      if (sig() !== before && alive) draw(container);
     } catch { /* keep the desk as it is */ }
   }, 10000);
 }

@@ -29,10 +29,12 @@ export function currentTheme() {
 export function setTheme(id) {
   const theme = THEMES.find((t) => t.id === id);
   if (!theme) return currentTheme();
-  if (theme.attr) document.documentElement.setAttribute('data-theme', theme.attr);
+  // Broadcast view is always the production gallery: remember the choice, show it in the other views.
+  const shown = document.documentElement.classList.contains('ui-broadcast') ? THEMES.find((t) => t.id === 'control-room') : theme;
+  if (shown.attr) document.documentElement.setAttribute('data-theme', shown.attr);
   else document.documentElement.removeAttribute('data-theme');
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', theme.bar);
+  if (meta) meta.setAttribute('content', shown.bar);
   try { if (theme.attr) localStorage.setItem(KEY, theme.id); else localStorage.removeItem(KEY); } catch { /* blocked: this page only */ }
   return theme.id;
 }

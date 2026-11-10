@@ -578,6 +578,7 @@
     // ⚠️ Declared HERE, not beside bootViewer: the boot gate calls bootViewer from further up the
     // script than its body, and a `let` read before its line runs is a TDZ ReferenceError (1.9.32).
     let viewerRev = null;
+    let viewerGfxId = null;      // the graphic a stream feed has keyed on, if any
     let viewerTimer = null;
     let viewerEnded = false;
     let viewerLastAnchor = null;
@@ -3292,6 +3293,11 @@
           handlePlaylistUpdate(body.payload);
           viewerLastAnchor = null;      // a new playlist: re-join wherever the screen is
         }
+        // A stream output's feed (routes/stream-out.js) also says which graphic is keyed over it.
+        if (Object.prototype.hasOwnProperty.call(body, 'gfx')) {
+          var gid = body.gfx && body.gfx.pip_id ? body.gfx.pip_id : null;
+          if (gid !== viewerGfxId) { viewerGfxId = gid; try { if (gid) pipShow(body.gfx); else pipClear(); } catch (e) {} }
+        }
         viewerAlign(body.now_playing);
       }).catch(function (e) {
         // A network blip is not a revocation: keep showing what we have and try again.
@@ -3299,7 +3305,7 @@
       }).then(function () {
         if (viewerEnded) return;
         clearTimeout(viewerTimer);
-        viewerTimer = setTimeout(function () { viewerPoll(v, false); }, Math.max(2000, Number(v.poll_ms) || 4000));
+        viewerTimer = setTimeout(function () { viewerPoll(v, false); }, Math.max(v.fast === true ? 500 : 2000, Number(v.poll_ms) || 4000));
       });
     }
 
@@ -5311,7 +5317,10 @@
         if (p.opacity != null && isFinite(Number(p.opacity))) box.style.opacity = String(Math.max(0, Math.min(1, Number(p.opacity))));
         if (p.border_radius != null && isFinite(Number(p.border_radius))) box.style.borderRadius = pipPx(p.border_radius, 0);
         const pos = PIP_POS[p.position] || PIP_POS['top-right'];
-        Object.keys(pos).forEach((k) => { box.style[k] = pos[k]; });
+        Object.keys(pos).forEach((k) => { box.style[k] = (p.keyed === true && pos[k] === '4%') ? '0' : pos[k]; });
+        // keyed (the vision mixer's graphics): the page brings its own transparency, so no backing
+        // box and no shadow, and it sits flush to the edge of the picture.
+        if (p.keyed === true) { box.style.background = 'transparent'; box.style.boxShadow = 'none'; }
 
         const hasTitle = p.title != null && p.title !== '';
         if (hasTitle) {

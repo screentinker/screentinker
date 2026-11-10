@@ -176,6 +176,9 @@ router.post('/', requireScope('full'), requireFleetWrite, (req, res) => {
   if (b.title != null && b.title !== '') payload.title = String(b.title).slice(0, 200);
   if (b.title_color) payload.title_color = b.title_color;
   if (b.background_color) payload.background_color = b.background_color;
+  // keyed: a graphic with its own transparency (the vision mixer's lower thirds). No backing box,
+  // no shadow, flush to the edge. A player that does not know the flag shows it in the usual box.
+  if (b.keyed === true) payload.keyed = true;
 
   const results = emitToTargets(req, targets.devices, 'device:pip-show', payload);
   const summary = summarize(results);

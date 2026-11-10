@@ -61,7 +61,9 @@ router.get('/', (req, res) => {
 router.post('/take', requireScope('full'), requireFleetWrite, (req, res) => {
   const b = req.body || {};
   const ids = Array.isArray(b.device_ids) ? [...new Set(b.device_ids.filter((x) => typeof x === 'string'))].slice(0, 500) : [];
-  if (!ids.length) return res.status(400).json({ error: 'device_ids required: choose at least one screen' });
+  // Stream outputs (routes/stream-out.js) take a source the same way a screen does.
+  const streamIds = Array.isArray(b.stream_ids) ? [...new Set(b.stream_ids.filter((x) => typeof x === 'string'))].slice(0, 50) : [];
+  if (!ids.length && !streamIds.length) return res.status(400).json({ error: 'device_ids required: choose at least one screen' });
   if (typeof b.playlist_id !== 'string' || !b.playlist_id) return res.status(400).json({ error: 'playlist_id required' });
   const playlist = db.prepare('SELECT id, name, workspace_id FROM playlists WHERE id = ?').get(b.playlist_id);
   if (!playlist || playlist.workspace_id !== req.workspaceId) return res.status(404).json({ error: 'Playlist not found in this workspace' });
@@ -89,7 +91,15 @@ router.post('/take', requireScope('full'), requireFleetWrite, (req, res) => {
     try { if (push) push(id); } catch { /* the override is saved; the screen takes it on its next sync */ }
     taken.push({ device_id: id, name: d.name, previous_playlist_id: d.playlist_id || null });
   }
-  res.json({ success: taken.length > 0, playlist: { id: playlist.id, name: playlist.name }, taken, skipped });
+  const streams = [];
+  for (const id of streamIds) {
+    const s = db.prepare('SELECT id, name, workspace_id, playlist_id FROM stream_outputs WHERE id = ?').get(id);
+    if (!s || s.workspace_id !== req.workspaceId) { skipped.push({ stream_id: id, reason: 'not_found' }); continue; }
+    db.prepare('UPDATE stream_outputs SET playlist_id = ? WHERE id = ?').run(playlist.id, id);
+    streams.push({ stream_id: id, name: s.name, previous_playlist_id: s.playlist_id || null });
+  }
+  res.json({ success: taken.length + streams.length > 0, playlist: { id: playlist.id, name: playlist.name }, taken, streams, skipped });
 });
 
 module.exports = router;
+module.exports.requireFleetWrite = requireFleetWrite;
