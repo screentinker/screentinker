@@ -38,9 +38,7 @@ let onKey = null;
 let refreshTimer = null;
 let alive = false;
 
-const call = (path, opts) => api.request ? api.request(path, opts) : fetch('/api' + path, {
-  ...opts, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
-}).then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d; });
+const call = (path, opts) => api.desk(path, opts);
 
 const frame = (src) => `<iframe class="mx-frame" src="${src}" title="" tabindex="-1"></iframe>`;
 const streams = () => (so && so.outputs) || [];
@@ -154,8 +152,8 @@ function draw(root) {
             <div class="mx-stream-form-actions"><button type="submit" class="btn btn-primary btn-sm">${esc(t('mixer.stream_save'))}</button><button type="button" class="btn btn-secondary btn-sm" id="mxStreamCancel">${esc(t('common.cancel'))}</button></div>
           </form>` : ''}
           <p class="mx-note">${esc(t('mixer.stream_note', { max: so.max }))}</p>
-          ${so.ffmpeg && so.ffmpeg.licence && so.ffmpeg.licence !== 'lgpl' ? `<p class="mx-note mx-licence" role="note"><b>${esc(t('mixer.licence_title'))}</b> ${esc(t('mixer.licence_' + so.ffmpeg.licence, { version: so.ffmpeg.version || '' }))}</p>`
-            : `<p class="mx-note">${esc(t('mixer.licence_lgpl'))}</p>`}`}
+          ${so.ffmpeg && so.ffmpeg.licence && so.ffmpeg.licence !== 'lgpl' ? `<p class="mx-note mx-licence" role="note"><b>${esc(t('mixer.licence.title'))}</b> ${esc(t('mixer.licence.' + so.ffmpeg.licence, { version: so.ffmpeg.version || '' }))}</p>`
+            : `<p class="mx-note">${esc(t('mixer.licence.lgpl'))}</p>`}`}
       </section>` : ''}
 
       <section class="mx-bank mx-gfx">

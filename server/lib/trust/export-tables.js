@@ -98,6 +98,7 @@ const EXPORTED = {
   kiosk_pages: { category: 'signs', scope: ws() },
   kiosk_sessions: { category: 'signs', scope: ws() },
   qr_links: { category: 'signs', scope: ws() },
+  mixer_scenes: { category: 'signs', scope: ws() },
   qr_scans: { category: 'signs', scope: via('link_id', 'qr_links') },
   // widgets
   widgets: { category: 'widgets', scope: ws() },
@@ -264,6 +265,7 @@ const EXCLUDED = {
   play_log_rollup_state: 'internal rollup bookkeeping',
   player_debug_logs: 'short-lived player diagnostics keyed by device, not tenant',
   device_diagnostic_logs: 'short-lived hardware diagnostics keyed by device, not tenant',
+  stream_outputs: 'stream destinations of the vision mixer: each holds a stream key and a renderer secret encrypted for this server, re-entered after a move',
   data_exports: 'the export jobs themselves',
   instance_exports: 'the platform administrator\'s whole-server export jobs',
   org_imports: 'organization import jobs on this server (docs/move-server.md): may hold an encrypted download key',

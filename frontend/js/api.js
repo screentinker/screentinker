@@ -478,6 +478,9 @@ export const api = {
 
   // #109 PiP overlay: push/clear a floating overlay on a device or group. `id` may be a
   // device id OR a group id (the server resolves + expands). Needs full scope (no-op for JWT).
+  // The vision mixer (views/mixer.js) drives several APIs from one page: the desk, stream
+  // outputs, overlays, cameras and screen commands. One door, so every call gets the same errors.
+  desk: (path, opts) => request(path, opts),
   sendPip: (id, opts) => request('/pip', { method: 'POST', body: JSON.stringify({ device_id: id, ...opts }) }),
   clearPip: (id, pipId) => request('/pip/clear', { method: 'POST', body: JSON.stringify({ device_id: id, pip_id: pipId || undefined }) }),
 
