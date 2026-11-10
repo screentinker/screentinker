@@ -3929,6 +3929,9 @@ if (hasSsl) {
   });
 }
 
+// LAST in the chain: a route that throws still answers an /api caller in JSON (lib/api-errors.js).
+app.use(require('./lib/api-errors').apiErrorHandler);
+
 server.listen(listenPort, '0.0.0.0', () => {
   console.log(`
 ╔══════════════════════════════════════════════════╗
