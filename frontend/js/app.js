@@ -745,6 +745,10 @@ function route() {
     // Broadcast view: the desk is home. Screens is still in the menu.
     currentView = mixer;
     mixer.render(app);
+  } else if ((hash === '#/mixer' || hash.startsWith('#/mixer/')) && !document.documentElement.classList.contains('has-broadcast')) {
+    // The mixer is for self-hosted instances; anywhere else its address is just the home page.
+    currentView = dashboard;
+    dashboard.render(app);
   } else if (hash === '#/mixer' || hash.startsWith('#/mixer/')) {
     currentView = mixer;
     mixer.render(app, hash.split('/')[2] || 'desk');

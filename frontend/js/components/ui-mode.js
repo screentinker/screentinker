@@ -26,7 +26,7 @@ export function uiModeOf(user) {
   if (inManagerApp()) return 'simple';
   // 'broadcast' is the full dashboard with the vision mixer as its home; everything that asks
   // "simple or not" treats it as not simple.
-  if (user && user.ui_mode === 'broadcast') return 'broadcast';
+  if (user && user.ui_mode === 'broadcast' && user.self_hosted === true) return 'broadcast';
   return user && user.ui_mode === 'simple' ? 'simple' : 'advanced';
 }
 
@@ -51,6 +51,9 @@ let bound = false;
 export function applyUiMode(user) {
   if (!user) return;
   const mode = uiModeOf(user);
+  // Broadcast is offered on self-hosted instances only: without this class its switch button and
+  // the Mixer link are not shown (css/main.css).
+  document.documentElement.classList.toggle('has-broadcast', user.self_hosted === true);
   setBodyMode(mode);
   const sw = document.getElementById('uiModeSwitch');
   if (!sw) return;
@@ -80,6 +83,7 @@ export function applyUiMode(user) {
  */
 export async function setUiMode(next) {
   if (next !== 'simple' && next !== 'advanced' && next !== 'broadcast') return;
+  if (next === 'broadcast' && !document.documentElement.classList.contains('has-broadcast')) return;
   // In the Manager app, Advanced is the full dashboard in the phone's browser (#/switch-advanced
   // turns Advanced on for this account there, then lands on the dashboard).
   if (inManagerApp()) { if (next === 'advanced') openOutsideApp('/app#/switch-advanced'); return; }

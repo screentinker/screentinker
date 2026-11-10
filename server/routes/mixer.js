@@ -27,6 +27,12 @@ const { requireScope } = require('../middleware/apiToken');
 const { resourceAccess } = require('../lib/tenancy');
 const gfx = require('../lib/mixer-gfx');
 
+const config = require('../config');
+// ⚠️ SELF-HOSTED ONLY, all of it: the desk, takes, scenes. On the hosted service the mixer is not
+// offered (it is arranged per enterprise agreement), the dashboard does not show it, and the API
+// answers as if it were not there.
+router.use((req, res, next) => (config.selfHosted ? next() : res.status(404).json({ error: 'The mixer is available on self-hosted instances.', code: 'on_prem_only' })));
+
 const TRANSITIONS = ['cut', 'fade', 'flash', 'wipe'];
 
 function requireFleetWrite(req, res, next) {

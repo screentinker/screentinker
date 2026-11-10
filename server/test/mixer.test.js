@@ -244,3 +244,44 @@ test('the web player runs a transition as a cover under the graphics layer, once
     assert.match(player, /data\.take_fx && !data\.suspended && typeof takeFxRun === ['"]function['"] && takeFxRun\(data\)/, `${f}: a suspension is never dressed up`);
   }
 });
+
+/*
+ * SELF-HOSTED ONLY. On the hosted service the mixer is not offered: its API answers as if it were
+ * not there, Broadcast cannot be chosen as a view, and the dashboard shows neither.
+ */
+test('on a hosted instance the mixer is not there and Broadcast cannot be chosen', async () => {
+  const port = await freePort();
+  const dir = path.join(os.tmpdir(), 'st-mixer-hosted-' + crypto.randomBytes(4).toString('hex'));
+  const env = { ...process.env, DATA_DIR: dir, PORT: String(port), NODE_ENV: 'test' };
+  delete env.SELF_HOSTED;
+  const hosted = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env, stdio: 'ignore' });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    let up = false;
+    for (let i = 0; i < 80; i++) { try { if ((await fetch(base + '/api/status')).ok) { up = true; break; } } catch { /* */ } await sleep(250); }
+    assert.ok(up, 'hosted server boots');
+    const j = async (m, p, tok, body) => { const r = await fetch(base + p, { method: m, headers: { ...(tok ? { Authorization: 'Bearer ' + tok } : {}), 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); return { status: r.status, body: await r.json().catch(() => null) }; };
+    const reg = await j('POST', '/api/auth/register', null, { email: 'h' + crypto.randomBytes(4).toString('hex') + '@example.com', password: 'Passw0rd123', name: 'H' });
+    const tok = reg.body && reg.body.token;
+    assert.ok(tok, JSON.stringify(reg.body));
+    for (const [m, p, body] of [['GET', '/api/mixer'], ['POST', '/api/mixer/take', { device_ids: ['x'], playlist_id: 'y' }], ['POST', '/api/mixer/scenes', { name: 'x' }]]) {
+      const r = await j(m, p, tok, body);
+      assert.equal(r.status, 404, `${m} ${p}`); assert.equal(r.body.code, 'on_prem_only');
+    }
+    assert.equal((await j('GET', '/api/stream-out', tok)).body.available, false);
+    await j('PUT', '/api/auth/me', tok, { ui_mode: 'broadcast' });
+    const me = (await j('GET', '/api/auth/me', tok)).body;
+    assert.notEqual(me.ui_mode, 'broadcast', 'Broadcast is not a view here');
+    assert.equal(me.self_hosted, false, 'and the dashboard is told so, which is what hides the switch and the menu link');
+  } finally { try { hosted.kill('SIGKILL'); } catch { /* */ } }
+});
+
+test('the dashboard shows Broadcast and the Mixer link only when the account says the instance is self-hosted', () => {
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', p), 'utf8');
+  assert.match(read('index.html'), /data-ui-mode="broadcast" data-broadcast-only/);
+  assert.match(read('index.html'), /<li data-advanced data-broadcast-only><a href="#\/mixer"/);
+  assert.match(read('css/main.css'), /html:not\(\.has-broadcast\) \[data-broadcast-only\] \{ display: none !important; \}/);
+  assert.match(read('js/nav-prime.js'), /user\.self_hosted === true\) document\.documentElement\.classList\.add\('has-broadcast'\)/);
+  assert.match(read('js/components/ui-mode.js'), /classList\.toggle\('has-broadcast', user\.self_hosted === true\)/);
+  assert.match(read('js/app.js'), /startsWith\('#\/mixer\/'\)\) && !document\.documentElement\.classList\.contains\('has-broadcast'\)/);
+});
