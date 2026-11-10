@@ -1014,6 +1014,7 @@ export async function render(container) {
     const save = async () => {
       const f = readForm();
       if (!f.targetId) { showToast(t('schedule.toast.target_required'), 'error'); return; }
+      if (!f.playlistId) { showToast(t('schedule.toast.nothing_to_show'), 'error'); return; }
       const data = {
         title: f.title, playlist_id: f.playlistId || null,
         start_time: toLocalStamp(dayDate, f.startMin), end_time: toLocalStamp(dayDate, f.endMin),
@@ -1397,6 +1398,9 @@ export async function render(container) {
     if (!targetId) { showToast(t('schedule.toast.target_required'), 'error'); return; }
     const playlistId = document.getElementById('schedPlaylist').value;
     const layoutId = document.getElementById('schedLayout').value;
+    // A new schedule with nothing chosen saved as an empty block that shows nothing (and can stand
+    // in front of a real one). Existing schedules stay editable as they are.
+    if (!editingId && !contentId && !playlistId && !layoutId) { showToast(t('schedule.toast.nothing_to_show'), 'error'); return; }
     // The date a new schedule is stamped with: the day it was drawn on, or the one being edited,
     // else today. Local parts, never toISOString(), which is UTC and puts anyone west of Greenwich
     // on the previous day for part of their evening.

@@ -4323,6 +4323,7 @@ export default {
   'schedule.hour_pm': 'pm',
   'schedule.toast.no_groups': 'No groups available. Create a group first.',
   'schedule.toast.target_required': 'Select a screen or group before saving.',
+  'schedule.toast.nothing_to_show': 'Choose a playlist, a layout or an item for this schedule to show.',
   'schedule.toast.saved': 'Schedule saved',
 
   // Reports
