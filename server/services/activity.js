@@ -197,7 +197,9 @@ function activityLogger(req, res, next) {
       // Only ever a string: the column is TEXT and a caller can send an object or an array here.
       const rawDevice = req.params?.id || req.params?.deviceId || req.body?.device_id;
       const deviceId = typeof rawDevice === 'string' ? rawDevice.slice(0, 100) : null;
-      const details = summarizeAction(req);
+      // The summary is a convenience; the row is the record. A summary that cannot be built is left out.
+      let details = null;
+      try { details = summarizeAction(req); } catch { details = null; }
       logActivity(userId, action, details, deviceId, getClientIp(req), req.workspaceId || null, res.statusCode);
     } catch (e) {
       // A finish handler runs outside the request's error path: throwing here would be an
@@ -211,7 +213,13 @@ function activityLogger(req, res, next) {
 // A request's own text, cut to a length worth reading in a log. Uncapped, one request could put
 // megabytes into a row.
 const SUMMARY_PART_MAX = 120;
-const brief = (v) => { const s = String(v); return s.length > SUMMARY_PART_MAX ? s.slice(0, SUMMARY_PART_MAX) + '...' : s; };
+// Only text and numbers are quoted. String() THROWS on an object whose toString is not a function,
+// and a throw here lost the whole row: the action happened and was never logged.
+const brief = (v) => {
+  if (typeof v !== 'string' && typeof v !== 'number') return `[${Array.isArray(v) ? 'list' : typeof v}]`;
+  const s = String(v);
+  return s.length > SUMMARY_PART_MAX ? s.slice(0, SUMMARY_PART_MAX) + '...' : s;
+};
 
 function summarizeAction(req) {
   const parts = [];
