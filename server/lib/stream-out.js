@@ -78,6 +78,39 @@ async function availability(cfg = config) {
   return { available: true, reason: null, ffmpeg: ff };
 }
 
+/*
+ * HOW THE PICTURE IS TAKEN. Two ways, chosen once:
+ *
+ *   display     the renderer runs on a virtual display of its own (Xvfb) and ffmpeg grabs that
+ *               display at the stream's frame rate. Every frame the browser draws is in the
+ *               stream, so moving pictures (a guest's camera, a video) are fluid.
+ *   screencast  the browser hands over a JPEG whenever the page changes, through its debugging
+ *               channel. Needs nothing installed, and is fine for signage, but it tops out at
+ *               about 10 to 15 pictures a second of moving video (measured on a 4-core server).
+ *
+ * `display` is used when Xvfb is installed and this ffmpeg can grab an X display; otherwise
+ * `screencast`. STREAM_OUT_CAPTURE=screencast forces the old way.
+ */
+let captureMode = null;
+function onPath(name) { return (process.env.PATH || '').split(path.delimiter).some((d) => { try { fs.accessSync(path.join(d, name), fs.constants.X_OK); return true; } catch { return false; } }); }
+async function capture() {
+  if (captureMode) return captureMode;
+  if (process.env.STREAM_OUT_CAPTURE === 'screencast' || process.platform !== 'linux' || !onPath('Xvfb')) return (captureMode = 'screencast');
+  const grab = await new Promise((resolve) => execFile('ffmpeg', ['-hide_banner', '-devices'], { timeout: 5000 }, (err, out) => resolve(!err && /\bx11grab\b/.test(String(out)))));
+  return (captureMode = grab ? 'display' : 'screencast');
+}
+/** Starts a virtual display of the stream's size. Resolves with { n, proc }, or null when it would not start. */
+async function openDisplay(width, height) {
+  for (let n = 90; n < 130; n++) {
+    if (fs.existsSync(`/tmp/.X11-unix/X${n}`) || fs.existsSync(`/tmp/.X${n}-lock`)) continue;
+    const proc = spawn('Xvfb', [`:${n}`, '-screen', '0', `${width}x${height}x24`, '-nolisten', 'tcp', '-nocursor'], { stdio: 'ignore' });
+    let gone = false; proc.on('exit', () => { gone = true; }); proc.on('error', () => { gone = true; });
+    for (let i = 0; i < 40 && !gone; i++) { if (fs.existsSync(`/tmp/.X11-unix/X${n}`)) return { n, proc }; await new Promise((r) => setTimeout(r, 50)); }
+    try { proc.kill('SIGKILL'); } catch { /* gone */ }
+  }
+  return null;
+}
+
 /** Checks a destination as typed. Returns { ok, error } and the cleaned values. */
 function validate(input, { needKey = true } = {}) {
   const kind = String(input.kind || '');
@@ -146,7 +179,7 @@ function listRecordings(workspaceId) {
 /** One slave of ffmpeg's tee muxer: the characters tee reads as syntax are escaped. */
 const teeSlave = (opts, target) => `[${opts}]${String(target).replace(/[\\'|\[\]]/g, '\\$&')}`;
 
-function ffmpegArgs({ width, height, fps, bitrate_k, target, kind, recordFile = null, encoder = ENCODER }) {
+function ffmpegArgs({ width, height, fps, bitrate_k, target, kind, recordFile = null, encoder = ENCODER, display = null }) {
   // Where it goes: a service, a file, or both from the one encode. When both, the stream is the
   // one that matters: it ending ends ffmpeg (and the reconnect starts); the file failing does not.
   const out = !target ? ['-f', 'matroska', recordFile]
@@ -155,8 +188,10 @@ function ffmpegArgs({ width, height, fps, bitrate_k, target, kind, recordFile = 
         `${teeSlave(`f=${kind === 'srt' ? 'mpegts' : 'flv'}:onfail=abort`, target)}|${teeSlave('f=matroska:onfail=ignore', recordFile)}`];
   return [
     '-hide_banner', '-loglevel', 'warning',
-    '-f', 'image2pipe', '-framerate', String(fps), '-c:v', 'mjpeg', '-i', 'pipe:0',
-    '-f', 's16le', '-ar', String(RATE), '-ac', '2', '-i', 'pipe:3',
+    // The picture: grabbed from the renderer's own display at the stream's rate, or JPEGs written to stdin.
+    ...(display != null ? ['-progress', 'pipe:1', '-f', 'x11grab', '-framerate', String(fps), '-video_size', `${width}x${height}`, '-draw_mouse', '0', '-thread_queue_size', '64', '-i', `:${display}`]
+      : ['-f', 'image2pipe', '-framerate', String(fps), '-c:v', 'mjpeg', '-i', 'pipe:0']),
+    '-f', 's16le', '-ar', String(RATE), '-ac', '2', ...(display != null ? ['-thread_queue_size', '64'] : []), '-i', 'pipe:3',
     '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,
     '-c:v', encoder, ...(encoder === 'libx264' ? ['-preset', 'veryfast', '-tune', 'zerolatency'] : []),
     '-b:v', `${bitrate_k}k`, '-maxrate', `${bitrate_k}k`, '-bufsize', `${bitrate_k * 2}k`,
@@ -182,6 +217,7 @@ function status(id) {
   return { state: s.state, since: s.since, frames: s.sent, error: s.error || null, audio_peak: Math.round(s.mix.held.master * 1e4) / 1e4,
     audio_peaks: Object.fromEntries(Object.entries(s.mix.held).map(([k, v]) => [k, Math.round(v * 1e4) / 1e4])), programme_audio: !!s.sink,
     limiting: Math.round(s.mix.limiting * 10) / 10, inputs_live: Object.keys(s.inputs),
+    capture: s.display ? 'display' : 'screencast',
     recording: s.recFile ? path.basename(s.recFile) : null, record_skipped: !!s.recSkipped };
 }
 function localBaseUrl() { return global.__localApiOrigin || `http://127.0.0.1:${process.env.PORT || config.port || 3001}`; }
@@ -326,29 +362,36 @@ async function start(row, key, sound, { standby = false } = {}) {
     // Programme sound: the browser plays into a sink of its own, which the mixer reads back.
     // Without PulseAudio there is no sink and the browser stays muted, as before.
     s.sink = await audio.createSink(row.id).catch(() => null);
+    // The renderer's own display, when the picture is grabbed from one (see capture()).
+    if (await capture() === 'display') s.display = await openDisplay(row.width, row.height);
+    const shown = !!s.display;
     s.browser = await puppeteer().launch({
-      executablePath: chromePath(), headless: 'new',
-      env: s.sink ? { ...process.env, PULSE_SINK: s.sink.name } : process.env,
+      executablePath: chromePath(), headless: shown ? false : 'new', ...(shown ? { defaultViewport: null } : {}),
+      env: { ...process.env, ...(s.sink ? { PULSE_SINK: s.sink.name } : {}), ...(shown ? { DISPLAY: `:${s.display.n}` } : {}) },
       // puppeteer mutes a headless browser by default; with a sink to play into, it must not.
-      ignoreDefaultArgs: s.sink ? ['--mute-audio'] : [],
+      // On a display, the "controlled by automated software" bar would be in the picture.
+      ignoreDefaultArgs: [...(s.sink ? ['--mute-audio'] : []), ...(shown ? ['--enable-automation'] : [])],
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', ...(s.sink ? [] : ['--mute-audio']), '--hide-scrollbars',
         '--autoplay-policy=no-user-gesture-required',
         // Guests connect to this browser directly: it must offer its real addresses, not names only its own network can resolve.
-        '--disable-features=WebRtcHideLocalIpsWithMdns', `--window-size=${row.width},${row.height}`],
+        '--disable-features=WebRtcHideLocalIpsWithMdns', `--window-size=${row.width},${row.height}`,
+        ...(shown ? ['--kiosk', '--window-position=0,0', '--test-type', '--noerrdialogs', '--disable-infobars', '--no-first-run', '--disable-session-crashed-bubble'] : [])],
     });
     s.browser.on('disconnected', () => { if (s.wanted) { s.error = 'The renderer stopped.'; stop(row.id, 'error'); } });
-    const page = await s.browser.newPage();
-    await page.setViewport({ width: row.width, height: row.height });
+    const page = shown ? ((await s.browser.pages())[0] || await s.browser.newPage()) : await s.browser.newPage();
+    if (!shown) await page.setViewport({ width: row.width, height: row.height });
     await page.goto(`${localBaseUrl()}/stream-render/${row.feed_secret}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     // The player keeps media silent until someone has touched the page (the browser's autoplay
     // rule, lib/media-mute.js). Nobody will: this click is that touch.
     if (s.sink) { try { await page.mouse.click(5, 5); } catch { /* it plays muted */ } }
-    const cdp = await page.createCDPSession();
-    cdp.on('Page.screencastFrame', (f) => {
-      s.last = Buffer.from(f.data, 'base64');
-      cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
-    });
-    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 82, maxWidth: row.width, maxHeight: row.height, everyNthFrame: 1 });
+    if (!shown) {
+      const cdp = await page.createCDPSession();
+      cdp.on('Page.screencastFrame', (f) => {
+        s.last = Buffer.from(f.data, 'base64');
+        cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
+      });
+      await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 82, maxWidth: row.width, maxHeight: row.height, everyNthFrame: 1 });
+    }
     if (!s.wanted) return status(row.id);
     for (const name of [...audio.INPUTS, 'console']) startInput(s, name);
     s.ready = true;
@@ -369,7 +412,8 @@ function encode(s) {
   s.recFile = row.record || fileOnly ? newRecording(row) : null;
   s.recSkipped = !!(row.record || fileOnly) && !s.recFile;
   if (fileOnly && !s.recFile) { s.error = 'There is not enough free disk space on this server to record.'; setImmediate(() => stop(s.id, 'error')); return; }
-  const ff = spawn('ffmpeg', ffmpegArgs({ ...row, target: fileOnly ? null : targetUrl(row, s.key), recordFile: s.recFile }), { stdio: ['pipe', 'ignore', 'pipe', 'pipe'] });
+  const grab = s.display ? s.display.n : null;
+  const ff = spawn('ffmpeg', ffmpegArgs({ ...row, target: fileOnly ? null : targetUrl(row, s.key), recordFile: s.recFile, display: grab }), { stdio: ['pipe', grab != null ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
   s.ff = ff; s.t0 = Date.now(); s.written = 0;
   // Sound, paced by the same clock as the picture: every 20 ms, the samples that are now due.
   const snd = ff.stdio[3]; let sndBytes = 0;
@@ -386,7 +430,18 @@ function encode(s) {
   ff.stderr.on('data', (d) => { tail = (tail + d).slice(-2000); });
   ff.stdin.on('error', () => {});
   ff.on('error', (e) => { tail += ' ' + e.message; });
-  s.timer = setInterval(() => {
+  // Grabbing a display, ffmpeg takes the pictures itself and says how many it has encoded.
+  if (grab != null) {
+    const base = s.sent; let line = '';
+    ff.stdout.on('data', (d) => {
+      line = (line + d).slice(-400);
+      const all = line.match(/frame=\s*\d+\s/g); if (!all) return;
+      const n = Number(all[all.length - 1].replace(/\D/g, '')); s.written = n; s.sent = base + n;
+      if (s.state === 'starting' && n > row.fps * 3) s.state = 'live';
+      if (s.state === 'reconnecting' && n > row.fps * 3) { s.state = 'live'; s.error = null; }
+    });
+  }
+  s.timer = grab != null ? null : setInterval(() => {
     if (!s.last || !ff.stdin.writable) return;
     const due = Math.floor((Date.now() - s.t0) * row.fps / 1000);
     let n = Math.min(due - s.written, 5);                       // catch up after a hiccup, a little at a time
@@ -418,12 +473,13 @@ async function stop(id, why) {
   for (const name of [...audio.INPUTS, 'console']) stopInput(s, name);
   try { require('./mixer-guests').rendererGone(id); } catch { /* no guests */ }
   audio.removeSink(s.sink);
-  try { if (s.ff) { s.ff.stdin.end(); try { s.ff.stdio[3].end(); } catch { /* gone */ } const ff = s.ff; setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* gone */ } }, 2000).unref(); } } catch { /* gone */ }
+  try { if (s.ff) { if (s.display) { try { s.ff.stdin.write('q'); } catch { /* gone */ } } s.ff.stdin.end(); try { s.ff.stdio[3].end(); } catch { /* gone */ } const ff = s.ff; setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* gone */ } }, 2000).unref(); } } catch { /* gone */ }
   try { if (s.browser) await s.browser.close(); } catch { /* gone */ }
+  try { if (s.display) s.display.proc.kill('SIGKILL'); } catch { /* gone */ }
   return { state: 'off' };
 }
 function lastError(id) { const e = stopped.get(id); return e ? e.error : null; }
 async function stopAll() { await Promise.all([...sessions.keys()].map((id) => stop(id))); }
-process.on('exit', () => { for (const s of sessions.values()) { try { s.ff && s.ff.kill('SIGKILL'); } catch { /* */ } try { Object.values(s.inputs).forEach((p) => p.kill('SIGKILL')); } catch { /* */ } try { s.browser && s.browser.process() && s.browser.process().kill('SIGKILL'); } catch { /* */ } } });
+process.on('exit', () => { for (const s of sessions.values()) { try { s.ff && s.ff.kill('SIGKILL'); } catch { /* */ } try { Object.values(s.inputs).forEach((p) => p.kill('SIGKILL')); } catch { /* */ } try { s.browser && s.browser.process() && s.browser.process().kill('SIGKILL'); } catch { /* */ } try { s.display && s.display.proc.kill('SIGKILL'); } catch { /* */ } } });
 
-module.exports = { pushMic, stopMic, recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };
+module.exports = { pushMic, stopMic, recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, capture, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };

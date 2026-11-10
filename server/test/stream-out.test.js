@@ -766,3 +766,16 @@ test('the green room over the API: operators only, guests only as themselves, th
   assert.equal((await call('GET', `/api/stream-guest/${token}/state?guest_id=${j2.guest_id}&key=${j2.key}`)).status, 404);
   assert.equal((await call('POST', `/api/stream-guest/${token}/join`, null, { name: 'late' })).status, 404);
 });
+
+test('the picture is grabbed from the renderer\'s own display when there is one, and written as JPEGs when there is not', () => {
+  const base = { width: 1280, height: 720, fps: 30, bitrate_k: 3500, kind: 'rtmp', target: 'rtmp://h/live/k' };
+  const jpeg = streamOut.ffmpegArgs(base).join(' ');
+  assert.match(jpeg, /-f image2pipe -framerate 30 -c:v mjpeg -i pipe:0/);
+  assert.doesNotMatch(jpeg, /x11grab|-progress/);
+  const grab = streamOut.ffmpegArgs({ ...base, display: 93 }).join(' ');
+  assert.match(grab, /-f x11grab -framerate 30 -video_size 1280x720 -draw_mouse 0 [^:]*-i :93 /, 'the whole display, at the stream\'s rate, without the pointer');
+  assert.doesNotMatch(grab, /image2pipe|pipe:0/, 'nothing is read from stdin: it carries the stop key');
+  assert.match(grab, /-progress pipe:1/, 'ffmpeg reports the frames it has encoded: that is how the stream is known to be live');
+  assert.match(grab, /-i pipe:3 /, 'the sound still comes from the mixer');
+  assert.equal(streamOut.ffmpegArgs({ ...base, display: 0 }).includes(':0'), true, 'display 0 is a display');
+});
