@@ -593,7 +593,9 @@
 .mx-mute { min-width: 64px; min-height: 30px; background: var(--bg-input); color: var(--text-secondary); border: 1px solid var(--border-light); border-radius: var(--radius); font: inherit; font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
 .mx-mute.is-on { background: var(--tally, var(--danger)); color: #fff; border-color: transparent; }
 .mx-meter { position: absolute; left: 16px; top: 36px; width: 8px; height: 130px; background: var(--bg-input); border-radius: 2px; overflow: hidden; display: flex; align-items: flex-end; }
-.mx-meter i { display: block; width: 100%; background: linear-gradient(0deg, var(--success) 0 70%, var(--warning) 70% 90%, var(--danger) 90%); background-size: 100% 130px; background-position: bottom; transition: height 0.2s linear; }
+.mx-meter i { display: block; width: 100%; background: linear-gradient(0deg, var(--success) 0 70%, var(--warning) 70% 90%, var(--danger) 90%); background-size: 100% 130px; background-position: bottom; transition: height 0.12s linear; }
+.mx-meters-on { margin-left: auto; }
+.mx-group-state { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--text-secondary); }
 .mx-bed { width: 100%; font-size: 12px; padding: 4px 6px; }
 @media (max-width: 1100px) { .mx-pair { grid-template-columns: 1fr; } .mx-cam-desk { grid-template-columns: auto 1fr; } .mx-presets { grid-column: 1 / -1; } }
 @media (prefers-reduced-motion: reduce) { .mx-meter i { transition: none; } .mx-pad-key:active { transform: none; } }

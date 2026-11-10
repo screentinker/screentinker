@@ -6,7 +6,8 @@
  *   GET    /api/stream-out             what is possible here, and this workspace's outputs
  *   POST   /api/stream-out             add a destination        PUT /:id   change it
  *   DELETE /api/stream-out/:id         remove it (stops it first)
- *   POST   /api/stream-out/:id/start   go live                  POST /:id/stop
+ *   POST   /api/stream-out/:id/start   go live ({ standby: true }: meters and mix only, nothing sent)
+ *   POST   /api/stream-out/:id/stop    GET /levels: the meters of this workspace's running outputs
  *   POST   /api/stream-out/:id/gfx     key a graphic over it    POST /:id/gfx/clear
  *   GET    /api/stream-out/recordings  this workspace's recordings
  *   POST   /api/stream-out/recordings/:name/link   a one-minute download link
@@ -101,6 +102,15 @@ router.get('/', async (req, res) => {
 // A recording is gigabytes, so the browser downloads it itself with a link, not through a session
 // request: the link is a random ticket for that one file, good for a minute.
 const tickets = new Map();   // ticket -> { file, name, until }
+// The meters: small, and asked for several times a second by an open desk.
+router.get('/levels', (req, res) => {
+  const out = {};
+  for (const { id } of db.prepare('SELECT id FROM stream_outputs WHERE workspace_id = ?').all(req.workspaceId)) {
+    const st = streamOut.status(id);
+    if (st.state !== 'off') out[id] = { state: st.state, peaks: st.audio_peaks, limiting: st.limiting, inputs_live: st.inputs_live };
+  }
+  res.json({ levels: out });
+});
 router.get('/recordings', (req, res) => res.json({ recordings: streamOut.listRecordings(req.workspaceId) }));
 router.post('/recordings/:name/link', (req, res) => {
   const file = streamOut.recordingPath(req.workspaceId, req.params.name);
@@ -154,10 +164,11 @@ router.delete('/:id', requireFleetWrite, async (req, res) => {
 router.post('/:id/start', gate, requireFleetWrite, async (req, res) => {
   const r = mine(req, req.params.id);
   if (!r) return res.status(404).json({ error: 'Stream not found' });
-  if (!r.playlist_id) return res.status(400).json({ error: 'Take a source to this stream first, so it has something to show.' });
+  const standby = !!(req.body && req.body.standby === true);
+  if (!r.playlist_id && !standby) return res.status(400).json({ error: 'Take a source to this stream first, so it has something to show.' });
   const key = secretbox.decrypt(r.key_enc) || '';
   if (r.key_enc && !key) return res.status(400).json({ error: 'The stored stream key can no longer be read. Enter it again.' });
-  try { res.json({ status: await streamOut.start(r, key, audioOf(r)) }); }
+  try { res.json({ status: await streamOut.start(r, key, audioOf(r), { standby }) }); }
   catch (e) { res.status(e.code === 'limit' ? 409 : 500).json({ error: e.message, code: e.code || null }); }
 });
 
@@ -220,7 +231,7 @@ router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
   if (b.learn_noise !== undefined) {
     if (!audio.INPUTS.includes(b.learn_noise)) return res.status(400).json({ error: 'No such strip.' });
     const print = await streamOut.learnNoise(r.id, b.learn_noise);
-    if (!print) return res.status(409).json({ error: 'The noise can only be learned while the stream is live and that input is connected.' });
+    if (!print) return res.status(409).json({ error: 'The noise can only be learned while the stream is live or on standby, and that input is connected.' });
     mix[b.learn_noise].noise = print;
     if (!mix[b.learn_noise].denoise) mix[b.learn_noise].denoise = 0.5;
   }

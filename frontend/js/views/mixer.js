@@ -32,11 +32,14 @@ let cued = null;             // the scene waiting on TAKE, if one was recalled
 let tx = (() => { try { const v = JSON.parse(localStorage.getItem('st_mixer_tx') || 'null'); if (v && typeof v.type === 'string' && Number(v.ms) >= 200) return { type: v.type, ms: Number(v.ms) }; } catch { /* default */ } return { type: 'cut', ms: 600 }; })();
 const RATES = [300, 600, 1000, 2000];
 const STRIPS = ['programme', 'bed', 'line', 'net', 'net2', 'master'];
+let meterBusy = false;
 let procOpen = null;         // the strip whose processing is open on the desk: { sid, strip }
 /** Whether a strip's processing does anything: its EQ key is lit when it does. */
 const shaped = (st) => !!(st.hpf || st.gate || st.comp || st.fx || st.denoise || (st.eq && (st.eq.low || st.eq.mid || st.eq.high)));
 const knob = (s, strip, ctl, label, value, min, max, step, show) => `<label class="mx-knob">${esc(label)}<input type="range" min="${min}" max="${max}" step="${step}" value="${value}" data-proc="${esc(s.id)}" data-strip="${strip}" data-ctl="${ctl}"><output>${esc(show)}</output></label>`;
 const sizeOf = (n) => (n >= 1024 ** 3 ? (n / 1024 ** 3).toFixed(2) + ' GB' : (n / 1024 ** 2).toFixed(1) + ' MB');
+/** A meter's height for a peak of 0..1: a dB scale from -60 to 0, as a desk's meter reads. */
+const meterPct = (v) => (v > 0.001 ? Math.round(Math.max(0, Math.min(1, (20 * Math.log10(v) + 60) / 60)) * 100) : 0);
 const dB = (v) => (v > 0 ? '+' : '') + v + ' dB';
 const pct = (v) => (v ? Math.round(v * 100) + '%' : t('mixer.audio_off'));
 /** The processing of one strip: what a desk channel has between its input and its fader. */
@@ -55,7 +58,7 @@ function procPanel(s, strip) {
         ${knob(s, strip, 'fx', t('mixer.audio_reverb'), st.fx, 0, 1, 0.05, pct(st.fx))}
         ${knob(s, strip, 'denoise', t('mixer.audio_denoise'), st.denoise, 0, 1, 0.05, pct(st.denoise))}
         <span class="mx-knob mx-noise">${esc(t(st.noise ? 'mixer.audio_noise_learned' : 'mixer.audio_noise_auto'))}
-          <span class="mx-noise-keys"><button type="button" class="btn btn-secondary btn-sm" data-learn="${esc(s.id)}" data-strip="${strip}" ${s.status.state === 'live' ? '' : 'disabled'} title="${esc(t('mixer.audio_noise_learn_tip'))}">${esc(t('mixer.audio_noise_learn'))}</button>
+          <span class="mx-noise-keys"><button type="button" class="btn btn-secondary btn-sm" data-learn="${esc(s.id)}" data-strip="${strip}" ${s.status.state === 'live' || s.status.state === 'standby' ? '' : 'disabled'} title="${esc(t('mixer.audio_noise_learn_tip'))}">${esc(t('mixer.audio_noise_learn'))}</button>
           ${st.noise ? `<button type="button" class="btn btn-secondary btn-sm" data-forget="${esc(s.id)}" data-strip="${strip}">${esc(t('mixer.audio_noise_forget'))}</button>` : ''}</span></span>`}
     </div>
     <p class="mx-note">${esc(t(master ? 'mixer.audio_proc_master_note' : 'mixer.audio_proc_note'))}</p>
@@ -174,11 +177,11 @@ function draw(root) {
         ${selScreens.length || streams().length ? `<div class="mx-console">
           ${streams().map((s) => { const mix = s.audio.mix, pk = s.status.audio_peaks || {}, live = s.status.inputs_live || []; return `
             <div class="mx-group">
-              <div class="mx-group-name"><span class="mx-lamp mx-lamp-${streamTally(s)}"></span>${esc(s.name)}${s.status.limiting > 0.5 ? `<span class="mx-limiting">${esc(t('mixer.audio_limiting', { db: s.status.limiting }))}</span>` : ''}</div>
+              <div class="mx-group-name"><span class="mx-lamp mx-lamp-${streamTally(s)}"></span>${esc(s.name)}${s.status.state === 'off' && so.available ? `<button type="button" class="btn btn-secondary btn-sm mx-meters-on" data-standby="${esc(s.id)}" title="${esc(t('mixer.standby_tip'))}">${esc(t('mixer.meters_on'))}</button>` : `<span class="mx-group-state">${esc(t('mixer.stream_state.' + s.status.state))}</span>`}${s.status.limiting > 0.5 ? `<span class="mx-limiting">${esc(t('mixer.audio_limiting', { db: s.status.limiting }))}</span>` : ''}</div>
               <div class="mx-strips">${STRIPS.map((k) => { const off = (k === 'programme' && !so.programme_audio) || (k === 'line' && !mix.line.device) || ((k === 'net' || k === 'net2') && !mix[k].url); const open = procOpen && procOpen.sid === s.id && procOpen.strip === k; return `
                 <div class="mx-strip${mix[k].muted ? ' is-muted' : ''}${k === 'master' ? ' mx-strip-master' : ''}${off ? ' is-off' : ''}">
                   <span class="mx-strip-name">${esc(t('mixer.strip.' + k))}</span>
-                  <div class="mx-meter" aria-hidden="true"><i data-meter="${esc(s.id)}:${k}" style="height:${Math.round(Math.min(1, pk[k] || 0) * 100)}%"></i></div>
+                  <div class="mx-meter" aria-hidden="true"><i data-meter="${esc(s.id)}:${k}" style="height:${meterPct(pk[k] || 0)}%"></i></div>
                   <input type="range" class="mx-fader" min="0" max="${Math.round((so.max_level || 1.5) * 100)}" value="${Math.round(mix[k].level * 100)}" data-svol="${esc(s.id)}" data-strip="${k}" aria-label="${esc(t('mixer.audio_level_of', { name: s.name + ', ' + t('mixer.strip.' + k) }))}">
                   <span class="mx-strip-val">${mix[k].muted ? esc(t('mixer.audio_muted')) : Math.round(mix[k].level * 100) + '%'}</span>
                   <button type="button" class="mx-mute${mix[k].muted ? ' is-on' : ''}" data-smute="${esc(s.id)}" data-strip="${k}" aria-pressed="${mix[k].muted}">${esc(t('mixer.audio_mute'))}</button>
@@ -247,7 +250,8 @@ function draw(root) {
               ${s.file_only ? '' : `<label class="mx-rec-check"><input type="checkbox" data-record="${esc(s.id)}" ${s.record ? 'checked' : ''} ${s.status.state === 'off' ? '' : 'disabled'}> ${esc(t('mixer.rec_also'))}</label>`}
               <span class="mx-stream-state">${esc(t('mixer.stream_state.' + s.status.state))}</span>
               ${s.status.state === 'off'
-                ? `<button type="button" class="btn btn-sm mx-golive" data-go="${esc(s.id)}">${esc(t(s.file_only ? 'mixer.rec_start' : 'mixer.stream_go'))}</button><button type="button" class="btn btn-secondary btn-sm" data-del="${esc(s.id)}">${esc(t('common.delete'))}</button>`
+                ? `<button type="button" class="btn btn-secondary btn-sm" data-standby="${esc(s.id)}" title="${esc(t('mixer.standby_tip'))}">${esc(t('mixer.standby'))}</button><button type="button" class="btn btn-sm mx-golive" data-go="${esc(s.id)}">${esc(t(s.file_only ? 'mixer.rec_start' : 'mixer.stream_go'))}</button><button type="button" class="btn btn-secondary btn-sm" data-del="${esc(s.id)}">${esc(t('common.delete'))}</button>`
+                : s.status.state === 'standby' ? `<button type="button" class="btn btn-sm mx-golive" data-go="${esc(s.id)}">${esc(t(s.file_only ? 'mixer.rec_start' : 'mixer.stream_go'))}</button><button type="button" class="btn btn-secondary btn-sm" data-stop="${esc(s.id)}">${esc(t('mixer.stream_stop'))}</button>`
                 : `<button type="button" class="btn btn-secondary btn-sm" data-stop="${esc(s.id)}">${esc(t('mixer.stream_stop'))}</button>`}
             </div>`).join('')}</div>` : (addingStream ? '' : `<p class="mx-note mx-note-top">${esc(t('mixer.stream_none'))}</p>`)}
           ${addingStream ? `<form class="mx-stream-form" id="mxStreamForm">
@@ -497,6 +501,7 @@ function bind(root) {
     try { await fn(b.dataset[attr]); } catch (err) { showToast(err.message, 'error'); }
     redo();
   }));
+  act('[data-standby]', 'standby', async (id) => { await call(`/stream-out/${encodeURIComponent(id)}/start`, { method: 'POST', body: JSON.stringify({ standby: true }) }); showToast(t('mixer.toast.standby'), 'success'); });
   act('[data-go]', 'go', async (id) => { await call(`/stream-out/${encodeURIComponent(id)}/start`, { method: 'POST' }); showToast(t('mixer.toast.stream_starting'), 'success'); });
   act('[data-stop]', 'stop', (id) => call(`/stream-out/${encodeURIComponent(id)}/stop`, { method: 'POST' }));
   act('[data-del]', 'del', async (id) => { await call(`/stream-out/${encodeURIComponent(id)}`, { method: 'DELETE' }); outputs.delete(id); });
@@ -580,18 +585,20 @@ export async function render(container, which) {
       if (sig() !== before && alive) draw(container);
     } catch { /* keep the desk as it is */ }
   }, 10000);
-  // Level meters of live streams, moved in place twice a second (no redraw).
+  // Level meters of running streams (live or on standby), moved in place five times a second (no redraw).
   meterTimer = setInterval(async () => {
-    if (!alive || document.hidden || !streams().some((s) => s.status.state !== 'off')) return;
+    if (!alive || document.hidden || meterBusy || !streams().some((s) => s.status.state !== 'off')) return;
+    meterBusy = true;
     try {
-      const fresh = await call('/stream-out');
-      for (const s of fresh.outputs) {
-        const pk = s.status.audio_peaks || {};
-        for (const k of STRIPS) { const bar = container.querySelector(`[data-meter="${CSS.escape(s.id + ':' + k)}"]`); if (bar) bar.style.height = Math.round(Math.min(1, pk[k] || 0) * 100) + '%'; }
-        const mine = streams().find((x) => x.id === s.id); if (mine) mine.status = { ...mine.status, audio_peaks: pk };
+      const { levels } = await call('/stream-out/levels');
+      for (const s of streams()) {
+        const l = levels[s.id], pk = l ? l.peaks : {};
+        for (const k of STRIPS) { const bar = container.querySelector(`[data-meter="${CSS.escape(s.id + ':' + k)}"]`); if (bar) bar.style.height = meterPct(pk[k] || 0) + '%'; }
+        s.status = { ...s.status, audio_peaks: pk };
       }
     } catch { /* next time */ }
-  }, 500);
+    meterBusy = false;
+  }, 200);
 }
 
 export function cleanup() {

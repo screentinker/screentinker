@@ -487,3 +487,28 @@ test('recordings are listed, linked and deleted per workspace; a link is a ticke
   assert.equal((await call('GET', link.body.url)).status, 404, 'the ticket does not outlive the file');
   for (const id of [so.id, yt.id]) await call('DELETE', `/api/stream-out/${id}`, A.jwt);
 });
+
+/*
+ * METERS. A meter has to show a peak to a desk that only looks a few times a second, so the mixer
+ * holds each strip's loudest moment and lets it fall at a steady rate; and the meters of one
+ * workspace are not another's to read.
+ */
+test('a strip\'s meter holds its peak and falls back gradually, instead of showing only the last instant', async () => {
+  const m = new audio.Mix({});
+  const src = new PassThrough(); m.attach('net', src, { live: true });
+  src.write(pcm(16384, 882)); await tick();
+  m.next(882 * 4);
+  assert.ok(Math.abs(m.held.net - 0.5) < 0.001 && Math.abs(m.held.master - 0.5) < 0.001, 'the peak is there');
+  m.next(882 * 4);                                                     // 20 ms of nothing
+  assert.ok(m.held.net < 0.5 && m.held.net > 0.45, 'a moment later it has only begun to fall');
+  for (let i = 0; i < 50; i++) m.next(882 * 4);                        // one more second
+  assert.ok(m.held.net < 0.06 && m.held.net > 0.04, 'a second later it is 20 dB down');
+  for (let i = 0; i < 300; i++) m.next(882 * 4);
+  assert.equal(m.held.net, 0, 'and it comes to rest at nothing');
+});
+
+test('the meters endpoint lists only running outputs of the caller\'s workspace', async () => {
+  assert.deepEqual((await call('GET', '/api/stream-out/levels', A.jwt)).body, { levels: {} });
+  assert.deepEqual((await call('GET', '/api/stream-out/levels', V.jwt)).body, { levels: {} }, 'a read-only member may watch the meters');
+  assert.equal((await call('GET', '/api/stream-out/levels')).status, 401);
+});

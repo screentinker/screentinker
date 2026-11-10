@@ -179,8 +179,8 @@ const sessions = new Map();   // id -> session
 function status(id) {
   const s = sessions.get(id);
   if (!s) return { state: 'off' };
-  return { state: s.state, since: s.since, frames: s.sent, error: s.error || null, audio_peak: Math.round(s.mix.peaks.master * 100) / 100,
-    audio_peaks: Object.fromEntries(Object.entries(s.mix.peaks).map(([k, v]) => [k, Math.round(v * 100) / 100])), programme_audio: !!s.sink,
+  return { state: s.state, since: s.since, frames: s.sent, error: s.error || null, audio_peak: Math.round(s.mix.held.master * 1e4) / 1e4,
+    audio_peaks: Object.fromEntries(Object.entries(s.mix.held).map(([k, v]) => [k, Math.round(v * 1e4) / 1e4])), programme_audio: !!s.sink,
     limiting: Math.round(s.mix.limiting * 10) / 10, inputs_live: Object.keys(s.inputs),
     recording: s.recFile ? path.basename(s.recFile) : null, record_skipped: !!s.recSkipped };
 }
@@ -252,10 +252,31 @@ function learnNoise(id, name) {
   return Promise.race([s.mix.learnNoise(name, 1.5), new Promise((r) => setTimeout(() => r(null), 5000).unref())]);
 }
 
-async function start(row, key, sound) {
+/**
+ * STANDBY: everything a live stream has except the encoder. The renderer is up and every input is
+ * connected and mixed, so the desk's meters move, levels can be set and a noise print learned
+ * before anything is sent anywhere. The mix is drawn at the pace of the clock and thrown away.
+ */
+function idle(s) {
+  s.state = 'standby'; s.idleT0 = Date.now(); let bytes = 0;
+  clearInterval(s.idleTimer);
+  s.idleTimer = setInterval(() => {
+    let due = Math.floor((Date.now() - s.idleT0) * RATE / 1000) * FRAME - bytes;
+    if (due > RATE * FRAME / 2) { bytes += due - RATE * FRAME / 5; due = RATE * FRAME / 5; }
+    due -= due % FRAME;
+    if (due > 0) { s.mix.next(due); bytes += due; }
+  }, 20);
+}
+
+async function start(row, key, sound, { standby = false } = {}) {
   const a = await availability();
   if (!a.available) throw Object.assign(new Error('Streaming out is not available on this server.'), { code: a.reason });
-  if (sessions.has(row.id)) return status(row.id);
+  const had = sessions.get(row.id);
+  if (had) {
+    // From standby to air: the renderer and the mix are already running; only the encoder starts.
+    if (had.state === 'standby' && !standby && had.ready) { clearInterval(had.idleTimer); had.row = row; had.key = key; had.state = 'starting'; had.since = Date.now(); had.sent = 0; encode(had); }
+    return status(row.id);
+  }
   if (sessions.size >= MAX_STREAMS) throw Object.assign(new Error(`This server runs at most ${MAX_STREAMS} stream(s) at once (STREAM_OUT_MAX).`), { code: 'limit' });
   const s = { id: row.id, row, key, state: 'starting', since: Date.now(), sent: 0, last: null, wanted: true, retries: 0, error: null,
     mix: new audio.Mix(sound && sound.settings), bedFile: (sound && sound.file) || null, inputs: {}, inputKeys: {}, inputTimers: {}, sink: null };
@@ -287,7 +308,8 @@ async function start(row, key, sound) {
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 82, maxWidth: row.width, maxHeight: row.height, everyNthFrame: 1 });
     if (!s.wanted) return status(row.id);
     for (const name of audio.INPUTS) startInput(s, name);
-    encode(s);
+    s.ready = true;
+    if (standby) idle(s); else encode(s);
   } catch (e) {
     s.error = e.message; await stop(row.id, 'error');
     throw e;
@@ -349,7 +371,7 @@ async function stop(id, why) {
   s.wanted = false;
   sessions.delete(id);
   if (why === 'error' && s.error) stopped.set(id, { error: s.error, at: Date.now() }); else stopped.delete(id);
-  clearInterval(s.timer); clearInterval(s.sndTimer); clearTimeout(s.retry);
+  clearInterval(s.timer); clearInterval(s.sndTimer); clearInterval(s.idleTimer); clearTimeout(s.retry);
   for (const name of audio.INPUTS) stopInput(s, name);
   audio.removeSink(s.sink);
   try { if (s.ff) { s.ff.stdin.end(); try { s.ff.stdio[3].end(); } catch { /* gone */ } const ff = s.ff; setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* gone */ } }, 2000).unref(); } } catch { /* gone */ }

@@ -79,6 +79,9 @@ class Mix {
     this.reverb = new dsp.Reverb();
     this.limiter = new dsp.Limiter();
     this.peaks = Object.fromEntries([...INPUTS, 'master'].map((n) => [n, 0]));
+    // What a meter shows: the loudest each strip has been lately, falling back at 20 dB a second,
+    // so a desk that looks a few times a second still sees every peak.
+    this.held = Object.fromEntries([...INPUTS, 'master'].map((n) => [n, 0]));
     this.limiting = 0;           // dB the limiter is holding back right now
   }
 
@@ -109,7 +112,7 @@ class Mix {
     stream.on('error', () => {});
   }
 
-  detach(name) { this.inputs.delete(name); this.peaks[name] = 0; this.denoisers[name].cancelLearn(); }
+  detach(name) { this.inputs.delete(name); this.peaks[name] = 0; this.held[name] = 0; this.denoisers[name].cancelLearn(); }
 
   /** Listen to an input for a moment as noise. Resolves with its print (packed), or null. */
   learnNoise(name, seconds) { return this.inputs.has(name) ? this.denoisers[name].learn(seconds) : Promise.resolve(null); }
@@ -166,6 +169,8 @@ class Mix {
       const m = v < 0 ? -v : v; if (m > peak) peak = m;
     }
     this.peaks.master = peak / 32768;
+    const fall = Math.pow(10, -(len / 2 / RATE));          // 20 dB a second
+    for (const k in this.held) { const h = this.held[k] * fall; this.held[k] = this.peaks[k] > h ? this.peaks[k] : (h < 1e-5 ? 0 : h); }
     return out;
   }
 }
