@@ -195,7 +195,8 @@ test('a stream\'s audio bed is an audio item of its own workspace, and its level
   const bed = item(A, 'audio/mpeg', true);
   const set = await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, { content_id: bed, level: 0.6, muted: true });
   assert.equal(set.status, 200, set.text);
-  assert.deepEqual({ ...set.body.audio, name: null }, { content_id: bed, name: null, level: 0.6, muted: true });
+  assert.deepEqual({ ...set.body.audio, name: null, mix: null }, { content_id: bed, name: null, level: 0.6, muted: true, mix: null });
+  assert.deepEqual(set.body.audio.mix.bed, { level: 0.6, muted: true });
   assert.ok((await call('GET', '/api/stream-out', A.jwt)).body.audio_sources.some((a) => a.id === bed));
   assert.doesNotMatch(set.text, /uploads|\.bin/, 'where the file is on disk is not sent');
   for (const [body, status] of [[{ content_id: item(B, 'audio/mpeg', true) }, 404], [{ content_id: item(A, 'image/png', true) }, 404], [{ content_id: item(A, 'audio/mpeg', false) }, 400],
@@ -205,5 +206,74 @@ test('a stream\'s audio bed is an audio item of its own workspace, and its level
   assert.equal((await call('POST', `/api/stream-out/${A.stream}/audio`, B.jwt, { level: 1 })).status, 404);
   assert.equal((await call('POST', `/api/stream-out/${A.stream}/audio`, V.jwt, { level: 1 })).status, 403);
   const cleared = await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, { content_id: null, muted: false });
-  assert.deepEqual(cleared.body.audio, { content_id: null, name: null, level: 0.6, muted: false });
+  assert.deepEqual({ ...cleared.body.audio, mix: null }, { content_id: null, name: null, level: 0.6, muted: false, mix: null });
+  // The four strips, one at a time or together; nothing but a real strip, a level in range, and a
+  // sound input that is on this server.
+  const strips = await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, { strips: [{ strip: 'master', level: 0.8 }, { strip: 'programme', muted: true }, { strip: 'line', level: 1.2 }] });
+  assert.equal(strips.status, 200, strips.text);
+  assert.deepEqual(strips.body.audio.mix, { master: { level: 0.8, muted: false }, programme: { level: 1, muted: true }, bed: { level: 0.6, muted: false }, line: { level: 1.2, muted: false, device: null } });
+  assert.deepEqual((await call('GET', '/api/stream-out', A.jwt)).body.outputs.find((o) => o.id === A.stream).audio.mix.master, { level: 0.8, muted: false }, 'kept');
+  for (const body of [{ strip: 'aux', level: 1 }, { strip: 'master', level: 5 }, { strips: [{ strip: 'bed', level: 1 }, { strip: 'nope' }] }, { line_device: 'plughw:99,0' }, { line_device: 'default; rm -rf /' }]) {
+    assert.equal((await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, body)).status, 400, JSON.stringify(body));
+  }
+  const info = (await call('GET', '/api/stream-out', A.jwt)).body;
+  assert.ok(Array.isArray(info.line_inputs) && typeof info.programme_audio === 'boolean', 'the desk is told what this server can take in');
+});
+
+/*
+ * THE MIXER (lib/stream-audio.js). Inputs are summed with their own faders into a master; the
+ * mixer never waits for an input, never wraps a loud sum round to the other sign, and keeps a live
+ * input with the picture by dropping what is stale.
+ */
+const audio = require('../lib/stream-audio');
+const { PassThrough } = require('node:stream');
+const pcm = (v, samples) => { const b = Buffer.alloc(samples * 2); for (let i = 0; i < samples; i++) b.writeInt16LE(v, i * 2); return b; };
+const ints = (b) => Array.from({ length: b.length / 2 }, (_, i) => b.readInt16LE(i * 2));
+const tick = () => new Promise((r) => setImmediate(r));
+
+test('inputs are summed with their faders into the master, whatever sizes the chunks arrive in', async () => {
+  const m = new audio.Mix({ bed: { level: 0.5 }, line: { level: 1 }, master: { level: 2 } });   // master is capped at the top of the fader
+  const bed = new PassThrough(), line = new PassThrough();
+  m.attach('bed', bed); m.attach('line', line, { live: true });
+  bed.write(pcm(1000, 8).subarray(0, 7)); bed.write(pcm(1000, 8).subarray(7)); line.write(pcm(200, 8));
+  await tick(); await tick();
+  assert.deepEqual(ints(m.next(16)), Array(8).fill(Math.round((1000 * 0.5 + 200) * audio.MAX_LEVEL)));
+  assert.ok(m.peaks.bed > 0 && m.peaks.line > 0 && m.peaks.programme === 0 && m.peaks.master > 0);
+  assert.deepEqual(ints(m.next(16)), Array(8).fill(0), 'an input with nothing to give is silence, not a wait');
+});
+
+test('a loud sum clips, a muted strip is silent, and a muted master silences everything', async () => {
+  const m = new audio.Mix({});
+  const a = new PassThrough(), b = new PassThrough();
+  m.attach('programme', a, { live: true }); m.attach('bed', b);
+  a.write(pcm(30000, 4)); b.write(pcm(30000, 4)); await tick();
+  assert.deepEqual(ints(m.next(8)), [32767, 32767, 32767, 32767]);
+  m.setSettings({ programme: { muted: true } });
+  a.write(pcm(-30000, 4)); b.write(pcm(-20000, 4)); await tick();
+  assert.deepEqual(ints(m.next(8)), [-20000, -20000, -20000, -20000]);
+  assert.equal(m.peaks.programme, 0);
+  m.setSettings({ master: { muted: true } });
+  a.write(pcm(9000, 4)); await tick();
+  assert.deepEqual(ints(m.next(8)), [0, 0, 0, 0]);
+});
+
+test('a live input that has piled up is brought back to now; a file is never dropped', async () => {
+  const m = new audio.Mix({});
+  const live = new PassThrough({ highWaterMark: 1 << 22 }), file = new PassThrough({ highWaterMark: 1 << 22 });
+  m.attach('line', live, { live: true }); m.attach('bed', file);
+  for (let i = 0; i < 20; i++) { live.write(pcm(i + 1, audio.RATE / 5)); file.write(pcm(i + 1, audio.RATE / 5)); await tick(); }   // 2 s each, in 0.1 s chunks
+  assert.ok(m.inputs.get('line').bytes <= audio.SECOND / 2 + audio.SECOND / 10, 'stale live sound was dropped');
+  assert.ok(m.inputs.get('bed').bytes >= audio.SECOND, 'the file was paused with everything kept');
+  m.setSettings({ line: { muted: true } });
+  assert.equal(ints(m.next(8))[0], 1, 'the file still starts at its beginning');
+});
+
+test('sound inputs are read from the system\'s own list, and settings are made safe', () => {
+  assert.deepEqual(audio.parseCapture(' 0 [NVidia         ]: HDA-Intel - HDA NVidia\n 2 [CODEC          ]: USB-Audio - USB AUDIO CODEC\n',
+    '00-03: HDMI 0 : HDMI 0 : playback 1\n02-00: USB Audio : USB Audio : playback 1 : capture 1\n'), [{ device: 'plughw:2,0', name: 'USB AUDIO CODEC: USB Audio' }]);
+  assert.deepEqual(audio.parseCapture('', ''), []);
+  const s = audio.cleanSettings({ line: { device: 'hw:0; rm -rf /', level: 99 }, master: { muted: 1, level: -3 }, extra: { level: 1 } });
+  assert.deepEqual(s, { master: { level: 0, muted: true }, programme: { level: 1, muted: false }, bed: { level: 1, muted: false }, line: { level: audio.MAX_LEVEL, muted: false, device: null } });
+  assert.equal(audio.cleanSettings({ line: { device: 'plughw:2,0' } }).line.device, 'plughw:2,0');
+  assert.deepEqual(audio.lineArgs('plughw:2,0').slice(3, 9), ['-f', 'alsa', '-ac', '2', '-i', 'plughw:2,0'], 'the device is one argument');
 });

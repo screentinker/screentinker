@@ -29,6 +29,7 @@ let cued = null;             // the scene waiting on TAKE, if one was recalled
 // The transition TAKE uses, remembered in this browser: { type: cut|fade|flash|wipe, ms }.
 let tx = (() => { try { const v = JSON.parse(localStorage.getItem('st_mixer_tx') || 'null'); if (v && typeof v.type === 'string' && Number(v.ms) >= 200) return { type: v.type, ms: Number(v.ms) }; } catch { /* default */ } return { type: 'cut', ms: 600 }; })();
 const RATES = [300, 600, 1000, 2000];
+const STRIPS = ['programme', 'bed', 'line', 'master'];
 let savingScene = false;
 let cam = null;              // the camera being steered: { id, presets, last: { preset, name } | null }
 let camSpeed = 0.5;
@@ -165,6 +166,39 @@ function draw(root) {
         </div>
       </section>
 
+      <section class="mx-bank mx-audio">
+        <h3>${esc(t('mixer.audio'))}</h3>
+        ${selScreens.length || streams().length ? `<div class="mx-console">
+          ${streams().map((s) => { const mix = s.audio.mix, pk = s.status.audio_peaks || {}; return `
+            <div class="mx-group">
+              <div class="mx-group-name"><span class="mx-lamp mx-lamp-${streamTally(s)}"></span>${esc(s.name)}</div>
+              <div class="mx-strips">${STRIPS.map((k) => { const off = k === 'programme' && !so.programme_audio; return `
+                <div class="mx-strip${mix[k].muted ? ' is-muted' : ''}${k === 'master' ? ' mx-strip-master' : ''}${off ? ' is-off' : ''}">
+                  <span class="mx-strip-name">${esc(t('mixer.strip.' + k))}</span>
+                  <div class="mx-meter" aria-hidden="true"><i data-meter="${esc(s.id)}:${k}" style="height:${Math.round(Math.min(1, pk[k] || 0) * 100)}%"></i></div>
+                  <input type="range" class="mx-fader" min="0" max="${Math.round((so.max_level || 1.5) * 100)}" value="${Math.round(mix[k].level * 100)}" data-svol="${esc(s.id)}" data-strip="${k}" ${off ? 'disabled' : ''} aria-label="${esc(t('mixer.audio_level_of', { name: s.name + ', ' + t('mixer.strip.' + k) }))}">
+                  <span class="mx-strip-val">${mix[k].muted ? esc(t('mixer.audio_muted')) : Math.round(mix[k].level * 100) + '%'}</span>
+                  <button type="button" class="mx-mute${mix[k].muted ? ' is-on' : ''}" data-smute="${esc(s.id)}" data-strip="${k}" aria-pressed="${mix[k].muted}" ${off ? 'disabled' : ''}>${esc(t('mixer.audio_mute'))}</button>
+                </div>`; }).join('')}
+              </div>
+              <div class="mx-group-src">
+                <label>${esc(t('mixer.audio_bed'))}<select class="input mx-bed" data-bed="${esc(s.id)}"><option value="">${esc(t('mixer.audio_none_opt'))}</option>${(so.audio_sources || []).map((x) => `<option value="${esc(x.id)}"${x.id === s.audio.content_id ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
+                <label>${esc(t('mixer.audio_line'))}<select class="input mx-bed" data-line="${esc(s.id)}"><option value="">${esc(t('mixer.audio_none_opt'))}</option>${(so.line_inputs || []).map((x) => `<option value="${esc(x.device)}"${x.device === mix.line.device ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
+              </div>
+            </div>`; }).join('')}
+          ${selScreens.length ? `<div class="mx-group">
+            <div class="mx-group-name">${esc(t('mixer.audio_screens'))}</div>
+            <div class="mx-strips">${selScreens.slice(0, 12).map((s) => { const v = volumes.get(s.id) || { level: 100, muted: false }; return `
+              <div class="mx-strip${v.muted ? ' is-muted' : ''}"><span class="mx-strip-name" title="${esc(s.name)}">${esc(s.name)}</span>
+                <input type="range" class="mx-fader" min="0" max="100" value="${v.level}" data-vol="${esc(s.id)}" aria-label="${esc(t('mixer.audio_level_of', { name: s.name }))}">
+                <span class="mx-strip-val">${v.muted ? esc(t('mixer.audio_muted')) : v.level + '%'}</span>
+                <button type="button" class="mx-mute${v.muted ? ' is-on' : ''}" data-mute="${esc(s.id)}" aria-pressed="${v.muted}">${esc(t('mixer.audio_mute'))}</button></div>`; }).join('')}
+            </div>
+          </div>` : ''}
+        </div>
+        <p class="mx-note">${esc(t(so && so.available && !so.programme_audio && streams().length ? 'mixer.audio_note_no_programme' : 'mixer.audio_note'))}</p>` : `<p class="mx-note mx-note-top">${esc(t('mixer.audio_none'))}</p>`}
+      </section>
+
       ${so ? `<section class="mx-bank mx-streams">
         <h3>${esc(t('mixer.streams'))}${so.available ? `<span class="mx-bank-actions"><button type="button" class="btn btn-secondary btn-sm" id="mxAddStream">${esc(t('mixer.stream_add'))}</button></span>` : ''}</h3>
         ${!so.available ? `<p class="mx-note mx-note-top">${esc(t('mixer.stream_unavailable.' + so.reason))}</p>` : `
@@ -224,24 +258,6 @@ function draw(root) {
           </div>` : `<p class="mx-note">${esc(t('mixer.cam_pick'))}</p>`}` : `<p class="mx-note mx-note-top">${esc(t('mixer.cam_none'))}</p>`}
       </section>
 
-      <section class="mx-bank mx-audio">
-        <h3>${esc(t('mixer.audio'))}</h3>
-        ${selScreens.length || streams().length ? `<div class="mx-strips">
-          ${selScreens.slice(0, 12).map((s) => { const v = volumes.get(s.id) || { level: 100, muted: false }; return `
-            <div class="mx-strip${v.muted ? ' is-muted' : ''}"><span class="mx-strip-name" title="${esc(s.name)}">${esc(s.name)}</span>
-              <input type="range" class="mx-fader" min="0" max="100" value="${v.level}" data-vol="${esc(s.id)}" aria-label="${esc(t('mixer.audio_level_of', { name: s.name }))}">
-              <span class="mx-strip-val">${v.muted ? esc(t('mixer.audio_muted')) : v.level + '%'}</span>
-              <button type="button" class="mx-mute${v.muted ? ' is-on' : ''}" data-mute="${esc(s.id)}" aria-pressed="${v.muted}">${esc(t('mixer.audio_mute'))}</button></div>`; }).join('')}
-          ${streams().map((s) => `
-            <div class="mx-strip mx-strip-stream${s.audio.muted ? ' is-muted' : ''}"><span class="mx-strip-name" title="${esc(s.name)}">${esc(s.name)}</span>
-              <div class="mx-meter" aria-hidden="true"><i data-meter="${esc(s.id)}" style="height:${Math.round(Math.min(1, s.status.audio_peak || 0) * 100)}%"></i></div>
-              <input type="range" class="mx-fader" min="0" max="${Math.round((so.max_level || 1.5) * 100)}" value="${Math.round(s.audio.level * 100)}" data-svol="${esc(s.id)}" aria-label="${esc(t('mixer.audio_level_of', { name: s.name }))}">
-              <span class="mx-strip-val">${s.audio.muted ? esc(t('mixer.audio_muted')) : Math.round(s.audio.level * 100) + '%'}</span>
-              <button type="button" class="mx-mute${s.audio.muted ? ' is-on' : ''}" data-smute="${esc(s.id)}" aria-pressed="${s.audio.muted}">${esc(t('mixer.audio_mute'))}</button>
-              <select class="input mx-bed" data-bed="${esc(s.id)}" aria-label="${esc(t('mixer.audio_bed'))}"><option value="">${esc(t('mixer.audio_silence'))}</option>${(so.audio_sources || []).map((a) => `<option value="${esc(a.id)}"${a.id === s.audio.content_id ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select></div>`).join('')}
-        </div>
-        <p class="mx-note">${esc(t('mixer.audio_note'))}</p>` : `<p class="mx-note mx-note-top">${esc(t('mixer.audio_none'))}</p>`}
-      </section>
       </div>
 `;
   bind(root);
@@ -393,10 +409,12 @@ function bind(root) {
   };
   root.querySelectorAll('[data-svol]').forEach((el) => {
     let busy = false;
-    el.addEventListener('input', async () => { if (busy) return; busy = true; await streamAudio(el.dataset.svol, { level: Number(el.value) / 100 }); busy = false; });
-    el.addEventListener('change', async () => { await streamAudio(el.dataset.svol, { level: Number(el.value) / 100 }); draw(root); });
+    const send = () => streamAudio(el.dataset.svol, { strip: el.dataset.strip, level: Number(el.value) / 100 });
+    el.addEventListener('input', async () => { if (busy) return; busy = true; await send(); busy = false; });
+    el.addEventListener('change', async () => { await send(); draw(root); });
   });
-  root.querySelectorAll('[data-smute]').forEach((b) => b.addEventListener('click', async () => { const s = streams().find((x) => x.id === b.dataset.smute); await streamAudio(s.id, { muted: !s.audio.muted }); draw(root); }));
+  root.querySelectorAll('[data-smute]').forEach((b) => b.addEventListener('click', async () => { const s = streams().find((x) => x.id === b.dataset.smute), k = b.dataset.strip; await streamAudio(s.id, { strip: k, muted: !s.audio.mix[k].muted }); draw(root); }));
+  root.querySelectorAll('[data-line]').forEach((el) => el.addEventListener('change', async () => { await streamAudio(el.dataset.line, { line_device: el.value || null }); draw(root); }));
   root.querySelectorAll('[data-bed]').forEach((el) => el.addEventListener('change', async () => { await streamAudio(el.dataset.bed, { content_id: el.value || null }); draw(root); }));
   root.querySelectorAll('[data-out]').forEach((b) => b.addEventListener('click', () => {
     const id = b.dataset.out; if (outputs.has(id)) outputs.delete(id); else outputs.add(id); draw(root);
@@ -482,8 +500,9 @@ export async function render(container) {
     try {
       const fresh = await call('/stream-out');
       for (const s of fresh.outputs) {
-        const bar = container.querySelector(`[data-meter="${CSS.escape(s.id)}"]`); if (bar) bar.style.height = Math.round(Math.min(1, s.status.audio_peak || 0) * 100) + '%';
-        const mine = streams().find((x) => x.id === s.id); if (mine) mine.status = { ...mine.status, audio_peak: s.status.audio_peak };
+        const pk = s.status.audio_peaks || {};
+        for (const k of STRIPS) { const bar = container.querySelector(`[data-meter="${CSS.escape(s.id + ':' + k)}"]`); if (bar) bar.style.height = Math.round(Math.min(1, pk[k] || 0) * 100) + '%'; }
+        const mine = streams().find((x) => x.id === s.id); if (mine) mine.status = { ...mine.status, audio_peaks: pk };
       }
     } catch { /* next time */ }
   }, 500);

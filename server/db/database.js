@@ -1639,6 +1639,8 @@ const migrations = [
    * no way to express "this screen overrides its group", and no way to revert.
    */
   "ALTER TABLE devices ADD COLUMN playlist_source TEXT",
+  // The stream mixer's strips (programme, bed, line, master): lib/stream-audio.js.
+  "ALTER TABLE stream_outputs ADD COLUMN audio_mix TEXT",
 
   /*
    * What an ACTIVE SCHEDULE is currently imposing, kept apart from what the device is normally on.

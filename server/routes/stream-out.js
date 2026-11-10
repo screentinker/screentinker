@@ -39,7 +39,13 @@ function bedOf(row) {
   const file = c.filepath ? path.resolve(base, path.basename(String(c.filepath))) : null;
   return { id: c.id, name: c.filename, file: file && file.startsWith(base + path.sep) && fs.existsSync(file) ? file : null };
 }
-const audioOf = (row) => ({ file: bedOf(row).file, level: row.audio_level, muted: !!row.audio_muted });
+const audio = require('../lib/stream-audio');
+/** The mixer's strips for a row. Rows from before the mixer had only a bed level and mute. */
+function mixOf(row) {
+  let saved = null; try { saved = row.audio_mix ? JSON.parse(row.audio_mix) : null; } catch { saved = null; }
+  return audio.cleanSettings(saved || { bed: { level: row.audio_level, muted: !!row.audio_muted } });
+}
+const audioOf = (row) => ({ file: bedOf(row).file, settings: mixOf(row) });
 
 const pub = (r) => ({
   id: r.id, name: r.name, kind: r.kind, kind_label: streamOut.KINDS[r.kind] ? streamOut.KINDS[r.kind].label : r.kind,
@@ -47,7 +53,7 @@ const pub = (r) => ({
   playlist_name: r.playlist_id ? ((db.prepare('SELECT name FROM playlists WHERE id = ?').get(r.playlist_id) || {}).name || null) : null,
   width: r.width, height: r.height, fps: r.fps, bitrate_k: r.bitrate_k,
   graphic: !!r.gfx_json,
-  audio: { content_id: bedOf(r).id, name: bedOf(r).name, level: r.audio_level, muted: !!r.audio_muted },
+  audio: { content_id: bedOf(r).id, name: bedOf(r).name, level: mixOf(r).bed.level, muted: mixOf(r).bed.muted, mix: mixOf(r) },
   status: { ...streamOut.status(r.id), last_error: streamOut.lastError(r.id) },
 });
 const mine = (req, id) => {
@@ -71,6 +77,10 @@ router.get('/', async (req, res) => {
     kinds: Object.entries(streamOut.KINDS).map(([kind, k]) => ({ kind, label: k.label, needs_url: !k.base })),
     sizes: streamOut.SIZES.map(([width, height]) => ({ width, height })),
     max_level: streamOut.MAX_LEVEL,
+    // What the mixer can take in on this server: sound card inputs, and the programme's own sound
+    // (which needs PulseAudio here).
+    line_inputs: a.reason === 'hosted' ? [] : audio.captureDevices(),
+    programme_audio: a.available ? await audio.pulse().catch(() => false) : false,
     audio_sources: a.reason === 'hosted' ? [] : db.prepare("SELECT id, filename AS name FROM content WHERE workspace_id = ? AND mime_type LIKE 'audio/%' ORDER BY LOWER(filename) LIMIT 200").all(req.workspaceId),
     outputs: rows.map(pub),
   });
@@ -130,23 +140,36 @@ router.post('/:id/audio', gate, requireFleetWrite, (req, res) => {
   const r = mine(req, req.params.id);
   if (!r) return res.status(404).json({ error: 'Stream not found' });
   const b = req.body || {};
-  const next = { audio_content_id: r.audio_content_id, audio_level: r.audio_level, audio_muted: r.audio_muted };
+  let bedId = r.audio_content_id;
+  const mix = mixOf(r);
   if ('content_id' in b) {
-    if (b.content_id == null || b.content_id === '') next.audio_content_id = null;
+    if (b.content_id == null || b.content_id === '') bedId = null;
     else {
       const bed = bedOf({ ...r, audio_content_id: String(b.content_id) });
       if (!bed.id) return res.status(404).json({ error: 'That audio item is not in this workspace.' });
       if (!bed.file) return res.status(400).json({ error: 'That audio file is not stored on this server, so it cannot be mixed here.' });
-      next.audio_content_id = bed.id;
+      bedId = bed.id;
     }
   }
-  if ('level' in b) {
-    const l = Number(b.level);
-    if (!Number.isFinite(l) || l < 0 || l > streamOut.MAX_LEVEL) return res.status(400).json({ error: `level is 0 to ${streamOut.MAX_LEVEL}` });
-    next.audio_level = l;
+  // One strip at a time or several: { strip: 'programme' | 'bed' | 'line' | 'master', level, muted },
+  // or the same fields without `strip` for the bed (how the first version of this was called).
+  const strips = Array.isArray(b.strips) ? b.strips : [{ strip: b.strip || 'bed', level: b.level, muted: b.muted }];
+  for (const st of strips) {
+    if (!st || !['programme', 'bed', 'line', 'master'].includes(st.strip)) return res.status(400).json({ error: 'strip is programme, bed, line or master' });
+    if (st.level !== undefined) {
+      const l = Number(st.level);
+      if (typeof st.level === 'string' || !Number.isFinite(l) || l < 0 || l > streamOut.MAX_LEVEL) return res.status(400).json({ error: `level is 0 to ${streamOut.MAX_LEVEL}` });
+      mix[st.strip].level = l;
+    }
+    if (st.muted !== undefined) mix[st.strip].muted = st.muted === true;
   }
-  if ('muted' in b) next.audio_muted = b.muted === true ? 1 : 0;
-  db.prepare('UPDATE stream_outputs SET audio_content_id = ?, audio_level = ?, audio_muted = ? WHERE id = ?').run(next.audio_content_id, next.audio_level, next.audio_muted, r.id);
+  if ('line_device' in b) {
+    if (b.line_device == null || b.line_device === '') mix.line.device = null;
+    else if (!audio.captureDevices().some((d) => d.device === b.line_device)) return res.status(400).json({ error: 'That sound input is not on this server.' });
+    else mix.line.device = b.line_device;
+  }
+  db.prepare('UPDATE stream_outputs SET audio_content_id = ?, audio_level = ?, audio_muted = ?, audio_mix = ? WHERE id = ?')
+    .run(bedId, mix.bed.level, mix.bed.muted ? 1 : 0, JSON.stringify(mix), r.id);
   const now = mine(req, r.id);
   streamOut.setAudio(r.id, audioOf(now));
   res.json(pub(now));

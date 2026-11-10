@@ -858,6 +858,7 @@ CREATE TABLE IF NOT EXISTS stream_outputs (
     audio_content_id TEXT,                                   -- the audio bed (an uploaded audio item), or none
     audio_level     REAL NOT NULL DEFAULT 1,
     audio_muted     INTEGER NOT NULL DEFAULT 0,
+    audio_mix       TEXT,                                    -- JSON: the mixer's strips (lib/stream-audio.js cleanSettings)
     feed_secret     TEXT NOT NULL UNIQUE,
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );

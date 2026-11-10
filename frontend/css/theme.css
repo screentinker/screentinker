@@ -612,3 +612,20 @@
 .mx-tx-rate select { padding: 4px 6px; font-size: 12px; }
 @media (max-width: 900px) { .mx-take-col { width: auto; grid-auto-flow: row; } .mx-tx { grid-template-columns: repeat(4, 1fr); max-width: 320px; } .mx-tx-rate { max-width: 320px; } }
 .mx-rest { display: grid; gap: 18px; }
+
+/* Mixer: the audio console. One group of strips per stream (programme, bed, line, master), one for screens. */
+.mx-pair { grid-template-columns: minmax(0, 1fr); }
+.mx-console { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+.mx-group { display: grid; gap: 10px; padding: 12px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius); min-width: 0; }
+.mx-group-name { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-primary); }
+.mx-group .mx-strips { overflow-x: auto; }
+.mx-group .mx-strip { width: 88px; border-style: solid; padding-left: 26px; }
+.mx-group .mx-meter { left: 10px; top: 34px; }
+.mx-strip-master { border-color: var(--accent) !important; }
+.mx-strip.is-off { opacity: 0.4; }
+.mx-group-src { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.mx-group-src label { display: grid; gap: 4px; font-size: 12px; color: var(--text-secondary); min-width: 0; }
+.mx-group .mx-strip { width: 96px; padding: 10px 8px; }
+.mx-group .mx-strip:has(.mx-meter) { padding-left: 24px; }
+.mx-group .mx-strip-name { font-size: 11.5px; }
+.mx-group .mx-mute { min-width: 0; width: 100%; }
