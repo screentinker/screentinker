@@ -31,8 +31,57 @@ let cued = null;             // the scene waiting on TAKE, if one was recalled
 // The transition TAKE uses, remembered in this browser: { type: cut|fade|flash|wipe, ms }.
 let tx = (() => { try { const v = JSON.parse(localStorage.getItem('st_mixer_tx') || 'null'); if (v && typeof v.type === 'string' && Number(v.ms) >= 200) return { type: v.type, ms: Number(v.ms) }; } catch { /* default */ } return { type: 'cut', ms: 600 }; })();
 const RATES = [300, 600, 1000, 2000];
-const STRIPS = ['programme', 'bed', 'line', 'net', 'net2', 'master'];
+const STRIPS = ['programme', 'bed', 'mic', 'line', 'net', 'net2', 'master'];
 let meterBusy = false;
+// This computer's microphone, open into one stream: { sid, rec, media }. The browser records it
+// and the pieces are sent up in order, one request at a time.
+let mic = null;
+function micStop() {
+  if (!mic) return;
+  const m = mic; mic = null;
+  try { m.rec.stop(); } catch { /* already */ }
+  m.media.getTracks().forEach((tr) => tr.stop());
+  call(`/stream-out/${encodeURIComponent(m.sid)}/mic`, { method: 'POST', body: JSON.stringify({ stop: true }) }).catch(() => {});
+}
+async function micStart(sid) {
+  micStop();
+  if (!navigator.mediaDevices || !window.MediaRecorder || !MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) throw new Error(t('mixer.mic_unsupported'));
+  // Asking for it is what makes the browser show its "allow microphone" prompt. Its own processing
+  // is off: the desk has a noise floor control, a gate and a compressor of its own.
+  const media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  const rec = new MediaRecorder(media, { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 128000 });
+  const me = { sid, rec, media }; mic = me;
+  let first = true, chain = Promise.resolve(), misses = 0;
+  rec.ondataavailable = (e) => {
+    if (mic !== me || !e.data || !e.data.size) return;
+    const isFirst = first; first = false;
+    chain = chain.then(async () => {
+      if (mic !== me) return;
+      const bytes = new Uint8Array(await e.data.arrayBuffer()); let bin = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      try { await call(`/stream-out/${encodeURIComponent(sid)}/mic`, { method: 'POST', body: JSON.stringify({ chunk: btoa(bin), first: isFirst }) }); misses = 0; }
+      catch (err) { if (++misses >= 3 && mic === me) { micStop(); showToast(err.message, 'error'); } }
+    });
+  };
+  media.getTracks().forEach((tr) => tr.addEventListener('ended', () => { if (mic === me) micStop(); }));
+  rec.start(250);
+}
+const onAirGfx = new Map();  // output id -> { uri, position, w, h }: the graphic this desk keyed over it
+/** The graphic over the Program monitor's output, as the output shows it: the same page, in the same box. */
+function gfxLayer(root, pgm) {
+  const screen = document.getElementById('mxPgmScreen'); if (!screen) return;
+  const g = pgm ? (onAirGfx.has(pgm.id) ? onAirGfx.get(pgm.id) : (pgm.graphic_on || null)) : null;
+  const had = screen.querySelector('.mx-gfx-layer'), key = g ? JSON.stringify(g) : '';
+  if (had && had.dataset.key === key) return;             // already showing it: do not restart its animation
+  if (had) had.remove();
+  if (!g) return;
+  const f = document.createElement('iframe');
+  f.className = 'mx-gfx-layer mx-gfx-' + String(g.position).replace(/[^a-z-]/g, ''); f.dataset.key = key;
+  f.setAttribute('sandbox', ''); f.setAttribute('tabindex', '-1'); f.setAttribute('aria-hidden', 'true'); f.setAttribute('allowtransparency', 'true');
+  f.style.width = (g.w * 100) + '%'; f.style.height = (g.h * 100) + '%';
+  f.src = g.uri;
+  screen.appendChild(f);
+}
 let procOpen = null;         // the strip whose processing is open on the desk: { sid, strip }
 /** Whether a strip's processing does anything: its EQ key is lit when it does. */
 const shaped = (st) => !!(st.hpf || st.gate || st.comp || st.fx || st.denoise || (st.eq && (st.eq.low || st.eq.mid || st.eq.high)));
@@ -84,7 +133,7 @@ const playlistFeed = (id, tag) => ({ page: `/player?preview=1&playlist=${encodeU
 /** Shows `src` in a monitor. A monitor that is already running is switched in place, with the
  *  take's transition when there is one; it is only (re)loaded when it has no player yet. */
 function monitor(el, src, emptyText, fx) {
-  let f = el.querySelector('iframe');
+  let f = el.querySelector('iframe.mx-frame');
   if (!src) { el.innerHTML = `<div class="mx-empty">${esc(emptyText)}</div>`; el.dataset.key = ''; return; }
   if (el.dataset.key === src.key && f) return;
   el.dataset.key = src.key;
@@ -154,6 +203,7 @@ function draw(root) {
     : { page: `/player?preview=1&device=${encodeURIComponent(pgm.id)}`, feed: `/api/devices/${encodeURIComponent(pgm.id)}/preview-payload`, key: `d:${pgm.id}:${pgm.playlist_id || ''}` },
   pgm && isStream(pgm) ? t('mixer.stream_no_source') : t('mixer.pick_output'), pgmFx);
   pgmFx = null;
+  gfxLayer(root, pgm);
   root.querySelector('#mxRest').innerHTML = `
       <section class="mx-bank mx-scenes">
         <h3>${esc(t('mixer.scenes'))}<span class="mx-bank-actions"><button type="button" class="btn btn-secondary btn-sm" id="mxSaveScene">${esc(t('mixer.scene_save'))}</button></span></h3>
@@ -178,7 +228,7 @@ function draw(root) {
           ${streams().map((s) => { const mix = s.audio.mix, pk = s.status.audio_peaks || {}, live = s.status.inputs_live || []; return `
             <div class="mx-group">
               <div class="mx-group-name"><span class="mx-lamp mx-lamp-${streamTally(s)}"></span>${esc(s.name)}${s.status.state === 'off' && so.available ? `<button type="button" class="btn btn-secondary btn-sm mx-meters-on" data-standby="${esc(s.id)}" title="${esc(t('mixer.standby_tip'))}">${esc(t('mixer.meters_on'))}</button>` : `<span class="mx-group-state">${esc(t('mixer.stream_state.' + s.status.state))}</span>`}${s.status.limiting > 0.5 ? `<span class="mx-limiting">${esc(t('mixer.audio_limiting', { db: s.status.limiting }))}</span>` : ''}</div>
-              <div class="mx-strips">${STRIPS.map((k) => { const off = (k === 'programme' && !so.programme_audio) || (k === 'line' && !mix.line.device) || ((k === 'net' || k === 'net2') && !mix[k].url); const open = procOpen && procOpen.sid === s.id && procOpen.strip === k; return `
+              <div class="mx-strips">${STRIPS.map((k) => { const off = (k === 'programme' && !so.programme_audio) || (k === 'mic' && !(mic && mic.sid === s.id)) || (k === 'line' && !mix.line.device) || ((k === 'net' || k === 'net2') && !mix[k].url); const open = procOpen && procOpen.sid === s.id && procOpen.strip === k; return `
                 <div class="mx-strip${mix[k].muted ? ' is-muted' : ''}${k === 'master' ? ' mx-strip-master' : ''}${off ? ' is-off' : ''}">
                   <span class="mx-strip-name">${esc(t('mixer.strip.' + k))}</span>
                   <div class="mx-meter" aria-hidden="true"><i data-meter="${esc(s.id)}:${k}" style="height:${meterPct(pk[k] || 0)}%"></i></div>
@@ -190,6 +240,7 @@ function draw(root) {
               </div>
               ${procOpen && procOpen.sid === s.id ? procPanel(s, procOpen.strip) : ''}
               <div class="mx-group-src">
+                <label>${esc(t('mixer.strip.mic'))}<button type="button" class="btn btn-secondary btn-sm mx-mic${mic && mic.sid === s.id ? ' is-on' : ''}" data-mic="${esc(s.id)}" aria-pressed="${!!(mic && mic.sid === s.id)}">${esc(t(mic && mic.sid === s.id ? 'mixer.mic_stop' : 'mixer.mic_start'))}</button></label>
                 <label>${esc(t('mixer.audio_bed'))}<select class="input mx-bed" data-bed="${esc(s.id)}"><option value="">${esc(t('mixer.audio_none_opt'))}</option>${(so.audio_sources || []).map((x) => `<option value="${esc(x.id)}"${x.id === s.audio.content_id ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
                 <label>${esc(t('mixer.audio_line'))}<select class="input mx-bed" data-line="${esc(s.id)}"><option value="">${esc(t('mixer.audio_none_opt'))}</option>${(so.line_inputs || []).map((x) => `<option value="${esc(x.device)}"${x.device === mix.line.device ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
                 ${['net', 'net2'].map((n) => `<label>${esc(t('mixer.strip.' + n))}${live.includes(n) ? ` <span class="mx-live">${esc(t('mixer.audio_connected'))}</span>` : ''}<input class="input mx-bed" data-net="${esc(s.id)}" data-strip="${n}" value="${esc(mix[n].url || '')}" placeholder="srt://  rtsp://  rtp://  udp://" spellcheck="false" autocomplete="off"></label>`).join('')}
@@ -359,10 +410,12 @@ async function key(root, kind, given) {
       if (streams().some((s) => s.id === id)) await call(`/stream-out/${encodeURIComponent(id)}/gfx`, { method: 'POST', body: JSON.stringify({ kind, a, b, accent }) });
       else await call('/pip', { method: 'POST', body: JSON.stringify({ device_id: id, type: 'web', uri, position: g.box.position, keyed: true,
         width: Math.round(W * g.box.w), height: Math.round(H * g.box.h), duration: 0, opacity: 1, border_radius: 0 }) });
+      onAirGfx.set(id, { uri: uri.replace(window.location.origin, ''), position: g.box.position, w: g.box.w, h: g.box.h, n: Date.now() });
       ok++;
     } catch { failed++; }
   }));
   showToast(failed ? t('mixer.toast.gfx_partial', { ok, failed }) : t('mixer.toast.gfx_on', { n: ok }), failed ? 'warning' : 'success');
+  gfxLayer(root, firstOutput());
 }
 
 async function clearGfx(quiet) {
@@ -370,6 +423,8 @@ async function clearGfx(quiet) {
   await Promise.all([...outputs].map((id) => (streams().some((s) => s.id === id)
     ? call(`/stream-out/${encodeURIComponent(id)}/gfx/clear`, { method: 'POST' })
     : call('/pip/clear', { method: 'POST', body: JSON.stringify({ device_id: id }) })).catch(() => null)));
+  for (const id of outputs) onAirGfx.set(id, null);
+  gfxLayer(null, firstOutput());
   if (quiet !== true) showToast(t('mixer.toast.gfx_off'), 'info');
 }
 
@@ -478,6 +533,20 @@ function bind(root) {
   root.querySelectorAll('[data-proc][type=range]').forEach((el) => el.addEventListener('input', () => { const o = el.parentNode.querySelector('output'); if (o) o.textContent = el.dataset.ctl.startsWith('eq.') ? dB(Number(el.value)) : Math.round(Number(el.value) * 100) + '%'; }));
   root.querySelectorAll('[data-procreset]').forEach((b) => b.addEventListener('click', async () => {
     await streamAudio(b.dataset.procreset, { strips: [{ strip: b.dataset.strip, hpf: false, eq: { low: 0, mid: 0, high: 0 }, gate: 0, comp: 0, fx: 0, denoise: 0 }] }); draw(root);
+  }));
+  root.querySelectorAll('[data-mic]').forEach((b) => b.addEventListener('click', async () => {
+    const sid = b.dataset.mic;
+    if (mic && mic.sid === sid) { micStop(); draw(root); return; }
+    b.disabled = true;
+    try {
+      // A microphone needs the stream's mix to be running: standby does that without sending anything.
+      const s = streams().find((x) => x.id === sid);
+      if (s && s.status.state === 'off') { const r = await call(`/stream-out/${encodeURIComponent(sid)}/start`, { method: 'POST', body: JSON.stringify({ standby: true }) }); s.status = { ...s.status, ...r.status }; }
+      await micStart(sid);
+      showToast(t('mixer.toast.mic_on'), 'success');
+    } catch (err) { showToast(err && err.name === 'NotAllowedError' ? t('mixer.mic_denied') : (err.message || String(err)), 'error'); }
+    try { so = await call('/stream-out'); } catch { /* keep */ }
+    draw(root);
   }));
   root.querySelectorAll('[data-learn]').forEach((b) => b.addEventListener('click', async () => {
     b.disabled = true; b.textContent = t('mixer.audio_noise_learning');
@@ -603,6 +672,9 @@ export async function render(container, which) {
 
 export function cleanup() {
   alive = false;
+  // Moving between the desk's own pages (Mixer, Audio, Graphics) must not close an open microphone;
+  // leaving the desk does.
+  setTimeout(() => { if (!alive) micStop(); }, 800);
   if (onKey) document.removeEventListener('keydown', onKey);
   onKey = null;
   clearInterval(refreshTimer); refreshTimer = null;

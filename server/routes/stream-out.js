@@ -64,6 +64,8 @@ const pub = (r) => ({
   width: r.width, height: r.height, fps: r.fps, bitrate_k: r.bitrate_k, record: !!r.record || !!(streamOut.KINDS[r.kind] && streamOut.KINDS[r.kind].file),
   file_only: !!(streamOut.KINDS[r.kind] && streamOut.KINDS[r.kind].file),
   graphic: !!r.gfx_json,
+  // What is keyed over it, so the desk's Program monitor can show it too: the page and its box as fractions of the frame.
+  graphic_on: (() => { try { const g = r.gfx_json ? JSON.parse(r.gfx_json) : null; return g && typeof g.uri === 'string' && g.uri.startsWith('/gfx/') ? { uri: g.uri, position: g.position, w: g.width / r.width, h: g.height / r.height } : null; } catch { return null; } })(),
   audio: { content_id: bedOf(r).id, name: bedOf(r).name, level: mixOf(r).bed.level, muted: mixOf(r).bed.muted, mix: shown(mixOf(r)) },
   status: { ...streamOut.status(r.id), last_error: streamOut.lastError(r.id) },
 });
@@ -245,6 +247,18 @@ router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
   const now = mine(req, r.id);
   streamOut.setAudio(r.id, audioOf(now));
   res.json(pub(now));
+});
+
+// The desk's microphone, a piece at a time: { chunk: base64 of the browser's recording, first: true on a new one },
+// or { stop: true }. Only into an output that is running (live or on standby).
+router.post('/:id/mic', gate, requireFleetWrite, (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'Stream not found' });
+  const b = req.body || {};
+  if (b.stop === true) { streamOut.stopMic(r.id); return res.json({ success: true }); }
+  if (typeof b.chunk !== 'string' || b.chunk.length > 400000 || !/^[A-Za-z0-9+/]*=*$/.test(b.chunk)) return res.status(400).json({ error: 'A piece of microphone sound is expected.' });
+  if (!streamOut.pushMic(r.id, Buffer.from(b.chunk, 'base64'), b.first === true)) return res.status(409).json({ error: 'Put the stream on standby or live before opening a microphone.' });
+  res.json({ success: true });
 });
 
 router.post('/:id/gfx', gate, requireFleetWrite, (req, res) => {

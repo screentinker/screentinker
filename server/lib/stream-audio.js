@@ -10,6 +10,8 @@
  *               The renderer's browser plays into a PulseAudio sink of its own and this reads the
  *               sink back. Needs PulseAudio on the server; without it the input is simply absent.
  *   bed         an uploaded audio item, looped.
+ *   mic         the microphone of the computer the desk is open on: the browser records it and
+ *               sends it up a quarter of a second at a time (routes/stream-out.js /:id/mic).
  *   line        a sound card input on the server (a USB audio interface, a desk's output),
  *               read through ALSA.
  *
@@ -37,7 +39,7 @@ const RATE = 44100;
 const FRAME = 4;                 // bytes per stereo 16-bit sample
 const SECOND = RATE * FRAME;
 const MAX_LEVEL = 1.5;
-const INPUTS = ['programme', 'bed', 'line', 'net', 'net2'];
+const INPUTS = ['programme', 'bed', 'mic', 'line', 'net', 'net2'];
 const NET_SCHEMES = ['srt:', 'rtmp:', 'rtmps:', 'rtsp:', 'rtsps:', 'rtp:', 'udp:', 'http:', 'https:'];
 
 const level = (v, dflt) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(MAX_LEVEL, n)) : dflt; };
@@ -183,6 +185,13 @@ const lineArgs = (device) => [...QUIET, '-f', 'alsa', '-ac', '2', '-i', device, 
 // The protocol list is closed: a playlist or session description fetched from the network cannot
 // point the decoder at a local file.
 const netArgs = (url) => [...QUIET, '-protocol_whitelist', 'srt,rtmp,rtmps,rtsp,rtp,udp,tcp,tls,http,https,crypto', '-fflags', 'nobuffer', '-i', url, ...PCM_OUT];
+/** The desk microphone arrives as the browser's own recording (WebM/Opus) on stdin. */
+const micArgs = () => [...QUIET, '-fflags', 'nobuffer', '-probesize', '4096', '-analyzeduration', '0', '-f', 'matroska', '-i', 'pipe:0', ...PCM_OUT];
+function micDecoder() {
+  const p = spawn('ffmpeg', micArgs(), { stdio: ['pipe', 'pipe', 'ignore'] });
+  p.on('error', () => {}); p.stdin.on('error', () => {});
+  return p;
+}
 const programmeArgs = (sink) => [...QUIET, '-f', 'pulse', '-i', `${sink}.monitor`, ...PCM_OUT];
 function decoder(args) {
   const p = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'ignore'] });
@@ -234,4 +243,4 @@ async function createSink(id) {
 }
 function removeSink(sink) { if (sink && /^\d+$/.test(sink.module)) run('pactl', ['unload-module', sink.module]); }
 
-module.exports = { RATE, FRAME, SECOND, MAX_LEVEL, INPUTS, NET_SCHEMES, Mix, cleanSettings, netUrl, maskUrl, netArgs, bedArgs, lineArgs, programmeArgs, decoder, parseCapture, captureDevices, pulse, createSink, removeSink };
+module.exports = { RATE, FRAME, SECOND, MAX_LEVEL, INPUTS, NET_SCHEMES, Mix, cleanSettings, netUrl, maskUrl, netArgs, bedArgs, lineArgs, programmeArgs, micArgs, micDecoder, decoder, parseCapture, captureDevices, pulse, createSink, removeSink };

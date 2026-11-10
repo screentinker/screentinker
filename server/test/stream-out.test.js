@@ -299,7 +299,7 @@ test('sound inputs are read from the system\'s own list, and settings are made s
     '00-03: HDMI 0 : HDMI 0 : playback 1\n02-00: USB Audio : USB Audio : playback 1 : capture 1\n'), [{ device: 'plughw:2,0', name: 'USB AUDIO CODEC: USB Audio' }]);
   assert.deepEqual(audio.parseCapture('', ''), []);
   const s = audio.cleanSettings({ line: { device: 'hw:0; rm -rf /', level: 99, eq: { low: 'x', mid: -50 }, gate: 7, denoise: -1 }, master: { muted: 1, level: -3, comp: 1 }, extra: { level: 1 }, net: { url: 'file:///etc/passwd' } });
-  assert.deepEqual(Object.keys(s).sort(), ['bed', 'fx', 'line', 'master', 'net', 'net2', 'programme']);
+  assert.deepEqual(Object.keys(s).sort(), ['bed', 'fx', 'line', 'master', 'mic', 'net', 'net2', 'programme']);
   assert.deepEqual(s.master, { level: 0, muted: true, eq: { low: 0, mid: 0, high: 0 } });
   assert.deepEqual(s.line, { level: audio.MAX_LEVEL, muted: false, hpf: false, eq: { low: 0, mid: -12, high: 0 }, gate: 1, comp: 0, fx: 0, device: null, denoise: 0, noise: null });
   assert.equal(s.net.url, null);
@@ -511,4 +511,40 @@ test('the meters endpoint lists only running outputs of the caller\'s workspace'
   assert.deepEqual((await call('GET', '/api/stream-out/levels', A.jwt)).body, { levels: {} });
   assert.deepEqual((await call('GET', '/api/stream-out/levels', V.jwt)).body, { levels: {} }, 'a read-only member may watch the meters');
   assert.equal((await call('GET', '/api/stream-out/levels')).status, 401);
+});
+
+/*
+ * THE DESK MICROPHONE and STANDBY. The microphone of the computer the desk is open on arrives as
+ * pieces of the browser's recording; only someone who may operate the workspace's streams can
+ * send them, only into an output that is running, and only something that is a piece of sound.
+ */
+test('microphone sound is taken only from an operator of the workspace, into a running output, as sound', async () => {
+  const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Mic', kind: 'record' })).body;
+  const piece = Buffer.from('not really opus').toString('base64');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/mic`, A.jwt, { chunk: piece, first: true })).status, 409, 'nothing is running to take it');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/mic`, A.jwt, { chunk: '<script>alert(1)</script>' })).status, 400);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/mic`, A.jwt, { chunk: 'A'.repeat(400001) })).status, 400, 'a piece has a size');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/mic`, A.jwt, {})).status, 400);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/mic`, B.jwt, { chunk: piece, first: true })).status, 404, 'not another workspace\'s output');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/mic`, V.jwt, { chunk: piece, first: true })).status, 403, 'not a read-only member');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/mic`, null, { chunk: piece })).status, 401);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/mic`, A.jwt, { stop: true })).status, 200, 'closing a microphone that is not open is fine');
+  assert.ok(audio.INPUTS.includes('mic')); assert.equal(streamOut.pushMic('no-such-output', Buffer.alloc(4), true), false);
+  const args = audio.micArgs(); assert.equal(args[args.indexOf('-i') + 1], 'pipe:0'); assert.equal(args[args.indexOf('-f') + 1], 'matroska', 'it is decoded as the one format a browser records, from the pipe and nowhere else');
+  const strip = await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { strips: [{ strip: 'mic', level: 0.8, gate: 0.3, denoise: 0.5 }] });
+  assert.deepEqual([strip.body.audio.mix.mic.level, strip.body.audio.mix.mic.gate, strip.body.audio.mix.mic.denoise], [0.8, 0.3, 0.5], 'the microphone is a strip like the others');
+  await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+});
+
+test('the desk is told what graphic is over a stream, so its Program monitor can show it', async () => {
+  const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Gfx', kind: 'record' })).body;
+  assert.equal(so.graphic_on, null);
+  await call('POST', `/api/stream-out/${so.id}/gfx`, A.jwt, { kind: 'lower-third', a: 'Dana', b: 'Ops', accent: '#ff2a1f' });
+  const on = (await call('GET', '/api/stream-out', A.jwt)).body.outputs.find((o) => o.id === so.id).graphic_on;
+  assert.match(on.uri, /^\/gfx\/lower-third\?a=Dana&b=Ops/); assert.equal(on.position, 'bottom-left'); assert.ok(Math.abs(on.w - 0.62) < 0.01 && Math.abs(on.h - 0.2) < 0.01);
+  db.prepare('UPDATE stream_outputs SET gfx_json = ? WHERE id = ?').run(JSON.stringify({ uri: 'https://evil.example/x', position: 'center', width: 10, height: 10 }), so.id);
+  assert.equal((await call('GET', '/api/stream-out', A.jwt)).body.outputs.find((o) => o.id === so.id).graphic_on, null, 'only this server\'s own graphics pages are handed to the desk to frame');
+  await call('POST', `/api/stream-out/${so.id}/gfx/clear`, A.jwt);
+  assert.equal((await call('GET', '/api/stream-out', A.jwt)).body.outputs.find((o) => o.id === so.id).graphic_on, null);
+  await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
 });

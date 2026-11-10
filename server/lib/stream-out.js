@@ -201,6 +201,7 @@ const audio = require('./stream-audio');
 /** What an input is decoding from, as one string: when it changes, the input is restarted. */
 function inputKey(s, name) {
   const set = s.mix.settings[name];
+  if (name === 'mic') return '';                     // fed by the desk (pushMic), not started from settings
   if (name === 'bed') return s.bedFile || '';
   if (name === 'line') return set.device || '';
   if (name === 'programme') return s.sink ? s.sink.name : '';
@@ -244,6 +245,29 @@ function setAudio(id, next) {
   for (const name of audio.INPUTS) if (inputKey(s, name) !== (s.inputKeys[name] || '')) startInput(s, name);
   return true;
 }
+
+/**
+ * The desk's microphone: a piece of the browser's recording, in order. `first` is the start of a
+ * new recording (it carries the header), so the decoder starts again with it. When the pieces stop
+ * coming (the desk closed, the network dropped) the input is taken away after a few seconds.
+ */
+function pushMic(id, chunk, first) {
+  const s = sessions.get(id);
+  if (!s || !s.wanted) return false;
+  if (first || !s.inputs.mic) {
+    if (!first) return true;                           // mid-recording pieces with no decoder: wait for a new start
+    stopInput(s, 'mic');
+    const proc = audio.micDecoder();
+    s.inputs.mic = proc; s.mix.attach('mic', proc.stdout, { live: true });
+    proc.on('close', () => { if (s.inputs.mic === proc) { delete s.inputs.mic; s.mix.detach('mic'); } });
+  }
+  const proc = s.inputs.mic;
+  if (proc.stdin.writable && proc.stdin.writableLength < 1 << 20) proc.stdin.write(chunk);
+  clearTimeout(s.inputTimers.mic);
+  s.inputTimers.mic = setTimeout(() => { if (s.inputs.mic === proc) stopInput(s, 'mic'); }, 4000);
+  return true;
+}
+function stopMic(id) { const s = sessions.get(id); if (s) stopInput(s, 'mic'); }
 
 /** Listen to one input of a live stream as noise. Resolves with its print, or null (not live, no such input). */
 function learnNoise(id, name) {
@@ -382,4 +406,4 @@ function lastError(id) { const e = stopped.get(id); return e ? e.error : null; }
 async function stopAll() { await Promise.all([...sessions.keys()].map((id) => stop(id))); }
 process.on('exit', () => { for (const s of sessions.values()) { try { s.ff && s.ff.kill('SIGKILL'); } catch { /* */ } try { Object.values(s.inputs).forEach((p) => p.kill('SIGKILL')); } catch { /* */ } try { s.browser && s.browser.process() && s.browser.process().kill('SIGKILL'); } catch { /* */ } } });
 
-module.exports = { recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };
+module.exports = { pushMic, stopMic, recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };
