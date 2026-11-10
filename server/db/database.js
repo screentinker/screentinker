@@ -5642,6 +5642,12 @@ if (_bootUpgraded) {
   } catch (e) { console.warn(`[boot] could not record the upgrade time: ${e.message}`); }
 }
 
+// Payment is moving from the person to the organization (lib/org-billing.js). Step 1: the
+// organization's copy of its owner's billing state is filled and kept in step by triggers. Nothing
+// reads it yet; `users` stays the source of truth. LAST, so every column it copies already exists.
+try { require('../lib/org-billing').install(db); }
+catch (e) { console.error(`[org-billing] mirror not installed: ${e.message}`); }
+
 // `playsMigrationTouched`: did THIS boot build a play_logs index or add a play_logs column?
 // Read once by services/heartbeat to arm the 2.0.1 player defer (lib/boot-defer.js). The loop
 // that sets it runs at require time, well above this line, so the value is already final here.

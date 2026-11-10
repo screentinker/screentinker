@@ -172,10 +172,22 @@ test('a PAYING team moving screens between its members is not a second trial', (
   for (let i = 0; i < 2; i++) claim(me, burnedScreen(prior));
   assert.equal(check(me, burnedScreen(prior)).allowed, true, 'the org owner pays');
 
-  const prior2 = user('lapsed'), me2 = user('trial');
-  wsIn(org(prior2, { sub: 'sub_org' }), prior2, me2);
-  for (let i = 0; i < 2; i++) claim(me2, burnedScreen(prior2));
-  assert.equal(check(me2, burnedScreen(prior2)).allowed, true, 'the organization has its own subscription');
+  // An organization that pays for ITSELF while its owner does not. That state only exists once the
+  // organization is the source of truth for billing (lib/org-billing.js): until then its row is a
+  // copy of its owner's, kept in step by triggers, which would overwrite this fixture. So this half
+  // runs in that mode.
+  const orgBilling = require('../lib/org-billing');
+  db.prepare("INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('billing_source', 'org', strftime('%s','now'))").run();
+  orgBilling.install(db, null);
+  try {
+    const prior2 = user('lapsed'), me2 = user('trial');
+    wsIn(org(prior2, { sub: 'sub_org' }), prior2, me2);
+    for (let i = 0; i < 2; i++) claim(me2, burnedScreen(prior2));
+    assert.equal(check(me2, burnedScreen(prior2)).allowed, true, 'the organization has its own subscription');
+  } finally {
+    db.prepare("DELETE FROM app_settings WHERE key = 'billing_source'").run();
+    orgBilling.install(db, null);
+  }
 });
 
 test('a comped or invoiced (hand-assigned) account counts as paid', () => {
