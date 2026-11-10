@@ -31,7 +31,32 @@ let cued = null;             // the scene waiting on TAKE, if one was recalled
 // The transition TAKE uses, remembered in this browser: { type: cut|fade|flash|wipe, ms }.
 let tx = (() => { try { const v = JSON.parse(localStorage.getItem('st_mixer_tx') || 'null'); if (v && typeof v.type === 'string' && Number(v.ms) >= 200) return { type: v.type, ms: Number(v.ms) }; } catch { /* default */ } return { type: 'cut', ms: 600 }; })();
 const RATES = [300, 600, 1000, 2000];
-const STRIPS = ['programme', 'bed', 'line', 'master'];
+const STRIPS = ['programme', 'bed', 'line', 'net', 'net2', 'master'];
+let procOpen = null;         // the strip whose processing is open on the desk: { sid, strip }
+/** Whether a strip's processing does anything: its EQ key is lit when it does. */
+const shaped = (st) => !!(st.hpf || st.gate || st.comp || st.fx || st.denoise || (st.eq && (st.eq.low || st.eq.mid || st.eq.high)));
+const knob = (s, strip, ctl, label, value, min, max, step, show) => `<label class="mx-knob">${esc(label)}<input type="range" min="${min}" max="${max}" step="${step}" value="${value}" data-proc="${esc(s.id)}" data-strip="${strip}" data-ctl="${ctl}"><output>${esc(show)}</output></label>`;
+const dB = (v) => (v > 0 ? '+' : '') + v + ' dB';
+const pct = (v) => (v ? Math.round(v * 100) + '%' : t('mixer.audio_off'));
+/** The processing of one strip: what a desk channel has between its input and its fader. */
+function procPanel(s, strip) {
+  const st = s.audio.mix[strip], master = strip === 'master';
+  return `<div class="mx-proc" role="group" aria-label="${esc(t('mixer.strip.' + strip))}">
+    <div class="mx-proc-title">${esc(t('mixer.audio_proc_of', { strip: t('mixer.strip.' + strip) }))}<button type="button" class="btn btn-secondary btn-sm" data-procreset="${esc(s.id)}" data-strip="${strip}">${esc(t('mixer.audio_flat'))}</button></div>
+    <div class="mx-knobs">
+      ${master ? '' : `<label class="mx-knob mx-knob-check"><input type="checkbox" ${st.hpf ? 'checked' : ''} data-proc="${esc(s.id)}" data-strip="${strip}" data-ctl="hpf"> ${esc(t('mixer.audio_hpf'))}</label>`}
+      ${knob(s, strip, 'eq.low', t('mixer.audio_eq_low'), st.eq.low, -12, 12, 1, dB(st.eq.low))}
+      ${knob(s, strip, 'eq.mid', t('mixer.audio_eq_mid'), st.eq.mid, -12, 12, 1, dB(st.eq.mid))}
+      ${knob(s, strip, 'eq.high', t('mixer.audio_eq_high'), st.eq.high, -12, 12, 1, dB(st.eq.high))}
+      ${master ? knob(s, strip, 'decay', t('mixer.audio_room'), s.audio.mix.fx.decay, 0, 1, 0.05, Math.round(s.audio.mix.fx.decay * 100) + '%') : `
+        ${knob(s, strip, 'gate', t('mixer.audio_gate'), st.gate, 0, 1, 0.05, pct(st.gate))}
+        ${knob(s, strip, 'comp', t('mixer.audio_comp'), st.comp, 0, 1, 0.05, pct(st.comp))}
+        ${knob(s, strip, 'fx', t('mixer.audio_reverb'), st.fx, 0, 1, 0.05, pct(st.fx))}
+        ${'denoise' in st ? knob(s, strip, 'denoise', t('mixer.audio_denoise'), st.denoise, 0, 1, 0.1, pct(st.denoise)) : ''}`}
+    </div>
+    <p class="mx-note">${esc(t(master ? 'mixer.audio_proc_master_note' : 'denoise' in st ? 'mixer.audio_proc_note_denoise' : 'mixer.audio_proc_note'))}</p>
+  </div>`;
+}
 let savingScene = false;
 let cam = null;              // the camera being steered: { id, presets, last: { preset, name } | null }
 let camSpeed = 0.5;
@@ -143,21 +168,24 @@ function draw(root) {
       <section class="mx-bank mx-audio">
         <h3>${esc(t('mixer.audio'))}</h3>
         ${selScreens.length || streams().length ? `<div class="mx-console">
-          ${streams().map((s) => { const mix = s.audio.mix, pk = s.status.audio_peaks || {}; return `
+          ${streams().map((s) => { const mix = s.audio.mix, pk = s.status.audio_peaks || {}, live = s.status.inputs_live || []; return `
             <div class="mx-group">
-              <div class="mx-group-name"><span class="mx-lamp mx-lamp-${streamTally(s)}"></span>${esc(s.name)}</div>
-              <div class="mx-strips">${STRIPS.map((k) => { const off = k === 'programme' && !so.programme_audio; return `
+              <div class="mx-group-name"><span class="mx-lamp mx-lamp-${streamTally(s)}"></span>${esc(s.name)}${s.status.limiting > 0.5 ? `<span class="mx-limiting">${esc(t('mixer.audio_limiting', { db: s.status.limiting }))}</span>` : ''}</div>
+              <div class="mx-strips">${STRIPS.map((k) => { const off = (k === 'programme' && !so.programme_audio) || (k === 'line' && !mix.line.device) || ((k === 'net' || k === 'net2') && !mix[k].url); const open = procOpen && procOpen.sid === s.id && procOpen.strip === k; return `
                 <div class="mx-strip${mix[k].muted ? ' is-muted' : ''}${k === 'master' ? ' mx-strip-master' : ''}${off ? ' is-off' : ''}">
                   <span class="mx-strip-name">${esc(t('mixer.strip.' + k))}</span>
                   <div class="mx-meter" aria-hidden="true"><i data-meter="${esc(s.id)}:${k}" style="height:${Math.round(Math.min(1, pk[k] || 0) * 100)}%"></i></div>
-                  <input type="range" class="mx-fader" min="0" max="${Math.round((so.max_level || 1.5) * 100)}" value="${Math.round(mix[k].level * 100)}" data-svol="${esc(s.id)}" data-strip="${k}" ${off ? 'disabled' : ''} aria-label="${esc(t('mixer.audio_level_of', { name: s.name + ', ' + t('mixer.strip.' + k) }))}">
+                  <input type="range" class="mx-fader" min="0" max="${Math.round((so.max_level || 1.5) * 100)}" value="${Math.round(mix[k].level * 100)}" data-svol="${esc(s.id)}" data-strip="${k}" aria-label="${esc(t('mixer.audio_level_of', { name: s.name + ', ' + t('mixer.strip.' + k) }))}">
                   <span class="mx-strip-val">${mix[k].muted ? esc(t('mixer.audio_muted')) : Math.round(mix[k].level * 100) + '%'}</span>
-                  <button type="button" class="mx-mute${mix[k].muted ? ' is-on' : ''}" data-smute="${esc(s.id)}" data-strip="${k}" aria-pressed="${mix[k].muted}" ${off ? 'disabled' : ''}>${esc(t('mixer.audio_mute'))}</button>
+                  <button type="button" class="mx-mute${mix[k].muted ? ' is-on' : ''}" data-smute="${esc(s.id)}" data-strip="${k}" aria-pressed="${mix[k].muted}">${esc(t('mixer.audio_mute'))}</button>
+                  <button type="button" class="mx-mute mx-proc-open${open ? ' is-open' : ''}${shaped(mix[k]) ? ' is-shaped' : ''}" data-procopen="${esc(s.id)}" data-strip="${k}" aria-expanded="${open}">${esc(t('mixer.audio_eq'))}</button>
                 </div>`; }).join('')}
               </div>
+              ${procOpen && procOpen.sid === s.id ? procPanel(s, procOpen.strip) : ''}
               <div class="mx-group-src">
                 <label>${esc(t('mixer.audio_bed'))}<select class="input mx-bed" data-bed="${esc(s.id)}"><option value="">${esc(t('mixer.audio_none_opt'))}</option>${(so.audio_sources || []).map((x) => `<option value="${esc(x.id)}"${x.id === s.audio.content_id ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
                 <label>${esc(t('mixer.audio_line'))}<select class="input mx-bed" data-line="${esc(s.id)}"><option value="">${esc(t('mixer.audio_none_opt'))}</option>${(so.line_inputs || []).map((x) => `<option value="${esc(x.device)}"${x.device === mix.line.device ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
+                ${['net', 'net2'].map((n) => `<label>${esc(t('mixer.strip.' + n))}${live.includes(n) ? ` <span class="mx-live">${esc(t('mixer.audio_connected'))}</span>` : ''}<input class="input mx-bed" data-net="${esc(s.id)}" data-strip="${n}" value="${esc(mix[n].url || '')}" placeholder="srt://  rtsp://  rtp://  udp://" spellcheck="false" autocomplete="off"></label>`).join('')}
               </div>
             </div>`; }).join('')}
           ${selScreens.length ? `<div class="mx-group">
@@ -419,6 +447,21 @@ function bind(root) {
   });
   root.querySelectorAll('[data-smute]').forEach((b) => b.addEventListener('click', async () => { const s = streams().find((x) => x.id === b.dataset.smute), k = b.dataset.strip; await streamAudio(s.id, { strip: k, muted: !s.audio.mix[k].muted }); draw(root); }));
   root.querySelectorAll('[data-line]').forEach((el) => el.addEventListener('change', async () => { await streamAudio(el.dataset.line, { line_device: el.value || null }); draw(root); }));
+  // A strip's processing: open its panel, turn its controls, set it flat.
+  root.querySelectorAll('[data-procopen]').forEach((b) => b.addEventListener('click', () => {
+    const same = procOpen && procOpen.sid === b.dataset.procopen && procOpen.strip === b.dataset.strip;
+    procOpen = same ? null : { sid: b.dataset.procopen, strip: b.dataset.strip }; draw(root);
+  }));
+  root.querySelectorAll('[data-proc]').forEach((el) => el.addEventListener('change', async () => {
+    const ctl = el.dataset.ctl, v = el.type === 'checkbox' ? el.checked : Number(el.value);
+    const body = ctl === 'decay' ? { fx: { decay: v } } : { strips: [{ strip: el.dataset.strip, ...(ctl.startsWith('eq.') ? { eq: { [ctl.slice(3)]: v } } : { [ctl]: v }) }] };
+    await streamAudio(el.dataset.proc, body); draw(root);
+  }));
+  root.querySelectorAll('[data-proc][type=range]').forEach((el) => el.addEventListener('input', () => { const o = el.parentNode.querySelector('output'); if (o) o.textContent = el.dataset.ctl.startsWith('eq.') ? dB(Number(el.value)) : Math.round(Number(el.value) * 100) + '%'; }));
+  root.querySelectorAll('[data-procreset]').forEach((b) => b.addEventListener('click', async () => {
+    await streamAudio(b.dataset.procreset, { strips: [{ strip: b.dataset.strip, hpf: false, eq: { low: 0, mid: 0, high: 0 }, gate: 0, comp: 0, fx: 0, denoise: 0 }] }); draw(root);
+  }));
+  root.querySelectorAll('[data-net]').forEach((el) => el.addEventListener('change', async () => { await streamAudio(el.dataset.net, { [el.dataset.strip + '_url']: el.value.trim() || null }); draw(root); }));
   root.querySelectorAll('[data-bed]').forEach((el) => el.addEventListener('change', async () => { await streamAudio(el.dataset.bed, { content_id: el.value || null }); draw(root); }));
   root.querySelectorAll('[data-out]').forEach((b) => b.addEventListener('click', () => {
     const id = b.dataset.out; if (outputs.has(id)) outputs.delete(id); else outputs.add(id); draw(root);
@@ -494,7 +537,7 @@ export async function render(container, which) {
     try {
       const sig = () => JSON.stringify([state.screens.map((s) => [s.id, s.status, s.playlist_id]), state.sources.length, streams().map((s) => [s.id, s.status.state, s.status.error, s.playlist_id])]);
       const before = sig();
-      if (container.querySelector('#mxStreamForm, #mxSceneForm') || holdTimer) return;      // someone is typing or steering: leave the desk alone
+      if (container.querySelector('#mxStreamForm, #mxSceneForm') || holdTimer || (document.activeElement && document.activeElement.matches && document.activeElement.matches('[data-net], [data-proc], .mx-fader'))) return;      // someone is typing or steering: leave the desk alone
       state = await load();
       if (sig() !== before && alive) draw(container);
     } catch { /* keep the desk as it is */ }

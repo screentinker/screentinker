@@ -639,3 +639,19 @@
 /* A section page keeps an eye on the pictures without giving them the whole screen. */
 .mx:not([data-section="desk"]) .mx-monitors { grid-template-columns: minmax(0, 320px) auto minmax(0, 320px); justify-content: start; }
 .mx:not([data-section="desk"]) .mx-take-col { display: none; }
+
+/* Mixer: a strip's processing panel, and the network feed fields */
+.mx-group .mx-strip { width: 92px; }
+.mx-proc-open { margin-top: -2px; }
+.mx-proc-open.is-shaped { border-color: var(--success); color: var(--success); }
+.mx-proc-open.is-open { background: var(--accent); color: var(--on-accent, #fff); border-color: var(--accent); }
+.mx-proc { padding: 12px; background: var(--bg-card); border: 1px solid var(--accent); border-radius: var(--radius); }
+.mx-proc-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; font-size: 12.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.mx-knobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 16px; align-items: end; }
+.mx-knob { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-size: 12px; color: var(--text-secondary); }
+.mx-knob input[type="range"] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+.mx-knob output { grid-row: 1; grid-column: 2; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.mx-knob-check { display: flex; align-items: center; gap: 8px; grid-column: 1 / -1; color: var(--text-primary); }
+.mx-group-src { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.mx-live { color: var(--success); font-weight: 700; }
+.mx-limiting { margin-left: auto; font-size: 11px; letter-spacing: 0; text-transform: none; color: var(--warning); }
