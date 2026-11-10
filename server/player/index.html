@@ -3304,14 +3304,14 @@
     }
     function guestLayerEl() {
       var el = document.getElementById('guestLayer');
-      if (!el) { el = document.createElement('div'); el.id = 'guestLayer'; el.style.cssText = 'position:fixed;inset:0;z-index:8000;pointer-events:none;'; document.body.appendChild(el); }
+      if (!el) { el = document.createElement('div'); el.id = 'guestLayer'; el.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:8000;pointer-events:none;'; document.body.appendChild(el); }
       return el;
     }
     function guestConnect(g, ice, v) {
       guestDrop(g.id);
       var tile = document.createElement('div');
       tile.style.cssText = 'position:absolute;display:none;overflow:hidden;background:#000;box-shadow:0 0 0 2px rgba(255,255,255,.85),0 6px 24px rgba(0,0,0,.5);';
-      var video = document.createElement('video');
+      var video = newVideoElement();
       video.autoplay = true; video.playsInline = true; video.muted = true; video.__stOverlay = true;
       video.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
       var label = document.createElement('div');
