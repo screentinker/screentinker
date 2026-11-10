@@ -2099,6 +2099,9 @@ const migrations = [
   // drops the plan), so it needs no one-shot marker.
   "UPDATE users SET plan_comped = 1 WHERE plan_comped = 0 AND plan_id != 'free' AND stripe_subscription_id IS NULL AND trial_started IS NULL",
   'CREATE INDEX IF NOT EXISTS idx_activity_log_user_time ON activity_log(user_id, created_at)',
+  // A workspace administrator's activity list filters on the workspace (routes/activity.js); without
+  // this it walks the whole log by time looking for a quiet workspace's fifty rows.
+  'CREATE INDEX IF NOT EXISTS idx_activity_log_ws_time ON activity_log(workspace_id, created_at)',
   `CREATE TABLE IF NOT EXISTS template_seen (
     user_id      TEXT NOT NULL,
     template_key TEXT NOT NULL,

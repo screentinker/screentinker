@@ -82,7 +82,7 @@ let auditDrops = 0;
 function auditDropCount() { return auditDrops; }
 
 function getActivity(options = {}) {
-  const { userId, deviceId, workspaceId, action, limit = 50, offset = 0 } = options;
+  const { userId, deviceId, workspaceId, alsoUserId, action, limit = 50, offset = 0 } = options;
   let sql = `SELECT al.*, u.name as user_name, u.email as user_email
     FROM activity_log al LEFT JOIN users u ON al.user_id = u.id WHERE 1=1`;
   const params = [];
@@ -97,7 +97,10 @@ function getActivity(options = {}) {
    * fetch everything and filter in the process, which is the shape that leaks the moment somebody
    * adds a count or a total.
    */
-  if (workspaceId) { sql += ' AND al.workspace_id = ?'; params.push(workspaceId); }
+  // alsoUserId: the workspace's rows plus that person's own (their rows that carry no workspace,
+  // or another one, stay visible to them as they always were).
+  if (workspaceId && alsoUserId) { sql += ' AND (al.workspace_id = ? OR al.user_id = ?)'; params.push(workspaceId, alsoUserId); }
+  else if (workspaceId) { sql += ' AND al.workspace_id = ?'; params.push(workspaceId); }
   if (action) { sql += ' AND al.action = ?'; params.push(action); }
 
   sql += ' ORDER BY al.created_at DESC LIMIT ? OFFSET ?';
