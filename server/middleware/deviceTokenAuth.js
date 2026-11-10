@@ -36,6 +36,10 @@ function deviceTokenAuth(req, res, next) {
   if (!deviceId) {
     return res.status(400).json({ error: 'device_id parameter required' });
   }
+  // Given twice in the query string it arrives as an array, which the lookup below cannot bind.
+  if (typeof deviceId !== 'string') {
+    return res.status(400).json({ error: 'device_id must be given once, as text' });
+  }
 
   const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);
   if (!device) {

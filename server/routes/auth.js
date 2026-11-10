@@ -1,5 +1,8 @@
 const express = require('express');
 const router = express.Router();
+// Anyone can call these, and every handler below lowercases, trims or hashes these fields: a
+// number or an object in one of them was an unhandled TypeError. Refused up front instead.
+router.use(require('../lib/api-errors').textFields(['email', 'password', 'current_password', 'name', 'token', 'mfa_token']));
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');

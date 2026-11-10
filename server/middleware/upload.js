@@ -67,7 +67,8 @@ const fileFilter = (req, file, cb) => {
       || looksLikeBundle) {
     cb(null, true);
   } else {
-    cb(new Error('Only audio, video, image and HTML-bundle files are allowed'), false);
+    // status 400: a refused file is the request's fault (read by lib/api-errors.js).
+    cb(Object.assign(new Error('Only audio, video, image and HTML-bundle files are allowed'), { status: 400 }), false);
   }
 };
 
