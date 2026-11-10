@@ -2099,9 +2099,6 @@ const migrations = [
   // drops the plan), so it needs no one-shot marker.
   "UPDATE users SET plan_comped = 1 WHERE plan_comped = 0 AND plan_id != 'free' AND stripe_subscription_id IS NULL AND trial_started IS NULL",
   'CREATE INDEX IF NOT EXISTS idx_activity_log_user_time ON activity_log(user_id, created_at)',
-  // A workspace administrator's activity list filters on the workspace (routes/activity.js); without
-  // this it walks the whole log by time looking for a quiet workspace's fifty rows.
-  'CREATE INDEX IF NOT EXISTS idx_activity_log_ws_time ON activity_log(workspace_id, created_at)',
   `CREATE TABLE IF NOT EXISTS template_seen (
     user_id      TEXT NOT NULL,
     template_key TEXT NOT NULL,
@@ -5644,6 +5641,20 @@ if (_bootUpgraded) {
     db.prepare("INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('last_upgraded_at', strftime('%s','now'), strftime('%s','now'))").run();
   } catch (e) { console.warn(`[boot] could not record the upgrade time: ${e.message}`); }
 }
+
+/*
+ * A workspace administrator's activity list filters on the workspace (routes/activity.js); without
+ * this index it walks the whole log by time looking for a quiet workspace's fifty rows.
+ *
+ * Here, guarded on the column, and NOT in the migrations array: activity_log.workspace_id is added
+ * by the multi-tenancy phase, which runs after that array on a fresh install, so the statement
+ * failed there on first boot and printed a `[migrate] FAILED` line (it healed on the second).
+ */
+try {
+  if (db.prepare('PRAGMA table_info(activity_log)').all().some((c) => c.name === 'workspace_id')) {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_activity_log_ws_time ON activity_log(workspace_id, created_at)');
+  }
+} catch (e) { console.error(`[migrate] could not create idx_activity_log_ws_time: ${e.message}`); }
 
 // `playsMigrationTouched`: did THIS boot build a play_logs index or add a play_logs column?
 // Read once by services/heartbeat to arm the 2.0.1 player defer (lib/boot-defer.js). The loop
