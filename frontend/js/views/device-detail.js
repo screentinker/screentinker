@@ -3620,13 +3620,21 @@ function setupRemote(device) {
 
   startBtn?.addEventListener('click', () => {
     console.log('Start Remote clicked for device:', device.id);
-    remoteActive = true;
-    startRemote(device.id);
-    requestScreenshot(device.id);
-    startBtn.style.display = 'none';
-    stopBtn.style.display = '';
-    overlay.style.display = 'none';
-    showToast(t('device.toast.remote_started'), 'info');
+    startBtn.disabled = true;
+    startRemote(device.id, (ack) => {
+      startBtn.disabled = false;
+      // Say what happened, like every other action on this page. An offline screen used to get
+      // "Remote session started" and a set of key buttons that went nowhere.
+      if (ack && !ack.delivered && ack.reason === 'offline') { showToast(t('device.toast.remote_offline'), 'warning'); return; }
+      if (ack && !ack.delivered && ack.reason === 'unsupported') { showToast(t('device.toast.remote_unsupported'), 'warning'); return; }
+      // Confirmed, or no answer at all (a server from before the answer existed): as before.
+      remoteActive = true;
+      requestScreenshot(device.id);
+      startBtn.style.display = 'none';
+      stopBtn.style.display = '';
+      overlay.style.display = 'none';
+      showToast(t('device.toast.remote_started'), 'info');
+    });
   });
 
   stopBtn?.addEventListener('click', () => {
