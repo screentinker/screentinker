@@ -173,6 +173,7 @@ test('any member can start a checkout, and it is the ORGANIZATION that becomes t
   assert.equal(cust.metadata.org_id, A.org.o);
   assert.equal(cust.metadata.user_id, A.member, 'who clicked is kept, for the funnel');
   assert.equal(cust.name, 'Acme');
+  assert.equal(cust.email, userRow(A.owner).email, 'Stripe writes to the organization\'s owner, not to whoever clicked');
   const session = calls.find((c) => c[0] === 'checkout.create')[1];
   assert.equal(session.metadata.org_id, A.org.o);
   assert.equal(session.subscription_data.metadata.org_id, A.org.o);

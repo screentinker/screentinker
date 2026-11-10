@@ -127,8 +127,13 @@ router.post('/checkout', requireAuth, tenancyWhenOrgPays, async (req, res) => {
     const idMeta = payer.org ? { org_id: payer.org.id, user_id: req.user.id } : { user_id: req.user.id };
     let customerId = payer.row.stripe_customer_id;
     if (!customerId) {
+      // The organization's customer carries its OWNER's address: Stripe sends its own receipts
+      // and card-failure notices there, and "whoever clicked first" (possibly a member who has
+      // since left) is the wrong person to get them. Seen in the sandbox: the portal's billing
+      // email was the member's.
+      const ownerEmail = payer.org ? (db.prepare('SELECT email FROM users WHERE id = ?').get(payer.org.owner_user_id) || {}).email : null;
       const customer = await stripe.customers.create({
-        email: req.user.email,
+        email: ownerEmail || req.user.email,
         ...(payer.org ? { name: payer.org.name } : {}),
         metadata: { ...idMeta, name: (payer.org ? payer.org.name : req.user.name) || '' },
       });
