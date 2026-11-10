@@ -1037,6 +1037,7 @@ export default {
   'mixer.stream_save': 'Save destination',
   'mixer.stream_go': 'Go live',
   'mixer.rec_also': 'Record',
+  'mixer.rec_start': 'Record',
   'mixer.rec_on': 'REC',
   'mixer.rec_skipped': 'Not recording: under 2 GB free on this server.',
   'mixer.recordings': 'Recordings',

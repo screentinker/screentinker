@@ -247,7 +247,7 @@ function draw(root) {
               ${s.file_only ? '' : `<label class="mx-rec-check"><input type="checkbox" data-record="${esc(s.id)}" ${s.record ? 'checked' : ''} ${s.status.state === 'off' ? '' : 'disabled'}> ${esc(t('mixer.rec_also'))}</label>`}
               <span class="mx-stream-state">${esc(t('mixer.stream_state.' + s.status.state))}</span>
               ${s.status.state === 'off'
-                ? `<button type="button" class="btn btn-sm mx-golive" data-go="${esc(s.id)}">${esc(t('mixer.stream_go'))}</button><button type="button" class="btn btn-secondary btn-sm" data-del="${esc(s.id)}">${esc(t('common.delete'))}</button>`
+                ? `<button type="button" class="btn btn-sm mx-golive" data-go="${esc(s.id)}">${esc(t(s.file_only ? 'mixer.rec_start' : 'mixer.stream_go'))}</button><button type="button" class="btn btn-secondary btn-sm" data-del="${esc(s.id)}">${esc(t('common.delete'))}</button>`
                 : `<button type="button" class="btn btn-secondary btn-sm" data-stop="${esc(s.id)}">${esc(t('mixer.stream_stop'))}</button>`}
             </div>`).join('')}</div>` : (addingStream ? '' : `<p class="mx-note mx-note-top">${esc(t('mixer.stream_none'))}</p>`)}
           ${addingStream ? `<form class="mx-stream-form" id="mxStreamForm">
