@@ -15,6 +15,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const yaml = require('js-yaml');
+
+// lib/device-command (below) loads db/database at require time, and with no DATA_DIR the database
+// is the one inside this checkout: running "a test that needs no server" opened, and on a fresh
+// tree created and migrated, the developer's own database. Point it at a scratch directory first.
+process.env.DATA_DIR = process.env.DATA_DIR
+  || fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'st-openapi-contract-'));
 const { PUBLIC_ROUTERS, JWT_ONLY_ROUTERS } = require('../config/api-surface');
 const { ALLOWED_COMMANDS } = require('../lib/device-command');
 
