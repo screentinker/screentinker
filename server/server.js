@@ -739,6 +739,14 @@ app.use('/.well-known/acme-challenge', express.static(path.join(config.frontendD
 app.get(['/flash', '/flash/'], (req, res) => {
   res.sendFile(path.join(config.frontendDir, 'flash', 'index.html'));
 });
+// Pages with no icon link of their own (the web player, /download, /flash, error pages) make the
+// browser ask for this; it was a 404 and a console error on every load. Same image the dashboard uses.
+app.get('/favicon.ico', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=2592000');
+  res.type('image/png').sendFile(path.join(config.frontendDir, 'assets', 'icon-192.png'), (err) => {
+    if (err && !res.headersSent) res.status(404).type('text/plain').send('not found');
+  });
+});
 // Serve frontend static files
 // JS/CSS/HTML: no-cache (always revalidate, uses ETag/304)
 // Images/fonts/icons: long cache for Cloudflare + browser
