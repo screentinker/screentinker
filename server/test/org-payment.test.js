@@ -300,6 +300,25 @@ test('a lapsed trial is found and ended on the organization, by the sweep and by
   assert.equal(userRow(A.member).plan_id, 'pro', 'but the copy was not written');
 });
 
+test('a new signup\'s trial becomes its first organization\'s trial; a second organization gets none', () => {
+  // What registration does: the person row is created with the trial, then the organization.
+  const fresh = person('fresh', { plan_id: 'pro', trial_started: now() - DAY, trial_plan: 'pro' });
+  const first = organization(fresh, 'Fresh');
+  const o = orgRow(first.o);
+  assert.equal(o.plan_id, 'pro'); assert.equal(o.trial_plan, 'pro'); assert.equal(o.trial_started, userRow(fresh).trial_started);
+  assert.equal(subs.getOrgPlan(first.o).trial_active, true, 'the organization is on a running trial');
+  assert.equal(userRow(fresh).trial_started, o.trial_started, 'and the person\'s copy was not wiped by creating it');
+  const second = organization(fresh, 'Fresh two');
+  const o2 = orgRow(second.o);
+  assert.equal(o2.plan_id, 'free'); assert.equal(o2.trial_started, null, 'no second trial');
+  assert.equal(orgRow(first.o).plan_id, 'pro', 'and the first is untouched');
+  // Someone whose trial already ended and who then starts an organization does not get a new one.
+  const used = person('used', { plan_id: 'free', trial_expired_at: now() - 5 * DAY });
+  const late = organization(used, 'Late');
+  assert.equal(orgRow(late.o).plan_id, 'free'); assert.equal(orgRow(late.o).trial_started, null);
+  assert.ok(orgRow(late.o).trial_expired_at, 'the used trial is remembered on it');
+});
+
 test('switching back to people keeps what was paid for on each owner\'s oldest organization', () => {
   const before_ = orgRow(A.twin2.o).plan_id;
   const refused = orgBilling.switchToPeople(db);

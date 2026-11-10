@@ -179,8 +179,21 @@ function install(db, log = console) {
       dropTriggers(db);
       db.exec(`CREATE TRIGGER trg_org_billing_rev_upd AFTER UPDATE OF ${cols.join(', ')} ON organizations
         BEGIN ${reverseSql(cols)}; END`);
+      /*
+       * A person's FIRST organization takes over what the person has: the trial a signup was given
+       * (which lives on their row until they have an organization), or the plan an invited member
+       * was on when they later start a workspace of their own. Only the first: a second
+       * organization starts with what its INSERT says (Free), so nobody gets a second trial by
+       * making another one, and an organization a platform admin provisions is not handed the
+       * admin's plan.
+       */
       db.exec(`CREATE TRIGGER trg_org_billing_rev_ins AFTER INSERT ON organizations
-        BEGIN ${reverseSql(cols)}; END`);
+        BEGIN
+          UPDATE organizations SET (${cols.join(', ')}) = (SELECT ${cols.map((c) => `u.${c}`).join(', ')} FROM users u WHERE u.id = NEW.owner_user_id)
+           WHERE id = NEW.id
+             AND (SELECT COUNT(*) FROM organizations x WHERE x.owner_user_id = NEW.owner_user_id) = 1
+             AND EXISTS (SELECT 1 FROM users u WHERE u.id = NEW.owner_user_id);
+        END`);
       createView(db, 'org', userCols, orgColsNow);
       out.reason = 'billing_source is org';
       out.source = 'org';
