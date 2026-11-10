@@ -461,7 +461,7 @@
 .mx-screen { position: relative; aspect-ratio: 16 / 9; background: #000; border: 4px solid #000; border-radius: 4px; overflow: hidden; }
 .mx-guest-layer { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 2; }
 .mx-guest-tile { position: absolute; overflow: hidden; background: #000; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85); }
-.mx-guest-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mx-guest-tile img, .mx-guest-tile video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .mx-guest-tile span { position: absolute; left: 0; bottom: 0; max-width: 90%; padding: 1px 6px; background: rgba(11, 12, 14, 0.82); color: #fff; font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mx-gfx-layer { position: absolute; border: 0; background: transparent; pointer-events: none; z-index: 3; color-scheme: normal; }
 .mx-gfx-top-left { top: 0; left: 0; } .mx-gfx-top-right { top: 0; right: 0; } .mx-gfx-bottom-left { bottom: 0; left: 0; } .mx-gfx-bottom-right { bottom: 0; right: 0; }
@@ -668,14 +668,16 @@
 .mx-key-sm { padding: 4px 10px; font-size: 11px; min-height: 0; }
 .mx-room-link { margin-top: 10px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
 .mx-guest-list { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
-.mx-guest { width: 208px; }
+.mx-guest { width: 272px; }
 .mx-guest-pic { position: relative; aspect-ratio: 16 / 9; background: #000; border: 2px solid var(--border-light); border-radius: 3px; overflow: hidden; display: grid; place-items: center; font-size: 12px; color: var(--text-secondary); }
 .mx-guest.is-air .mx-guest-pic { border-color: var(--tally, var(--danger)); box-shadow: 0 0 14px color-mix(in srgb, var(--tally, var(--danger)) 45%, transparent); }
+.mx-guest-badge { position: absolute; right: 6px; top: 6px; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-style: normal; font-weight: 600; color: #111; background: var(--warning, #f5a623); }
 .mx-room-off { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--warning, #f5a623); }
-.mx-guest-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mx-guest-pic img, .mx-guest-pic video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
 .mx-guest-pic b { position: absolute; left: 6px; top: 6px; padding: 2px 6px; border-radius: 2px; font-size: 10px; letter-spacing: 0.08em; color: #fff; background: var(--danger); }
 .mx-guest-name { margin: 6px 0; font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mx-guest-keys { display: flex; gap: 6px; }
+.mx-guest-keys { display: flex; flex-wrap: wrap; gap: 6px; }
+.mx-guest-keys .btn { white-space: nowrap; }
 /* A section page keeps an eye on the pictures without giving them the whole screen. */
 .mx:not([data-section="desk"]) .mx-monitors { grid-template-columns: minmax(0, 320px) auto minmax(0, 320px); justify-content: start; }
 .mx:not([data-section="desk"]) .mx-take-col { display: none; }

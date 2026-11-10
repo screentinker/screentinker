@@ -692,7 +692,7 @@ test('the green room: invite, join, backstage, on air, layouts, and its limits',
   assert.equal(guestsLib.who(token, a.id, b.key, t0), null, 'a guest is only themselves'); assert.equal(guestsLib.who(token, a.id, a.key, t0), a);
   assert.equal(guestsLib.setOffer(a, 'not sdp'), false); assert.equal(guestsLib.setOffer(a, 'v=0\r\n' + 'a'.repeat(70000)), false);
   assert.equal(guestsLib.setOffer(a, 'v=0\r\no=guest'), true);
-  assert.deepEqual(guestsLib.stateFor(a, true), { on_air: false, studio: true, need_offer: false, answer: null, seq: 1, name: 'Priya bN./b' });
+  assert.deepEqual(guestsLib.stateFor(a, true), { on_air: false, studio: true, need_offer: false, answer: null, seq: 1, name: 'Priya bN./b', desks: [] });
   // The renderer is handed the offer of anyone it holds no connection for, and only then.
   const first = guestsLib.forRenderer('out-1', '', t0);
   assert.equal(first.list.length, 2); assert.equal(first.list[0].offer, 'v=0\r\no=guest'); assert.equal(first.list[1].offer, undefined, 'no offer yet from the second');
@@ -714,9 +714,21 @@ test('the green room: invite, join, backstage, on air, layouts, and its limits',
   const desk = guestsLib.forDesk('out-1', t0);
   assert.equal(desk.layout, 'grid'); assert.equal(desk.guests.length, guestsLib.MAX_GUESTS); assert.ok(!JSON.stringify(desk.guests).includes(a.key), 'the desk is not handed the guests\' keys');
   // The renderer stopping takes everyone off air; a guest whose page has gone quiet is dropped; closing the room ends it.
-  guestsLib.rendererGone('out-1'); assert.ok(guestsLib.forDesk('out-1', t0).guests.every((g) => !g.on_air));
-  guestsLib.who(token, a.id, a.key, t0 + 25000);
-  assert.deepEqual(guestsLib.forDesk('out-1', t0 + 25000).guests.map((g) => g.id), [a.id], 'only the guest still asking is still here');
+  guestsLib.rendererGone('out-1', t0); assert.equal(guestsLib.fromRenderer('out-1', { guest_id: a.id, state: 'connected' }, t0 + 1000), false, 'a stopping renderer\'s last words are not kept');
+  assert.ok(guestsLib.forDesk('out-1', t0).guests.every((g) => !g.on_air));
+  assert.equal(guestsLib.stateFor(a, false).seq, 2, 'and an answer from the stopped renderer no longer fits');
+  assert.equal(guestsLib.forDesk('out-1', t0 + 60000).guests.length, guestsLib.MAX_GUESTS, 'a minute of silence (a locked phone, a change of network) costs nobody their place');
+  guestsLib.who(token, a.id, a.key, t0 + 125000);
+  assert.deepEqual(guestsLib.forDesk('out-1', t0 + 125000).guests.map((g) => g.id), [a.id], 'only the guest still asking is still here');
+  // The time limit of an invite is on coming in: whoever is inside stays, and asking for the link again renews it.
+  const late = t0 + 13 * 3600 * 1000;
+  assert.equal(guestsLib.who(token, a.id, a.key, late), a, 'a guest inside is not thrown out when the invite runs out'); assert.equal(guestsLib.join(token, 'late', late).status, 404);
+  assert.equal(guestsLib.forDesk('out-1', late).guests.length, 1);
+  assert.equal(guestsLib.invite(out, late), token, 'the same link, renewed'); assert.equal(guestsLib.forDesk('out-1', late).expires_at, late + 12 * 3600 * 1000);
+  assert.ok(guestsLib.join(token, 'in time', late).guest);
+  // Removed by the operator is remembered as such; an offer straight after another is refused.
+  assert.equal(guestsLib.wasRemoved(a.id), false); assert.equal(guestsLib.remove('out-1', a.id, late), true); assert.equal(guestsLib.wasRemoved(a.id), true);
+  assert.equal(guestsLib.mayOffer(b, late), true); assert.equal(guestsLib.mayOffer(b, late + 500), false); assert.equal(guestsLib.mayOffer(b, late + 2000), true);
   guestsLib.revoke('out-1');
   assert.equal(guestsLib.invited(token, t0), null); assert.equal(guestsLib.who(token, a.id, a.key, t0), null);
   const again = guestsLib.invite(out, t0); assert.notEqual(again, token, 'a closed link is not reopened'); guestsLib.revoke('out-1');
@@ -735,35 +747,58 @@ test('the green room over the API: operators only, guests only as themselves, th
   assert.equal((await call('POST', `/api/stream-guest/${'x'.repeat(43)}/join`, null, { name: 'Eve' })).status, 404);
   const j = (await call('POST', `/api/stream-guest/${token}/join`, null, { name: 'Priya' })).body;
   assert.deepEqual([j.name, j.on_air, j.studio, j.need_offer], ['Priya', false, false, true]); assert.ok(Array.isArray(j.ice_servers));
+  assert.ok(Array.isArray((await call('POST', `/api/stream-guest/${token}/state`, null, { guest_id: j.guest_id, key: j.key })).body.ice_servers), 'a guest with an offer to make is given the servers again, with a fresh login');
+  assert.equal((await call('GET', `/api/stream-guest/${token}/state?guest_id=${j.guest_id}&key=${j.key}`)).status, 404, 'the key is not taken from the address');
   assert.ok(!JSON.stringify(j).includes(so.id) && !JSON.stringify(j).includes(A.wsId), 'a guest learns nothing about the workspace or the output');
   assert.equal((await call('POST', `/api/stream-guest/${token}/offer`, null, { guest_id: j.guest_id, key: 'wrong', sdp: 'v=0\r\n' })).status, 404);
   assert.equal((await call('POST', `/api/stream-guest/${token}/offer`, null, { guest_id: j.guest_id, key: j.key, sdp: '<script>' })).status, 400);
   assert.equal((await call('POST', `/api/stream-guest/${token}/offer`, null, { guest_id: j.guest_id, key: j.key, sdp: 'v=0\r\no=x' })).status, 200);
-  assert.equal((await call('GET', `/api/stream-guest/${token}/state?guest_id=${j.guest_id}&key=nope`)).status, 404);
+  assert.equal((await call('POST', `/api/stream-guest/${token}/state`, null, { guest_id: j.guest_id, key: 'nope' })).status, 404);
   // The renderer: the feed lists the guest with their offer; only the feed secret answers.
   const secret = db.prepare('SELECT feed_secret FROM stream_outputs WHERE id = ?').get(so.id).feed_secret;
   const feed = (await call('GET', `/api/stream-feed/${secret}`)).body;
   assert.equal(feed.guests.list[0].offer, 'v=0\r\no=x'); assert.equal(feed.guests.layout, 'pip'); assert.ok(!JSON.stringify(feed.guests).includes(j.key));
   assert.equal((await call('POST', `/api/stream-feed/${'s'.repeat(43)}/guest`, null, { guest_id: j.guest_id, seq: 1, answer: 'v=0\r\na' })).status, 404);
   assert.equal((await call('POST', `/api/stream-feed/${secret}/guest`, null, { guest_id: j.guest_id, seq: 1, answer: 'v=0\r\na', state: 'connected' })).status, 200);
-  assert.equal((await call('GET', `/api/stream-guest/${token}/state?guest_id=${j.guest_id}&key=${j.key}`)).body.answer, 'v=0\r\na');
+  assert.equal((await call('POST', `/api/stream-guest/${token}/state`, null, { guest_id: j.guest_id, key: j.key })).body.answer, 'v=0\r\na');
   // The desk: the room is listed for its workspace only; on air and remove are the operator's.
   const rooms = (await call('GET', '/api/stream-out/guests', A.jwt)).body.rooms;
   assert.deepEqual(rooms[so.id].guests.map((g) => [g.name, g.on_air, g.state]), [['Priya', false, 'connected']]); assert.equal(rooms[so.id].invite_url, inv.invite_url);
   assert.deepEqual((await call('GET', '/api/stream-out/guests', B.jwt)).body.rooms, {});
   assert.equal((await call('GET', '/api/stream-out/guests')).status, 401);
+  // A read-only member sees who is in the room, not the way in and not anyone's picture.
+  const seenByViewer = (await call('GET', `/api/stream-out/guests?desk=viewerdesk000001`, V.jwt)).body;
+  assert.equal(seenByViewer.rooms[so.id].invite_url, null); assert.equal(seenByViewer.rooms[so.id].live, false); assert.deepEqual(seenByViewer.ice_servers, []);
+  assert.deepEqual(seenByViewer.rooms[so.id].guests.map((g) => [g.name, g.thumb]), [['Priya', null]]); assert.ok(!JSON.stringify(seenByViewer).includes(token));
+  assert.equal((await call('GET', `/guest/${'x'.repeat(43)}`)).status, 404, 'no page behind a link that lets nobody in');
+  // The desk's own picture of a guest: offered by the guest to a desk that named itself, answered by that workspace's operator only.
+  const DESK = 'desk0123456789ab';
+  const live = (await call('GET', `/api/stream-out/guests?desk=${DESK}`, A.jwt)).body;
+  assert.equal(live.rooms[so.id].live, true); assert.ok(Array.isArray(live.ice_servers));
+  const st1 = (await call('POST', `/api/stream-guest/${token}/state`, null, { guest_id: j.guest_id, key: j.key })).body;
+  assert.deepEqual(st1.desks.map((d) => [d.id, d.need_offer]), [[DESK, true]]);
+  assert.equal((await call('POST', `/api/stream-guest/${token}/desk-offer`, null, { guest_id: j.guest_id, key: 'wrong', desk: DESK, sdp: 'v=0\r\nd' })).status, 404);
+  assert.equal((await call('POST', `/api/stream-guest/${token}/desk-offer`, null, { guest_id: j.guest_id, key: j.key, desk: 'nobody-here-0001', sdp: 'v=0\r\nd' })).status, 400);
+  assert.equal((await call('POST', `/api/stream-guest/${token}/desk-offer`, null, { guest_id: j.guest_id, key: j.key, desk: DESK, sdp: 'v=0\r\nd' })).body.seq, 1);
+  assert.equal((await call('GET', `/api/stream-out/guests?desk=${DESK}`, A.jwt)).body.rooms[so.id].guests[0].leg_offer, 'v=0\r\nd');
+  assert.equal((await call('GET', '/api/stream-out/guests', A.jwt)).body.rooms[so.id].guests[0].leg_offer, undefined);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}/desk`, B.jwt, { desk: DESK, seq: 1, answer: 'v=0\r\ne' })).status, 404, 'another workspace cannot answer');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}/desk`, null, { desk: DESK, seq: 1, answer: 'v=0\r\ne' })).status, 401);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}/desk`, A.jwt, { desk: DESK, seq: 9, answer: 'v=0\r\ne' })).status, 409);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}/desk`, A.jwt, { desk: DESK, seq: 1, answer: 'v=0\r\ne' })).status, 200);
+  assert.equal((await call('POST', `/api/stream-guest/${token}/state`, null, { guest_id: j.guest_id, key: j.key })).body.desks[0].answer, 'v=0\r\ne');
   assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}`, V.jwt, { on_air: true })).status, 403);
   assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}`, B.jwt, { on_air: true })).status, 404);
   assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}`, A.jwt, { on_air: true })).status, 200);
-  assert.equal((await call('GET', `/api/stream-guest/${token}/state?guest_id=${j.guest_id}&key=${j.key}`)).body.on_air, true);
+  assert.equal((await call('POST', `/api/stream-guest/${token}/state`, null, { guest_id: j.guest_id, key: j.key })).body.on_air, true);
   assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/layout`, A.jwt, { layout: 'nope' })).status, 400);
   assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/layout`, A.jwt, { layout: 'side' })).status, 200);
   assert.equal((await call('DELETE', `/api/stream-out/${so.id}/guests/${j.guest_id}`, A.jwt)).status, 200);
-  assert.equal((await call('GET', `/api/stream-guest/${token}/state?guest_id=${j.guest_id}&key=${j.key}`)).status, 404, 'a removed guest is out');
+  assert.equal((await call('POST', `/api/stream-guest/${token}/state`, null, { guest_id: j.guest_id, key: j.key })).status, 410, 'a removed guest is out, and is told it was the studio (so the page does not come back in by itself)');
   // Deleting the output closes its green room.
   const j2 = (await call('POST', `/api/stream-guest/${token}/join`, null, { name: 'Marco' })).body;
   await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
-  assert.equal((await call('GET', `/api/stream-guest/${token}/state?guest_id=${j2.guest_id}&key=${j2.key}`)).status, 404);
+  assert.equal((await call('POST', `/api/stream-guest/${token}/state`, null, { guest_id: j2.guest_id, key: j2.key })).status, 404);
   assert.equal((await call('POST', `/api/stream-guest/${token}/join`, null, { name: 'late' })).status, 404);
 });
 
@@ -778,4 +813,56 @@ test('the picture is grabbed from the renderer\'s own display when there is one,
   assert.match(grab, /-progress pipe:1/, 'ffmpeg reports the frames it has encoded: that is how the stream is known to be live');
   assert.match(grab, /-i pipe:3 /, 'the sound still comes from the mixer');
   assert.equal(streamOut.ffmpegArgs({ ...base, display: 0 }).includes(':0'), true, 'display 0 is a display');
+});
+
+test('a desk gets each guest\'s picture on a connection of its own: only named desks, only two, only by offer and matching answer', () => {
+  const G = require('../lib/mixer-guests');
+  const out = { id: 'out-desk-' + Date.now(), workspace_id: 'ws-desk' };
+  const SDP = 'v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\n';
+  const t0 = 1_000_000;
+  const token = G.invite(out, t0);
+  const g = G.join(token, 'Ana', t0).guest;
+  assert.deepEqual(G.stateFor(g, false).desks, [], 'no desk is looking: nothing to send');
+  assert.equal(G.forDesk(out.id, t0).live, false, 'a desk that does not name itself is not sent pictures');
+  assert.equal(G.forDesk(out.id, t0, 'short').live, false, 'a malformed desk id is refused');
+  assert.equal(G.forDesk(out.id, t0, 'desk-aaaaaaaa').live, true);
+  assert.equal(G.forDesk(out.id, t0, 'desk-bbbbbbbb').live, true);
+  assert.equal(G.forDesk(out.id, t0, 'desk-cccccccc').live, false, 'a third desk would triple the guest\'s upload: it keeps the stills');
+  assert.deepEqual(G.stateFor(g, false).desks.map((d) => [d.id, d.need_offer, d.answer]), [['desk-aaaaaaaa', true, null], ['desk-bbbbbbbb', true, null]], 'the guest is asked for an offer per desk, stream running or not');
+  assert.equal(G.setDeskOffer(g, 'desk-cccccccc', SDP), null, 'no offer to a desk that is not here');
+  assert.equal(G.setDeskOffer(g, 'desk-aaaaaaaa', 'not sdp'), null);
+  assert.equal(G.setDeskOffer(g, 'desk-aaaaaaaa', SDP), 1);
+  const seen = G.forDesk(out.id, t0, 'desk-aaaaaaaa').guests[0];
+  assert.deepEqual([seen.leg_seq, seen.leg_offer], [1, SDP]);
+  assert.equal(G.forDesk(out.id, t0, 'desk-bbbbbbbb').guests[0].leg_offer, undefined, 'an offer goes to the desk it was made for');
+  assert.equal(G.fromDesk(out.id, g.id, 'desk-bbbbbbbb', { seq: 1, answer: SDP }), false, 'another desk cannot answer it');
+  assert.equal(G.fromDesk('other-output', g.id, 'desk-aaaaaaaa', { seq: 1, answer: SDP }), false, 'nor a desk of another output');
+  assert.equal(G.fromDesk(out.id, g.id, 'desk-aaaaaaaa', { seq: 7, answer: SDP }), false, 'an answer to an older offer is dropped');
+  assert.equal(G.fromDesk(out.id, g.id, 'desk-aaaaaaaa', { seq: 1, answer: SDP }), true);
+  assert.equal(G.stateFor(g, false).desks[0].answer, SDP, 'the guest reads the answer');
+  assert.equal(G.forDesk(out.id, t0, 'desk-aaaaaaaa').guests[0].leg_offer, undefined, 'an answered offer is not handed out again');
+  assert.equal(G.fromDesk(out.id, g.id, 'desk-aaaaaaaa', { again: true }), true);
+  assert.equal(G.stateFor(g, false).desks[0].need_offer, true, 'a desk whose connection failed asks for a new offer');
+  // A desk that stops asking is forgotten, and the guest stops sending to it.
+  G.who(token, g.id, g.key, t0 + 11000);
+  G.forDesk(out.id, t0 + 11000, 'desk-bbbbbbbb');
+  assert.deepEqual(G.stateFor(g, false).desks.map((d) => d.id), ['desk-bbbbbbbb']);
+  assert.equal(g.legs.has('desk-aaaaaaaa'), false);
+  assert.equal(G.forDesk(out.id, t0 + 11000, 'desk-cccccccc').live, true, 'and its place is free');
+  G.revoke(out.id);
+  assert.equal(G.forDesk(out.id, t0 + 11000, 'desk-bbbbbbbb').live, false, 'a closed green room has no desks');
+});
+
+test('an open invite outlives a restart: it is kept where the caller says, and given back', () => {
+  const G = require('../lib/mixer-guests');
+  const saved = new Map(); const keep = { save: (id, token, until) => saved.set(id, { token, until }), drop: (id) => saved.delete(id) };
+  const now = 5_000_000;
+  G.restore([{ outputId: 'out-keep', workspaceId: 'ws-k', token: 'k'.repeat(43), until: now + 1000 }, { outputId: 'out-old', workspaceId: 'ws-k', token: 'o'.repeat(43), until: now - 1 }, { outputId: 'out-bad', workspaceId: 'ws-k', token: 'short', until: now + 1000 }], keep, now);
+  assert.equal(G.inviteOf('out-keep'), 'k'.repeat(43), 'the link from before the restart still opens the room');
+  assert.ok(G.join('k'.repeat(43), 'Back again', now).guest);
+  assert.equal(G.inviteOf('out-old'), null, 'one that had run out is not brought back'); assert.equal(G.inviteOf('out-bad'), null);
+  const fresh = G.invite({ id: 'out-new', workspace_id: 'ws-k' }, now);
+  assert.equal(saved.get('out-new').token, fresh, 'a new invite is saved');
+  G.revoke('out-new'); assert.equal(saved.has('out-new'), false, 'and a closed one is forgotten');
+  G.revoke('out-keep'); G.restore([], null);
 });

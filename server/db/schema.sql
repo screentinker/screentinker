@@ -861,6 +861,8 @@ CREATE TABLE IF NOT EXISTS stream_outputs (
     audio_mix       TEXT,                                    -- JSON: the mixer's strips (lib/stream-audio.js cleanSettings)
     record          INTEGER NOT NULL DEFAULT 0,              -- also write the stream to a file on this server
     feed_secret     TEXT NOT NULL UNIQUE,
+    guest_invite    TEXT,                                    -- the open invite link's token (lib/mixer-guests.js), kept across restarts
+    guest_invite_until INTEGER,                              -- when that invite stops letting new guests in (ms)
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_stream_outputs_ws ON stream_outputs(workspace_id);

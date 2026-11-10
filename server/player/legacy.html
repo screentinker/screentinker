@@ -2957,7 +2957,8 @@ function guestRects(layout2, n) {
     for (i = 0; i < n; i++) out.push([60, i * (100 / n), 40, 100 / n]);
     return out;
   }
-  for (i = 0; i < n; i++) out.push([100 - 2 - 24, 100 - 3 - (i + 1) * 24 - i * 2, 24, 24]);
+  var h = Math.min(24, (94 - 2 * (n - 1)) / n);
+  for (i = 0; i < n; i++) out.push([100 - 2 - h, 100 - 3 - (i + 1) * h - i * 2, h, h]);
   return out;
 }
 function guestSync(gs, v) {

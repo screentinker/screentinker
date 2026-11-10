@@ -41,6 +41,69 @@ let meterBusy = false;
 // The green room of each stream: who came in by its invite link, a still of each, who is on air.
 let rooms = {};              // stream id -> { invite_url, layout, layouts, guests: [...] }
 let roomsSig = '', guestTimer = null;
+// Guests as moving picture on this desk: each guest's browser connects straight to this page
+// (server/lib/mixer-guests.js, "the operator's own view"). The server only passes the descriptions.
+const deskId = (() => { const b = new Uint8Array(12); crypto.getRandomValues(b); return [...b].map((x) => x.toString(16).padStart(2, '0')).join(''); })();
+const guestLive = new Map();   // guest id -> { pc, seq, stream, sid }
+const listening = new Set();   // guest ids the operator is listening to
+let guestIce = [];
+let closeArmed = null, closeTimer = null;   // the stream whose "Close the green room" has been pressed once
+const liveAsked = new Map();                // guest id -> when this desk last asked them for a new offer
+const liveOf = (gid) => { const c = guestLive.get(gid); return c && c.pc.connectionState === 'connected' && c.stream.getVideoTracks().length ? c : null; };
+function liveDrop(gid) { const c = guestLive.get(gid); if (c) { try { c.pc.close(); } catch { /* gone */ } } guestLive.delete(gid); }
+async function liveAnswer(sid, g) {
+  liveDrop(g.id);
+  const c = { pc: new RTCPeerConnection({ iceServers: guestIce }), seq: g.leg_seq, stream: new MediaStream(), sid };
+  guestLive.set(g.id, c);
+  const said = (body) => call(`/stream-out/${encodeURIComponent(sid)}/guests/${encodeURIComponent(g.id)}/desk`, { method: 'POST', body: JSON.stringify({ desk: deskId, ...body }) }).catch(() => {});
+  c.pc.ontrack = (e) => { c.stream.addTrack(e.track); };
+  c.pc.onconnectionstatechange = () => {
+    if (guestLive.get(g.id) !== c) return;
+    if (c.pc.connectionState === 'failed') { liveDrop(g.id); said({ again: true }); }
+    guestsRefresh(true);
+  };
+  try {
+    await c.pc.setRemoteDescription({ type: 'offer', sdp: g.leg_offer });
+    await c.pc.setLocalDescription(await c.pc.createAnswer());
+    await new Promise((resolve) => {
+      if (c.pc.iceGatheringState === 'complete') return resolve();
+      const timer = setTimeout(resolve, 3000);
+      c.pc.addEventListener('icegatheringstatechange', () => { if (c.pc.iceGatheringState === 'complete') { clearTimeout(timer); resolve(); } });
+    });
+    if (guestLive.get(g.id) === c) await said({ seq: c.seq, answer: c.pc.localDescription.sdp });
+  } catch { if (guestLive.get(g.id) === c) { liveDrop(g.id); said({ again: true }); } }
+}
+/** Answer every guest that offers this desk a picture; let go of those who have left or offered anew. */
+function liveSync() {
+  const here = new Map();
+  for (const [sid, r] of Object.entries(rooms)) for (const g of r.guests) here.set(g.id, [sid, g]);
+  for (const gid of [...guestLive.keys()]) if (!here.has(gid)) { liveDrop(gid); listening.delete(gid); }
+  if (!window.RTCPeerConnection) return;
+  for (const [sid, g] of here.values()) {
+    const c = guestLive.get(g.id);
+    if (g.leg_offer && (!c || c.seq !== g.leg_seq)) liveAnswer(sid, g);
+    else if (c && g.leg_seq && c.seq !== g.leg_seq) liveDrop(g.id);
+    else if (!c && g.leg_seq && !g.leg_offer && Date.now() - (liveAsked.get(g.id) || 0) > 5000) {
+      // The guest's offer to this desk was answered by a page that is gone (this one, before a reload): ask for a new one.
+      liveAsked.set(g.id, Date.now());
+      call(`/stream-out/${encodeURIComponent(sid)}/guests/${encodeURIComponent(g.id)}/desk`, { method: 'POST', body: JSON.stringify({ desk: deskId, again: true }) }).catch(() => {});
+    }
+  }
+}
+/** Put the live pictures into the places drawn for them. A place is drawn again often; the connection is not. */
+function liveAttach(root) {
+  if (!root) return;
+  root.querySelectorAll('video[data-gvid]').forEach((v) => {
+    const c = liveOf(v.dataset.gvid); if (!c) return;
+    v.muted = v.dataset.sound !== '1' || !listening.has(v.dataset.gvid);
+    if (v.srcObject !== c.stream) {
+      // On the Program monitor, as in the stream: an upright picture is shown whole, a wide one fills its box.
+      if (v.closest('.mx-guest-tile')) { const fit = () => { v.style.objectFit = v.videoHeight > v.videoWidth ? 'contain' : 'cover'; }; v.addEventListener('loadedmetadata', fit); v.addEventListener('resize', fit); }
+      v.srcObject = c.stream;
+    }
+    v.play().catch(() => {});
+  });
+}
 function guestsHtml() {
   if (!so || !so.available || !streams().length) return '';
   return `<h3>${esc(t('mixer.guests'))}</h3>
@@ -49,28 +112,36 @@ function guestsHtml() {
         <div class="mx-group-name"><span class="mx-lamp mx-lamp-${streamTally(s)}"></span>${esc(s.name)}
           ${url ? `<span class="mx-room-keys">${(r.layouts || []).map((l) => `<button type="button" class="mx-key mx-key-sm${r.layout === l ? ' is-on' : ''}" data-glayout="${esc(s.id)}" data-layout="${esc(l)}" aria-pressed="${r.layout === l}">${esc(t('mixer.guest_layout.' + l))}</button>`).join('')}</span>` : ''}
           <button type="button" class="btn btn-secondary btn-sm mx-meters-on" data-ginvite="${esc(s.id)}">${esc(t(url ? 'mixer.guest_copy' : 'mixer.guest_invite'))}</button>
-          ${url ? `<button type="button" class="btn btn-secondary btn-sm" data-grevoke="${esc(s.id)}">${esc(t('mixer.guest_close'))}</button>` : ''}</div>
+          ${url ? `<button type="button" class="btn btn-secondary btn-sm" data-grevoke="${esc(s.id)}">${esc(t(closeArmed === s.id ? 'mixer.guest_close_sure' : 'mixer.guest_close'))}</button>` : ''}</div>
         ${url ? `<input class="input mx-room-link" readonly value="${esc(url)}" aria-label="${esc(t('mixer.guest_link'))}" data-glink>
           ${s.status.state === 'off' ? `<p class="mx-note mx-room-off">${esc(t('mixer.guest_need_standby'))} <button type="button" class="btn btn-secondary btn-sm" data-gstandby="${esc(s.id)}">${esc(t('mixer.standby'))}</button></p>` : ''}
           ${r.guests.length ? `<div class="mx-guest-list">${r.guests.map((g) => `
             <div class="mx-guest${g.on_air ? ' is-air' : ''}">
-              <div class="mx-guest-pic">${g.thumb ? `<img src="${esc(g.thumb)}" alt="">` : `<span>${esc(t('mixer.guest_state.' + (s.status.state === 'off' ? 'waiting' : g.state === 'connected' ? 'connected' : 'connecting')))}</span>`}${g.on_air ? `<b>${esc(t('mixer.guest_on_air'))}</b>` : ''}</div>
+              <div class="mx-guest-pic">${liveOf(g.id) ? `<video data-gvid="${esc(g.id)}" data-sound="1" autoplay muted playsinline></video>` : g.thumb ? `<img data-gthumb="${esc(g.id)}" src="${esc(g.thumb)}" alt="">` : `<span>${esc(t('mixer.guest_state.' + (s.status.state === 'off' ? 'waiting' : g.state === 'connected' ? 'connected' : 'connecting')))}</span>`}${g.on_air ? `<b>${esc(t('mixer.guest_on_air'))}</b>` : ''}${s.status.state !== 'off' && g.state !== 'connected' ? `<i class="mx-guest-badge">${esc(t('mixer.guest_state.connecting'))}</i>` : ''}</div>
               <div class="mx-guest-name" title="${esc(g.name)}">${esc(g.name)}</div>
-              <div class="mx-guest-keys"><button type="button" class="btn btn-sm ${g.on_air ? 'btn-secondary' : 'mx-golive'}" data-gair="${esc(s.id)}" data-gid="${esc(g.id)}" data-on="${g.on_air ? 0 : 1}" ${s.status.state === 'off' && !g.on_air ? 'disabled' : ''}>${esc(t(g.on_air ? 'mixer.guest_off' : 'mixer.guest_put_on'))}</button>
+              <div class="mx-guest-keys"><button type="button" class="btn btn-sm ${g.on_air ? 'btn-secondary' : 'mx-golive'}" data-gair="${esc(s.id)}" data-gid="${esc(g.id)}" data-on="${g.on_air ? 0 : 1}" ${(s.status.state === 'off' || g.state !== 'connected') && !g.on_air ? `disabled title="${esc(t('mixer.guest_not_connected'))}"` : ''}>${esc(t(g.on_air ? 'mixer.guest_off' : 'mixer.guest_put_on'))}</button>
+                ${liveOf(g.id) ? `<button type="button" class="btn btn-secondary btn-sm${listening.has(g.id) ? ' is-on' : ''}" data-glisten="${esc(g.id)}" aria-pressed="${listening.has(g.id)}" title="${esc(t('mixer.guest_listen_tip'))}">${esc(t(listening.has(g.id) ? 'mixer.guest_listening' : 'mixer.guest_listen'))}</button>` : ''}
                 <button type="button" class="btn btn-secondary btn-sm" data-gdel="${esc(s.id)}" data-gid="${esc(g.id)}">${esc(t('mixer.guest_remove'))}</button></div>
             </div>`).join('')}</div>` : `<p class="mx-note">${esc(t('mixer.guest_none'))}</p>`}` : ''}
       </div>`; }).join('')}
     <p class="mx-note">${esc(t('mixer.guest_note'))}</p>`;
 }
 async function guestsRefresh(force) {
-  try { rooms = (await call('/stream-out/guests')).rooms || {}; } catch { return; }
-  const sig = JSON.stringify(rooms) + streams().map((s) => s.status.state).join();
+  try { const r = await call(`/stream-out/guests?desk=${deskId}`); rooms = r.rooms || {}; guestIce = r.ice_servers || []; } catch { return; }
+  liveSync();
+  // What is drawn: a guest shown live does not need drawing again each time their still is renewed.
+  // The panel is drawn again only when what it is made of changes. A renewed still is put into the
+  // picture that is already there: drawing the panel again every two seconds would take the key
+  // from under the operator's finger, and the keyboard's place with it.
+  const el = document.getElementById('mxGuests');
+  const stills = new Map(Object.values(rooms).flatMap((r) => r.guests.filter((g) => g.thumb).map((g) => [g.id, g.thumb])));
+  document.querySelectorAll('img[data-gthumb]').forEach((img) => { const src = stills.get(img.dataset.gthumb); if (src && img.getAttribute('src') !== src) img.setAttribute('src', src); });
+  const sig = JSON.stringify([closeArmed, Object.entries(rooms).map(([sid, r]) => [sid, r.invite_url, r.layout, r.guests.map((g) => [g.id, g.name, g.on_air, g.state, liveOf(g.id) ? 'live' : !!g.thumb, listening.has(g.id)])])]) + streams().map((s) => s.status.state).join();
   if (sig === roomsSig && !force) return;
   roomsSig = sig;
   guestLayer();
-  const el = document.getElementById('mxGuests'); if (!el) return;
-  if (el.contains(document.activeElement) && document.activeElement.matches('[data-glink]')) return;      // the link is being copied by hand
-  el.innerHTML = guestsHtml(); guestsBind(el);
+  if (!el) return;
+  el.innerHTML = guestsHtml(); guestsBind(el); liveAttach(el);
 }
 function guestsBind(el) {
   const act = (sel, fn) => el.querySelectorAll(sel).forEach((b) => b.addEventListener('click', async () => {
@@ -84,9 +155,13 @@ function guestsBind(el) {
     try { await navigator.clipboard.writeText(url); showToast(t('mixer.toast.guest_copied'), 'success'); } catch { showToast(t('mixer.toast.guest_link_ready'), 'info'); }
   });
   act('[data-grevoke]', async (b) => {
-    if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = t('mixer.guest_close_sure'); b.disabled = false; throw new Error(t('mixer.guest_close_warn')); }
-    await call(`/stream-out/${encodeURIComponent(b.dataset.grevoke)}/guests/invite`, { method: 'DELETE' });
+    const sid = b.dataset.grevoke;
+    // Twice to close: the first press arms the key (for a few seconds), the second closes the room.
+    if (closeArmed !== sid) { closeArmed = sid; clearTimeout(closeTimer); closeTimer = setTimeout(() => { closeArmed = null; guestsRefresh(true); }, 6000); showToast(t('mixer.guest_close_warn'), 'info'); return; }
+    closeArmed = null; clearTimeout(closeTimer);
+    await call(`/stream-out/${encodeURIComponent(sid)}/guests/invite`, { method: 'DELETE' });
   });
+  el.querySelectorAll('[data-glisten]').forEach((b) => b.addEventListener('click', () => { const id = b.dataset.glisten; if (listening.has(id)) listening.delete(id); else listening.add(id); guestsRefresh(true); }));
   act('[data-gstandby]', async (b) => {
     const sid = b.dataset.gstandby, s = streams().find((x) => x.id === sid);
     const r = await call(`/stream-out/${encodeURIComponent(sid)}/start`, { method: 'POST', body: JSON.stringify({ standby: true }) });
@@ -163,7 +238,8 @@ function guestRects(layout, n) {
     return Array.from({ length: n }, (_, i) => [(i % 2) * 50 + (n === 3 && i === 2 ? 25 : 0), Math.floor(i / 2) * 50, 50, 50]);
   }
   if (layout === 'side') return Array.from({ length: n }, (_, i) => [60, i * (100 / n), 40, 100 / n]);
-  return Array.from({ length: n }, (_, i) => [100 - 2 - 24, 100 - 3 - (i + 1) * 24 - i * 2, 24, 24]);
+  const h = Math.min(24, (94 - 2 * (n - 1)) / n);      // four in a column still fit the height
+  return Array.from({ length: n }, (_, i) => [100 - 2 - h, 100 - 3 - (i + 1) * h - i * 2, h, h]);
 }
 /** The on-air guests of the stream on the Program monitor, where the stream shows them. Stills, renewed every two seconds: the moving picture is in the stream itself. */
 function guestLayer() {
@@ -174,7 +250,13 @@ function guestLayer() {
   if (!air.length) { if (layer) layer.remove(); return; }
   if (!layer) { layer = document.createElement('div'); layer.className = 'mx-guest-layer'; layer.setAttribute('aria-hidden', 'true'); screen.appendChild(layer); }
   const rects = guestRects(room.layout, air.length);
-  layer.innerHTML = air.map((g, i) => `<div class="mx-guest-tile" style="left:${rects[i][0]}%;top:${rects[i][1]}%;width:${rects[i][2]}%;height:${rects[i][3]}%">${g.thumb ? `<img src="${esc(g.thumb)}" alt="">` : ''}<span>${esc(g.name)}</span></div>`).join('');
+  // Drawn again only when who is shown, or how, changes: a live picture must not restart every two seconds.
+  const key = JSON.stringify([room.layout, air.map((g) => [g.id, g.name, liveOf(g.id) ? 'live' : !!g.thumb])]);
+  if (layer.dataset.key !== key) {
+    layer.dataset.key = key;
+    layer.innerHTML = air.map((g, i) => `<div class="mx-guest-tile" style="left:${rects[i][0]}%;top:${rects[i][1]}%;width:${rects[i][2]}%;height:${rects[i][3]}%">${liveOf(g.id) ? `<video data-gvid="${esc(g.id)}" autoplay muted playsinline></video>` : g.thumb ? `<img data-gthumb="${esc(g.id)}" src="${esc(g.thumb)}" alt="">` : ''}<span>${esc(g.name)}</span></div>`).join('');
+  }
+  liveAttach(layer);
 }
 let procOpen = null;         // the strip whose processing is open on the desk: { sid, strip }
 /** Whether a strip's processing does anything: its EQ key is lit when it does. */
@@ -374,7 +456,8 @@ function draw(root) {
   pgmFx = null;
   gfxLayer(root, pgm);
   guestLayer();
-  { const gel = root.querySelector('#mxGuests'); if (gel) guestsBind(gel); }
+  // The guests panel is part of what is drawn just below: its keys are bound once that is in the page.
+  queueMicrotask(() => { const gel = document.getElementById('mxGuests'); if (gel) { guestsBind(gel); liveAttach(gel); } });
   root.querySelector('#mxRest').innerHTML = `
       <section class="mx-bank mx-scenes">
         <h3>${esc(t('mixer.scenes'))}<span class="mx-bank-actions"><button type="button" class="btn btn-secondary btn-sm" id="mxSaveScene">${esc(t('mixer.scene_save'))}</button></span></h3>
@@ -842,7 +925,7 @@ export async function render(container, which) {
     } catch { /* keep the desk as it is */ }
   }, 10000);
   // Level meters of running streams (live or on standby), moved in place five times a second (no redraw).
-  guestsRefresh(true); guestTimer = setInterval(() => { if (alive && !document.hidden) guestsRefresh(false); }, 2000);
+  guestsRefresh(true); guestTimer = setInterval(() => { if (alive && !document.hidden) guestsRefresh(false); }, 1000);
   monTimer = setInterval(() => { if (alive && !document.hidden) monitorLevels(); }, 100);
   document.addEventListener('pointerdown', wakeAudio);
   meterTimer = setInterval(async () => {
@@ -870,6 +953,8 @@ export function cleanup() {
   clearInterval(refreshTimer); refreshTimer = null;
   clearInterval(meterTimer); meterTimer = null;
   clearInterval(guestTimer); guestTimer = null;
+  // Moving between the desk's own pages keeps the guests' pictures; leaving the desk lets them go.
+  setTimeout(() => { if (!alive) { for (const gid of [...guestLive.keys()]) liveDrop(gid); listening.clear(); } }, 800);
   clearInterval(monTimer); monTimer = null; document.removeEventListener('pointerdown', wakeAudio);
   releaseMove();
 }

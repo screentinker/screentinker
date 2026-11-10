@@ -45,8 +45,24 @@ function bedOf(row) {
 }
 const audio = require('../lib/stream-audio');
 const guests = require('../lib/mixer-guests');
+const { resourceAccess } = require('../lib/tenancy');
 const orgWebrtc = require('../lib/org-webrtc');
 const running = (id) => streamOut.status(id).state !== 'off';
+// Open invites outlive a restart of the server: they are kept on the output's row.
+try {
+  guests.restore(
+    db.prepare('SELECT id, workspace_id, guest_invite, guest_invite_until FROM stream_outputs WHERE guest_invite IS NOT NULL').all()
+      .map((r) => ({ outputId: r.id, workspaceId: r.workspace_id, token: r.guest_invite, until: r.guest_invite_until })),
+    { save: (id, token, until) => { try { db.prepare('UPDATE stream_outputs SET guest_invite = ?, guest_invite_until = ? WHERE id = ?').run(token, until, id); } catch { /* kept in memory only */ } },
+      drop: (id) => { try { db.prepare('UPDATE stream_outputs SET guest_invite = NULL, guest_invite_until = NULL WHERE id = ?').run(id); } catch { /* already gone */ } } },
+  );
+} catch { /* a database from before the columns: invites are kept in memory */ }
+/** Whether this request may change the workspace's fleet: a read-only member sees who is in a green room, not the way in. */
+function canWrite(req) {
+  const ws = req.workspaceId && db.prepare('SELECT * FROM workspaces WHERE id = ?').get(req.workspaceId);
+  const ctx = ws && resourceAccess(req, ws);
+  return !!ctx && !(!ctx.actingAs && ctx.workspaceRole === 'workspace_viewer');
+}
 /** The mixer's strips for a row. Rows from before the mixer had only a bed level and mute. */
 function mixOf(row) {
   let saved = null; try { saved = row.audio_mix ? JSON.parse(row.audio_mix) : null; } catch { saved = null; }
@@ -286,12 +302,24 @@ router.post('/:id/mic', gate, requireFleetWrite, (req, res) => {
 // ── guests (lib/mixer-guests.js) ─────────────────────────────────────────────────────────────────
 // The green rooms of this workspace's outputs: who has come in by each invite, and who is on air.
 router.get('/guests', (req, res) => {
-  const out = {};
+  const out = {}, write = canWrite(req);
   for (const { id } of db.prepare('SELECT id FROM stream_outputs WHERE workspace_id = ?').all(req.workspaceId)) {
-    const g = guests.forDesk(id);
-    if (g.invite || g.guests.length) out[id] = { ...g, invite: undefined, invite_url: g.invite ? `/guest/${g.invite}` : null };
+    // A desk that names itself (?desk=) is sent each guest's picture directly: lib/mixer-guests.js.
+    const g = guests.forDesk(id, Date.now(), write && typeof req.query.desk === 'string' ? req.query.desk : null);
+    if (!(g.invite || g.guests.length)) continue;
+    // A read-only member: who is here and who is on air, without the link in or anyone's picture.
+    out[id] = write ? { ...g, invite: undefined, invite_url: g.invite ? `/guest/${g.invite}` : null }
+      : { ...g, invite: undefined, invite_url: null, expires_at: null, guests: g.guests.map((x) => ({ ...x, thumb: null })) };
   }
-  res.json({ rooms: out });
+  res.json({ rooms: out, ice_servers: write && Object.keys(out).length ? orgWebrtc.iceServersForWorkspace(req.workspaceId) : [] });
+});
+// This desk's answer to a guest's offer of a picture, or (again: true) its request for a new offer.
+router.post('/:id/guests/:gid/desk', gate, requireFleetWrite, (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'not found' });
+  const b = req.body || {};
+  if (!guests.fromDesk(r.id, req.params.gid, String(b.desk || ''), b)) return res.status(409).json({ error: 'That guest has left, or has made a new offer.' });
+  res.json({ success: true });
 });
 router.post('/:id/guests/invite', gate, requireFleetWrite, (req, res) => {
   const r = mine(req, req.params.id);
@@ -378,6 +406,8 @@ function renderer({ sendPlayer }) {
   // guest who has joined also proves who they are with the key they were given.
   r.get('/guest/:token', (req, res) => {
     quiet(res);
+    // No page (and so no request for a camera) behind a link that lets nobody in.
+    if (!guests.invited(req.params.token)) return res.status(404).type('text/plain').send('This invitation is no longer open. Ask for a new link.');
     res.sendFile(path.join(config.frontendDir, 'guest.html'));
   });
   const limiter = require('../lib/backstop-limiter');
@@ -392,17 +422,33 @@ function renderer({ sendPlayer }) {
   });
   const me = (req, res) => {
     quiet(res);
-    const b = req.method === 'GET' ? req.query : (req.body || {});
+    const b = req.body || {};
     const g = guests.who(req.params.token, b.guest_id, b.key);
-    if (!g) { res.status(404).json({ error: 'gone' }); return null; }
+    // 410: the operator removed this guest. 404: the server no longer knows them (a restart, a long silence): the page comes in again.
+    if (!g) { res.status(guests.wasRemoved(b.guest_id) ? 410 : 404).json({ error: 'gone' }); return null; }
     return g;
+  };
+  // What a guest's page is told: how things stand, and (when it has an offer to make) the servers to make it through, with a fresh login.
+  const told = (g) => {
+    const st = guests.stateFor(g, running(g.outputId));
+    if (st.need_offer || st.desks.some((d) => d.need_offer)) { const row = rowOf({ outputId: g.outputId }); if (row) st.ice_servers = orgWebrtc.guestIceServers(orgWebrtc.orgIdForWorkspace(row.workspace_id)); }
+    return st;
   };
   r.post('/api/stream-guest/:token/offer', limiter, (req, res) => {
     const g = me(req, res); if (!g) return;
-    if (!guests.setOffer(g, (req.body || {}).sdp)) return res.status(400).json({ error: 'That is not a session description.' });
-    res.json(guests.stateFor(g, running(g.outputId)));
+    if (!guests.sdpOk((req.body || {}).sdp)) return res.status(400).json({ error: 'That is not a session description.' });
+    if (!guests.mayOffer(g)) return res.status(429).json({ error: 'Too soon after the last offer.' });
+    guests.setOffer(g, req.body.sdp);
+    res.json(told(g));
   });
-  r.get('/api/stream-guest/:token/state', limiter, (req, res) => { const g = me(req, res); if (g) res.json(guests.stateFor(g, running(g.outputId))); });
+  r.post('/api/stream-guest/:token/desk-offer', limiter, (req, res) => {
+    const g = me(req, res); if (!g) return;
+    const seq = guests.setDeskOffer(g, String((req.body || {}).desk || ''), (req.body || {}).sdp);
+    if (!seq) return res.status(400).json({ error: 'That desk is not here, or that is not a session description.' });
+    res.json({ seq });
+  });
+  // POST, so the guest's key is in the body and not in anyone's access log.
+  r.post('/api/stream-guest/:token/state', limiter, (req, res) => { const g = me(req, res); if (g) res.json(told(g)); });
   r.post('/api/stream-guest/:token/leave', limiter, (req, res) => { const g = me(req, res); if (g) { guests.leave(g); res.json({ success: true }); } });
   // The renderer's side: its answer to a guest, the state of that connection, a thumbnail.
   r.post('/api/stream-feed/:secret/guest', (req, res) => {

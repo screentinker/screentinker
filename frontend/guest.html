@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/css/reset.css">
   <link rel="stylesheet" href="/css/main.css">
   <style>
+    [hidden] { display: none !important; }
     body { min-height: 100vh; margin: 0; display: flex; justify-content: center; padding: 4vh 16px 32px; background: #0b0c0e; color: #f2f3f5; }
     .gs { width: 100%; max-width: 560px; }
     .gs h1 { font-size: 22px; margin: 0 0 4px; }
@@ -19,7 +20,8 @@
     .gs-view { position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: 6px; overflow: hidden; border: 3px solid #23262d; }
     .gs-view.is-air { border-color: #ff2a1f; box-shadow: 0 0 24px rgba(255, 42, 31, 0.45); }
     .gs-view.is-back { border-color: #f5a623; }
-    .gs-view video { width: 100%; height: 100%; object-fit: contain; display: block; transform: scaleX(-1); }
+    .gs-view video { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .gs-view.is-mirror video { transform: scaleX(-1); }
     .gs-tag { position: absolute; left: 10px; top: 10px; padding: 4px 10px; border-radius: 3px; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; background: rgba(11, 12, 14, 0.8); }
     .gs-view.is-air .gs-tag { background: #ff2a1f; color: #fff; }
     .gs-view.is-back .gs-tag { background: #f5a623; color: #111; }
@@ -41,23 +43,25 @@
 </head>
 <body>
   <main class="gs">
-    <h1 id="gsTitle">Join the broadcast</h1>
-    <p class="lead" id="gsLead">Check your camera and microphone, then join. You will wait backstage until the studio puts you on air.</p>
-    <div class="gs-view" id="gsView"><video id="gsVideo" autoplay muted playsinline></video><span class="gs-tag" id="gsTag">Camera check</span></div>
+    <div role="status" aria-live="polite">
+      <h1 id="gsTitle">Join the broadcast</h1>
+      <p class="lead" id="gsLead">Check your camera and microphone, then join. You will wait backstage until the studio puts you on air.</p>
+    </div>
+    <div class="gs-view is-mirror" id="gsView"><video id="gsVideo" autoplay muted playsinline></video><span class="gs-tag" id="gsTag">Camera check</span></div>
     <p class="gs-turn" id="gsTurn" hidden>Your picture is upright. Turn your phone sideways to fill the screen.</p>
     <div class="gs-level" aria-hidden="true"><i id="gsLevel"></i></div>
     <div id="gsSetup">
       <label class="gs-name">Your name<input class="input" id="gsName" maxlength="40" autocomplete="name" placeholder="How you should be named on screen"></label>
-      <div class="gs-grid">
-        <label>Camera<select class="input" id="gsCam"></select></label>
-        <label>Microphone<select class="input" id="gsMic"></select></label>
-      </div>
       <button type="button" class="btn btn-primary gs-go" id="gsJoin">Join</button>
     </div>
     <div class="gs-keys" id="gsLive" hidden>
       <button type="button" class="btn btn-secondary" id="gsMute">Mute microphone</button>
       <button type="button" class="btn btn-secondary" id="gsCamOff">Turn camera off</button>
       <button type="button" class="btn btn-secondary" id="gsLeave">Leave</button>
+    </div>
+    <div class="gs-grid">
+      <label>Camera<select class="input" id="gsCam"></select></label>
+      <label>Microphone<select class="input" id="gsMic"></select></label>
     </div>
     <p class="gs-msg" id="gsMsg" role="status"></p>
   </main>

@@ -1642,6 +1642,9 @@ const migrations = [
   // The stream mixer's strips (programme, bed, line, master): lib/stream-audio.js.
   "ALTER TABLE stream_outputs ADD COLUMN audio_mix TEXT",
   "ALTER TABLE stream_outputs ADD COLUMN record INTEGER NOT NULL DEFAULT 0",
+  // A stream output's open guest invite, so a restart does not end it: lib/mixer-guests.js.
+  "ALTER TABLE stream_outputs ADD COLUMN guest_invite TEXT",
+  "ALTER TABLE stream_outputs ADD COLUMN guest_invite_until INTEGER",
 
   /*
    * What an ACTIVE SCHEDULE is currently imposing, kept apart from what the device is normally on.
