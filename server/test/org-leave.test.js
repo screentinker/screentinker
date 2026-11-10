@@ -183,6 +183,18 @@ test('while the person pays, leaving with a hand-over that changes the plan need
   assert.equal(orgRow(o).owner_user_id, member); assert.equal(wsRole(w, owner), null);
 });
 
+test('an organization copied from another server is not changed here', async () => {
+  const owner = person('owner'), member = person('member');
+  const { o, w } = organization(owner, 'Copied');
+  join(w, member);
+  db.prepare("UPDATE workspaces SET origin_node_id = 'node-elsewhere' WHERE id = ?").run(w);
+  const leave = await req('POST', `/api/organizations/${o}/leave`, member, {});
+  assert.equal(leave.status, 409); assert.equal(leave.body.code, 'COPIED_ORGANIZATION');
+  const hand = await req('POST', `/api/organizations/${o}/ownership`, owner, { user_id: member });
+  assert.equal(hand.status, 409); assert.equal(hand.body.code, 'COPIED_ORGANIZATION');
+  assert.equal(orgRow(o).owner_user_id, owner); assert.equal(wsRole(w, member), 'workspace_editor', 'nothing changed');
+});
+
 test('a workspace is not left without an administrator while other people are in it', async () => {
   const owner = person('owner'), lead = person('lead'), staff = person('staff');
   const { o } = organization(owner, 'Headless');

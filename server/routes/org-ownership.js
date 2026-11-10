@@ -37,6 +37,17 @@ router.use(require('../lib/backstop-limiter'));
 
 const publicUser = (u) => (u ? { id: u.id, name: u.name || null, email: u.email } : null);
 
+/*
+ * Scale-out (docs/scale-out.md): an organization COPIED here from another server is owned by that
+ * server. Changing who owns it, or who is in it, on this copy would make this node a second writer
+ * for it, and the next sync would silently put it back. Refused, with where to go instead.
+ */
+function copiedHere(orgId) {
+  try { return !!db.prepare('SELECT 1 FROM workspaces WHERE organization_id = ? AND origin_node_id IS NOT NULL LIMIT 1').get(orgId); }
+  catch { return false; }   // no origin_node_id column: nothing is ever a copy
+}
+const COPIED = { error: 'This organization is managed on its home server. Make this change there.', code: 'COPIED_ORGANIZATION' };
+
 /** Everyone in the organization: its members and the members of its workspaces. */
 function peopleIn(orgId) {
   return db.prepare(`
@@ -135,6 +146,7 @@ function handOver(req, org, targetId) {
 }
 
 router.post('/:orgId/ownership', requireAuth, loadOrg, (req, res) => {
+  if (copiedHere(req.org.id)) return res.status(409).json(COPIED);
   if (!req.mayTransfer) return res.status(403).json({ error: 'Only the organization\'s owner can hand it to someone else.' });
   const org = req.org;
   const r = handOver(req, org, req.body && typeof req.body.user_id === 'string' ? req.body.user_id : null);
@@ -201,6 +213,7 @@ router.get('/mine', requireAuth, (req, res) => {
 router.post('/:orgId/leave', requireAuth, (req, res) => {
   const org = db.prepare('SELECT id, name, owner_user_id FROM organizations WHERE id = ?').get(req.params.orgId);
   if (!org || !peopleIn(org.id).some((p) => p.id === req.user.id)) return res.status(404).json({ error: 'Organization not found' });
+  if (copiedHere(org.id)) return res.status(409).json(COPIED);
   const me = req.user.id;
 
   if (org.owner_user_id === me) {

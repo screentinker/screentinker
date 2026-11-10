@@ -101,6 +101,7 @@ const NOT_WORKSPACE_SCOPED = Object.freeze({
   // workspaces (lib/scim/provision.js filters origin_node_id IS NULL), so a copied one is never written.
   'scim.js': 'identity provisioning from an organization\'s IdP; never writes a copied workspace (lib/scim/provision.js)',
   'org-scim.js': 'organization-level provisioning settings; mappings refuse a copied workspace',
+  'org-ownership.js': 'organization-level (who owns it, who is in it); both mutating routes refuse an organization copied from another node (copiedHere), asserted below',
   'subscription.js': 'billing, owner-only, not scaled (Phase D)',
   'stripe.js': 'webhook from Stripe, not a user write',
   'billing.js': 'billing, not scaled',
@@ -274,4 +275,18 @@ test('test_replica_refuses_or_proxies_every_non_get_for_remote_workspaces: the i
   for (const m of ['GET', 'HEAD', 'OPTIONS']) assert.equal(shouldIntercept({ method: m }, copy), false, m);
   for (const m of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.equal(shouldIntercept({ method: m }, copy), true, m);
   for (const m of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.equal(shouldIntercept({ method: m }, mine), false, `${m} on my own workspace`);
+});
+
+test('org-ownership.js: a copied organization is not handed over or left on this node', () => {
+  const src = read('routes/org-ownership.js');
+  assert.match(src, /function copiedHere\(orgId\)[\s\S]{0,200}origin_node_id IS NOT NULL/, 'it knows a copied organization by its workspaces');
+  for (const route of ["router.post('/:orgId/ownership'", "router.post('/:orgId/leave'"]) {
+    const body = src.slice(src.indexOf(route), src.indexOf(route) + 900);
+    const guardAt = body.indexOf('copiedHere(');
+    assert.ok(guardAt > 0, route + ' checks for a copy');
+    for (const write of ['handOver(', 'DELETE FROM', 'db.transaction']) {
+      const w = body.indexOf(write);
+      if (w !== -1) assert.ok(guardAt < w, route + ': the check comes before ' + write);
+    }
+  }
 });
