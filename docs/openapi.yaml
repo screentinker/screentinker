@@ -2768,7 +2768,7 @@ paths:
                 playlist_id: { type: string }
                 title: { type: string }
                 start_time: { type: string, example: '2026-07-28T09:00', description: 'Wall clock in the schedule''s timezone, "YYYY-MM-DDTHH:MM" (no Z or offset). A time sent with Z or an offset is converted to wall clock in the schedule''s timezone (the explicit timezone, else the target screen''s); with no zone to convert to it is refused with 400.' }
-                end_time: { type: string, example: '2026-07-28T17:00', description: 'Same format and conversion as start_time.' }
+                end_time: { type: string, example: '2026-07-28T17:00', description: 'Same format and conversion as start_time. For a schedule with no recurrence: an end on the same date but earlier in the day than the start means through midnight and is stored on the following day; an end on an earlier date is refused with 400.' }
                 timezone: { type: string, description: 'IANA zone. Omitted, the target screen''s (or group/wall leader''s) zone is used.' }
                 recurrence: { type: string }
                 recurrence_end: { type: string }
