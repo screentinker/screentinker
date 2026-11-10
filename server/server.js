@@ -737,6 +737,9 @@ app.use('/.well-known/acme-challenge', express.static(path.join(config.frontendD
 // .bin, vendored esp-web-tools) are served by express.static as ordinary files. CSP was already
 // relaxed for this path by the exempt middleware above.
 app.get(['/flash', '/flash/'], (req, res) => {
+  // The page refers to its module and manifests RELATIVELY, so it only works at a URL ending in a
+  // slash: at /flash the browser asks for /vendor/... and the install button never loads.
+  if (req.path === '/flash') return res.redirect(301, '/flash/' + (req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : ''));
   res.sendFile(path.join(config.frontendDir, 'flash', 'index.html'));
 });
 // Serve frontend static files
