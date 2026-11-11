@@ -377,7 +377,7 @@ function guestRects(layout, n) {
 /** The on-air guests of the stream on the Program monitor, where the stream shows them. Stills, renewed every two seconds: the moving picture is in the stream itself. */
 function guestLayer() {
   const screen = document.getElementById('mxPgmScreen'); if (!screen) return;
-  const pgm = firstOutput(), room = pgm && isStream(pgm) ? rooms[pgm.id] : null;
+  const pgm = onProgram(), room = pgm && isStream(pgm) ? rooms[pgm.id] : null;
   const air = room ? room.guests.filter((g) => g.on_air) : [];
   let layer = screen.querySelector('.mx-guest-layer');
   if (!air.length) { if (layer) layer.remove(); return; }
@@ -534,6 +534,12 @@ function monitor(el, src, emptyText, fx) {
 const streams = () => (so && so.outputs) || [];
 const firstOutput = () => (state ? (state.screens.find((s) => outputs.has(s.id)) || streams().find((s) => outputs.has(s.id))) : null);
 const isStream = (o) => !!o && streams().includes(o);
+/**
+ * What the Program monitor shows: what is really live on the first selected output. A screen that is
+ * showing a stream's picture is live with that stream (its programme, graphics and guests), not
+ * with the playlist it would otherwise play.
+ */
+const onProgram = () => { const o = firstOutput(); return (o && !isStream(o) && followOf(o.id)) || o; };
 /** The stream whose picture a screen is showing, if any. */
 const followOf = (deviceId) => streams().find((s) => (s.on_screens || []).some((x) => x.id === deviceId)) || null;
 const streamTally = (s) => (s.status.state === 'live' ? 'air' : s.status.state === 'off' ? 'idle' : 'standby');
@@ -552,7 +558,7 @@ const cuedScene = () => (cued && state.scenes.find((s) => s.id === cued)) || nul
 const DIRS = [[-1, 1, '↖'], [0, 1, '↑'], [1, 1, '↗'], [-1, 0, '←'], null, [1, 0, '→'], [-1, -1, '↙'], [0, -1, '↓'], [1, -1, '↘']];
 
 function draw(root) {
-  const pgm = firstOutput();
+  const pgm = onProgram();
   const scene = cuedScene();
   const selScreens = state.screens.filter((s) => outputs.has(s.id));
   // The monitors are built ONCE and switched in place (the preview player is told to load the new
@@ -839,7 +845,7 @@ async function key(root, kind, given) {
     } catch { failed++; }
   }));
   showToast(failed ? t('mixer.toast.gfx_partial', { ok, failed }) : t('mixer.toast.gfx_on', { n: ok }), failed ? 'warning' : 'success');
-  gfxLayer(root, firstOutput());
+  gfxLayer(root, onProgram());
 }
 
 async function clearGfx(quiet) {
@@ -848,7 +854,7 @@ async function clearGfx(quiet) {
     ? call(`/stream-out/${encodeURIComponent(id)}/gfx/clear`, { method: 'POST' })
     : call('/pip/clear', { method: 'POST', body: JSON.stringify({ device_id: id }) })).catch(() => null)));
   for (const id of outputs) onAirGfx.set(id, null);
-  gfxLayer(null, firstOutput());
+  gfxLayer(null, onProgram());
   if (quiet !== true) showToast(t('mixer.toast.gfx_off'), 'info');
 }
 
