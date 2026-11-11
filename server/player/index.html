@@ -3407,7 +3407,7 @@
       label.style.cssText = "position:absolute;left:0;bottom:0;max-width:90%;padding:.35em .8em;background:rgba(11,12,14,.82);color:#fff;font:600 1.6vh/1.2 'Barlow','Helvetica Neue',Arial,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
       label.textContent = g.name || '';
       tile.appendChild(video); tile.appendChild(label); guestLayerEl().appendChild(tile);
-      var pc = new RTCPeerConnection({ iceServers: ice || [] });
+      var pc = new RTCPeerConnection({ iceServers: ice || [], bundlePolicy: 'max-bundle' });
       var c = guestConns[g.id] = { seq: g.seq, pc: pc, video: video, tile: tile, label: label, onAir: false };
       var stream = new MediaStream();
       video.srcObject = stream;

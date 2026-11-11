@@ -3018,7 +3018,7 @@ function guestConnect(g, ice, v) {
   tile.appendChild(video);
   tile.appendChild(label);
   guestLayerEl().appendChild(tile);
-  var pc = new RTCPeerConnection({ iceServers: ice || [] });
+  var pc = new RTCPeerConnection({ iceServers: ice || [], bundlePolicy: "max-bundle" });
   var c = guestConns[g.id] = { seq: g.seq, pc, video, tile, label, onAir: false };
   var stream = new MediaStream();
   video.srcObject = stream;

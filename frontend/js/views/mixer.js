@@ -61,6 +61,8 @@ const listening = new Set();   // guest ids the operator is listening to
 const liveOf = (gid) => { const c = guestLive.get(gid); return c && c.pc.connectionState === 'connected' && c.stream.getVideoTracks().length ? c : null; };
 let guestIce = [];
 let closeArmed = null, closeTimer = null;   // the stream whose "Close the green room" has been pressed once
+const liveFails = new Map();                // guest id -> how many times this desk's connection to them has failed
+let rtc = null;                             // what this browser can do for a direct connection: { host, srflx, relay } once checked
 const liveAsked = new Map();                // guest id -> when this desk last asked them for a new offer
 const talking = new Set();     // guest ids the operator is talking to, one to one
 const merged = new Set();      // stream ids whose green room is in a conversation
@@ -105,13 +107,14 @@ function liveDrop(gid) {
 }
 async function liveAnswer(sid, g) {
   liveDrop(g.id);
-  const c = { pc: new RTCPeerConnection({ iceServers: guestIce }), seq: g.leg_seq, stream: new MediaStream(), sid };
+  const c = { pc: new RTCPeerConnection({ iceServers: guestIce, bundlePolicy: 'max-bundle' }), seq: g.leg_seq, stream: new MediaStream(), sid };
   guestLive.set(g.id, c);
   const said = (body) => call(`/stream-out/${encodeURIComponent(sid)}/guests/${encodeURIComponent(g.id)}/desk`, { method: 'POST', body: JSON.stringify({ desk: deskId, ...body }) }).catch(() => {});
   c.pc.ontrack = (e) => { c.stream.addTrack(e.track); };
   c.pc.onconnectionstatechange = () => {
     if (guestLive.get(g.id) !== c) return;
-    if (c.pc.connectionState === 'failed') { liveDrop(g.id); said({ again: true }); }
+    if (c.pc.connectionState === 'failed') { liveFails.set(g.id, (liveFails.get(g.id) || 0) + 1); liveDrop(g.id); said({ again: true }); rtcCheck(); }
+    if (c.pc.connectionState === 'connected') liveFails.delete(g.id);
     if (c.pc.connectionState === 'connected' && merged.has(sid)) route();      // someone new joins the conversation
     guestsRefresh(true);
   };
@@ -128,6 +131,34 @@ async function liveAnswer(sid, g) {
     });
     if (guestLive.get(g.id) === c) await said({ seq: c.seq, answer: c.pc.localDescription.sdp });
   } catch { if (guestLive.get(g.id) === c) { liveDrop(g.id); said({ again: true }); } }
+}
+/**
+ * What this browser offers for a direct connection, found out once: its own addresses, its address as
+ * the internet sees it, and a relay. A browser set to hide them all (some VPN and privacy settings)
+ * can show no guest live, and neither can a screen opened in it.
+ */
+function rtcCheck() {
+  if (rtc || !window.RTCPeerConnection) return;
+  rtc = { pending: true };
+  (async () => {
+    const found = { host: 0, srflx: 0, relay: 0 };
+    try {
+      const pc = new RTCPeerConnection({ iceServers: guestIce });
+      pc.onicecandidate = (e) => { const m = e.candidate && / typ (host|srflx|prflx|relay)/.exec(e.candidate.candidate); if (m) found[m[1] === 'prflx' ? 'srflx' : m[1]] += 1; };
+      pc.createDataChannel('x'); await pc.setLocalDescription(await pc.createOffer());
+      await new Promise((r) => setTimeout(r, 4000));
+      pc.close();
+    } catch { /* nothing found */ }
+    rtc = found; guestsRefresh(true);
+  })();
+}
+/** In words, why a guest is not live on this desk (or '' when they are). */
+function deskLink(g) {
+  if (liveOf(g.id)) return '';
+  if (!window.RTCPeerConnection) return t('mixer.guest_link.no_webrtc');
+  if (rtc && !rtc.pending && !rtc.host && !rtc.srflx && !rtc.relay) return t('mixer.guest_link.blocked');
+  if ((liveFails.get(g.id) || 0) >= 2) return t(rtc && !rtc.pending && !rtc.relay ? 'mixer.guest_link.failed_no_relay' : 'mixer.guest_link.failed');
+  return t(g.leg_seq || guestLive.has(g.id) ? 'mixer.guest_link.connecting' : 'mixer.guest_link.waiting');
 }
 /** Answer every guest that offers this desk a picture; let go of those who have left or offered anew. */
 function liveSync() {
@@ -203,7 +234,7 @@ function guestsHtml() {
       <div class="mx-room">
         <div class="mx-group-name"><span class="mx-lamp mx-lamp-${streamTally(s)}"></span>${esc(s.name)}
           ${url ? `<span class="mx-room-keys">${(r.layouts || []).map((l) => `<button type="button" class="mx-key mx-key-sm${r.layout === l ? ' is-on' : ''}" data-glayout="${esc(s.id)}" data-layout="${esc(l)}" aria-pressed="${r.layout === l}">${esc(t('mixer.guest_layout.' + l))}</button>`).join('')}</span>` : ''}
-          ${url && r.guests.some((g) => liveOf(g.id)) ? `<button type="button" class="btn btn-sm ${merged.has(s.id) ? 'mx-golive' : 'btn-secondary'}" data-gmerge="${esc(s.id)}" aria-pressed="${merged.has(s.id)}" title="${esc(t('mixer.guest_merge_tip'))}">${esc(t(merged.has(s.id) ? 'mixer.guest_merged' : 'mixer.guest_merge'))}</button>` : ''}
+          ${url && r.guests.length ? `<button type="button" class="btn btn-sm ${merged.has(s.id) ? 'mx-golive' : 'btn-secondary'}" data-gmerge="${esc(s.id)}" aria-pressed="${merged.has(s.id)}" ${r.guests.some((g) => liveOf(g.id)) ? '' : 'disabled'} title="${esc(t('mixer.guest_merge_tip'))}">${esc(t(merged.has(s.id) ? 'mixer.guest_merged' : 'mixer.guest_merge'))}</button>` : ''}
           <button type="button" class="btn btn-secondary btn-sm mx-meters-on" data-ginvite="${esc(s.id)}">${esc(t(url ? 'mixer.guest_copy' : 'mixer.guest_invite'))}</button>
           ${url ? `<button type="button" class="btn btn-secondary btn-sm" data-grevoke="${esc(s.id)}">${esc(t(closeArmed === s.id ? 'mixer.guest_close_sure' : 'mixer.guest_close'))}</button>` : ''}</div>
         ${url ? `<input class="input mx-room-link" readonly value="${esc(url)}" aria-label="${esc(t('mixer.guest_link'))}" data-glink>
@@ -212,9 +243,10 @@ function guestsHtml() {
             <div class="mx-guest${g.on_air ? ' is-air' : ''}">
               <div class="mx-guest-pic">${liveOf(g.id) ? `<video data-gvid="${esc(g.id)}" data-sound="1" autoplay muted playsinline></video>` : g.thumb ? `<img data-gthumb="${esc(g.id)}" src="${esc(g.thumb)}" alt="">` : `<span>${esc(t('mixer.guest_state.' + (s.status.state === 'off' ? 'waiting' : g.state === 'connected' ? 'connected' : 'connecting')))}</span>`}${g.on_air ? `<b>${esc(t('mixer.guest_on_air'))}</b>` : ''}${s.status.state !== 'off' && g.state !== 'connected' ? `<i class="mx-guest-badge">${esc(t('mixer.guest_state.connecting'))}</i>` : ''}</div>
               <div class="mx-guest-name" title="${esc(g.name)}">${esc(g.name)}</div>
+              ${deskLink(g) ? `<div class="mx-guest-link">${esc(deskLink(g))}</div>` : ''}
               <div class="mx-guest-keys"><button type="button" class="btn btn-sm ${g.on_air ? 'btn-secondary' : 'mx-golive'}" data-gair="${esc(s.id)}" data-gid="${esc(g.id)}" data-on="${g.on_air ? 0 : 1}" ${(s.status.state === 'off' || g.state !== 'connected') && !g.on_air ? `disabled title="${esc(t('mixer.guest_not_connected'))}"` : ''}>${esc(t(g.on_air ? 'mixer.guest_off' : 'mixer.guest_put_on'))}</button>
-                ${liveOf(g.id) ? `<button type="button" class="btn btn-secondary btn-sm${listening.has(g.id) || merged.has(s.id) ? ' is-on' : ''}" data-glisten="${esc(g.id)}" aria-pressed="${listening.has(g.id) || merged.has(s.id)}" ${merged.has(s.id) ? 'disabled' : ''} title="${esc(t('mixer.guest_listen_tip'))}">${esc(t(listening.has(g.id) || merged.has(s.id) ? 'mixer.guest_listening' : 'mixer.guest_listen'))}</button>` : ''}
-                ${liveOf(g.id) && guestLive.get(g.id).talk ? `<button type="button" class="btn btn-sm ${talking.has(g.id) || merged.has(s.id) ? 'mx-golive' : 'btn-secondary'}" data-gtalk="${esc(g.id)}" aria-pressed="${talking.has(g.id) || merged.has(s.id)}" ${merged.has(s.id) ? 'disabled' : ''} title="${esc(t('mixer.guest_talk_tip'))}">${esc(t(talking.has(g.id) || merged.has(s.id) ? 'mixer.guest_talking' : 'mixer.guest_talk'))}</button>` : ''}
+                <button type="button" class="btn btn-secondary btn-sm${listening.has(g.id) || merged.has(s.id) ? ' is-on' : ''}" data-glisten="${esc(g.id)}" aria-pressed="${listening.has(g.id) || merged.has(s.id)}" ${merged.has(s.id) || !liveOf(g.id) ? 'disabled' : ''} title="${esc(liveOf(g.id) ? t('mixer.guest_listen_tip') : deskLink(g))}">${esc(t(listening.has(g.id) || merged.has(s.id) ? 'mixer.guest_listening' : 'mixer.guest_listen'))}</button>
+                <button type="button" class="btn btn-sm ${talking.has(g.id) || merged.has(s.id) ? 'mx-golive' : 'btn-secondary'}" data-gtalk="${esc(g.id)}" aria-pressed="${talking.has(g.id) || merged.has(s.id)}" ${merged.has(s.id) || !(liveOf(g.id) && guestLive.get(g.id).talk) ? 'disabled' : ''} title="${esc(liveOf(g.id) ? t('mixer.guest_talk_tip') : deskLink(g))}">${esc(t(talking.has(g.id) || merged.has(s.id) ? 'mixer.guest_talking' : 'mixer.guest_talk'))}</button>
                 <button type="button" class="btn btn-secondary btn-sm${g.cut ? ' is-on' : ''}" data-gcut="${esc(s.id)}" data-gid="${esc(g.id)}" data-on="${g.cut ? 0 : 1}" aria-pressed="${!!g.cut}" title="${esc(t(g.green ? 'mixer.guest_cut_tip_green' : 'mixer.guest_cut_tip'))}">${esc(t(g.cut ? 'mixer.guest_cut_on' : 'mixer.guest_cut'))}</button>
                 <button type="button" class="btn btn-secondary btn-sm" data-gdel="${esc(s.id)}" data-gid="${esc(g.id)}">${esc(t('mixer.guest_remove'))}</button></div>
             </div>`).join('')}</div>` : `<p class="mx-note">${esc(t('mixer.guest_none'))}</p>`}` : ''}
@@ -225,6 +257,8 @@ async function guestsRefresh(force) {
   let r; try { r = await call(`/stream-out/guests?desk=${deskId}`); } catch { return; }      // only the request failing is passed over: the next poll asks again
   rooms = r.rooms || {}; guestIce = r.ice_servers || [];
   liveSync();
+  // A guest who has been here a while and is still not live on this desk: find out what this browser can do.
+  if (Object.values(rooms).some((r) => r.guests.some((g) => !liveOf(g.id) && Date.now() - g.joined_at > 8000))) rtcCheck();
   // What is drawn: a guest shown live does not need drawing again each time their still is renewed.
   // The panel is drawn again only when what it is made of changes. A renewed still is put into the
   // picture that is already there: drawing the panel again every two seconds would take the key
@@ -232,7 +266,7 @@ async function guestsRefresh(force) {
   const el = document.getElementById('mxGuests');
   const stills = new Map(Object.values(rooms).flatMap((r) => r.guests.filter((g) => g.thumb).map((g) => [g.id, g.thumb])));
   document.querySelectorAll('img[data-gthumb]').forEach((img) => { const src = stills.get(img.dataset.gthumb); if (src && img.getAttribute('src') !== src) img.setAttribute('src', src); });
-  const sig = JSON.stringify([closeArmed, [...merged], Object.entries(rooms).map(([sid, r]) => [sid, r.invite_url, r.layout, r.guests.map((g) => [g.id, g.name, g.on_air, g.state, liveOf(g.id) ? 'live' : !!g.thumb, listening.has(g.id), talking.has(g.id), g.cut, g.green])])]) + streams().map((s) => s.status.state).join();
+  const sig = JSON.stringify([closeArmed, [...merged], Object.entries(rooms).map(([sid, r]) => [sid, r.invite_url, r.layout, r.guests.map((g) => [g.id, g.name, g.on_air, g.state, liveOf(g.id) ? 'live' : !!g.thumb, listening.has(g.id), talking.has(g.id), g.cut, g.green, deskLink(g)])])]) + streams().map((s) => s.status.state).join();
   if (sig === roomsSig && !force) return;
   roomsSig = sig;
   guestLayer();
@@ -630,6 +664,7 @@ function draw(root) {
       <section class="mx-bank mx-outputs">
         <h3>${esc(t('mixer.outputs'))}
           <span class="mx-bank-actions">
+            ${(() => { const p = screenPlan(); return p.lead && p.ids.length ? `<button type="button" class="btn btn-sm mx-golive" id="mxOnScreens" title="${esc(t('mixer.on_screens_tip'))}">${esc(t('mixer.on_screens_go', { name: p.lead.name, n: p.ids.length }))}</button>` : p.off ? `<span class="mx-note mx-room-off">${esc(t('mixer.on_screens_need'))}</span>` : ''; })()}
             <button type="button" class="btn btn-secondary btn-sm" id="mxAll">${esc(t('mixer.all'))}</button>
             <button type="button" class="btn btn-secondary btn-sm" id="mxNone">${esc(t('mixer.none'))}</button>
             ${state.groups.filter((g) => g.device_ids.length).map((g) => `<button type="button" class="btn btn-secondary btn-sm" data-group="${esc(g.id)}">${esc(g.name)}</button>`).join('')}
@@ -739,16 +774,8 @@ async function take(root) {
     // guests, as composed), over whatever they play, instead of taking the source themselves.
     const lead = streams().find((s) => outputs.has(s.id) && s.status.state !== 'off');
     let followed = null;
-    if (lead && screenIds.length) {
-      try {
-        followed = await call(`/stream-out/${encodeURIComponent(lead.id)}/screens`, { method: 'POST', body: JSON.stringify({ device_ids: screenIds }) });
-        lead.on_screens = [...(lead.on_screens || []).filter((x) => !followed.shown.some((y) => y.device_id === x.id)), ...followed.shown.map((x) => ({ id: x.device_id, name: x.name, live: false }))];
-        // A screen that cannot show a stream's picture (an older player, offline) takes the source itself, as before.
-        screenIds = followed.skipped.map((x) => x.device_id);
-        if (followed.skipped.length) showToast(t('mixer.toast.on_screens_skipped', { n: followed.shown.length, skipped: followed.skipped.length, names: followed.skipped.map((x) => x.name || '?').join(', ') }), 'warning');
-        else showToast(t('mixer.toast.on_screens', { n: followed.shown.length, name: lead.name }), 'success');
-      } catch (err) { showToast(err.message, 'warning'); }
-    }
+    // A screen that cannot show a stream's picture (an older player, offline) takes the source itself, as before.
+    if (lead && screenIds.length) { followed = await streamToScreens(lead, screenIds); if (followed) screenIds = followed.skipped.map((x) => x.device_id); }
     const r = await call('/mixer/take', { method: 'POST', body: JSON.stringify({ device_ids: screenIds, stream_ids: streamIds, playlist_id: pvw,
       transition: { type: tx.type, ms: tx.ms, color: (root.querySelector('#mxC') || {}).value || undefined } }) });
     for (const tk of r.streams || []) { const s = streams().find((x) => x.id === tk.stream_id); if (s) { s.playlist_id = r.playlist.id; s.playlist_name = r.playlist.name; } }
@@ -761,6 +788,27 @@ async function take(root) {
     if (scene) { await applyScene(root, scene); cued = null; }
   } catch (err) { showToast(err.message, 'error'); }
   if (alive) draw(root);
+}
+
+/**
+ * Puts a running stream's picture (programme, graphics, guests) on screens. Says, screen by screen,
+ * which could not take it and why. Resolves with the server's { shown, skipped }, or null when it refused.
+ */
+async function streamToScreens(lead, ids) {
+  try {
+    const r = await call(`/stream-out/${encodeURIComponent(lead.id)}/screens`, { method: 'POST', body: JSON.stringify({ device_ids: ids }) });
+    lead.on_screens = [...(lead.on_screens || []).filter((x) => !r.shown.some((y) => y.device_id === x.id)), ...r.shown.map((x) => ({ id: x.device_id, name: x.name, live: false }))];
+    if (r.skipped.length) showToast(t('mixer.toast.on_screens_skipped', { n: r.shown.length, why: r.skipped.map((x) => `${x.name || '?'} (${t('mixer.screen_skip.' + x.reason)})`).join(', ') }), 'warning');
+    else showToast(t('mixer.toast.on_screens', { n: r.shown.length, name: lead.name }), 'success');
+    return r;
+  } catch (err) { showToast(err.message, 'error'); return null; }
+}
+/** The stream that the selected screens would show, and those screens: a running stream selected together with screens. */
+function screenPlan() {
+  const lead = streams().find((s) => outputs.has(s.id) && s.status.state !== 'off');
+  const ids = state ? state.screens.filter((s) => outputs.has(s.id) && !(lead && (lead.on_screens || []).some((x) => x.id === s.id))).map((s) => s.id) : [];
+  const off = !lead && streams().some((s) => outputs.has(s.id)) && ids.length > 0;
+  return { lead, ids, off };
 }
 
 /** The rest of a scene, once its source is on air: its graphic (or none) and its camera positions. */
@@ -998,6 +1046,7 @@ function bind(root) {
       } catch (err) { showToast(err.message, 'error'); }
     });
   }
+  const ons = root.querySelector('#mxOnScreens'); if (ons) ons.addEventListener('click', async () => { ons.disabled = true; const p = screenPlan(); if (p.lead && p.ids.length) await streamToScreens(p.lead, p.ids); if (alive) draw(root); });
   const none = root.querySelector('#mxNone'); if (none) none.addEventListener('click', () => { outputs = new Set(); draw(root); });
   const tk = root.querySelector('#mxTake'); if (tk) tk.addEventListener('click', () => take(root));
   const keepTx = () => { try { localStorage.setItem('st_mixer_tx', JSON.stringify(tx)); } catch { /* this page only */ } };

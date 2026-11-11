@@ -144,7 +144,7 @@ async function offer() {
   if (offering || !me || !media) return;
   offering = true;
   closeConn(pc);
-  const conn = pc = new RTCPeerConnection({ iceServers: ice });
+  const conn = pc = new RTCPeerConnection({ iceServers: ice, bundlePolicy: 'max-bundle' });
   conn.seq = -1;             // the number the server gives this offer: an answer to any other number is not for this connection
   try {
     for (const t of sendTracks()) conn.addTrack(t, media);
@@ -185,7 +185,7 @@ async function hearCheck() {
 async function offerDesk(id) {
   const had = legs.get(id); if (had && had.busy) return;
   if (had) closeConn(had.pc);
-  const leg = { pc: new RTCPeerConnection({ iceServers: ice }), seq: -1, busy: true }; legs.set(id, leg);
+  const leg = { pc: new RTCPeerConnection({ iceServers: ice, bundlePolicy: 'max-bundle' }), seq: -1, busy: true }; legs.set(id, leg);
   try {
     const conn = leg.pc;
     for (const t of sendTracks()) {
