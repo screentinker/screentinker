@@ -198,7 +198,7 @@ test('a stream\'s audio bed is an audio item of its own workspace, and its level
   const bed = item(A, 'audio/mpeg', true);
   const set = await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, { content_id: bed, level: 0.6, muted: true });
   assert.equal(set.status, 200, set.text);
-  assert.deepEqual({ ...set.body.audio, name: null, mix: null }, { content_id: bed, name: null, level: 0.6, muted: true, mix: null });
+  assert.deepEqual({ ...set.body.audio, name: null, mix: null }, { content_id: bed, name: null, level: 0.6, muted: true, mix: null, pads: [] });
   assert.deepEqual([set.body.audio.mix.bed.level, set.body.audio.mix.bed.muted], [0.6, true]);
   assert.ok((await call('GET', '/api/stream-out', A.jwt)).body.audio_sources.some((a) => a.id === bed));
   assert.doesNotMatch(set.text, /uploads|\.bin/, 'where the file is on disk is not sent');
@@ -209,7 +209,7 @@ test('a stream\'s audio bed is an audio item of its own workspace, and its level
   assert.equal((await call('POST', `/api/stream-out/${A.stream}/audio`, B.jwt, { level: 1 })).status, 404);
   assert.equal((await call('POST', `/api/stream-out/${A.stream}/audio`, V.jwt, { level: 1 })).status, 403);
   const cleared = await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, { content_id: null, muted: false });
-  assert.deepEqual({ ...cleared.body.audio, mix: null }, { content_id: null, name: null, level: 0.6, muted: false, mix: null });
+  assert.deepEqual({ ...cleared.body.audio, mix: null }, { content_id: null, name: null, level: 0.6, muted: false, mix: null, pads: [] });
   // The four strips, one at a time or together; nothing but a real strip, a level in range, and a
   // sound input that is on this server.
   const strips = await call('POST', `/api/stream-out/${A.stream}/audio`, A.jwt, { strips: [{ strip: 'master', level: 0.8 }, { strip: 'programme', muted: true }, { strip: 'line', level: 1.2 }] });
@@ -299,7 +299,7 @@ test('sound inputs are read from the system\'s own list, and settings are made s
     '00-03: HDMI 0 : HDMI 0 : playback 1\n02-00: USB Audio : USB Audio : playback 1 : capture 1\n'), [{ device: 'plughw:2,0', channels: 2, name: 'USB AUDIO CODEC: USB Audio' }]);
   assert.deepEqual(audio.parseCapture('', ''), []);
   const s = audio.cleanSettings({ line: { device: 'hw:0; rm -rf /', level: 99, eq: { low: 'x', mid: -50 }, gate: 7, denoise: -1 }, master: { muted: 1, level: -3, comp: 1 }, extra: { level: 1 }, net: { url: 'file:///etc/passwd' } });
-  assert.deepEqual(Object.keys(s).sort(), ['bed', 'console', 'fx', 'line', 'master', 'mic', 'net', 'net2', 'programme']);
+  assert.deepEqual(Object.keys(s).sort(), ['bed', 'console', 'fx', 'guest', 'line', 'master', 'mic', 'net', 'net2', 'pad_list', 'pads', 'programme']);
   assert.deepEqual(s.master, { level: 0, muted: true, eq: { low: 0, mid: 0, high: 0, low_f: 120, lomid: 0, lomid_f: 400, lomid_q: 1, mid_f: 1200, mid_q: 0.9, high_f: 8000 }, comp: 1, cmp: { on: false, thr: -20, ratio: 3, att: 8, rel: 200, gain: 0 } });
   assert.deepEqual(s.line, { level: audio.MAX_LEVEL, muted: false, trim: 0, inv: false, pan: 0, hpf: false, hpf_f: 80, lpf: 0, eq: { low: 0, mid: -12, high: 0, low_f: 120, lomid: 0, lomid_f: 400, lomid_q: 1, mid_f: 1200, mid_q: 0.9, high_f: 8000 }, gate: 1, comp: 0, cmp: { on: false, thr: -20, ratio: 3, att: 8, rel: 200, gain: 0 }, deess: 0, chorus: 0, fx: 0, dly: 0, duck: 0, device: null, denoise: 0, noise: null });
   assert.equal(s.net.url, null);
@@ -991,13 +991,13 @@ test('a renderer started again right after a stop is listened to at once; the st
   G.revoke(out.id);
 });
 
-test('each guest has a volume of their own in the stream: 0 to 1, the operator\'s, and it leaves on air alone', async () => {
+test('each guest has a volume of their own in the stream: 0 to the console\'s maximum, the operator\'s, and it leaves on air alone', async () => {
   const G = require('../lib/mixer-guests');
   const out = { id: 'out-lvl-' + Date.now(), workspace_id: 'ws-lvl' }, t0 = 3_000_000;
   const token = G.invite(out, t0), g = G.join(token, 'Ana', t0).guest;
   assert.equal(G.forRenderer(out.id, '', t0).list[0].level, 1, 'as they arrive, until someone moves their fader');
   assert.equal(G.setLevel(out.id, g.id, 0.25), true); assert.deepEqual([G.forRenderer(out.id, '', t0).list[0].level, G.forDesk(out.id, t0).guests[0].level], [0.25, 0.25]);
-  assert.equal(G.setLevel(out.id, g.id, 7), true); assert.equal(g.level, 1, 'no louder than they arrive');
+  assert.equal(G.setLevel(out.id, g.id, 7), true); assert.equal(g.level, 1.5, 'no louder than any other strip of the console');
   assert.equal(G.setLevel(out.id, g.id, -3), true); assert.equal(g.level, 0);
   assert.equal(G.setLevel(out.id, g.id, 'loud'), false); assert.equal(G.setLevel('other-output', g.id, 0.5), false); assert.equal(g.level, 0);
   G.revoke(out.id);
@@ -1011,4 +1011,83 @@ test('each guest has a volume of their own in the stream: 0 to 1, the operator\'
   const room = (await call('GET', '/api/stream-out/guests', A.jwt)).body.rooms[so.id].guests[0];
   assert.deepEqual([room.level, room.on_air], [0.4, true], 'moving a guest\'s fader does not take them off air');
   await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+});
+
+// ── the sound console: guests as strips, mix-minus, pads, sound on screens ───────────────────────
+const tone = (hz, secs, amp = 0.5) => { const a = require('../lib/stream-audio'); const n = Math.round(a.RATE * secs), b = Buffer.alloc(n * a.FRAME); for (let i = 0; i < n; i++) { const v = Math.round(Math.sin(2 * Math.PI * hz * i / a.RATE) * amp * 32767); b.writeInt16LE(v, i * 4); b.writeInt16LE(v, i * 4 + 2); } return b; };
+const peakOf = (b) => { let p = 0; for (let i = 0; i < b.length; i += 2) p = Math.max(p, Math.abs(b.readInt16LE(i))); return p / 32768; };
+
+test('a guest is a strip of their own: metered in the green room, heard only on air, and never in their own ear', () => {
+  const a = require('../lib/stream-audio');
+  const m = new a.Mix({});
+  let last = null; m.onMix = (out, minus) => { last = { out, minus }; };
+  m.setGuest('g:ana', { on: false }); m.setGuest('g:bo', { on: true });
+  m.guestInput('g:ana'); m.push('g:ana', tone(440, 0.2)); m.guestInput('g:bo'); m.push('g:bo', tone(660, 0.2));
+  m.next(a.RATE / 10 * a.FRAME);
+  assert.ok(m.held['g:ana'] > 0.3, 'backstage, Ana is metered');
+  assert.ok(Math.abs(peakOf(last.out) - 0.5) < 0.05, 'and only Bo, who is on air, is in the mix');
+  assert.ok(peakOf(last.minus.get('g:bo')) < 0.01, 'Bo hears the show without himself (here: nothing else is on)');
+  assert.ok(peakOf(last.minus.get('g:ana')) > 0.4, 'Ana, backstage, hears the show (Bo)');
+  m.setGuest('g:ana', { on: true, hear: false }); m.push('g:ana', tone(440, 0.2)); m.push('g:bo', tone(660, 0.2)); m.next(a.RATE / 10 * a.FRAME);
+  assert.equal(last.minus.has('g:ana'), false, 'a guest set not to hear the show gets nothing back');
+  assert.ok(peakOf(last.minus.get('g:bo')) > 0.4, 'Bo now hears Ana');
+  m.setGuest('g:bo', { on: true, set: { level: 0 } }); m.push('g:ana', tone(440, 0.2)); m.push('g:bo', tone(660, 0.2)); m.next(a.RATE / 10 * a.FRAME);
+  assert.ok(Math.abs(peakOf(last.out) - 0.5) < 0.05, 'a guest\'s own fader is theirs');
+  m.setGuest('g:bo', null);
+  assert.equal(m.guests['g:bo'], undefined); assert.equal(m.inputs.has('g:bo'), false, 'a guest who leaves takes their strip with them');
+  m.setGuest('not-a-guest', { on: true }); assert.equal(m.guests['not-a-guest'], undefined, 'only g:<id> names are guests');
+});
+
+test('pads: fired, again from the top, stopped with a fade; up to twelve, each an audio item, kept in the mix settings', () => {
+  const a = require('../lib/stream-audio');
+  const set = a.cleanSettings({ pad_list: [{ content_id: 'abc', label: 'Jingle\u0007', level: 9, loop: true }, { content_id: '../etc' }, ...Array(20).fill({ content_id: 'x' })] });
+  assert.equal(set.pad_list.length, a.MAX_PADS);
+  assert.deepEqual(set.pad_list[0], { content_id: 'abc', label: 'Jingle', level: a.MAX_LEVEL, loop: true });
+  assert.equal(set.pad_list[1], null, 'a pad must name an item, not a path');
+  const m = new a.Mix({ pad_list: [{ content_id: 'x', level: 1 }] });
+  assert.equal(m.fire(0, tone(880, 0.5)), true); assert.equal(m.fire(5, tone(880, 0.5)), false, 'an empty pad does nothing');
+  m.next(a.RATE / 10 * a.FRAME); assert.ok(m.held.pads > 0.4); assert.equal(m.sounding().length, 1);
+  m.fire(0, tone(880, 0.5)); assert.equal(m.voices.length, 1, 'fired again it starts again, it does not double');
+  m.hush(); m.next(a.RATE / 10 * a.FRAME); m.next(a.RATE / 10 * a.FRAME);
+  assert.equal(m.voices.length, 0, 'stopped: gone within the fade');
+});
+
+test('the console\'s new keys: only this workspace\'s audio items on pads, nobody else\'s stream, nothing while it is off', async () => {
+  const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Pads', kind: 'record' })).body;
+  const mine = crypto.randomUUID(), theirs = crypto.randomUUID();
+  db.prepare(`INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec) VALUES (?, ?, ?, 'sting.wav', 'sting.wav', 'audio/wav', 10, 1)`).run(mine, A.userId, A.wsId);
+  db.prepare(`INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec) VALUES (?, ?, ?, 'b.wav', 'b.wav', 'audio/wav', 10, 1)`).run(theirs, B.userId, B.wsId);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { pads: [{ content_id: theirs }] })).status, 404, 'another workspace\'s audio item');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { pads: [{ content_id: mine }] })).status, 400, 'an item whose file is not on this server');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { pads: 'x' })).status, 400);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { pads: Array(13).fill(null) })).status, 400);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/pads/0`, A.jwt, { action: 'fire' })).status, 404, 'no sound on that pad');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/pads/stop`, A.jwt)).status, 409, 'the stream is off');
+  for (const [who, code] of [[V, 403], [B, 404], [null, 401]]) {
+    assert.equal((await call('POST', `/api/stream-out/${so.id}/pads/stop`, who && who.jwt)).status, code);
+    assert.equal((await call('POST', `/api/stream-out/${so.id}/screens/sound`, who && who.jwt, { on: true })).status, code);
+  }
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/screens/sound`, A.jwt, { on: 'yes' })).status, 400);
+  const on = await call('POST', `/api/stream-out/${so.id}/screens/sound`, A.jwt, { on: true });
+  assert.equal(on.status, 200); assert.equal(on.body.screens_sound, true);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { strips: [{ strip: 'g:nobody', level: 1 }] })).status, 404, 'a guest who is not here has no strip');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { guest_default_from: 'nobody' })).status, 404);
+  // A guest's strip, kept with the guest: fader to 150%, mute, processing, hearing the show.
+  const tok = (await call('POST', `/api/stream-out/${so.id}/guests/invite`, A.jwt)).body.invite_url.split('/').pop();
+  const j = (await call('POST', `/api/stream-guest/${tok}/join`, null, { name: 'Cy' })).body;
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { strips: [{ strip: 'g:' + j.guest_id, level: 1.5, muted: true, eq: { high: 4 } }] })).status, 200);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}`, A.jwt, { hear: false })).status, 200);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}`, B.jwt, { hear: true })).status, 404);
+  const g = (await call('GET', '/api/stream-out/guests', A.jwt)).body.rooms[so.id].guests[0];
+  assert.deepEqual([g.level, g.muted, g.hear, g.strip.eq.high, g.on_air], [1.5, true, false, 4, false], 'kept, and none of it puts them on air');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { guest_default_from: j.guest_id })).status, 200);
+  assert.equal((await call('GET', '/api/stream-out', A.jwt)).body.outputs.find((o) => o.id === so.id).audio.mix.guest.eq.high, 4, 'new guests start from it');
+  await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+});
+
+test('the renderer\'s sound link answers only its own session\'s key', async () => {
+  const WebSocket = require('ws');
+  const tryKey = (k) => new Promise((resolve) => { const ws = new WebSocket(BASE.replace('http', 'ws') + '/api/stream-render/audio?k=' + encodeURIComponent(k)); ws.on('open', () => { ws.close(); resolve('open'); }); ws.on('unexpected-response', (_q, r) => resolve(r.statusCode)); ws.on('error', () => resolve('error')); });
+  assert.equal(await tryKey('not-a-key'), 404);
+  assert.equal(await tryKey(''), 404);
 });

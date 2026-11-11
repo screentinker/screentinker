@@ -121,7 +121,7 @@ router.get('/', async (req, res) => {
     ffmpeg: a.ffmpeg ? { present: a.ffmpeg.present, licence: a.ffmpeg.licence, version: a.ffmpeg.version } : null,
     kinds: Object.entries(streamOut.KINDS).map(([kind, k]) => ({ kind, label: k.label, needs_url: !k.base && !k.file, file: !!k.file })),
     sizes: streamOut.SIZES.map(([width, height]) => ({ width, height })),
-    max_level: streamOut.MAX_LEVEL,
+    max_level: streamOut.MAX_LEVEL, max_pads: audio.MAX_PADS,
     max_channels: audio.MAX_CHANNELS,
     // What the mixer can take in on this server: sound card inputs, and the programme's own sound
     // (which needs PulseAudio here).
@@ -142,7 +142,7 @@ router.get('/levels', (req, res) => {
   const out = {};
   for (const { id } of db.prepare('SELECT id FROM stream_outputs WHERE workspace_id = ?').all(req.workspaceId)) {
     const st = streamOut.status(id);
-    if (st.state !== 'off') out[id] = { state: st.state, peaks: st.audio_peaks, limiting: st.limiting, inputs_live: st.inputs_live };
+    if (st.state !== 'off') out[id] = { state: st.state, peaks: st.audio_peaks, limiting: st.limiting, inputs_live: st.inputs_live, pads: st.pads || [] };
   }
   res.json({ levels: out });
 });
