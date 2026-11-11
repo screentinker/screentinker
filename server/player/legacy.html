@@ -3013,7 +3013,7 @@ function guestConnect(g, ice, v) {
   video.addEventListener("loadedmetadata", fit);
   video.addEventListener("resize", fit);
   var label = document.createElement("div");
-  label.style.cssText = "position:absolute;left:0;bottom:0;max-width:90%;padding:.35em .8em;background:rgba(11,12,14,.82);color:#fff;font:600 1.6vh/1.2 'Barlow','Helvetica Neue',Arial,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+  label.style.cssText = "position:absolute;left:50%;bottom:3%;-webkit-transform:translateX(-50%);transform:translateX(-50%);max-width:90%;padding:.35em .8em;border-radius:.3em;background:rgba(11,12,14,.82);color:#fff;font:600 1.6vh/1.2 'Barlow','Helvetica Neue',Arial,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
   label.textContent = g.name || "";
   tile.appendChild(video);
   tile.appendChild(label);

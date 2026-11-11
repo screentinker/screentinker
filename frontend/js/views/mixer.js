@@ -769,7 +769,8 @@ async function take(root) {
   const scene = cuedScene();
   if ((!pvw && !scene) || !outputs.size) return;
   if (!pvw) { await applyScene(root, scene); cued = null; if (alive) draw(root); return; }
-  const before = firstOutput();
+  // What is on Program now (a screen showing a stream is live with the stream's source, not its own playlist).
+  const before = onProgram();
   const cutBackTo = before && before.playlist_id && before.playlist_id !== pvw ? before.playlist_id : null;
   const btn = root.querySelector('#mxTake');
   if (btn) btn.disabled = true;
