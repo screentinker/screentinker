@@ -148,6 +148,14 @@ async function offer() {
   conn.seq = -1;             // the number the server gives this offer: an answer to any other number is not for this connection
   try {
     for (const t of sendTracks()) conn.addTrack(t, media);
+    // THE SHOW: the studio sends back what the audience hears, without this guest's own voice. A guest
+    // without a microphone still gets it.
+    if (!media.getAudioTracks().length) conn.addTransceiver('audio', { direction: 'recvonly' });
+    conn.ontrack = (e) => {
+      if (e.track.kind !== 'audio' || pc !== conn) return;
+      const el = $('gsShow'); el.srcObject = new MediaStream([e.track]); el.volume = Number($('gsShowVol').value) / 100;
+      el.play().catch(() => {});
+    };
     conn.onconnectionstatechange = () => {
       if (pc !== conn) return;
       if (conn.connectionState === 'connected') { fails = 0; lostAt = 0; }
@@ -290,7 +298,7 @@ function ended(text, keepMedia) {
   // The camera light goes out when the visit is over; Join opens it again.
   if (cut) { cut.stop(); cut = null; }
   if (!keepMedia && media) { media.getTracks().forEach((t) => { t.onended = null; t.stop(); }); media = null; $('gsVideo').srcObject = null; }
-  $('gsLive').hidden = true; $('gsSetup').hidden = false;
+  $('gsLive').hidden = true; $('gsSetup').hidden = false; $('gsShowRow').hidden = true;
   $('gsView').classList.remove('is-air', 'is-back', 'is-wait'); $('gsTag').textContent = 'Camera check';
   $('gsTitle').textContent = 'Join the broadcast'; $('gsLead').textContent = '';
   say(text);
@@ -319,7 +327,7 @@ $('gsJoin').addEventListener('click', async () => {
     let j;
     try { j = await post('/join', { name: myName }); } catch (e) { say(e.message, true); $('gsJoin').disabled = false; return; }
     me = { guest_id: j.guest_id, key: j.key }; ice = j.ice_servers || []; fails = 0; lostAt = 0;
-    $('gsSetup').hidden = true; $('gsLive').hidden = false; labels();
+    $('gsSetup').hidden = true; $('gsLive').hidden = false; $('gsShowRow').hidden = false; labels();
     show(j); stayAwake();
     if (j.studio) offer();
   } catch (e) { say(mediaError(e), true); }
@@ -337,3 +345,5 @@ else openMedia().catch((e) => say(e && e.name === 'NotAllowedError' ? 'Allow the
 
 // A tall picture (a phone held upright) is shown whole, and the guest is told how to fill the frame.
 { const v = $('gsVideo'), tall = () => { $('gsTurn').hidden = !(v.videoHeight > v.videoWidth); }; v.addEventListener('loadedmetadata', tall); v.addEventListener('resize', tall); }
+// How loud the show is in this guest's ear (theirs alone: it changes nothing for the studio).
+$('gsShowVol').addEventListener('input', () => { $('gsShow').volume = Number($('gsShowVol').value) / 100; });

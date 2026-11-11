@@ -127,6 +127,12 @@ try {
 } catch (e) {
   console.warn('[screen-share] signalling WS not attached:', e && e.message);
 }
+// Stream outputs: the sound link between this server and its own renderer (lib/stream-out.js). Loopback only.
+try {
+  require('./lib/stream-out').attachAudio(server);
+} catch (e) {
+  console.warn('[stream-out] sound link not attached:', e && e.message);
+}
 
 // Middleware
 const helmet = require('helmet');

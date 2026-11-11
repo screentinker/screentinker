@@ -91,11 +91,14 @@ const pub = (r) => ({
   width: r.width, height: r.height, fps: r.fps, bitrate_k: r.bitrate_k, record: !!r.record || !!(streamOut.KINDS[r.kind] && streamOut.KINDS[r.kind].file),
   file_only: !!(streamOut.KINDS[r.kind] && streamOut.KINDS[r.kind].file),
   graphic: !!r.gfx_json,
+  // Whether screens showing it are sent its sound too (POST /:id/screens/sound).
+  screens_sound: !!r.screens_sound,
   // The screens showing this stream's picture right now (POST /:id/screens).
   on_screens: screensOf(r.id),
   // What is keyed over it, so the desk's Program monitor can show it too: the page and its box as fractions of the frame.
   graphic_on: (() => { try { const g = r.gfx_json ? JSON.parse(r.gfx_json) : null; return g && typeof g.uri === 'string' && g.uri.startsWith('/gfx/') ? { uri: g.uri, position: g.position, w: g.width / r.width, h: g.height / r.height } : null; } catch { return null; } })(),
-  audio: { content_id: bedOf(r).id, name: bedOf(r).name, level: mixOf(r).bed.level, muted: mixOf(r).bed.muted, mix: shown(mixOf(r)) },
+  audio: { content_id: bedOf(r).id, name: bedOf(r).name, level: mixOf(r).bed.level, muted: mixOf(r).bed.muted, mix: shown(mixOf(r)),
+    pads: mixOf(r).pad_list.map((p) => (p ? { ...p, name: bedOf({ ...r, audio_content_id: p.content_id }).name } : null)) },
   status: { ...streamOut.status(r.id), last_error: streamOut.lastError(r.id) },
 });
 const mine = (req, id) => {
@@ -266,10 +269,10 @@ async function putOnScreens(r, ids, by) {
     targets.push({ device, workspace });
   }
   if (targets.length) {
-    const out = screenShare.createShare({ targets, sharedBy: r.name, userId: by && by.userId, ip: by && by.ip, audio: false, system: true, streamId: r.id, source: 'stream' });
+    const out = screenShare.createShare({ targets, sharedBy: r.name, userId: by && by.userId, ip: by && by.ip, audio: !!r.screens_sound, system: true, streamId: r.id, source: 'stream' });
     if (out.error) return { status: 409, code: out.error, device_id: out.device_id || null, error: out.error === 'too_many_targets' ? `A stream can be shown on at most ${screenShare.maxTargets()} screens at once.` : 'One of those screens is showing something else that was shared to it.' };
     const legs = out.legs.map((l) => ({ device_id: l.device.id, screen_name: l.device.name || '', session_id: l.session.id, ticket: l.ticket, ice_servers: screenShare.iceServersFor(l.device.id) }));
-    if (!(await streamOut.showOn(r.id, legs, '/api/screen-share/ws'))) {
+    if (!(await streamOut.showOn(r.id, legs, '/api/screen-share/ws', { sound: !!r.screens_sound }))) {
       screenShare.stopShare(out.shareId, 'not_connected');
       return { status: 502, error: 'The stream\'s renderer could not send its picture: ' + (streamOut.shareError(r.id) || 'unknown reason') };
     }
@@ -366,11 +369,17 @@ router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
     for (const k of Object.keys(mix)) delete mix[k];
     Object.assign(mix, next);
   }
-  const stripNames = [...audio.inputNames(mix), 'master'];
+  // ...and 'guest' (what a new guest's strip starts as) and 'g:<guest id>' (a guest's own strip, while they are here).
+  const stripNames = [...audio.inputNames(mix), 'master', 'guest'];
   const strips = Array.isArray(b.strips) ? b.strips : (b.strip !== undefined || b.level !== undefined || b.muted !== undefined ? [{ ...b, strip: b.strip || 'bed' }] : []);
+  const touched = [];
   for (const st of strips) {
-    if (!st || !stripNames.includes(st.strip)) return res.status(400).json({ error: `strip is one of: ${stripNames.join(', ')}` });
-    const target = mix[st.strip];
+    const gm = st && typeof st.strip === 'string' ? /^g:([A-Za-z0-9_-]{1,64})$/.exec(st.strip) : null;
+    const gg = gm ? guests.list(r.id).find((x) => x.id === gm[1]) : null;
+    if (gm && !gg) return res.status(404).json({ error: 'That guest has left.' });
+    if (!st || (!gg && !stripNames.includes(st.strip))) return res.status(400).json({ error: `strip is one of: ${stripNames.join(', ')}, or g:<guest id>` });
+    const target = gg ? { ...mix.guest, ...(gg.strip || {}), level: gg.level, muted: gg.muted } : mix[st.strip];
+    if (gg) touched.push([gg, target]);
     if (st.level !== undefined) {
       const l = Number(st.level);
       if (typeof st.level === 'string' || !Number.isFinite(l) || l < 0 || l > streamOut.MAX_LEVEL) return res.status(400).json({ error: `level is 0 to ${streamOut.MAX_LEVEL}` });
@@ -386,6 +395,29 @@ router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
       if (st.denoise !== undefined) target.denoise = st.denoise;
       if (st.label !== undefined && /^c\d+$/.test(st.strip)) target.label = String(st.label);
     }
+  }
+  // A guest's strip lives as long as they are here (lib/mixer-guests.js), not in the stored mix.
+  for (const [gg, target] of touched) {
+    const { level, muted, ...proc } = target;
+    guests.setLevel(r.id, gg.id, level); guests.setMuted(r.id, gg.id, muted); guests.setStrip(r.id, gg.id, proc);
+  }
+  // "Use for new guests": a guest's processing becomes what every guest who comes in after starts with.
+  if (b.guest_default_from !== undefined) {
+    const gg = guests.list(r.id).find((x) => x.id === b.guest_default_from);
+    if (!gg) return res.status(404).json({ error: 'That guest has left.' });
+    mix.guest = { ...mix.guest, ...(gg.strip || {}), level: mix.guest.level, muted: false };
+  }
+  // The sound pads: [{ content_id, label, level, loop } | null] (at most audio.MAX_PADS). Each is an audio item of this workspace.
+  if (b.pads !== undefined) {
+    if (!Array.isArray(b.pads) || b.pads.length > audio.MAX_PADS) return res.status(400).json({ error: `pads is a list of at most ${audio.MAX_PADS}.` });
+    for (const p of b.pads) {
+      if (p == null) continue;
+      if (typeof p !== 'object' || typeof p.content_id !== 'string') return res.status(400).json({ error: 'Each pad is { content_id, label, level, loop } or null.' });
+      const it = bedOf({ ...r, audio_content_id: p.content_id });
+      if (!it.id) return res.status(404).json({ error: 'That audio item is not in this workspace.' });
+      if (!it.file) return res.status(400).json({ error: 'That audio file is not stored on this server, so it cannot be played here.' });
+    }
+    mix.pad_list = b.pads;
   }
   for (const n of ['net', 'net2']) {
     const field = n + '_url';
@@ -419,6 +451,37 @@ router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
   const now = mine(req, r.id);
   streamOut.setAudio(r.id, audioOf(now));
   res.json(pub(now));
+});
+
+// A sound pad: fired (from the top, again if it is sounding) or stopped. { action: 'fire' | 'stop' }. /pads/stop stops them all.
+router.post('/:id/pads/stop', gate, requireFleetWrite, (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'Stream not found' });
+  if (!streamOut.stopPads(r.id)) return res.status(409).json({ error: 'The stream is off.', code: 'off' });
+  res.json({ success: true });
+});
+router.post('/:id/pads/:n', gate, requireFleetWrite, async (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'Stream not found' });
+  const n = Number(req.params.n), pad = Number.isInteger(n) ? mixOf(r).pad_list[n] : null;
+  if (!pad) return res.status(404).json({ error: 'No sound on that pad.' });
+  if ((req.body || {}).action === 'stop') { if (!streamOut.stopPads(r.id, n)) return res.status(409).json({ error: 'The stream is off.', code: 'off' }); return res.json({ success: true }); }
+  const it = bedOf({ ...r, audio_content_id: pad.content_id });
+  if (!it.file) return res.status(400).json({ error: 'That pad\'s audio item is no longer here.' });
+  const out = await streamOut.firePad(r.id, n, it.file);
+  if (out.error === 'off') return res.status(409).json({ error: 'Put the stream on standby or live to play pads.', code: 'off' });
+  if (out.error) return res.status(400).json({ error: 'That audio file could not be read.' });
+  res.json({ success: true });
+});
+// Whether screens showing this stream get its sound as well as its picture. Those showing it now are given it again with the change.
+router.post('/:id/screens/sound', gate, requireFleetWrite, (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'Stream not found' });
+  if (typeof (req.body || {}).on !== 'boolean') return res.status(400).json({ error: 'on: true or false' });
+  db.prepare('UPDATE stream_outputs SET screens_sound = ? WHERE id = ?').run(req.body.on ? 1 : 0, r.id);
+  // The followers stay; their sessions end and the next pass (reconcile) shows the stream again, as it now is.
+  for (const s of onScreens(r.id)) screenShare.endSession(s, 'stopped_by_owner', req.user && req.user.id);
+  res.json(pub(mine(req, r.id)));
 });
 
 // The desk's microphone, a piece at a time: { chunk: base64 of the browser's recording, first: true on a new one },
@@ -480,7 +543,11 @@ router.post('/:id/guests/:gid', gate, requireFleetWrite, (req, res) => {
   if (typeof b.cut === 'boolean' && !guests.setCut(r.id, req.params.gid, b.cut)) return res.status(404).json({ error: 'That guest has left.' });
   // Their own volume in the stream, likewise.
   if (typeof b.level === 'number' && !guests.setLevel(r.id, req.params.gid, b.level)) return res.status(404).json({ error: 'That guest has left.' });
-  if (typeof b.on_air === 'boolean' || (typeof b.cut !== 'boolean' && typeof b.level !== 'number')) {
+  // Their strip's mute, and whether they hear the show (without their own voice) on their page.
+  if (typeof b.muted === 'boolean' && !guests.setMuted(r.id, req.params.gid, b.muted)) return res.status(404).json({ error: 'That guest has left.' });
+  if (typeof b.hear === 'boolean' && !guests.setHear(r.id, req.params.gid, b.hear)) return res.status(404).json({ error: 'That guest has left.' });
+  const other = ['cut', 'muted', 'hear'].some((k) => typeof b[k] === 'boolean') || typeof b.level === 'number';
+  if (typeof b.on_air === 'boolean' || !other) {
     const x = guests.setOnAir(r.id, req.params.gid, b.on_air === true);
     if (!x.ok) return res.status(x.status).json({ error: x.error });
   }

@@ -22,6 +22,16 @@
  *   net, net2   a network feed: SRT, RTMP, RTSP, RTP or UDP, or an HTTP audio stream. This is how a
  *               remote contributor, a wireless link's receiver, an AES67/RTP source or another
  *               studio comes in.
+ *   pads        the sound pads: short audio items (a jingle, a sting, applause) fired from the desk,
+ *               several at once if need be, each with its own level; the strip is their sum.
+ *   g:<id>      each guest of the stream (lib/mixer-guests.js), a strip of their own, made when their
+ *               sound first arrives from the renderer (lib/stream-out.js, the renderer's audio link)
+ *               and gone when they leave. Heard only while the guest is on air; metered always, so
+ *               the desk sees a guest in the green room speaking. New guests start from the `guest`
+ *               settings (the operator's "use for new guests").
+ *
+ * What goes back: the mix itself (to screens showing the stream), and for each guest who is to hear
+ * the show, the mix without their own voice (a mix-minus: nobody hears themselves come back late).
  *
  * Every input strip has the processing a desk channel has (lib/stream-dsp.js): noise floor
  * subtraction (a room's steady noise, air handling, hum, hiss, taken out by frequency, from a
@@ -43,11 +53,14 @@ const RATE = 44100;
 const FRAME = 4;                 // bytes per stereo 16-bit sample
 const SECOND = RATE * FRAME;
 const MAX_LEVEL = 1.5;
-const INPUTS = ['programme', 'bed', 'mic', 'line', 'net', 'net2'];
+const INPUTS = ['programme', 'bed', 'mic', 'line', 'net', 'net2'];   // each started from its settings (lib/stream-out.js)
+const STRIPS = [...INPUTS, 'pads'];                                    // ...and the pads, fed from here
+const MAX_PADS = 12;
+const isGuestStrip = (name) => typeof name === 'string' && /^g:[A-Za-z0-9_-]{1,64}$/.test(name);
 const MAX_CHANNELS = 32;
 const channelNames = (count) => Array.from({ length: Math.max(0, Math.min(MAX_CHANNELS, count | 0)) }, (_, i) => 'c' + (i + 1));
 /** Every input strip of a mix with these settings, in desk order: the fixed inputs, then the console's channels. */
-const inputNames = (settings) => [...INPUTS, ...channelNames(settings && settings.console ? settings.console.count : 0)];
+const inputNames = (settings) => [...STRIPS, ...channelNames(settings && settings.console ? settings.console.count : 0)];
 const NET_SCHEMES = ['srt:', 'rtmp:', 'rtmps:', 'rtsp:', 'rtsps:', 'rtp:', 'udp:', 'http:', 'https:'];
 
 const level = (v, dflt) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(MAX_LEVEL, n)) : dflt; };
@@ -80,6 +93,11 @@ function cleanSettings(s) {
     out[name].noise = x[name] && dsp.isPrint(x[name].noise) ? x[name].noise : null;   // the learned noise print, packed
   }
   for (const name of ['net', 'net2']) out[name].url = netUrl(x[name] && x[name].url);
+  // What a new guest's strip starts as.
+  out.guest = { ...strip(x.guest), denoise: unit(x.guest && x.guest.denoise), noise: null };
+  // The pads: which audio item each is, what it is called, its own level, whether it loops.
+  out.pad_list = (Array.isArray(x.pad_list) ? x.pad_list : []).slice(0, MAX_PADS).map((p) => (p && typeof p === 'object' && typeof p.content_id === 'string' && /^[0-9A-Za-z_-]{1,64}$/.test(p.content_id)
+    ? { content_id: p.content_id, label: typeof p.label === 'string' ? p.label.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 24) : '', level: level(p.level, 1), loop: p.loop === true } : null));
   const m = x.master && typeof x.master === 'object' ? x.master : {};
   const mp = dsp.cleanProcessing(m);
   out.master = { level: level(m.level, 1), muted: !!m.muted, eq: mp.eq, comp: mp.comp, cmp: mp.cmp };
@@ -103,9 +121,50 @@ class Mix {
     // so a desk that looks a few times a second still sees every peak.
     this.held = Object.fromEntries([...INPUTS, 'master'].map((n) => [n, 0]));
     this.limiting = 0;           // dB the limiter is holding back right now
+    this.guests = {};            // 'g:<id>' -> { set (strip settings), on (on air), hear (gets a mix-minus) }
+    this.voices = [];            // the pads that are sounding: { pad, pcm, pos, gain, loop, fade }
+    this.onMix = null;           // (mix Buffer, Map(guest strip -> its mix-minus Buffer)) after each block, when set
   }
 
   setSettings(s) { this.settings = cleanSettings(s); }
+
+  /** A guest's strip: its settings, whether they are on air, whether they hear the show. Null removes it. */
+  setGuest(name, g) {
+    if (!isGuestStrip(name)) return;
+    if (!g) { delete this.guests[name]; this.detach(name); delete this.strips[name]; delete this.denoisers[name]; delete this.peaks[name]; delete this.held[name]; return; }
+    const was = this.guests[name];
+    const from = g.set || this.settings.guest;
+    this.guests[name] = { set: { ...strip(from), denoise: unit(from && from.denoise), noise: null }, on: !!g.on, hear: g.hear !== false };
+    if (!was) { this.peaks[name] = 0; this.held[name] = 0; }
+  }
+  guestInput(name) { return this.inputs.get(name) || (isGuestStrip(name) ? this.open(name, { live: true }) : null); }
+
+  /** Fires pad `n` with its sound (16-bit stereo PCM at RATE). Again while it sounds: from the top. */
+  fire(n, pcm) {
+    const p = this.settings.pad_list[n];
+    if (!p || !pcm || !pcm.length) return false;
+    this.voices = this.voices.filter((v) => v.pad !== n);
+    this.voices.push({ pad: n, pcm, pos: 0, loop: p.loop, fade: 0 });
+    return true;
+  }
+  /** Stops pad `n` (or every pad), with a short fade so nothing clicks. */
+  hush(n = null) { for (const v of this.voices) if (n == null || v.pad === n) v.fade = v.fade || 1; }
+  sounding() { return this.voices.filter((v) => !v.fade).map((v) => ({ pad: v.pad, at: v.pos / v.pcm.length })); }
+  _pads(buf) {
+    const keep = [], step = 1 / (RATE * 2 * 0.15);       // a stopped pad fades out over 150 ms
+    for (const v of this.voices) {
+      const p = this.settings.pad_list[v.pad], gain = p ? p.level : 0;
+      let done = !p;
+      for (let i = 0; i < buf.length && !done; i++) {
+        if (v.pos >= v.pcm.length) { if (v.loop && !v.fade) v.pos = 0; else { done = true; break; } }
+        let g = gain;
+        if (v.fade) { g *= v.fade; v.fade -= step; if (v.fade <= 0) { done = true; break; } }
+        buf[i] += (v.pcm.readInt16LE(v.pos) / 32768) * g; v.pos += 2;
+      }
+      if (!done) keep.push(v);
+    }
+    this.voices = keep;
+  }
 
   /**
    * Attach an input's PCM stream. `live` inputs (everything but the bed) are happening now: when
@@ -158,41 +217,49 @@ class Mix {
     // come back when the talking stops: quick down, slow up.
     const secs = len / 2 / RATE, was = this.ducked;
     this.ducked = this.talk > 0.02 ? Math.min(1, was + secs / 0.08) : Math.max(0, was - secs / 0.9);
-    for (const name of inputNames(this.settings)) {
-      const input = this.inputs.get(name);
-      if (!input) { this.peaks[name] = 0; continue; }
-      const set = this.settings[name];
+    const contrib = new Map();         // guest strip -> what it put into the sum (for the mix-minus)
+    for (const name of [...inputNames(this.settings), ...Object.keys(this.guests)]) {
+      const guest = this.guests[name] || null;
+      const input = name === 'pads' ? null : this.inputs.get(name);
+      if (name === 'pads' ? !this.voices.length : !input) { this.peaks[name] = 0; continue; }
+      const set = guest ? guest.set : this.settings[name];
       // Always taken from the queue, muted or not: a muted input must still be at "now" when it is opened.
       const buf = new Float32Array(len);
       let at = 0;
-      while (at < len && input.q.length) {
+      if (name === 'pads') this._pads(buf);
+      else while (at < len && input.q.length) {
         const head = input.q[0], take = Math.min(head.length, (len - at) * 2);
         for (let i = 0; i < take; i += 2) buf[at + i / 2] = head.readInt16LE(i) / 32768;
         at += take / 2; input.bytes -= take;
         if (take === head.length) input.q.shift(); else input.q[0] = head.subarray(take);
       }
-      if (!input.live && input.stream && input.bytes < SECOND / 2 && input.stream.isPaused && input.stream.isPaused()) input.stream.resume();
+      if (input && !input.live && input.stream && input.bytes < SECOND / 2 && input.stream.isPaused && input.stream.isPaused()) input.stream.resume();
       const dn = this._dn(name);
       dn.setPrint(set.noise); dn.run(buf, set.denoise);
       (this.strips[name] || (this.strips[name] = new dsp.Strip())).run(buf, set);
+      // A guest in the green room is metered (the desk sees them speak) but not heard.
       const gain = set.muted ? 0 : set.level;
+      const heard = guest && !guest.on ? 0 : gain;
       let peak = 0;
-      if (gain !== 0) {
+      if (heard === 0 && gain !== 0) { for (let i = 0; i < len; i++) { const m = Math.abs(buf[i] * gain); if (m > peak) peak = m; } }
+      if (heard !== 0) {
+        const mine = guest ? new Float32Array(len) : null;
         const fx = set.fx, dly = set.dly;
         const gl = gain * (set.pan > 0 ? 1 - set.pan : 1), gr = gain * (set.pan < 0 ? 1 + set.pan : 1);
         // A ducked strip's gain moves across the block from where ducking was to where it is now: no steps to hear.
         const d0 = set.duck ? dsp.dbToLin(-24 * set.duck * was) : 1, d1 = set.duck ? dsp.dbToLin(-24 * set.duck * this.ducked) : 1;
         for (let i = 0; i < len; i++) {
-          const v = buf[i] * ((i & 1) ? gr : gl) * (d0 + (d1 - d0) * (i / len)); sum[i] += v;
+          const v = buf[i] * ((i & 1) ? gr : gl) * (d0 + (d1 - d0) * (i / len)); sum[i] += v; if (mine) mine[i] = v;
           const m = v < 0 ? -v : v; if (m > peak) peak = m;
           if (fx) send[i] += v * fx;
           if (dly) send2[i] += v * dly;
         }
+        if (mine) contrib.set(name, mine);
         if (fx && peak > 0) sending = true;
         if (dly && peak > 0) echoing = true;
       }
       this.peaks[name] = Math.min(1, peak);
-      if (!set.duck && name !== 'programme' && name !== 'bed' && peak > talk) talk = peak;
+      if (!set.duck && name !== 'programme' && name !== 'bed' && name !== 'pads' && heard !== 0 && peak > talk) talk = peak;
     }
     this.talk = talk;
     this.reverb.run(send, sum, this.settings.fx.decay, sending);
@@ -201,6 +268,14 @@ class Mix {
     this.masterEq.run(sum, { hpf: false, eq: master.eq, gate: 0, comp: master.comp, cmp: master.cmp, fx: 0 });
     const mg = master.muted ? 0 : master.level;
     if (mg !== 1) for (let i = 0; i < len; i++) sum[i] *= mg;
+    // Each guest who hears the show: the mix as it is now, less what they put into it. Soft-limited on its own.
+    const minus = new Map();
+    if (this.onMix) for (const [name, g] of Object.entries(this.guests)) {
+      if (!g.hear) continue;
+      const mine = contrib.get(name), b = Buffer.alloc(n);
+      for (let i = 0; i < len; i++) { let v = sum[i] - (mine ? mine[i] * mg : 0); if (v > 0.9) v = 0.9 + 0.1 * Math.tanh((v - 0.9) / 0.1); else if (v < -0.9) v = -0.9 - 0.1 * Math.tanh((-v - 0.9) / 0.1); b.writeInt16LE(Math.round(v * 32767), i * 2); }
+      minus.set(name, b);
+    }
     this.limiter.run(sum);                             // loud is held under full scale; it never wraps
     this.limiting = this.limiter.reduction;
     const out = Buffer.alloc(n);
@@ -212,6 +287,7 @@ class Mix {
       const m = v < 0 ? -v : v; if (m > peak) peak = m;
     }
     this.peaks.master = peak / 32768;
+    if (this.onMix) { try { this.onMix(out, minus); } catch { /* a listener's trouble is not the mix's */ } }
     const fall = Math.pow(10, -(len / 2 / RATE));          // 20 dB a second
     for (const k in this.peaks) { const h = (this.held[k] || 0) * fall; this.held[k] = this.peaks[k] > h ? this.peaks[k] : (h < 1e-5 ? 0 : h); }
     return out;
@@ -318,4 +394,4 @@ async function createSink(id) {
 }
 function removeSink(sink) { if (sink && /^\d+$/.test(sink.module)) run('pactl', ['unload-module', sink.module]); }
 
-module.exports = { MAX_CHANNELS, channelNames, inputNames, consoleArgs, splitChannels, captureChannels, RATE, FRAME, SECOND, MAX_LEVEL, INPUTS, NET_SCHEMES, Mix, cleanSettings, netUrl, maskUrl, netArgs, bedArgs, lineArgs, programmeArgs, micArgs, micDecoder, decoder, parseCapture, captureDevices, pulse, createSink, removeSink };
+module.exports = { MAX_PADS, STRIPS, isGuestStrip, MAX_CHANNELS, channelNames, inputNames, consoleArgs, splitChannels, captureChannels, RATE, FRAME, SECOND, MAX_LEVEL, INPUTS, NET_SCHEMES, Mix, cleanSettings, netUrl, maskUrl, netArgs, bedArgs, lineArgs, programmeArgs, micArgs, micDecoder, decoder, parseCapture, captureDevices, pulse, createSink, removeSink };

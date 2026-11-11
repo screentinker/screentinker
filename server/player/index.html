@@ -3299,6 +3299,7 @@
     function guestDrop(id) {
       var c = guestConns[id]; if (!c) return;
       delete guestConns[id];
+      if (window.__stAudio) { try { window.__stAudio.drop(id); } catch (e) {} }
       try { c.pc.close(); } catch (e) {}
       guestKeyStop(c);
       try { c.video.srcObject = null; c.tile.remove(); } catch (e) {}
@@ -3413,7 +3414,14 @@
       var c = guestConns[g.id] = { seq: g.seq, pc: pc, video: video, tile: tile, label: label, onAir: false };
       var stream = new MediaStream();
       video.srcObject = stream;
-      pc.ontrack = function (e) { try { stream.addTrack(e.track); video.play().catch(function () {}); } catch (err) {} };
+      pc.ontrack = function (e) {
+        try { stream.addTrack(e.track); video.play().catch(function () {}); } catch (err) {}
+        // The server's renderer only (window.__stAudio, lib/stream-out.js): the guest's sound goes to the stream's
+        // console as a strip of its own, and the show comes back to them on this connection.
+        if (e.track && e.track.kind === 'audio' && window.__stAudio) {
+          try { if (e.transceiver) e.transceiver.direction = 'sendrecv'; window.__stAudio.guest(g.id, e.track, e.transceiver ? e.transceiver.sender : null); } catch (err) {}
+        }
+      };
       pc.onconnectionstatechange = function () {
         if (guestConns[g.id] !== c) return;
         guestPost(v, { guest_id: g.id, state: pc.connectionState });
@@ -3462,12 +3470,15 @@
       // Full screen is the guests instead of the programme, unless they are all cut out: then they stand in it.
       var allCut = air.length > 0; for (i = 0; i < air.length; i++) if (!air[i].cut) allCut = false;
       if (layer) layer.style.background = gs && gs.layout === 'grid' && air.length && !allCut ? '#000' : 'transparent';
+      // With the renderer's sound link up, a guest's sound is mixed on the server's console and never played here.
+      var linked = false; try { linked = !!(window.__stAudio && window.__stAudio.active()); } catch (e) {}
       for (id in guestConns) {
         c = guestConns[id]; i = air.indexOf(c);
         if (i < 0) { c.tile.style.display = 'none'; if (!c.video.muted) c.video.muted = true; guestKeyStop(c); continue; }
+        if (c.tile.style.display === 'block' && c.video.muted !== linked) c.video.muted = linked;
         if (c.cut) guestKeyStart(c); else guestKeyStop(c);
         c.tile.style.left = rects[i][0] + '%'; c.tile.style.top = rects[i][1] + '%'; c.tile.style.width = rects[i][2] + '%'; c.tile.style.height = rects[i][3] + '%';
-        if (c.tile.style.display !== 'block') { c.tile.style.display = 'block'; c.video.muted = false; c.video.play().catch(function () {}); }
+        if (c.tile.style.display !== 'block') { c.tile.style.display = 'block'; c.video.muted = linked; c.video.play().catch(function () {}); }
       }
       // A still of each guest for the operator's desk, every two seconds.
       if (Date.now() - guestThumbAt > 2000) {

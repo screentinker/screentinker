@@ -1648,6 +1648,7 @@ const migrations = [
   // A stream the operator had running comes back on standby after a restart, with its screens: routes/stream-out.js.
   "ALTER TABLE stream_outputs ADD COLUMN resume_state TEXT",
   "ALTER TABLE stream_outputs ADD COLUMN screens_json TEXT",
+  "ALTER TABLE stream_outputs ADD COLUMN screens_sound INTEGER NOT NULL DEFAULT 0",
 
   /*
    * What an ACTIVE SCHEDULE is currently imposing, kept apart from what the device is normally on.

@@ -47,6 +47,7 @@ const LAYOUTS = ['pip', 'side', 'grid'];
 const MAX_DESKS = 2;                        // desks one guest sends a picture to
 // A desk in a background tab asks less often (the browser slows its timers): 30 s is well over that.
 const DESK_GONE_MS = 30000;
+const MAX_LEVEL = 1.5;                       // a guest's fader goes as high as the console's other strips
 
 const invites = new Map();                  // token -> { outputId, workspaceId, until }
 const byOutput = new Map();                 // outputId -> token
@@ -126,7 +127,10 @@ function join(token, name, now = Date.now()) {
   if (of(inv.outputId).length >= MAX_GUESTS) return { status: 409, error: 'The green room is full.' };
   const g = { id: crypto.randomUUID(), key: crypto.randomBytes(24).toString('base64url'), outputId: inv.outputId, workspaceId: inv.workspaceId,
     name: cleanName(name) || `Guest ${of(inv.outputId).length + 1}`, offer: null, seq: 0, answer: null, answerSeq: 0, onAir: false,
-    joinedAt: now, seenAt: now, thumb: null, state: 'new', legs: new Map(), green: false, cut: null, level: 1 };
+    joinedAt: now, seenAt: now, thumb: null, state: 'new', legs: new Map(), green: false, cut: null, level: 1,
+    // Their strip on the stream's sound console (lib/stream-audio.js): fader and mute above; the processing
+    // the operator gave them (null: as new guests start); whether they hear the show (a mix without their own voice).
+    muted: false, strip: null, hear: true };
   guests.set(g.id, g);
   return { guest: g };
 }
@@ -211,7 +215,7 @@ function forDesk(outputId, now = Date.now(), deskId = null) {
   const tok = inviteOf(outputId);
   return { invite: tok, expires_at: tok ? invites.get(tok).until : null, layout: layouts.get(outputId) || 'pip', layouts: LAYOUTS, max_on_air: MAX_ON_AIR, live,
     guests: of(outputId).map((g) => {
-      const out = { id: g.id, name: g.name, on_air: g.onAir, state: g.state, thumb: g.thumb, joined_at: g.joinedAt, green: g.green, cut: cutOf(g), level: g.level };
+      const out = { id: g.id, name: g.name, on_air: g.onAir, state: g.state, thumb: g.thumb, joined_at: g.joinedAt, green: g.green, cut: cutOf(g), level: g.level, muted: g.muted, hear: g.hear, strip: g.strip };
       // This desk's own connection to the guest: the offer to answer, until it has been answered.
       const leg = live ? g.legs.get(deskId) : null;
       if (leg && leg.offer) { out.leg_seq = leg.seq; if (!(leg.answer && leg.answerSeq === leg.seq)) out.leg_offer = leg.offer; }
@@ -234,7 +238,12 @@ function setOnAir(outputId, id, on) {
 const cutOf = (g) => (g.cut == null ? !!g.green : !!g.cut);
 function setGreen(g, on) { g.green = on === true; }
 /** How loud this guest is in the stream, 0 (silent) to 1 (as they arrive). Each guest has their own. */
-function setLevel(outputId, id, level) { const g = guests.get(String(id || '')); const v = Number(level); if (!g || g.outputId !== outputId || !Number.isFinite(v)) return false; g.level = Math.max(0, Math.min(1, Math.round(v * 100) / 100)); return true; }
+function setLevel(outputId, id, level) { const g = guests.get(String(id || '')); const v = Number(level); if (!g || g.outputId !== outputId || !Number.isFinite(v)) return false; g.level = Math.max(0, Math.min(MAX_LEVEL, Math.round(v * 100) / 100)); return true; }
+const mineOf = (outputId, id) => { const g = guests.get(String(id || '')); return g && g.outputId === outputId ? g : null; };
+function setMuted(outputId, id, on) { const g = mineOf(outputId, id); if (!g) return false; g.muted = on === true; return true; }
+function setHear(outputId, id, on) { const g = mineOf(outputId, id); if (!g) return false; g.hear = on === true; return true; }
+/** The processing of a guest's strip (EQ, compressor, ...), as the console's strips take it; null puts back what new guests get. */
+function setStrip(outputId, id, set) { const g = mineOf(outputId, id); if (!g || (set !== null && (typeof set !== 'object' || Array.isArray(set)))) return false; g.strip = set; return true; }
 function setCut(outputId, id, on) { const g = guests.get(String(id || '')); if (!g || g.outputId !== outputId) return false; g.cut = on === true; return true; }
 function remove(outputId, id, now = Date.now()) { const g = guests.get(String(id || '')); if (!g || g.outputId !== outputId) return false; guests.delete(g.id); removed.set(g.id, now); return true; }
 /** Whether the operator removed this guest (as opposed to the server having lost track of them). */
@@ -245,4 +254,4 @@ function setLayout(outputId, layout) { if (!LAYOUTS.includes(layout)) return fal
 function rendererBack(outputId) { hush.delete(outputId); }
 function rendererGone(outputId, now = Date.now()) { hush.set(outputId, now + 5000); for (const g of of(outputId)) { g.onAir = false; g.offer = null; g.answer = null; g.thumb = null; g.state = 'waiting'; g.seq += 1; } }
 
-module.exports = { MAX_GUESTS, MAX_ON_AIR, MAX_DESKS, LAYOUTS, deskSeen, setDeskOffer, fromDesk, restore, mayOffer, wasRemoved, sdpOk, setGreen, setCut, setLevel, invite, revoke, inviteOf, invited, join, who, setOffer, stateFor, leave, forRenderer, fromRenderer, forDesk, setOnAir, remove, setLayout, rendererGone, rendererBack, sweep, _guests: guests };
+module.exports = { MAX_GUESTS, MAX_ON_AIR, MAX_DESKS, LAYOUTS, deskSeen, setDeskOffer, fromDesk, restore, mayOffer, wasRemoved, sdpOk, setGreen, setCut, setLevel, invite, revoke, inviteOf, invited, join, who, setOffer, stateFor, leave, forRenderer, fromRenderer, forDesk, setOnAir, remove, setLayout, rendererGone, rendererBack, sweep, setMuted, setHear, setStrip, list: (outputId) => of(outputId), _guests: guests };

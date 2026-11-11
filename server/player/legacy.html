@@ -2865,6 +2865,12 @@ function guestDrop(id) {
   var c = guestConns[id];
   if (!c) return;
   delete guestConns[id];
+  if (window.__stAudio) {
+    try {
+      window.__stAudio.drop(id);
+    } catch (e) {
+    }
+  }
   try {
     c.pc.close();
   } catch (e) {
@@ -3029,6 +3035,13 @@ function guestConnect(g, ice, v) {
       });
     } catch (err) {
     }
+    if (e.track && e.track.kind === "audio" && window.__stAudio) {
+      try {
+        if (e.transceiver) e.transceiver.direction = "sendrecv";
+        window.__stAudio.guest(g.id, e.track, e.transceiver ? e.transceiver.sender : null);
+      } catch (err) {
+      }
+    }
   };
   pc.onconnectionstatechange = function() {
     if (guestConns[g.id] !== c) return;
@@ -3104,6 +3117,11 @@ function guestSync(gs, v) {
   var allCut = air.length > 0;
   for (i = 0; i < air.length; i++) if (!air[i].cut) allCut = false;
   if (layer) layer.style.background = gs && gs.layout === "grid" && air.length && !allCut ? "#000" : "transparent";
+  var linked = false;
+  try {
+    linked = !!(window.__stAudio && window.__stAudio.active());
+  } catch (e) {
+  }
   for (id in guestConns) {
     c = guestConns[id];
     i = air.indexOf(c);
@@ -3113,6 +3131,7 @@ function guestSync(gs, v) {
       guestKeyStop(c);
       continue;
     }
+    if (c.tile.style.display === "block" && c.video.muted !== linked) c.video.muted = linked;
     if (c.cut) guestKeyStart(c);
     else guestKeyStop(c);
     c.tile.style.left = rects[i][0] + "%";
@@ -3121,7 +3140,7 @@ function guestSync(gs, v) {
     c.tile.style.height = rects[i][3] + "%";
     if (c.tile.style.display !== "block") {
       c.tile.style.display = "block";
-      c.video.muted = false;
+      c.video.muted = linked;
       c.video.play().catch(function() {
       });
     }

@@ -29,6 +29,8 @@
     .gs-cut { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 14px; font-weight: 600; cursor: pointer; }
     .gs-cut span { font-weight: 400; color: #a3a8b3; }
     .gs-cut input { width: 18px; height: 18px; }
+    .gs-show { display: grid; gap: 6px; margin-top: 14px; font-size: 13px; font-weight: 600; }
+    .gs-show input { width: 100%; }
     .gs-cut-note { min-height: 1.2em; margin: 6px 0 0; font-size: 13px; color: #f5a623; }
     .gs-turn { margin: 8px 0 0; font-size: 13px; color: #f5a623; }
     .gs-view.is-wait { border-color: #5b6470; }
@@ -65,6 +67,7 @@
       <button type="button" class="btn btn-secondary" id="gsCamOff">Turn camera off</button>
       <button type="button" class="btn btn-secondary" id="gsLeave">Leave</button>
     </div>
+    <label class="gs-show" id="gsShowRow" hidden>The show in your ear (without your own voice)<input type="range" id="gsShowVol" min="0" max="100" value="70"><audio id="gsShow" autoplay></audio></label>
     <div class="gs-grid">
       <label>Camera<select class="input" id="gsCam"></select></label>
       <label>Microphone<select class="input" id="gsMic"></select></label>

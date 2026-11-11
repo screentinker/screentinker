@@ -31,6 +31,7 @@
 const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const config = require('../config');
 
 // The extension the renderer captures its own tab with (showOn). Its id follows from the key in its manifest.
@@ -249,6 +250,7 @@ function status(id) {
   if (!s) return { state: 'off' };
   return { state: s.state, since: s.since, frames: s.sent, error: s.error || null, audio_peak: Math.round(s.mix.held.master * 1e4) / 1e4,
     audio_peaks: Object.fromEntries(Object.entries(s.mix.held).map(([k, v]) => [k, Math.round(v * 1e4) / 1e4])), programme_audio: !!s.sink,
+    pads: s.mix.sounding(), sound_link: !!(s.audioWs && s.audioWs.readyState === 1),
     limiting: Math.round(s.mix.limiting * 10) / 10, inputs_live: Object.keys(s.inputs),
     capture: s.display ? 'display' : 'screencast', share_error: s.shareError || null,
     recording: s.recFile ? path.basename(s.recFile) : null, record_skipped: !!s.recSkipped };
@@ -391,6 +393,7 @@ async function start(row, key, sound, { standby = false } = {}) {
   const s = { id: row.id, row, key, state: 'starting', since: Date.now(), sent: 0, last: null, wanted: true, retries: 0, error: null,
     mix: new audio.Mix(sound && sound.settings), bedFile: (sound && sound.file) || null, inputs: {}, inputKeys: {}, inputTimers: {}, sink: null };
   sessions.set(row.id, s);
+  s.audioKey = crypto.randomBytes(24).toString('base64url'); audioLinks.set(s.audioKey, s);
   // Stopped while still starting (stop() closed what there was then): what has been made since is closed here.
   const late = async () => {
     if (s.wanted) return false;
@@ -432,6 +435,8 @@ async function start(row, key, sound, { standby = false } = {}) {
     if (!shown) await page.setViewport({ width: row.width, height: row.height });
     // A quick Stop and Start: the stopped renderer is closed by now, so what this one says is not to be ignored.
     try { require('./mixer-guests').rendererBack(row.id); } catch { /* no guests */ }
+    // The renderer's sound link (below): what it needs to find it, before the page's own scripts run.
+    await page.evaluateOnNewDocument(AUDIO_STUB, s.audioKey);
     await page.goto(`${localBaseUrl()}/stream-render/${row.feed_secret}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     // The player keeps media silent until someone has touched the page (the browser's autoplay
     // rule, lib/media-mute.js). Nobody will: this click is that touch.
@@ -449,6 +454,8 @@ async function start(row, key, sound, { standby = false } = {}) {
     // Ready to be shown on screens (showOn). Not waited for: a stream starts whether or not this works.
     if (shown) tabCapture(s);   // never throws
     s.ready = true;
+    s.mix.onMix = (out, minus) => sendDown(s, out, minus);
+    syncGuests(s); s.guestTimer = setInterval(() => syncGuests(s), 500);
     if (standby) idle(s); else encode(s);
   } catch (e) {
     // Stopped meanwhile: this start's failure is not news, and the id may belong to a new start by now.
@@ -519,6 +526,109 @@ function encode(s) {
 }
 
 /*
+ * THE RENDERER'S SOUND LINK. One WebSocket between this server and the renderer's page (only from this
+ * machine, and only with the session's own key), carrying 16-bit stereo PCM at RATE in 20 ms pieces:
+ *   up    1 <n> <guest id> <pcm>   a guest's sound, as it arrived over their connection: it becomes their
+ *                                  strip on the console (lib/stream-audio.js), so it is mixed, processed and
+ *                                  metered here like every other source, and not played into the programme;
+ *         4 <n> <guest id>         that guest's connection has gone
+ *   down  2 <pcm>                  the mix (for screens showing the stream with sound)
+ *         3 <n> <guest id> <pcm>   that guest's mix-minus: the show without their own voice, sent back to them
+ * The page's side is frontend/js/stream-render-audio.js. While the link is down the renderer plays guests
+ * into the programme as before: the sound degrades to what it was, it does not stop.
+ */
+const audioLinks = new Map();      // session key -> session
+const AUDIO_PATH = '/api/stream-render/audio';
+// Runs in the renderer before its own scripts: a place for the player to hand guests' tracks to, until the link's module is loaded.
+const AUDIO_STUB = (key) => {
+  const q = []; let real = null;
+  window.__stAudio = {
+    key,
+    guest(id, track, sender) { if (real) real.guest(id, track, sender); else q.push(['guest', id, track, sender]); },
+    drop(id) { if (real) real.drop(id); else q.push(['drop', id]); },
+    active() { return !!(real && real.active()); },
+    masterTrack() { return real ? real.masterTrack() : null; },
+    _ready(r) { real = r; for (const [f, ...a] of q.splice(0)) r[f](...a); },
+  };
+  document.addEventListener('DOMContentLoaded', () => { import('/js/stream-render-audio.js').catch((e) => console.warn('[sound link]', e && e.message)); });
+};
+const isLocal = (addr) => /^(::ffff:)?127\./.test(addr || '') || addr === '::1';
+function attachAudio(server) {
+  const WebSocket = require('ws');
+  const wss = new WebSocket.Server({ noServer: true, maxPayload: 64 * 1024 });
+  server.on('upgrade', (req, socket, head) => {
+    let u; try { u = new URL(req.url, 'http://localhost'); } catch { return; }
+    if (u.pathname !== AUDIO_PATH) return;
+    const s = audioLinks.get(u.searchParams.get('k') || '');
+    if (!s || !isLocal(req.socket.remoteAddress)) { try { socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'); socket.destroy(); } catch { /* gone */ } return; }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      if (s.audioWs) { try { s.audioWs.close(); } catch { /* gone */ } }
+      s.audioWs = ws;
+      ws.on('message', (d, binary) => { if (binary && sessions.get(s.id) === s) fromRenderer(s, d); });
+      ws.on('close', () => { if (s.audioWs === ws) s.audioWs = null; });
+      ws.on('error', () => {});
+    });
+  });
+  return wss;
+}
+function fromRenderer(s, d) {
+  if (d.length < 3 || d.length < 2 + d[1]) return;
+  const name = 'g:' + d.subarray(2, 2 + d[1]).toString();
+  if (!s.mix.guests[name]) return;                     // not (yet) a guest of this stream
+  if (d[0] === 1) { s.mix.guestInput(name); s.mix.push(name, d.subarray(2 + d[1])); } else if (d[0] === 4) s.mix.detach(name);
+}
+function sendDown(s, out, minus) {
+  const ws = s.audioWs;
+  if (!ws || ws.readyState !== 1 || ws.bufferedAmount > 512 * 1024) return;      // a renderer that is not keeping up loses sound, not memory
+  ws.send(Buffer.concat([Buffer.from([2]), out]));
+  for (const [name, b] of minus) { const id = Buffer.from(name.slice(2)); ws.send(Buffer.concat([Buffer.from([3, id.length]), id, b])); }
+}
+/** The console's guest strips follow the green room: who is here, on air or not, their fader and processing. */
+function syncGuests(s) {
+  let list = []; try { list = require('./mixer-guests').list(s.id); } catch { return; }
+  const here = new Set();
+  for (const g of list) {
+    const name = 'g:' + g.id; here.add(name);
+    s.mix.setGuest(name, { set: { ...s.mix.settings.guest, ...(g.strip || {}), level: g.level, muted: g.muted }, on: g.onAir, hear: g.hear });
+  }
+  for (const name of Object.keys(s.mix.guests)) if (!here.has(name)) s.mix.setGuest(name, null);
+}
+
+/*
+ * SOUND PADS. Each is an audio item of the workspace, decoded once (the first minute of it) and kept,
+ * so firing one is instant; the mixer plays it (lib/stream-audio.js Mix.fire) into the pads strip.
+ */
+const PAD_SECONDS = 60;
+const padCache = new Map();        // file|mtime -> Promise<Buffer | null>
+function padPcm(file) {
+  let st; try { st = fs.statSync(file); } catch { return Promise.resolve(null); }
+  const k = file + '|' + st.mtimeMs;
+  if (!padCache.has(k)) {
+    if (padCache.size >= 16) padCache.delete(padCache.keys().next().value);
+    const p = new Promise((resolve) => {
+      const dec = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-t', String(PAD_SECONDS), '-vn', '-f', 's16le', '-ar', String(RATE), '-ac', '2', 'pipe:1'], { stdio: ['ignore', 'pipe', 'ignore'] });
+      const parts = []; let size = 0;
+      dec.stdout.on('data', (d) => { if (size < RATE * FRAME * PAD_SECONDS) { parts.push(d); size += d.length; } });
+      dec.on('error', () => resolve(null));
+      dec.on('close', () => { const b = size ? Buffer.concat(parts) : null; resolve(b && b.length >= FRAME ? b.subarray(0, b.length - (b.length % FRAME)) : null); });
+    });
+    padCache.set(k, p);
+    p.then((b) => { if (!b) padCache.delete(k); });
+  }
+  return padCache.get(k);
+}
+/** Fires pad `n` of a running stream with this file. Resolves { ok } or { error }. */
+async function firePad(id, n, file) {
+  const s = sessions.get(id);
+  if (!s) return { error: 'off' };
+  const pcm = await padPcm(file);
+  if (!pcm) return { error: 'unreadable' };
+  if (sessions.get(id) !== s) return { error: 'off' };
+  return s.mix.fire(n, pcm) ? { ok: true } : { error: 'no_pad' };
+}
+function stopPads(id, n = null) { const s = sessions.get(id); if (!s) return false; s.mix.hush(n); return true; }
+
+/*
  * ON SCREENS. A running stream's picture (programme, graphics, guests, as composed by the renderer)
  * shown on screens of the workspace, over whatever they are playing, until released or the stream
  * stops. It rides on screen share (lib/screen-share.js): the renderer is the sharer, capturing its
@@ -550,21 +660,24 @@ async function captureTab(s) {
     return true;
   } catch (e) { s.shareError = 'The renderer could not capture its own picture: ' + String((e && e.message) || e).slice(0, 200); return false; }
 }
-async function showOn(id, legs, wsPath) {
+async function showOn(id, legs, wsPath, { sound = false } = {}) {
   const s = sessions.get(id);
   if (!s || !s.page || !s.ready) return false;
   try {
     // The capture needs the renderer on a display of its own (capture()): that is where the extension is loaded.
     if (!s.display) throw new Error('This server takes the stream picture without a display (no Xvfb), so it cannot be shown on screens.');
     if (!(await tabCapture(s))) throw new Error(s.shareError || 'The renderer could not capture its own picture.');
-    return await s.page.evaluate(async (legs, wsPath) => {
+    return await s.page.evaluate(async (legs, wsPath, sound) => {
       const lib = await import('/js/lib/screen-share-client.js');
       window.__stShares = window.__stShares || [];
-      const sender = new lib.MultiShareSender({ legs, wsPath, stream: window.__stTab, onEnded: () => { window.__stShares = window.__stShares.filter((x) => x !== sender); } });
+      // With sound: the stream's own mix (the console's master, as the stream sends it), from the sound link.
+      const master = sound && window.__stAudio && window.__stAudio.masterTrack ? window.__stAudio.masterTrack() : null;
+      const stream = master ? new MediaStream([...window.__stTab.getVideoTracks(), master]) : window.__stTab;
+      const sender = new lib.MultiShareSender({ legs, wsPath, stream, onEnded: () => { window.__stShares = window.__stShares.filter((x) => x !== sender); } });
       window.__stShares.push(sender);
       sender.start();
       return true;
-    }, legs, wsPath);
+    }, legs, wsPath, sound);
   } catch (e) { s.shareError = String((e && e.message) || e).slice(0, 300); return false; }
 }
 const shareError = (id) => { const s = sessions.get(id); return (s && s.shareError) || null; };
@@ -576,7 +689,9 @@ async function stop(id, why) {
   s.wanted = false;
   sessions.delete(id);
   if (why === 'error' && s.error) stopped.set(id, { error: s.error, at: Date.now() }); else stopped.delete(id);
-  clearInterval(s.timer); clearInterval(s.sndTimer); clearInterval(s.idleTimer); clearTimeout(s.retry);
+  clearInterval(s.timer); clearInterval(s.sndTimer); clearInterval(s.idleTimer); clearTimeout(s.retry); clearInterval(s.guestTimer);
+  audioLinks.delete(s.audioKey); s.mix.onMix = null;
+  try { if (s.audioWs) s.audioWs.close(); } catch { /* gone */ }
   for (const name of [...audio.INPUTS, 'console']) stopInput(s, name);
   try { require('./mixer-guests').rendererGone(id); } catch { /* no guests */ }
   audio.removeSink(s.sink); s.sink = null;
@@ -590,4 +705,4 @@ function lastError(id) { const e = stopped.get(id); return e ? e.error : null; }
 async function stopAll() { await Promise.all([...sessions.keys()].map((id) => stop(id))); }
 process.on('exit', () => { for (const s of sessions.values()) { try { s.ff && s.ff.kill('SIGKILL'); } catch { /* */ } try { Object.values(s.inputs).forEach((p) => p.kill('SIGKILL')); } catch { /* */ } try { s.browser && s.browser.process() && s.browser.process().kill('SIGKILL'); } catch { /* */ } try { s.display && s.display.proc.kill('SIGKILL'); } catch { /* */ } if (s.display) for (const f of [lockOf(s.display.n), sockOf(s.display.n)]) { try { fs.unlinkSync(f); } catch { /* */ } } } });
 
-module.exports = { showOn, shareError, CAPTURE_EXT, CAPTURE_EXT_ID, pushMic, stopMic, recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, capture, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };
+module.exports = { attachAudio, AUDIO_PATH, firePad, stopPads, padPcm, showOn, shareError, CAPTURE_EXT, CAPTURE_EXT_ID, pushMic, stopMic, recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, capture, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };
