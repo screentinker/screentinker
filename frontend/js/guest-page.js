@@ -158,7 +158,7 @@ async function offer() {
     await gathered(conn);
     if (!me || pc !== conn) throw new Error('superseded');
     const st = await post('/offer', { ...me, sdp: conn.localDescription.sdp });
-    conn.seq = st.seq;
+    conn.seq = st.seq; conn.offeredAt = Date.now();
   } catch (e) { if (pc === conn) { closeConn(conn); pc = null; } }
   offering = false;
 }
@@ -253,6 +253,8 @@ async function tick() {
     if (st.ice_servers) ice = st.ice_servers;
     // A connection that has been silent for a few seconds is not coming back by itself: offer again without waiting for it to fail.
     if (pc && lostAt && Date.now() - lostAt > 5000 && pc.connectionState === 'disconnected' && !offering) { lostAt = 0; fails += 1; closeConn(pc); pc = null; }
+    // An offer nobody has answered in 20 s (the studio restarted meanwhile, an answer was lost) is made again.
+    if (pc && !offering && pc.offeredAt && pc.signalingState === 'have-local-offer' && Date.now() - pc.offeredAt > 20000) { closeConn(pc); pc = null; }
     if (st.studio && (st.need_offer || !pc)) offer();
     else if (pc && !offering && st.answer && st.seq === pc.seq && pc.signalingState === 'have-local-offer') { const conn = pc; await conn.setRemoteDescription({ type: 'answer', sdp: st.answer }).catch(() => { if (pc === conn) { closeConn(conn); pc = null; } }); }
     syncDesks(st.desks); hearCheck();

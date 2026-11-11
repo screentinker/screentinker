@@ -102,16 +102,46 @@ async function capture() {
   const grab = await new Promise((resolve) => execFile('ffmpeg', ['-hide_banner', '-devices'], { timeout: 5000 }, (err, out) => resolve(!err && /\bx11grab\b/.test(String(out)))));
   return (captureMode = grab ? 'display' : 'screencast');
 }
+/*
+ * Display numbers. Xvfb leaves /tmp/.X<n>-lock and /tmp/.X11-unix/X<n> behind when it is killed, and a
+ * number with either file is not used again, so a display is closed politely (closeDisplay) and the files of
+ * one whose server is gone are cleared before the number is taken. `claimed` keeps two streams starting at
+ * the same moment off the same number.
+ */
+const claimed = new Set();
+const lockOf = (n) => `/tmp/.X${n}-lock`, sockOf = (n) => `/tmp/.X11-unix/X${n}`;
+function lockPid(n) { try { return parseInt(fs.readFileSync(lockOf(n), 'utf8').trim(), 10) || 0; } catch { return 0; } }
+function alive(pid) { if (!pid) return false; try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
+function clearStale(n) {
+  if (!fs.existsSync(lockOf(n)) && !fs.existsSync(sockOf(n))) return true;
+  if (alive(lockPid(n))) return false;
+  for (const f of [lockOf(n), sockOf(n)]) { try { fs.unlinkSync(f); } catch { /* gone */ } }
+  return !fs.existsSync(lockOf(n)) && !fs.existsSync(sockOf(n));
+}
 /** Starts a virtual display of the stream's size. Resolves with { n, proc }, or null when it would not start. */
 async function openDisplay(width, height) {
   for (let n = 90; n < 130; n++) {
-    if (fs.existsSync(`/tmp/.X11-unix/X${n}`) || fs.existsSync(`/tmp/.X${n}-lock`)) continue;
+    if (claimed.has(n) || !clearStale(n)) continue;
+    claimed.add(n);
     const proc = spawn('Xvfb', [`:${n}`, '-screen', '0', `${width}x${height}x24`, '-nolisten', 'tcp', '-nocursor'], { stdio: 'ignore' });
-    let gone = false; proc.on('exit', () => { gone = true; }); proc.on('error', () => { gone = true; });
-    for (let i = 0; i < 40 && !gone; i++) { if (fs.existsSync(`/tmp/.X11-unix/X${n}`)) return { n, proc }; await new Promise((r) => setTimeout(r, 50)); }
+    let gone = false;
+    proc.on('exit', () => {
+      gone = true; claimed.delete(n);
+      // Killed hard, it leaves its files: they are its own (the lock names it), so they go too.
+      if (lockPid(n) === proc.pid) for (const f of [lockOf(n), sockOf(n)]) { try { fs.unlinkSync(f); } catch { /* gone */ } }
+    });
+    proc.on('error', () => { gone = true; claimed.delete(n); });
+    // Ours only when the lock names our server: another one on this number would have its own socket here.
+    for (let i = 0; i < 40 && !gone; i++) { if (fs.existsSync(sockOf(n)) && lockPid(n) === proc.pid) return { n, proc }; await new Promise((r) => setTimeout(r, 50)); }
     try { proc.kill('SIGKILL'); } catch { /* gone */ }
   }
   return null;
+}
+/** Asks the display's server to end (it then removes its own files), and makes sure it does. */
+function closeDisplay(d) {
+  if (!d || !d.proc) return;
+  try { d.proc.kill('SIGTERM'); } catch { /* gone */ }
+  setTimeout(() => { try { if (d.proc.exitCode == null && d.proc.signalCode == null) d.proc.kill('SIGKILL'); } catch { /* gone */ } }, 2000).unref();
 }
 
 /** Checks a destination as typed. Returns { ok, error } and the cleaned values. */
@@ -361,12 +391,23 @@ async function start(row, key, sound, { standby = false } = {}) {
   const s = { id: row.id, row, key, state: 'starting', since: Date.now(), sent: 0, last: null, wanted: true, retries: 0, error: null,
     mix: new audio.Mix(sound && sound.settings), bedFile: (sound && sound.file) || null, inputs: {}, inputKeys: {}, inputTimers: {}, sink: null };
   sessions.set(row.id, s);
+  // Stopped while still starting (stop() closed what there was then): what has been made since is closed here.
+  const late = async () => {
+    if (s.wanted) return false;
+    audio.removeSink(s.sink); s.sink = null;
+    const b = s.browser; s.browser = null;
+    try { if (b) await b.close(); } catch { /* gone */ }
+    closeDisplay(s.display); s.display = null;
+    return true;
+  };
   try {
     // Programme sound: the browser plays into a sink of its own, which the mixer reads back.
     // Without PulseAudio there is no sink and the browser stays muted, as before.
     s.sink = await audio.createSink(row.id).catch(() => null);
     // The renderer's own display, when the picture is grabbed from one (see capture()).
+    if (await late()) return { state: 'off' };
     if (await capture() === 'display') s.display = await openDisplay(row.width, row.height);
+    if (await late()) return { state: 'off' };
     const shown = !!s.display;
     s.browser = await puppeteer().launch({
       executablePath: chromePath(), headless: shown ? false : 'new', ...(shown ? { defaultViewport: null } : {}),
@@ -385,9 +426,12 @@ async function start(row, key, sound, { standby = false } = {}) {
         ...(shown ? [`--load-extension=${CAPTURE_EXT}`, `--disable-extensions-except=${CAPTURE_EXT}`, `--allowlisted-extension-id=${CAPTURE_EXT_ID}`, '--disable-features=WebRtcHideLocalIpsWithMdns,DisableLoadExtensionCommandLineSwitch'] : []),
         ...(shown ? ['--kiosk', '--window-position=0,0', '--test-type', '--noerrdialogs', '--disable-infobars', '--no-first-run', '--disable-session-crashed-bubble'] : [])],
     });
-    s.browser.on('disconnected', () => { if (s.wanted) { s.error = 'The renderer stopped.'; stop(row.id, 'error'); } });
+    if (await late()) return { state: 'off' };
+    s.browser.on('disconnected', () => { if (s.wanted && sessions.get(row.id) === s) { s.error = 'The renderer stopped.'; stop(row.id, 'error'); } });
     const page = s.page = shown ? ((await s.browser.pages())[0] || await s.browser.newPage()) : await s.browser.newPage();
     if (!shown) await page.setViewport({ width: row.width, height: row.height });
+    // A quick Stop and Start: the stopped renderer is closed by now, so what this one says is not to be ignored.
+    try { require('./mixer-guests').rendererBack(row.id); } catch { /* no guests */ }
     await page.goto(`${localBaseUrl()}/stream-render/${row.feed_secret}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     // The player keeps media silent until someone has touched the page (the browser's autoplay
     // rule, lib/media-mute.js). Nobody will: this click is that touch.
@@ -400,13 +444,15 @@ async function start(row, key, sound, { standby = false } = {}) {
       });
       await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 82, maxWidth: row.width, maxHeight: row.height, everyNthFrame: 1 });
     }
-    if (!s.wanted) return status(row.id);
+    if (await late()) return { state: 'off' };
     for (const name of [...audio.INPUTS, 'console']) startInput(s, name);
     // Ready to be shown on screens (showOn). Not waited for: a stream starts whether or not this works.
-    if (shown) tabCapture(s).catch(() => {});
+    if (shown) tabCapture(s);   // never throws
     s.ready = true;
     if (standby) idle(s); else encode(s);
   } catch (e) {
+    // Stopped meanwhile: this start's failure is not news, and the id may belong to a new start by now.
+    if (await late()) return { state: 'off' };
     s.error = e.message; await stop(row.id, 'error');
     throw e;
   }
@@ -485,7 +531,13 @@ function encode(s) {
  * is the programme sound of the stream). Asked for when the renderer starts, while the extension's worker is
  * still awake (the browser puts an idle one to sleep after half a minute), and kept for as long as the page lives.
  */
-async function tabCapture(s) {
+function tabCapture(s) {
+  // One capture at a time: a second ask while the first is still under way waits for it.
+  if (s.capturing) return s.capturing.then((ok) => ok || tabCapture(s));
+  const p = s.capturing = captureTab(s).finally(() => { if (s.capturing === p) s.capturing = null; });
+  return p;
+}
+async function captureTab(s) {
   try {
     if (await s.page.evaluate(() => !!(window.__stTab && window.__stTab.getVideoTracks().some((t) => t.readyState === 'live')))) return true;
     const target = await s.browser.waitForTarget((t) => t.type() === 'service_worker' && t.url().startsWith(`chrome-extension://${CAPTURE_EXT_ID}/`), { timeout: 8000 });
@@ -527,14 +579,15 @@ async function stop(id, why) {
   clearInterval(s.timer); clearInterval(s.sndTimer); clearInterval(s.idleTimer); clearTimeout(s.retry);
   for (const name of [...audio.INPUTS, 'console']) stopInput(s, name);
   try { require('./mixer-guests').rendererGone(id); } catch { /* no guests */ }
-  audio.removeSink(s.sink);
+  audio.removeSink(s.sink); s.sink = null;
   try { if (s.ff) { if (s.display) { try { s.ff.stdin.write('q'); } catch { /* gone */ } } s.ff.stdin.end(); try { s.ff.stdio[3].end(); } catch { /* gone */ } const ff = s.ff; setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* gone */ } }, 2000).unref(); } } catch { /* gone */ }
-  try { if (s.browser) await s.browser.close(); } catch { /* gone */ }
-  try { if (s.display) s.display.proc.kill('SIGKILL'); } catch { /* gone */ }
+  const browser = s.browser; s.browser = null;
+  try { if (browser) await browser.close(); } catch { /* gone */ }
+  closeDisplay(s.display); s.display = null;
   return { state: 'off' };
 }
 function lastError(id) { const e = stopped.get(id); return e ? e.error : null; }
 async function stopAll() { await Promise.all([...sessions.keys()].map((id) => stop(id))); }
-process.on('exit', () => { for (const s of sessions.values()) { try { s.ff && s.ff.kill('SIGKILL'); } catch { /* */ } try { Object.values(s.inputs).forEach((p) => p.kill('SIGKILL')); } catch { /* */ } try { s.browser && s.browser.process() && s.browser.process().kill('SIGKILL'); } catch { /* */ } try { s.display && s.display.proc.kill('SIGKILL'); } catch { /* */ } } });
+process.on('exit', () => { for (const s of sessions.values()) { try { s.ff && s.ff.kill('SIGKILL'); } catch { /* */ } try { Object.values(s.inputs).forEach((p) => p.kill('SIGKILL')); } catch { /* */ } try { s.browser && s.browser.process() && s.browser.process().kill('SIGKILL'); } catch { /* */ } try { s.display && s.display.proc.kill('SIGKILL'); } catch { /* */ } if (s.display) for (const f of [lockOf(s.display.n), sockOf(s.display.n)]) { try { fs.unlinkSync(f); } catch { /* */ } } } });
 
 module.exports = { showOn, shareError, CAPTURE_EXT, CAPTURE_EXT_ID, pushMic, stopMic, recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, capture, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };

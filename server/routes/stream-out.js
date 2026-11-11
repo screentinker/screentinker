@@ -203,7 +203,8 @@ router.post('/:id/start', gate, requireFleetWrite, async (req, res) => {
   if (r.key_enc && !key) return res.status(400).json({ error: 'The stored stream key can no longer be read. Enter it again.' });
   try {
     const status = await streamOut.start(r, key, audioOf(r), { standby });
-    remember(r.id, 'standby');
+    // Stopped while it was starting: the Stop has forgotten it, and this must not bring it back.
+    if (status.state !== 'off') remember(r.id, 'standby');
     res.json({ status });
   } catch (e) { res.status(e.code === 'limit' ? 409 : 500).json({ error: e.message, code: e.code || null }); }
 });
@@ -290,9 +291,10 @@ router.post('/:id/screens', gate, requireFleetWrite, async (req, res) => {
   if (!following.has(r.id)) following.set(r.id, new Map());
   const later = out.skipped.filter((x) => x.reason === 'offline' || x.reason === 'busy');
   for (const x of [...out.shown, ...later]) following.get(r.id).set(x.device_id, by);
-  for (const x of later) x.waiting = true;
   saveScreens(r.id);
-  res.json(out);
+  // The ones that will be given it later are not refused: they are listed apart, as waiting.
+  const waiting = later.map((x) => ({ ...x, waiting: true }));
+  res.json({ shown: out.shown, skipped: out.skipped.filter((x) => !later.includes(x)), waiting });
 });
 // Release screens: all of them, or the ones named. Each gets its own content back.
 router.delete('/:id/screens', requireFleetWrite, (req, res) => {
@@ -303,7 +305,7 @@ router.delete('/:id/screens', requireFleetWrite, (req, res) => {
   let n = 0;
   if (set) { for (const id of [...set.keys()]) if (!only || only.has(id)) { set.delete(id); n += 1; } if (!set.size) following.delete(r.id); }
   saveScreens(r.id);
-  for (const s of onScreens(r.id)) if (!only || only.has(s.deviceId)) screenShare.endSession(s, 'stopped_by_owner', req.user && req.user.id);
+  for (const s of onScreens(r.id)) if (!only || only.has(s.deviceId) || only.has(s.roomKey)) screenShare.endSession(s, 'stopped_by_owner', req.user && req.user.id);
   res.json({ released: n });
 });
 /*
@@ -325,7 +327,9 @@ async function reconcile() {
       if (!r) { following.delete(streamId); continue; }
       const out = await putOnScreens(r, missing, set.get(missing[0])).catch(() => null);
       // A screen that no longer exists stops following; the rest (offline, busy) stay and are tried again.
-      for (const k of (out && out.skipped) || []) if (k.reason === 'not_found') set.delete(k.device_id);
+      const gone = ((out && out.skipped) || []).filter((k) => k.reason === 'not_found');
+      for (const k of gone) set.delete(k.device_id);
+      if (gone.length) { if (!set.size) following.delete(streamId); saveScreens(streamId); }
     }
   } finally { reconciling = false; }
 }

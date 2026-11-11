@@ -844,13 +844,13 @@ test('a desk gets each guest\'s picture on a connection of its own: only named d
   assert.equal(G.fromDesk(out.id, g.id, 'desk-aaaaaaaa', { again: true }), true);
   assert.equal(G.stateFor(g, false).desks[0].need_offer, true, 'a desk whose connection failed asks for a new offer');
   // A desk that stops asking is forgotten, and the guest stops sending to it.
-  G.who(token, g.id, g.key, t0 + 11000);
-  G.forDesk(out.id, t0 + 11000, 'desk-bbbbbbbb');
+  G.who(token, g.id, g.key, t0 + 31000);
+  G.forDesk(out.id, t0 + 31000, 'desk-bbbbbbbb');
   assert.deepEqual(G.stateFor(g, false).desks.map((d) => d.id), ['desk-bbbbbbbb']);
   assert.equal(g.legs.has('desk-aaaaaaaa'), false);
-  assert.equal(G.forDesk(out.id, t0 + 11000, 'desk-cccccccc').live, true, 'and its place is free');
+  assert.equal(G.forDesk(out.id, t0 + 31000, 'desk-cccccccc').live, true, 'and its place is free');
   G.revoke(out.id);
-  assert.equal(G.forDesk(out.id, t0 + 11000, 'desk-bbbbbbbb').live, false, 'a closed green room has no desks');
+  assert.equal(G.forDesk(out.id, t0 + 31000, 'desk-bbbbbbbb').live, false, 'a closed green room has no desks');
 });
 
 test('an open invite outlives a restart: it is kept where the caller says, and given back', () => {
@@ -920,7 +920,9 @@ test('background removal ships whole and self-contained: the maths, the network,
   assert.doesNotMatch(fs.readFileSync(path.join(FE, 'guest.html'), 'utf8'), /vendor\/tfjs/);
 });
 
-test('a stream on screens: only a running stream, only this workspace\'s screens, only by someone who may; a system share has no time limit and no badge', async () => {
+// What a running stream does with screens (which screens, waiting ones, release, after a restart) needs a real renderer: it is
+// checked end to end on a server with Chromium and Xvfb, not here.
+test('a stream on screens is refused while the stream is off, to another workspace, to a read-only member and without sign-in; the share it makes is marked as the stream\'s, and is exempt from the time limit and the badge', async () => {
   const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'On screens', kind: 'record' })).body;
   assert.deepEqual(so.on_screens, [], 'a stream says which screens show it');
   assert.equal((await call('POST', `/api/stream-out/${so.id}/screens`, A.jwt, { device_ids: ['x'] })).status, 409, 'a stream that is off has no picture to show');
@@ -958,7 +960,7 @@ test('the renderer captures its own picture through an extension of ours, whose 
   assert.match(src, /audio: false, video: \{ mandatory: \{ chromeMediaSource: 'tab'/, 'the tab\'s sound is not captured: capturing it would take it away from the stream');
 });
 
-test('a running stream and its screens are kept for after a restart; stopping by hand forgets them', async () => {
+test('stopping a stream by hand forgets it for after a restart; bringing streams back never throws, and brings them back on standby', async () => {
   const cols = db.prepare("SELECT name FROM pragma_table_info('stream_outputs')").all().map((c) => c.name);
   assert.ok(cols.includes('resume_state') && cols.includes('screens_json'));
   const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Keeps', kind: 'record' })).body;
@@ -974,6 +976,19 @@ test('a running stream and its screens are kept for after a restart; stopping by
   assert.match(src, /streamOut\.start\(r, key, audioOf\(r\), \{ standby: true \}\)/, 'a stream comes back on STANDBY: going live is the operator\'s decision each time');
   assert.doesNotMatch(require('fs').readFileSync(require('path').join(__dirname, '..', 'lib', 'stream-out.js'), 'utf8'), /'--enable-unsafe-swiftshader'|'--ignore-gpu-blocklist'/, 'no forced software graphics card: it doubles the renderer\'s cost');
   await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+});
+
+test('a renderer started again right after a stop is listened to at once; the stopping one is not', () => {
+  const G = require('../lib/mixer-guests');
+  const out = { id: 'out-back-' + Date.now(), workspace_id: 'ws-back' }, t0 = 4_000_000;
+  const token = G.invite(out, t0), g = G.join(token, 'Ana', t0).guest;
+  const SDP = 'v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n';
+  G.rendererGone(out.id, t0);
+  assert.equal(G.fromRenderer(out.id, { guest_id: g.id, state: 'connected' }, t0 + 1000), false, 'the stopping renderer\'s last words are not kept');
+  G.rendererBack(out.id);
+  assert.equal(G.fromRenderer(out.id, { guest_id: g.id, state: 'connected' }, t0 + 1000), true, 'the new one is heard within the same seconds');
+  assert.equal(G.fromRenderer(out.id, { guest_id: g.id, answer: SDP, seq: g.seq - 1 }, t0 + 1000), false, 'an answer to an offer from before the stop is still refused');
+  G.revoke(out.id);
 });
 
 test('each guest has a volume of their own in the stream: 0 to 1, the operator\'s, and it leaves on air alone', async () => {

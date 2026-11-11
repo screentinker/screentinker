@@ -45,7 +45,8 @@ const OFFER_GAP_MS = 1500;                  // a guest's offers, no closer toget
 const REMOVED_MS = 15 * 60 * 1000;          // how long a removed guest is remembered as removed
 const LAYOUTS = ['pip', 'side', 'grid'];
 const MAX_DESKS = 2;                        // desks one guest sends a picture to
-const DESK_GONE_MS = 10000;
+// A desk in a background tab asks less often (the browser slows its timers): 30 s is well over that.
+const DESK_GONE_MS = 30000;
 
 const invites = new Map();                  // token -> { outputId, workspaceId, until }
 const byOutput = new Map();                 // outputId -> token
@@ -240,6 +241,8 @@ function remove(outputId, id, now = Date.now()) { const g = guests.get(String(id
 const wasRemoved = (id) => removed.has(String(id || ''));
 function setLayout(outputId, layout) { if (!LAYOUTS.includes(layout)) return false; layouts.set(outputId, layout); return true; }
 /** When an output's renderer stops, nobody is on air any more and every connection has to be made again. */
+/** A new renderer for the output is starting (the old one is closed by then): it is listened to at once. */
+function rendererBack(outputId) { hush.delete(outputId); }
 function rendererGone(outputId, now = Date.now()) { hush.set(outputId, now + 5000); for (const g of of(outputId)) { g.onAir = false; g.offer = null; g.answer = null; g.thumb = null; g.state = 'waiting'; g.seq += 1; } }
 
-module.exports = { MAX_GUESTS, MAX_ON_AIR, MAX_DESKS, LAYOUTS, deskSeen, setDeskOffer, fromDesk, restore, mayOffer, wasRemoved, sdpOk, setGreen, setCut, setLevel, invite, revoke, inviteOf, invited, join, who, setOffer, stateFor, leave, forRenderer, fromRenderer, forDesk, setOnAir, remove, setLayout, rendererGone, sweep, _guests: guests };
+module.exports = { MAX_GUESTS, MAX_ON_AIR, MAX_DESKS, LAYOUTS, deskSeen, setDeskOffer, fromDesk, restore, mayOffer, wasRemoved, sdpOk, setGreen, setCut, setLevel, invite, revoke, inviteOf, invited, join, who, setOffer, stateFor, leave, forRenderer, fromRenderer, forDesk, setOnAir, remove, setLayout, rendererGone, rendererBack, sweep, _guests: guests };

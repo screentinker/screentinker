@@ -796,6 +796,8 @@ function mintLeg(p, mirror, ws, roomKey) {
   const out = createSession({
     device: mirror, workspace: ws, shareId: p.shareId, roomKey, sharedBy: via.sharedBy, userId: via.userId,
     guest: via.guest, ip: via.ip, audio: via.audio,
+    // A mirror of a screen showing a stream is shown the stream the same way: no badge, no time limit, and Release finds it.
+    system: via.system, streamId: via.streamId,
   });
   if (out.error) return null;
   const leg = { session_id: out.session.id, ticket: out.ticket, screen_name: name, ice_servers: (via.guest ? guestIceServersFor : iceServersFor)(mirror.id) };

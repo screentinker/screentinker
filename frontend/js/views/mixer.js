@@ -809,13 +809,16 @@ async function take(root) {
 
 /**
  * Puts a running stream's picture (programme, graphics, guests) on screens. Says, screen by screen,
- * which could not take it and why. Resolves with the server's { shown, skipped }, or null when it refused.
+ * which could not take it and why. Resolves with the server's { shown, skipped, waiting } (waiting: screens that follow it and get it once they can), or null when it refused.
  */
 async function streamToScreens(lead, ids) {
   try {
     const r = await call(`/stream-out/${encodeURIComponent(lead.id)}/screens`, { method: 'POST', body: JSON.stringify({ device_ids: ids }) });
     lead.on_screens = [...(lead.on_screens || []).filter((x) => !r.shown.some((y) => y.device_id === x.id)), ...r.shown.map((x) => ({ id: x.device_id, name: x.name, live: false }))];
-    if (r.skipped.length) showToast(t('mixer.toast.on_screens_skipped', { n: r.shown.length, why: r.skipped.map((x) => `${x.name || '?'} (${t('mixer.screen_skip.' + x.reason)})`).join(', ') }), 'warning');
+    const why = (list) => list.map((x) => `${x.name || '?'} (${t('mixer.screen_skip.' + x.reason)})`).join(', ');
+    r.waiting = r.waiting || [];
+    if (r.skipped.length) showToast(t('mixer.toast.on_screens_skipped', { n: r.shown.length, why: why([...r.skipped, ...r.waiting]) }), 'warning');
+    else if (r.waiting.length) showToast(t('mixer.toast.on_screens_waiting', { n: r.shown.length, why: why(r.waiting) }), 'info');
     else showToast(t('mixer.toast.on_screens', { n: r.shown.length, name: lead.name }), 'success');
     return r;
   } catch (err) { showToast(err.message, 'error'); return null; }
@@ -1109,7 +1112,10 @@ export async function render(container, which) {
     } catch { /* keep the desk as it is */ }
   }, 10000);
   // Level meters of running streams (live or on standby), moved in place five times a second (no redraw).
-  guestsRefresh(true); guestTimer = setInterval(() => { if (alive && !document.hidden) guestsRefresh(false); }, 1000);
+  guestsRefresh(true); let hiddenTicks = 0;
+  // Also while the tab is in the background (the operator watching the output in another tab): a desk that
+  // stops asking is forgotten by the server, and its guests' live pictures and Talk lines with it.
+  guestTimer = setInterval(() => { if (!alive) return; if (document.hidden && ++hiddenTicks % 3) return; guestsRefresh(false); }, 1000);
   monTimer = setInterval(() => { if (alive && !document.hidden) monitorLevels(); }, 100);
   document.addEventListener('pointerdown', wakeAudio);
   meterTimer = setInterval(async () => {

@@ -1069,6 +1069,7 @@ export default {
   'mixer.release_screens': 'Release {n} screen(s)',
   'mixer.toast.on_screens': '{n} screen(s) now show the picture of {name}, guests and graphics included.',
   'mixer.toast.on_screens_skipped': '{n} screen(s) show the stream. Not shown on: {why}.',
+  'mixer.toast.on_screens_waiting': '{n} screen(s) show the stream. These get it as soon as they can take it: {why}.',
   'mixer.screen_skip.offline': 'offline now: it will show the stream when it is back',
   'mixer.screen_skip.unsupported': 'its player cannot show a live picture',
   'mixer.screen_skip.busy': 'something else is being shared to it: it will show the stream after that',
