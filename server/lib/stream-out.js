@@ -375,6 +375,8 @@ async function start(row, key, sound, { standby = false } = {}) {
         '--autoplay-policy=no-user-gesture-required',
         // Guests connect to this browser directly: it must offer its real addresses, not names only its own network can resolve.
         '--disable-features=WebRtcHideLocalIpsWithMdns', `--window-size=${row.width},${row.height}`,
+        // A cut-out guest is keyed on the graphics card where there is one; a server has none, so the software one is allowed.
+        '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader',
         ...(shown ? ['--kiosk', '--window-position=0,0', '--test-type', '--noerrdialogs', '--disable-infobars', '--no-first-run', '--disable-session-crashed-bubble'] : [])],
     });
     s.browser.on('disconnected', () => { if (s.wanted) { s.error = 'The renderer stopped.'; stop(row.id, 'error'); } });

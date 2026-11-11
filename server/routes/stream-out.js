@@ -341,8 +341,13 @@ router.post('/:id/guests/layout', gate, requireFleetWrite, (req, res) => {
 router.post('/:id/guests/:gid', gate, requireFleetWrite, (req, res) => {
   const r = mine(req, req.params.id);
   if (!r) return res.status(404).json({ error: 'Stream not found' });
-  const x = guests.setOnAir(r.id, req.params.gid, (req.body || {}).on_air === true);
-  if (!x.ok) return res.status(x.status).json({ error: x.error });
+  const b = req.body || {};
+  // Cut out (shown without their background) is set on its own or together with on air.
+  if (typeof b.cut === 'boolean' && !guests.setCut(r.id, req.params.gid, b.cut)) return res.status(404).json({ error: 'That guest has left.' });
+  if (typeof b.on_air === 'boolean' || typeof b.cut !== 'boolean') {
+    const x = guests.setOnAir(r.id, req.params.gid, b.on_air === true);
+    if (!x.ok) return res.status(x.status).json({ error: x.error });
+  }
   res.json({ success: true });
 });
 router.delete('/:id/guests/:gid', requireFleetWrite, (req, res) => {
@@ -448,7 +453,7 @@ function renderer({ sendPlayer }) {
     res.json({ seq });
   });
   // POST, so the guest's key is in the body and not in anyone's access log.
-  r.post('/api/stream-guest/:token/state', limiter, (req, res) => { const g = me(req, res); if (g) res.json(told(g)); });
+  r.post('/api/stream-guest/:token/state', limiter, (req, res) => { const g = me(req, res); if (!g) return; if (typeof req.body.green === 'boolean') guests.setGreen(g, req.body.green); res.json(told(g)); });
   r.post('/api/stream-guest/:token/leave', limiter, (req, res) => { const g = me(req, res); if (g) { guests.leave(g); res.json({ success: true }); } });
   // The renderer's side: its answer to a guest, the state of that connection, a thumbnail.
   r.post('/api/stream-feed/:secret/guest', (req, res) => {

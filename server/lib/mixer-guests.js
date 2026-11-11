@@ -125,7 +125,7 @@ function join(token, name, now = Date.now()) {
   if (of(inv.outputId).length >= MAX_GUESTS) return { status: 409, error: 'The green room is full.' };
   const g = { id: crypto.randomUUID(), key: crypto.randomBytes(24).toString('base64url'), outputId: inv.outputId, workspaceId: inv.workspaceId,
     name: cleanName(name) || `Guest ${of(inv.outputId).length + 1}`, offer: null, seq: 0, answer: null, answerSeq: 0, onAir: false,
-    joinedAt: now, seenAt: now, thumb: null, state: 'new', legs: new Map() };
+    joinedAt: now, seenAt: now, thumb: null, state: 'new', legs: new Map(), green: false, cut: null };
   guests.set(g.id, g);
   return { guest: g };
 }
@@ -181,7 +181,7 @@ function forRenderer(outputId, have, now = Date.now()) {
   sweep(now);
   const held = new Map(String(have || '').split(',').map((p) => p.split(':')).filter((p) => p.length === 2).map(([id, seq]) => [id, Number(seq)]));
   const list = of(outputId).map((g) => {
-    const out = { id: g.id, name: g.name, on_air: g.onAir, seq: g.seq };
+    const out = { id: g.id, name: g.name, on_air: g.onAir, seq: g.seq, cut: cutOf(g) };
     if (g.offer && held.get(g.id) !== g.seq) {
       // An offer that was already answered (by a renderer that has since gone) cannot be answered again: the guest makes a new one.
       if (g.answer && g.answerSeq === g.seq) { g.offer = null; g.answer = null; g.state = 'connecting'; }
@@ -210,7 +210,7 @@ function forDesk(outputId, now = Date.now(), deskId = null) {
   const tok = inviteOf(outputId);
   return { invite: tok, expires_at: tok ? invites.get(tok).until : null, layout: layouts.get(outputId) || 'pip', layouts: LAYOUTS, max_on_air: MAX_ON_AIR, live,
     guests: of(outputId).map((g) => {
-      const out = { id: g.id, name: g.name, on_air: g.onAir, state: g.state, thumb: g.thumb, joined_at: g.joinedAt };
+      const out = { id: g.id, name: g.name, on_air: g.onAir, state: g.state, thumb: g.thumb, joined_at: g.joinedAt, green: g.green, cut: cutOf(g) };
       // This desk's own connection to the guest: the offer to answer, until it has been answered.
       const leg = live ? g.legs.get(deskId) : null;
       if (leg && leg.offer) { out.leg_seq = leg.seq; if (!(leg.answer && leg.answerSeq === leg.seq)) out.leg_offer = leg.offer; }
@@ -224,6 +224,15 @@ function setOnAir(outputId, id, on) {
   g.onAir = !!on;
   return { ok: true };
 }
+/*
+ * CUT OUT: a guest shown without their background. The guest's picture arrives with the
+ * background painted green (their page did it, "Remove my background", or they stand in front of a
+ * real green screen) and the renderer keys the green out. It follows what the guest's page says it
+ * is sending, until the operator chooses otherwise for that guest.
+ */
+const cutOf = (g) => (g.cut == null ? !!g.green : !!g.cut);
+function setGreen(g, on) { g.green = on === true; }
+function setCut(outputId, id, on) { const g = guests.get(String(id || '')); if (!g || g.outputId !== outputId) return false; g.cut = on === true; return true; }
 function remove(outputId, id, now = Date.now()) { const g = guests.get(String(id || '')); if (!g || g.outputId !== outputId) return false; guests.delete(g.id); removed.set(g.id, now); return true; }
 /** Whether the operator removed this guest (as opposed to the server having lost track of them). */
 const wasRemoved = (id) => removed.has(String(id || ''));
@@ -231,4 +240,4 @@ function setLayout(outputId, layout) { if (!LAYOUTS.includes(layout)) return fal
 /** When an output's renderer stops, nobody is on air any more and every connection has to be made again. */
 function rendererGone(outputId, now = Date.now()) { hush.set(outputId, now + 5000); for (const g of of(outputId)) { g.onAir = false; g.offer = null; g.answer = null; g.thumb = null; g.state = 'waiting'; g.seq += 1; } }
 
-module.exports = { MAX_GUESTS, MAX_ON_AIR, MAX_DESKS, LAYOUTS, deskSeen, setDeskOffer, fromDesk, restore, mayOffer, wasRemoved, sdpOk, invite, revoke, inviteOf, invited, join, who, setOffer, stateFor, leave, forRenderer, fromRenderer, forDesk, setOnAir, remove, setLayout, rendererGone, sweep, _guests: guests };
+module.exports = { MAX_GUESTS, MAX_ON_AIR, MAX_DESKS, LAYOUTS, deskSeen, setDeskOffer, fromDesk, restore, mayOffer, wasRemoved, sdpOk, setGreen, setCut, invite, revoke, inviteOf, invited, join, who, setOffer, stateFor, leave, forRenderer, fromRenderer, forDesk, setOnAir, remove, setLayout, rendererGone, sweep, _guests: guests };

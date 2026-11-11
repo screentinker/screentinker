@@ -179,6 +179,7 @@ function guestsHtml() {
               <div class="mx-guest-keys"><button type="button" class="btn btn-sm ${g.on_air ? 'btn-secondary' : 'mx-golive'}" data-gair="${esc(s.id)}" data-gid="${esc(g.id)}" data-on="${g.on_air ? 0 : 1}" ${(s.status.state === 'off' || g.state !== 'connected') && !g.on_air ? `disabled title="${esc(t('mixer.guest_not_connected'))}"` : ''}>${esc(t(g.on_air ? 'mixer.guest_off' : 'mixer.guest_put_on'))}</button>
                 ${liveOf(g.id) ? `<button type="button" class="btn btn-secondary btn-sm${listening.has(g.id) || merged.has(s.id) ? ' is-on' : ''}" data-glisten="${esc(g.id)}" aria-pressed="${listening.has(g.id) || merged.has(s.id)}" ${merged.has(s.id) ? 'disabled' : ''} title="${esc(t('mixer.guest_listen_tip'))}">${esc(t(listening.has(g.id) || merged.has(s.id) ? 'mixer.guest_listening' : 'mixer.guest_listen'))}</button>` : ''}
                 ${liveOf(g.id) && guestLive.get(g.id).talk ? `<button type="button" class="btn btn-sm ${talking.has(g.id) || merged.has(s.id) ? 'mx-golive' : 'btn-secondary'}" data-gtalk="${esc(g.id)}" aria-pressed="${talking.has(g.id) || merged.has(s.id)}" ${merged.has(s.id) ? 'disabled' : ''} title="${esc(t('mixer.guest_talk_tip'))}">${esc(t(talking.has(g.id) || merged.has(s.id) ? 'mixer.guest_talking' : 'mixer.guest_talk'))}</button>` : ''}
+                <button type="button" class="btn btn-secondary btn-sm${g.cut ? ' is-on' : ''}" data-gcut="${esc(s.id)}" data-gid="${esc(g.id)}" data-on="${g.cut ? 0 : 1}" aria-pressed="${!!g.cut}" title="${esc(t(g.green ? 'mixer.guest_cut_tip_green' : 'mixer.guest_cut_tip'))}">${esc(t(g.cut ? 'mixer.guest_cut_on' : 'mixer.guest_cut'))}</button>
                 <button type="button" class="btn btn-secondary btn-sm" data-gdel="${esc(s.id)}" data-gid="${esc(g.id)}">${esc(t('mixer.guest_remove'))}</button></div>
             </div>`).join('')}</div>` : `<p class="mx-note">${esc(t('mixer.guest_none'))}</p>`}` : ''}
       </div>`; }).join('')}
@@ -195,7 +196,7 @@ async function guestsRefresh(force) {
   const el = document.getElementById('mxGuests');
   const stills = new Map(Object.values(rooms).flatMap((r) => r.guests.filter((g) => g.thumb).map((g) => [g.id, g.thumb])));
   document.querySelectorAll('img[data-gthumb]').forEach((img) => { const src = stills.get(img.dataset.gthumb); if (src && img.getAttribute('src') !== src) img.setAttribute('src', src); });
-  const sig = JSON.stringify([closeArmed, [...merged], Object.entries(rooms).map(([sid, r]) => [sid, r.invite_url, r.layout, r.guests.map((g) => [g.id, g.name, g.on_air, g.state, liveOf(g.id) ? 'live' : !!g.thumb, listening.has(g.id), talking.has(g.id)])])]) + streams().map((s) => s.status.state).join();
+  const sig = JSON.stringify([closeArmed, [...merged], Object.entries(rooms).map(([sid, r]) => [sid, r.invite_url, r.layout, r.guests.map((g) => [g.id, g.name, g.on_air, g.state, liveOf(g.id) ? 'live' : !!g.thumb, listening.has(g.id), talking.has(g.id), g.cut, g.green])])]) + streams().map((s) => s.status.state).join();
   if (sig === roomsSig && !force) return;
   roomsSig = sig;
   guestLayer();
@@ -231,6 +232,7 @@ function guestsBind(el) {
   });
   act('[data-glayout]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.glayout)}/guests/layout`, { method: 'POST', body: JSON.stringify({ layout: b.dataset.layout }) }));
   act('[data-gair]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.gair)}/guests/${encodeURIComponent(b.dataset.gid)}`, { method: 'POST', body: JSON.stringify({ on_air: b.dataset.on === '1' }) }));
+  act('[data-gcut]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.gcut)}/guests/${encodeURIComponent(b.dataset.gid)}`, { method: 'POST', body: JSON.stringify({ cut: b.dataset.on === '1' }) }));
   act('[data-gdel]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.gdel)}/guests/${encodeURIComponent(b.dataset.gid)}`, { method: 'DELETE' }));
   el.querySelectorAll('[data-glink]').forEach((i) => i.addEventListener('focus', () => i.select()));
 }

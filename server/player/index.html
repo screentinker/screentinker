@@ -3300,7 +3300,93 @@
       var c = guestConns[id]; if (!c) return;
       delete guestConns[id];
       try { c.pc.close(); } catch (e) {}
+      guestKeyStop(c);
       try { c.video.srcObject = null; c.tile.remove(); } catch (e) {}
+    }
+    // CUT OUT (lib/mixer-guests.js): a guest whose picture arrives with the background painted green is drawn
+    // through a key that makes the green transparent, so only the person stands in the programme. The video
+    // keeps playing (it is the sound, and the key's source) but is not what is seen.
+    var GUEST_KEY_FS = 'precision mediump float; varying vec2 uv; uniform sampler2D t;' +
+      'void main(){ vec4 c = texture2D(t, uv); float m = max(c.r, c.b); float g = c.g - m;' +
+      // how green: nothing of the picture below .08, all of it gone above .28 (the edge in between is soft)
+      ' float a = 1.0 - smoothstep(0.08, 0.28, g);' +
+      // what green is left on the person's edge is taken down to the other colours, or the outline glows
+      ' c.g -= max(g, 0.0) * 0.85;' +
+      ' gl_FragColor = vec4(c.rgb * a, a); }';
+    function guestKeyStart(c) {
+      if (c.key) return;
+      var cv = document.createElement('canvas');
+      cv.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;display:block;';
+      var gl = null; try { gl = cv.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false }); } catch (e) {}
+      if (!gl) { guestKeyPlain(c, cv); return; }     // no graphics card context in this browser: the same key, worked out point by point
+      var sh = function (type, src) { var x = gl.createShader(type); gl.shaderSource(x, src); gl.compileShader(x); return x; };
+      var prog = gl.createProgram();
+      gl.attachShader(prog, sh(gl.VERTEX_SHADER, 'attribute vec2 p; varying vec2 uv; void main(){ uv = vec2(p.x * .5 + .5, .5 - p.y * .5); gl_Position = vec4(p, 0., 1.); }'));
+      gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, GUEST_KEY_FS));
+      gl.linkProgram(prog); gl.useProgram(prog);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+      var loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      var k = c.key = { cv: cv, on: true };
+      var draw = function () {
+        if (!k.on) return;
+        var v = c.video;
+        try {
+          if (v.videoWidth && v.readyState >= 2) {
+            if (cv.width !== v.videoWidth || cv.height !== v.videoHeight) { cv.width = v.videoWidth; cv.height = v.videoHeight; gl.viewport(0, 0, cv.width, cv.height); }
+            if (cv.style.objectFit !== v.style.objectFit) cv.style.objectFit = v.style.objectFit;
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, v);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          }
+        } catch (e) {}
+        // One drawing for each picture that arrives, where the browser can say when one has; else with the screen.
+        if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(draw); else requestAnimationFrame(draw);
+      };
+      c.tile.insertBefore(cv, c.label);
+      c.video.style.opacity = '0';
+      c.tile.style.background = 'transparent'; c.tile.style.boxShadow = 'none';
+      draw();
+    }
+    // The key without a graphics context: a smaller picture (the work is done here, on the processor), the same rule.
+    function guestKeyPlain(c, cv) {
+      var ctx = cv.getContext('2d', { willReadFrequently: true }); if (!ctx) return;
+      var k = c.key = { cv: cv, on: true };
+      var draw = function () {
+        if (!k.on) return;
+        var v = c.video;
+        try {
+          if (v.videoWidth && v.readyState >= 2) {
+            var sc = Math.min(1, 640 / Math.max(v.videoWidth, v.videoHeight)), w = Math.round(v.videoWidth * sc), h = Math.round(v.videoHeight * sc);
+            if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+            if (cv.style.objectFit !== v.style.objectFit) cv.style.objectFit = v.style.objectFit;
+            ctx.drawImage(v, 0, 0, w, h);
+            var img = ctx.getImageData(0, 0, w, h), d = img.data, n = d.length, i, m, g, a;
+            for (i = 0; i < n; i += 4) {
+              m = d[i] > d[i + 2] ? d[i] : d[i + 2]; g = d[i + 1] - m;
+              if (g <= 0) continue;
+              a = g <= 20 ? 1 : g >= 71 ? 0 : 1 - (g - 20) / 51;
+              d[i + 1] -= g * 0.85; d[i + 3] = a * 255;
+            }
+            ctx.putImageData(img, 0, 0);
+          }
+        } catch (e) {}
+        if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(draw); else requestAnimationFrame(draw);
+      };
+      c.tile.insertBefore(cv, c.label);
+      c.video.style.opacity = '0';
+      c.tile.style.background = 'transparent'; c.tile.style.boxShadow = 'none';
+      draw();
+    }
+    function guestKeyStop(c) {
+      if (!c.key) return;
+      c.key.on = false;
+      try { c.key.cv.remove(); } catch (e) {}
+      c.key = null;
+      c.video.style.opacity = '';
+      c.tile.style.background = '#000'; c.tile.style.boxShadow = '0 0 0 2px rgba(255,255,255,.85),0 6px 24px rgba(0,0,0,.5)';
     }
     function guestLayerEl() {
       var el = document.getElementById('guestLayer');
@@ -3361,16 +3447,19 @@
       for (i = 0; i < list.length; i++) {
         g = list[i]; seen[g.id] = true; c = guestConns[g.id];
         if (g.offer && (!c || c.seq !== g.seq)) { guestConnect(g, gs.ice_servers, v); c = guestConns[g.id]; }
-        if (c) { c.onAir = !!g.on_air; if (c.label.textContent !== (g.name || '')) c.label.textContent = g.name || ''; }
+        if (c) { c.onAir = !!g.on_air; c.cut = !!g.cut; if (c.label.textContent !== (g.name || '')) c.label.textContent = g.name || ''; }
       }
       for (id in guestConns) if (!seen[id]) guestDrop(id);
       var air = []; for (i = 0; i < list.length; i++) if (guestConns[list[i].id] && guestConns[list[i].id].onAir) air.push(guestConns[list[i].id]);
       var rects = guestRects(gs ? gs.layout : 'pip', air.length);
       var layer = document.getElementById('guestLayer');
-      if (layer) layer.style.background = gs && gs.layout === 'grid' && air.length ? '#000' : 'transparent';
+      // Full screen is the guests instead of the programme, unless they are all cut out: then they stand in it.
+      var allCut = air.length > 0; for (i = 0; i < air.length; i++) if (!air[i].cut) allCut = false;
+      if (layer) layer.style.background = gs && gs.layout === 'grid' && air.length && !allCut ? '#000' : 'transparent';
       for (id in guestConns) {
         c = guestConns[id]; i = air.indexOf(c);
-        if (i < 0) { c.tile.style.display = 'none'; if (!c.video.muted) c.video.muted = true; continue; }
+        if (i < 0) { c.tile.style.display = 'none'; if (!c.video.muted) c.video.muted = true; guestKeyStop(c); continue; }
+        if (c.cut) guestKeyStart(c); else guestKeyStop(c);
         c.tile.style.left = rects[i][0] + '%'; c.tile.style.top = rects[i][1] + '%'; c.tile.style.width = rects[i][2] + '%'; c.tile.style.height = rects[i][3] + '%';
         if (c.tile.style.display !== 'block') { c.tile.style.display = 'block'; c.video.muted = false; c.video.play().catch(function () {}); }
       }

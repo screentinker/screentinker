@@ -21,6 +21,8 @@ let me = null;               // { guest_id, key } once joined
 let pc = null, offering = false, ice = [], fails = 0, lostAt = 0;
 let actx = null, analyser = null, lock = null;
 const pick = { cam: '', mic: '' };
+// "Remove my background" (guest-cutout.js): the running cut-out, and whether the guest wants it.
+let cut = null, cutWanted = false, cutBusy = false;
 const want = { mic: true, cam: true };       // what the guest has switched on, kept across a change of device
 let myName = '';
 try { $('gsName').value = localStorage.getItem('st_guest_name') || ''; } catch { /* not kept */ }
@@ -45,6 +47,28 @@ function mediaError(e) {
 }
 
 const closeConn = (conn) => { if (conn) { try { conn.close(); } catch { /* gone */ } } };
+/** What is sent: the microphone, and the camera's picture or (background removed) the person on green. */
+const sendTracks = () => (media ? [...media.getAudioTracks(), ...(cut ? [cut.track] : media.getVideoTracks())] : []);
+/** Puts what is sent now into every connection that is already up, and into the guest's own preview. */
+function resend() {
+  for (const conn of conns()) for (const s of conn.getSenders()) { const t = sendTracks().find((x) => s.track && x.kind === s.track.kind); if (t && s.track !== t) s.replaceTrack(t).catch(() => {}); }
+  if (media) $('gsVideo').srcObject = cut ? new MediaStream([cut.track]) : media;
+}
+/** Turns the cut-out on or off to match the switch, on the camera that is open now. */
+async function cutSync() {
+  if (cutBusy) return; cutBusy = true;
+  try {
+    if (cut) { const old = cut; cut = null; resend(); old.stop(); }
+    const cam = media && media.getVideoTracks()[0];
+    if (cutWanted && cam) {
+      $('gsCutNote').textContent = 'Getting background removal ready...';
+      const { startCutout } = await import('./guest-cutout.js');
+      cut = await startCutout(cam);
+      resend(); $('gsCutNote').textContent = '';
+    } else $('gsCutNote').textContent = cutWanted ? 'There is no camera picture to remove a background from.' : '';
+  } catch (e) { cutWanted = false; $('gsCut').checked = false; $('gsCutNote').textContent = 'Background removal did not start on this device: ' + ((e && e.message) || 'unknown reason'); }
+  cutBusy = false;
+}
 /** The connections that carry this guest's picture and sound: to the studio, and to each desk. */
 const conns = () => [pc, ...[...legs.values()].map((l) => l.pc)].filter(Boolean);
 
@@ -84,8 +108,8 @@ async function openMedia() {
   };
   fill($('gsCam'), 'videoinput', (media.getVideoTracks()[0] || { getSettings: () => ({}) }).getSettings().deviceId);
   fill($('gsMic'), 'audioinput', (media.getAudioTracks()[0] || { getSettings: () => ({}) }).getSettings().deviceId);
-  // Already connected: the new camera or microphone replaces the old one in place.
-  for (const conn of conns()) for (const s of conn.getSenders()) { const t = media.getTracks().find((x) => s.track && x.kind === s.track.kind); if (t) s.replaceTrack(t).catch(() => {}); }
+  // Already connected: the new camera or microphone replaces the old one in place (the cut-out starts again on the new camera).
+  if (cut || cutWanted) await cutSync(); else resend();
 }
 
 const buf = new Float32Array(1024);
@@ -123,7 +147,7 @@ async function offer() {
   const conn = pc = new RTCPeerConnection({ iceServers: ice });
   conn.seq = -1;             // the number the server gives this offer: an answer to any other number is not for this connection
   try {
-    for (const t of media.getTracks()) conn.addTrack(t, media);
+    for (const t of sendTracks()) conn.addTrack(t, media);
     conn.onconnectionstatechange = () => {
       if (pc !== conn) return;
       if (conn.connectionState === 'connected') { fails = 0; lostAt = 0; }
@@ -164,7 +188,7 @@ async function offerDesk(id) {
   const leg = { pc: new RTCPeerConnection({ iceServers: ice }), seq: -1, busy: true }; legs.set(id, leg);
   try {
     const conn = leg.pc;
-    for (const t of media.getTracks()) {
+    for (const t of sendTracks()) {
       const sender = conn.addTrack(t, media);
       // A preview, not the programme: a quarter of the pixels and a modest bit rate leave the uplink for the stream.
       if (t.kind === 'video') { try { const p = sender.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}]; p.encodings[0].maxBitrate = 400000; p.encodings[0].scaleResolutionDownBy = 2; await sender.setParameters(p); } catch { /* full size then */ } }
@@ -220,7 +244,7 @@ async function tick() {
   ticking = true;
   try {
     let st;
-    try { st = await post('/state', me); }
+    try { st = await post('/state', { ...me, green: !!cut }); }
     catch (e) {
       if (e.status === 410) return ended('The studio has ended your visit. Thank you for joining.');
       if (e.status === 404) return await rejoin();
@@ -232,6 +256,8 @@ async function tick() {
     if (st.studio && (st.need_offer || !pc)) offer();
     else if (pc && !offering && st.answer && st.seq === pc.seq && pc.signalingState === 'have-local-offer') { const conn = pc; await conn.setRemoteDescription({ type: 'answer', sdp: st.answer }).catch(() => { if (pc === conn) { closeConn(conn); pc = null; } }); }
     syncDesks(st.desks); hearCheck();
+    // A device that cannot keep up says so: a few pictures a second looks worse than a real background.
+    if (cut) { const r = cut.rate(); $('gsCutNote').textContent = r && r < 10 ? `Background removal is slow on this device (${Math.round(r)} pictures a second). Turn it off if the picture looks jerky.` : ''; }
     show(st); say('');
   } catch { say('Lost touch with the studio. Trying again...'); }
   finally { ticking = false; }
@@ -260,6 +286,7 @@ function ended(text, keepMedia) {
   for (const id of [...legs.keys()]) dropLeg(id);
   if (lock) { try { lock.release(); } catch { /* gone */ } lock = null; }
   // The camera light goes out when the visit is over; Join opens it again.
+  if (cut) { cut.stop(); cut = null; }
   if (!keepMedia && media) { media.getTracks().forEach((t) => { t.onended = null; t.stop(); }); media = null; $('gsVideo').srcObject = null; }
   $('gsLive').hidden = true; $('gsSetup').hidden = false;
   $('gsView').classList.remove('is-air', 'is-back', 'is-wait'); $('gsTag').textContent = 'Camera check';
@@ -277,6 +304,7 @@ const labels = () => {
   $('gsMute').textContent = want.mic ? 'Mute microphone' : 'Unmute microphone'; $('gsMute').setAttribute('aria-pressed', String(!want.mic));
   $('gsCamOff').textContent = want.cam ? 'Turn camera off' : 'Turn camera on'; $('gsCamOff').setAttribute('aria-pressed', String(!want.cam));
 };
+$('gsCut').addEventListener('change', () => { cutWanted = $('gsCut').checked; cutSync(); });
 $('gsCam').addEventListener('change', () => { pick.cam = $('gsCam').value; openMedia().catch((e) => say(mediaError(e), true)); });
 $('gsMic').addEventListener('change', () => { pick.mic = $('gsMic').value; openMedia().catch((e) => say(mediaError(e), true)); });
 $('gsJoin').addEventListener('click', async () => {

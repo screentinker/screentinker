@@ -866,3 +866,56 @@ test('an open invite outlives a restart: it is kept where the caller says, and g
   G.revoke('out-new'); assert.equal(saved.has('out-new'), false, 'and a closed one is forgotten');
   G.revoke('out-keep'); G.restore([], null);
 });
+
+test('cut out: a guest shown without their background follows what their page sends, until the operator says otherwise', async () => {
+  const G = require('../lib/mixer-guests');
+  const out = { id: 'out-cut-' + Date.now(), workspace_id: 'ws-cut' }, t0 = 2_000_000;
+  const token = G.invite(out, t0), g = G.join(token, 'Ana', t0).guest;
+  const seen = () => [G.forDesk(out.id, t0).guests[0].cut, G.forRenderer(out.id, '', t0).list[0].cut];
+  assert.deepEqual(seen(), [false, false], 'an ordinary picture is shown as it is');
+  G.setGreen(g, true); assert.deepEqual(seen(), [true, true], 'a page that removes the background is cut out without anyone pressing a key');
+  assert.equal(G.forDesk(out.id, t0).guests[0].green, true, 'and the desk is told that is what is arriving');
+  assert.equal(G.setCut(out.id, g.id, false), true); assert.deepEqual(seen(), [false, false], 'the operator can show the green as it is');
+  G.setGreen(g, false); G.setGreen(g, true); assert.deepEqual(seen(), [false, false], 'and that choice stays');
+  assert.equal(G.setCut(out.id, g.id, true), true); G.setGreen(g, false); assert.deepEqual(seen(), [true, true], 'cut out by the operator alone: a real green screen');
+  assert.equal(G.setCut('other-output', g.id, false), false); assert.equal(G.setCut(out.id, 'nobody', true), false);
+  G.setGreen(g, 'yes'); assert.equal(g.green, false, 'only true is true');
+  G.revoke(out.id);
+  // Over the API: the guest says what it sends with its state; the operator's key is theirs alone and leaves on air alone.
+  const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Cut', kind: 'record' })).body;
+  const tok = (await call('POST', `/api/stream-out/${so.id}/guests/invite`, A.jwt)).body.invite_url.split('/').pop();
+  const j = (await call('POST', `/api/stream-guest/${tok}/join`, null, { name: 'Bo' })).body;
+  await call('POST', `/api/stream-guest/${tok}/state`, null, { guest_id: j.guest_id, key: j.key, green: true });
+  const room = async () => (await call('GET', '/api/stream-out/guests', A.jwt)).body.rooms[so.id].guests[0];
+  assert.deepEqual([(await room()).green, (await room()).cut], [true, true]);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}`, A.jwt, { on_air: true })).status, 200);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}`, V.jwt, { cut: false })).status, 403);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}`, B.jwt, { cut: false })).status, 404);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}`, A.jwt, { cut: false })).status, 200);
+  assert.deepEqual([(await room()).cut, (await room()).on_air], [false, true], 'changing the cut does not take the guest off air');
+  await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+});
+
+test('background removal ships whole and self-contained: the maths, the network, their notices, and nothing that needs eval', () => {
+  const fs = require('fs'), path = require('path');
+  const FE = path.join(__dirname, '..', '..', 'frontend'), V = path.join(FE, 'vendor');
+  for (const f of ['tfjs/tf-core.es2017.min.js', 'tfjs/tf-backend-webgl.es2017.min.js', 'tfjs/tfjs.LICENSE', 'segmenter/general.json', 'segmenter/general.bin', 'segmenter/landscape.json', 'segmenter/landscape.bin', 'segmenter/segmenter.LICENSE']) assert.ok(fs.existsSync(path.join(V, f)), `missing frontend/vendor/${f}`);
+  for (const f of ['tfjs/tf-core.es2017.min.js', 'tfjs/tf-backend-webgl.es2017.min.js']) {
+    const src = fs.readFileSync(path.join(V, f), 'utf8');
+    assert.doesNotMatch(src, /new Function\(|[^.\w]eval\(/, `${f} must run under script-src 'self'`);
+    assert.doesNotMatch(src, /sourceMappingURL=/, 'the sourcemap is not vendored, so it is not pointed at');
+  }
+  assert.match(fs.readFileSync(path.join(V, 'README.md'), 'utf8'), /## tfjs\/[\s\S]*## segmenter\//, 'both are recorded in the vendor README');
+  // The network is a list of steps our own runner knows, and its weights are all there.
+  const runner = fs.readFileSync(path.join(FE, 'js', 'seg-net.js'), 'utf8');
+  for (const kind of ['general', 'landscape']) {
+    const g = JSON.parse(fs.readFileSync(path.join(V, 'segmenter', kind + '.json'), 'utf8')), bytes = fs.statSync(path.join(V, 'segmenter', kind + '.bin')).size;
+    for (const op of g.ops) assert.ok(runner.includes(`${op.op}:`), `${kind}: the runner has no step "${op.op}"`);
+    for (const c of Object.values(g.consts)) if (c.at !== undefined) assert.ok(c.at + c.bytes <= bytes, `${kind}: a weight lies outside the file`);
+    assert.equal(g.input_shape[3], 3); assert.equal(g.input_shape[1] % 16, 0);
+  }
+  // Loaded only when a guest asks for it, never by the page itself.
+  const page = fs.readFileSync(path.join(FE, 'js', 'guest-page.js'), 'utf8');
+  assert.doesNotMatch(page, /^import .*guest-cutout/m); assert.match(page, /await import\('\.\/guest-cutout\.js'\)/);
+  assert.doesNotMatch(fs.readFileSync(path.join(FE, 'guest.html'), 'utf8'), /vendor\/tfjs/);
+});
