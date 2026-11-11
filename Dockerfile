@@ -87,6 +87,8 @@ COPY brightsign/ /app/brightsign/
 COPY plugins/ /app/plugins/
 # #634: the native Raspberry Pi player for /download/pi (lib/deb-cache.js reads /app/native/dist).
 COPY --from=pi-deb /build/native/dist/ /app/native/dist/
+# Stream outputs (lib/stream-out.js): an image that adds Chromium runs its renderer as this user, not as root.
+RUN useradd --system --no-create-home --shell /usr/sbin/nologin st-render
 VOLUME ["/data"]
 EXPOSE 3001
 CMD ["node", "server.js"]

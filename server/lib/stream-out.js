@@ -43,6 +43,9 @@ const MAX_STREAMS = Math.max(1, Math.min(8, parseInt(process.env.STREAM_OUT_MAX 
 // sound server and the mixer, a steady 170 ms or so later (measured: a flash and a beep each second, through the
 // programme and through a guest). The picture is held back by as much, so they go out together.
 const AV_DELAY_MS = (() => { const n = Number(process.env.STREAM_OUT_AV_DELAY_MS); return Number.isFinite(n) && n >= 0 && n <= 1000 ? Math.round(n) : 170; })();
+// Screens given the stream with sound get the tab's picture as it is drawn and the mix as it comes out of the mixer,
+// about 200 ms later (measured on a screen): their picture is held back by as much (showOn).
+const SCREEN_AV_DELAY_MS = (() => { const n = Number(process.env.STREAM_OUT_SCREEN_AV_DELAY_MS); return Number.isFinite(n) && n >= 0 && n <= 1000 ? Math.round(n) : 200; })();
 const ENCODER = /^[a-z0-9_]{2,32}$/.test(process.env.STREAM_OUT_ENCODER || '') ? process.env.STREAM_OUT_ENCODER : 'libx264';
 
 const KINDS = {
@@ -726,21 +729,38 @@ async function showOn(id, legs, wsPath, { sound = false } = {}) {
     // The capture needs the renderer on a display of its own (capture()): that is where the extension is loaded.
     if (!s.display) throw new Error('This server takes the stream picture without a display (no Xvfb), so it cannot be shown on screens.');
     if (!(await tabCapture(s))) throw new Error(s.shareError || 'The renderer could not capture its own picture.');
-    return await s.page.evaluate(async (legs, wsPath, sound) => {
+    return await s.page.evaluate(async (legs, wsPath, sound, delayMs) => {
       const lib = await import('/js/lib/screen-share-client.js');
       window.__stShares = window.__stShares || [];
-      // With sound: the stream's own mix (the console's master, as the stream sends it), from the sound link.
+      // With sound: the stream's own mix (the console's master, as the stream sends it), from the sound link, and the
+      // picture held back to meet it. One held-back copy of the picture, shared by every screen that has sound.
       const master = sound && window.__stAudio && window.__stAudio.masterTrack ? window.__stAudio.masterTrack() : null;
-      const stream = master ? new MediaStream([...window.__stTab.getVideoTracks(), master]) : window.__stTab;
+      const held = () => {
+        const src = window.__stTab.getVideoTracks()[0];
+        if (window.__stHeld && window.__stHeld.src === src && window.__stHeld.track.readyState === 'live') return window.__stHeld.track;
+        if (!delayMs || !window.MediaStreamTrackProcessor || !window.MediaStreamTrackGenerator) return src;
+        const proc = new MediaStreamTrackProcessor({ track: src }), gen = new MediaStreamTrackGenerator({ kind: 'video' });
+        const reader = proc.readable.getReader(), writer = gen.writable.getWriter(), q = [];
+        (async () => { for (;;) { const r = await reader.read().catch(() => ({ done: true })); if (r.done) break; q.push([performance.now(), r.value]); } })();
+        const pump = () => {
+          const now = performance.now();
+          while (q.length && now - q[0][0] >= delayMs) { const f = q.shift()[1]; writer.write(f).catch(() => { try { f.close(); } catch (e) { /* gone */ } }); }
+          if (gen.readyState === 'live' && src.readyState === 'live') setTimeout(pump, 5); else { q.forEach((x) => { try { x[1].close(); } catch (e) { /* gone */ } }); try { gen.stop(); } catch (e) { /* gone */ } }
+        };
+        pump();
+        window.__stHeld = { src, track: gen };
+        return gen;
+      };
+      const stream = master ? new MediaStream([held(), master]) : window.__stTab;
       const sender = new lib.MultiShareSender({ legs, wsPath, stream, onEnded: () => {
         window.__stShares = window.__stShares.filter((x) => x !== sender);
         // No screen shows the stream any more: the capture is let go (it is asked for again when one does).
-        if (!window.__stShares.length && window.__stTab) { window.__stTab.getTracks().forEach((t) => t.stop()); window.__stTab = null; }
+        if (!window.__stShares.length && window.__stTab) { window.__stTab.getTracks().forEach((t) => t.stop()); window.__stTab = null; if (window.__stHeld) { try { window.__stHeld.track.stop(); } catch (e) { /* gone */ } window.__stHeld = null; } }
       } });
       window.__stShares.push(sender);
       sender.start();
       return true;
-    }, legs, wsPath, sound);
+    }, legs, wsPath, sound, SCREEN_AV_DELAY_MS);
   } catch (e) { s.shareError = String((e && e.message) || e).slice(0, 300); return false; }
 }
 const shareError = (id) => { const s = sessions.get(id); return (s && s.shareError) || null; };
