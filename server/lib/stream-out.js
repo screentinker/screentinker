@@ -33,6 +33,9 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 
+// The extension the renderer captures its own tab with (showOn). Its id follows from the key in its manifest.
+const CAPTURE_EXT = path.join(__dirname, 'stream-capture-ext');
+const CAPTURE_EXT_ID = 'ncdaglicfkfanohhhcdeidgndigimama';
 const MAX_STREAMS = Math.max(1, Math.min(8, parseInt(process.env.STREAM_OUT_MAX || '2', 10) || 2));
 const ENCODER = /^[a-z0-9_]{2,32}$/.test(process.env.STREAM_OUT_ENCODER || '') ? process.env.STREAM_OUT_ENCODER : 'libx264';
 
@@ -217,7 +220,7 @@ function status(id) {
   return { state: s.state, since: s.since, frames: s.sent, error: s.error || null, audio_peak: Math.round(s.mix.held.master * 1e4) / 1e4,
     audio_peaks: Object.fromEntries(Object.entries(s.mix.held).map(([k, v]) => [k, Math.round(v * 1e4) / 1e4])), programme_audio: !!s.sink,
     limiting: Math.round(s.mix.limiting * 10) / 10, inputs_live: Object.keys(s.inputs),
-    capture: s.display ? 'display' : 'screencast',
+    capture: s.display ? 'display' : 'screencast', share_error: s.shareError || null,
     recording: s.recFile ? path.basename(s.recFile) : null, record_skipped: !!s.recSkipped };
 }
 function localBaseUrl() { return global.__localApiOrigin || `http://127.0.0.1:${process.env.PORT || config.port || 3001}`; }
@@ -370,15 +373,16 @@ async function start(row, key, sound, { standby = false } = {}) {
       env: { ...process.env, ...(s.sink ? { PULSE_SINK: s.sink.name } : {}), ...(shown ? { DISPLAY: `:${s.display.n}` } : {}) },
       // puppeteer mutes a headless browser by default; with a sink to play into, it must not.
       // On a display, the "controlled by automated software" bar would be in the picture.
-      ignoreDefaultArgs: [...(s.sink ? ['--mute-audio'] : []), ...(shown ? ['--enable-automation'] : [])],
+      ignoreDefaultArgs: [...(s.sink ? ['--mute-audio'] : []), ...(shown ? ['--enable-automation', '--disable-extensions'] : [])],
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', ...(s.sink ? [] : ['--mute-audio']), '--hide-scrollbars',
         '--autoplay-policy=no-user-gesture-required',
         // Guests connect to this browser directly: it must offer its real addresses, not names only its own network can resolve.
         '--disable-features=WebRtcHideLocalIpsWithMdns', `--window-size=${row.width},${row.height}`,
         // A cut-out guest is keyed on the graphics card where there is one; a server has none, so the software one is allowed.
         '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader',
-        // Shown on screens (showOn): the renderer shares its own tab, and there is nobody to ask.
-        '--auto-accept-this-tab-capture',
+        // Shown on screens (showOn): the renderer's own tab is captured through a small extension of ours, which
+        // (unlike the browser's own screen sharing) draws nothing over the picture. It is loaded into this browser only.
+        ...(shown ? [`--load-extension=${CAPTURE_EXT}`, `--disable-extensions-except=${CAPTURE_EXT}`, `--allowlisted-extension-id=${CAPTURE_EXT_ID}`, '--disable-features=WebRtcHideLocalIpsWithMdns,DisableLoadExtensionCommandLineSwitch'] : []),
         ...(shown ? ['--kiosk', '--window-position=0,0', '--test-type', '--noerrdialogs', '--disable-infobars', '--no-first-run', '--disable-session-crashed-bubble'] : [])],
     });
     s.browser.on('disconnected', () => { if (s.wanted) { s.error = 'The renderer stopped.'; stop(row.id, 'error'); } });
@@ -398,6 +402,8 @@ async function start(row, key, sound, { standby = false } = {}) {
     }
     if (!s.wanted) return status(row.id);
     for (const name of [...audio.INPUTS, 'console']) startInput(s, name);
+    // Ready to be shown on screens (showOn). Not waited for: a stream starts whether or not this works.
+    if (shown) tabCapture(s).catch(() => {});
     s.ready = true;
     if (standby) idle(s); else encode(s);
   } catch (e) {
@@ -474,22 +480,42 @@ function encode(s) {
  * show a stream, and a screen gets its own content back the way it does when a share ends.
  * `legs` are the share's tickets (routes/stream-out.js made them). Resolves true once the renderer has them.
  */
+/**
+ * Has the renderer hold a capture of its own tab (the picture only: the tab's sound stays where it is, it
+ * is the programme sound of the stream). Asked for when the renderer starts, while the extension's worker is
+ * still awake (the browser puts an idle one to sleep after half a minute), and kept for as long as the page lives.
+ */
+async function tabCapture(s) {
+  try {
+    if (await s.page.evaluate(() => !!(window.__stTab && window.__stTab.getVideoTracks().some((t) => t.readyState === 'live')))) return true;
+    const target = await s.browser.waitForTarget((t) => t.type() === 'service_worker' && t.url().startsWith(`chrome-extension://${CAPTURE_EXT_ID}/`), { timeout: 8000 });
+    const worker = await target.worker();
+    const captureId = await worker.evaluate(() => self.stTabId());
+    await s.page.evaluate(async (captureId, w, h, fps) => {
+      window.__stTab = await navigator.mediaDevices.getUserMedia({ audio: false, video: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: captureId, minWidth: w, maxWidth: w, minHeight: h, maxHeight: h, maxFrameRate: fps } } });
+    }, captureId, s.row.width, s.row.height, s.row.fps);
+    s.shareError = null;
+    return true;
+  } catch (e) { s.shareError = 'The renderer could not capture its own picture: ' + String((e && e.message) || e).slice(0, 200); return false; }
+}
 async function showOn(id, legs, wsPath) {
   const s = sessions.get(id);
   if (!s || !s.page || !s.ready) return false;
-  return s.page.evaluate(async (legs, wsPath) => {
-    const lib = await import('/js/lib/screen-share-client.js');
-    // One capture of this tab (picture and sound) for every screen, kept for as long as the page lives.
-    if (!window.__stTab || !window.__stTab.getVideoTracks().some((t) => t.readyState === 'live')) {
-      window.__stTab = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 } }, audio: true, preferCurrentTab: true, selfBrowserSurface: 'include' });
-    }
-    window.__stShares = window.__stShares || [];
-    const sender = new lib.MultiShareSender({ legs, wsPath, stream: window.__stTab, onEnded: () => { window.__stShares = window.__stShares.filter((x) => x !== sender); } });
-    window.__stShares.push(sender);
-    sender.start();
-    return true;
-  }, legs, wsPath).catch((e) => { s.shareError = String((e && e.message) || e).slice(0, 200); return false; });
+  try {
+    // The capture needs the renderer on a display of its own (capture()): that is where the extension is loaded.
+    if (!s.display) throw new Error('This server takes the stream picture without a display (no Xvfb), so it cannot be shown on screens.');
+    if (!(await tabCapture(s))) throw new Error(s.shareError || 'The renderer could not capture its own picture.');
+    return await s.page.evaluate(async (legs, wsPath) => {
+      const lib = await import('/js/lib/screen-share-client.js');
+      window.__stShares = window.__stShares || [];
+      const sender = new lib.MultiShareSender({ legs, wsPath, stream: window.__stTab, onEnded: () => { window.__stShares = window.__stShares.filter((x) => x !== sender); } });
+      window.__stShares.push(sender);
+      sender.start();
+      return true;
+    }, legs, wsPath);
+  } catch (e) { s.shareError = String((e && e.message) || e).slice(0, 300); return false; }
 }
+const shareError = (id) => { const s = sessions.get(id); return (s && s.shareError) || null; };
 
 const stopped = new Map();   // id -> last error, so the desk can say why a stream went off
 async function stop(id, why) {
@@ -511,4 +537,4 @@ function lastError(id) { const e = stopped.get(id); return e ? e.error : null; }
 async function stopAll() { await Promise.all([...sessions.keys()].map((id) => stop(id))); }
 process.on('exit', () => { for (const s of sessions.values()) { try { s.ff && s.ff.kill('SIGKILL'); } catch { /* */ } try { Object.values(s.inputs).forEach((p) => p.kill('SIGKILL')); } catch { /* */ } try { s.browser && s.browser.process() && s.browser.process().kill('SIGKILL'); } catch { /* */ } try { s.display && s.display.proc.kill('SIGKILL'); } catch { /* */ } } });
 
-module.exports = { showOn, pushMic, stopMic, recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, capture, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };
+module.exports = { showOn, shareError, CAPTURE_EXT, CAPTURE_EXT_ID, pushMic, stopMic, recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, capture, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };

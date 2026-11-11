@@ -919,3 +919,41 @@ test('background removal ships whole and self-contained: the maths, the network,
   assert.doesNotMatch(page, /^import .*guest-cutout/m); assert.match(page, /await import\('\.\/guest-cutout\.js'\)/);
   assert.doesNotMatch(fs.readFileSync(path.join(FE, 'guest.html'), 'utf8'), /vendor\/tfjs/);
 });
+
+test('a stream on screens: only a running stream, only this workspace\'s screens, only by someone who may; a system share has no time limit and no badge', async () => {
+  const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'On screens', kind: 'record' })).body;
+  assert.deepEqual(so.on_screens, [], 'a stream says which screens show it');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/screens`, A.jwt, { device_ids: ['x'] })).status, 409, 'a stream that is off has no picture to show');
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/screens`, V.jwt, { device_ids: ['x'] })).status, 403);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/screens`, B.jwt, { device_ids: ['x'] })).status, 404);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/screens`, null, { device_ids: ['x'] })).status, 401);
+  assert.equal((await call('DELETE', `/api/stream-out/${so.id}/screens`, V.jwt)).status, 403);
+  assert.equal((await call('DELETE', `/api/stream-out/${so.id}/screens`, B.jwt)).status, 404);
+  assert.deepEqual((await call('DELETE', `/api/stream-out/${so.id}/screens`, A.jwt)).body, { released: 0 });
+  await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+  // The share the server makes for it: marked as the system's, tied to its stream.
+  const share = require('../lib/screen-share');
+  const dev = { id: 'dev-sys-' + Date.now(), name: 'Lobby' }, ws = { id: A.wsId, screen_share_enabled: 1 };
+  const made = share.createSession({ device: dev, workspace: ws, sharedBy: 'On screens', system: true, streamId: 'stream-1', audio: false });
+  assert.equal(made.session.system, true); assert.equal(made.session.streamId, 'stream-1');
+  const person = share.createSession({ device: { id: dev.id + '-b', name: 'Other' }, workspace: ws, sharedBy: 'Ana', streamId: 'stream-1' });
+  assert.equal(person.session.system, false); assert.equal(person.session.streamId, null, 'a person\'s share cannot claim to be a stream\'s');
+  share.endSession(made.session, 'stopped_by_owner'); share.endSession(person.session, 'stopped_by_owner');
+  const lib = require('fs').readFileSync(require('path').join(__dirname, '..', 'lib', 'screen-share.js'), 'utf8');
+  assert.match(lib, /if \(!s\.system\) \{ s\.timers\.max = /, 'a stream\'s picture is not cut off after the longest a person may share');
+  assert.match(lib, /s\.system \? \{ plain: true \} : \{\}/, 'and the screen is told to show it without a badge');
+});
+
+test('the renderer captures its own picture through an extension of ours, whose identity is fixed', () => {
+  const fs = require('fs'), path = require('path'), crypto = require('crypto');
+  const dir = streamOut.CAPTURE_EXT;
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.manifest_version, 3); assert.deepEqual(manifest.permissions.sort(), ['tabCapture', 'tabs']);
+  assert.ok(fs.existsSync(path.join(dir, manifest.background.service_worker)));
+  // The id the browser gives an extension is derived from its key: the one the renderer allows must be this one.
+  const id = crypto.createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest('hex').slice(0, 32).replace(/[0-9a-f]/g, (c) => 'abcdefghijklmnop'[parseInt(c, 16)]);
+  assert.equal(id, streamOut.CAPTURE_EXT_ID);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'stream-out.js'), 'utf8');
+  assert.doesNotMatch(src, /getDisplayMedia|auto-accept-this-tab-capture/, 'the browser\'s own screen sharing draws a bar over the picture, which is the stream');
+  assert.match(src, /audio: false, video: \{ mandatory: \{ chromeMediaSource: 'tab'/, 'the tab\'s sound is not captured: capturing it would take it away from the stream');
+});

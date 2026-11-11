@@ -229,12 +229,12 @@ router.post('/:id/screens', gate, requireFleetWrite, async (req, res) => {
     targets.push({ device, workspace });
   }
   if (targets.length) {
-    const out = screenShare.createShare({ targets, sharedBy: r.name, userId: req.user && req.user.id, ip: req.ip, audio: true, system: true, streamId: r.id, source: 'stream' });
+    const out = screenShare.createShare({ targets, sharedBy: r.name, userId: req.user && req.user.id, ip: req.ip, audio: false, system: true, streamId: r.id, source: 'stream' });
     if (out.error) return res.status(409).json({ error: out.error === 'too_many_targets' ? `A stream can be shown on at most ${screenShare.maxTargets()} screens at once.` : 'One of those screens is showing something else that was shared to it.', code: out.error, device_id: out.device_id || null });
     const legs = out.legs.map((l) => ({ device_id: l.device.id, screen_name: l.device.name || '', session_id: l.session.id, ticket: l.ticket, ice_servers: screenShare.iceServersFor(l.device.id) }));
     if (!(await streamOut.showOn(r.id, legs, '/api/screen-share/ws'))) {
       screenShare.stopShare(out.shareId, 'not_connected');
-      return res.status(502).json({ error: 'The stream\'s renderer could not send its picture. Stop the stream and start it again.' });
+      return res.status(502).json({ error: 'The stream\'s renderer could not send its picture: ' + (streamOut.shareError(r.id) || 'unknown reason') });
     }
     for (const l of out.legs) shown.push({ device_id: l.device.id, name: l.device.name });
   }
