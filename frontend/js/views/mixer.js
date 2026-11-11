@@ -147,6 +147,39 @@ function liveSync() {
   }
 }
 /** Put the live pictures into the places drawn for them. A place is drawn again often; the connection is not. */
+/*
+ * The green key, as the stream's renderer applies it to a cut-out guest (server/player/index.html,
+ * guestKeyStart: the same rule and the same numbers), so the Program monitor shows them the way the
+ * stream does. Draws `video` into `canvas` for as long as the canvas is in the page.
+ */
+const KEY_FS = `precision mediump float; varying vec2 uv; uniform sampler2D t;
+  void main(){ vec4 c = texture2D(t, uv); float m = max(c.r, c.b); float g = c.g - m;
+    float a = 1.0 - smoothstep(0.08, 0.28, g); c.g -= max(g, 0.0) * 0.85; gl_FragColor = vec4(c.rgb * a, a); }`;
+function keyOnto(video, canvas) {
+  let gl = null; try { gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false }); } catch { /* none */ }
+  if (!gl) return false;
+  const sh = (type, src) => { const x = gl.createShader(type); gl.shaderSource(x, src); gl.compileShader(x); return x; };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, 'attribute vec2 p; varying vec2 uv; void main(){ uv = vec2(p.x * .5 + .5, .5 - p.y * .5); gl_Position = vec4(p, 0., 1.); }'));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, KEY_FS)); gl.linkProgram(prog); gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer()); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+  for (const [k, v] of [[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+  const draw = () => {
+    if (!canvas.isConnected) return;
+    try {
+      if (video.videoWidth && video.readyState >= 2) {
+        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) { canvas.width = video.videoWidth; canvas.height = video.videoHeight; gl.viewport(0, 0, canvas.width, canvas.height); }
+        canvas.style.objectFit = video.videoHeight > video.videoWidth ? 'contain' : 'cover';
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      }
+    } catch { /* a frame that was not ready */ }
+    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(draw); else requestAnimationFrame(draw);
+  };
+  draw();
+  return true;
+}
 function liveAttach(root) {
   if (!root) return;
   root.querySelectorAll('video[data-gvid]').forEach((v) => {
@@ -156,6 +189,9 @@ function liveAttach(root) {
       // On the Program monitor, as in the stream: an upright picture is shown whole, a wide one fills its box.
       if (v.closest('.mx-guest-tile')) { const fit = () => { v.style.objectFit = v.videoHeight > v.videoWidth ? 'contain' : 'cover'; }; v.addEventListener('loadedmetadata', fit); v.addEventListener('resize', fit); }
       v.srcObject = c.stream;
+      // A cut-out guest: the picture goes through the key onto the canvas beside it, and the video itself is not shown.
+      const cv = v.dataset.key === '1' ? v.parentElement.querySelector('canvas') : null;
+      if (cv && keyOnto(v, cv)) v.parentElement.classList.add('is-keyed');
     }
     v.play().catch(() => {});
   });
@@ -314,10 +350,10 @@ function guestLayer() {
   if (!layer) { layer = document.createElement('div'); layer.className = 'mx-guest-layer'; layer.setAttribute('aria-hidden', 'true'); screen.appendChild(layer); }
   const rects = guestRects(room.layout, air.length);
   // Drawn again only when who is shown, or how, changes: a live picture must not restart every two seconds.
-  const key = JSON.stringify([room.layout, air.map((g) => [g.id, g.name, liveOf(g.id) ? 'live' : !!g.thumb])]);
+  const key = JSON.stringify([room.layout, air.map((g) => [g.id, g.name, liveOf(g.id) ? 'live' : !!g.thumb, g.cut])]);
   if (layer.dataset.key !== key) {
     layer.dataset.key = key;
-    layer.innerHTML = air.map((g, i) => `<div class="mx-guest-tile" style="left:${rects[i][0]}%;top:${rects[i][1]}%;width:${rects[i][2]}%;height:${rects[i][3]}%">${liveOf(g.id) ? `<video data-gvid="${esc(g.id)}" autoplay muted playsinline></video>` : g.thumb ? `<img data-gthumb="${esc(g.id)}" src="${esc(g.thumb)}" alt="">` : ''}<span>${esc(g.name)}</span></div>`).join('');
+    layer.innerHTML = air.map((g, i) => `<div class="mx-guest-tile" style="left:${rects[i][0]}%;top:${rects[i][1]}%;width:${rects[i][2]}%;height:${rects[i][3]}%">${liveOf(g.id) ? `<video data-gvid="${esc(g.id)}" ${g.cut ? 'data-key="1"' : ''} autoplay muted playsinline></video>${g.cut ? '<canvas></canvas>' : ''}` : g.thumb ? `<img data-gthumb="${esc(g.id)}" src="${esc(g.thumb)}" alt="">` : ''}<span>${esc(g.name)}</span></div>`).join('');
   }
   liveAttach(layer);
 }

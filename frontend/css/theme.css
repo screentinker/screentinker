@@ -462,6 +462,10 @@
 .mx-guest-layer { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 2; }
 .mx-guest-tile { position: absolute; overflow: hidden; background: #000; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85); }
 .mx-guest-tile img, .mx-guest-tile video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mx-guest-tile canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; }
+.mx-guest-tile.is-keyed { background: transparent; box-shadow: none; }
+.mx-guest-tile.is-keyed video { opacity: 0; }
+.mx-guest-tile.is-keyed canvas { display: block; }
 .mx-guest-tile span { position: absolute; left: 0; bottom: 0; max-width: 90%; padding: 1px 6px; background: rgba(11, 12, 14, 0.82); color: #fff; font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mx-gfx-layer { position: absolute; border: 0; background: transparent; pointer-events: none; z-index: 3; color-scheme: normal; }
 .mx-gfx-top-left { top: 0; left: 0; } .mx-gfx-top-right { top: 0; right: 0; } .mx-gfx-bottom-left { bottom: 0; left: 0; } .mx-gfx-bottom-right { bottom: 0; right: 0; }
