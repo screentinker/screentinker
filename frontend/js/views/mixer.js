@@ -235,14 +235,17 @@ function liveAttach(root) {
 function guestsHtml() {
   if (!so || !so.available || !streams().length) return '';
   return `<h3>${esc(t('mixer.guests'))}</h3>
-    ${streams().map((s) => { const r = rooms[s.id], url = r && r.invite_url ? window.location.origin + r.invite_url : ''; return `
+    ${streams().map((s) => { const r = rooms[s.id], url = r && r.invite_url ? window.location.origin + r.invite_url : '', people = (r && r.personal) || [], open = !!(url || people.length); return `
       <div class="mx-room">
         <div class="mx-group-name"><span class="mx-lamp mx-lamp-${streamTally(s)}"></span>${esc(s.name)}
-          ${url ? `<span class="mx-room-keys">${(r.layouts || []).map((l) => `<button type="button" class="mx-key mx-key-sm${r.layout === l ? ' is-on' : ''}" data-glayout="${esc(s.id)}" data-layout="${esc(l)}" aria-pressed="${r.layout === l}">${esc(t('mixer.guest_layout.' + l))}</button>`).join('')}</span>` : ''}
-          ${url && r.guests.length ? `<button type="button" class="btn btn-sm ${merged.has(s.id) ? 'mx-golive' : 'btn-secondary'}" data-gmerge="${esc(s.id)}" aria-pressed="${merged.has(s.id)}" ${r.guests.some((g) => liveOf(g.id)) ? '' : 'disabled'} title="${esc(t('mixer.guest_merge_tip'))}">${esc(t(merged.has(s.id) ? 'mixer.guest_merged' : 'mixer.guest_merge'))}</button>` : ''}
+          ${open ? `<span class="mx-room-keys">${(r.layouts || []).map((l) => `<button type="button" class="mx-key mx-key-sm${r.layout === l ? ' is-on' : ''}" data-glayout="${esc(s.id)}" data-layout="${esc(l)}" aria-pressed="${r.layout === l}">${esc(t('mixer.guest_layout.' + l))}</button>`).join('')}</span>` : ''}
+          ${open && r.guests.length ? `<button type="button" class="btn btn-sm ${merged.has(s.id) ? 'mx-golive' : 'btn-secondary'}" data-gmerge="${esc(s.id)}" aria-pressed="${merged.has(s.id)}" ${r.guests.some((g) => liveOf(g.id)) ? '' : 'disabled'} title="${esc(t('mixer.guest_merge_tip'))}">${esc(t(merged.has(s.id) ? 'mixer.guest_merged' : 'mixer.guest_merge'))}</button>` : ''}
           <button type="button" class="btn btn-secondary btn-sm mx-meters-on" data-ginvite="${esc(s.id)}">${esc(t(url ? 'mixer.guest_copy' : 'mixer.guest_invite'))}</button>
-          ${url ? `<button type="button" class="btn btn-secondary btn-sm" data-grevoke="${esc(s.id)}">${esc(t(closeArmed === s.id ? 'mixer.guest_close_sure' : 'mixer.guest_close'))}</button>` : ''}</div>
-        ${url ? `<input class="input mx-room-link" readonly value="${esc(url)}" aria-label="${esc(t('mixer.guest_link'))}" data-glink>
+          ${open ? `<button type="button" class="btn btn-secondary btn-sm" data-grevoke="${esc(s.id)}">${esc(t(closeArmed === s.id ? 'mixer.guest_close_sure' : 'mixer.guest_close'))}</button>` : ''}</div>
+        <form class="mx-person-add" data-gperson="${esc(s.id)}"><input class="input" name="name" maxlength="40" placeholder="${esc(t('mixer.guest_person_ph'))}" aria-label="${esc(t('mixer.guest_person_name'))}" autocomplete="off"><button type="submit" class="btn btn-secondary btn-sm">${esc(t('mixer.guest_person_add'))}</button></form>
+        ${people.length ? `<ul class="mx-people">${people.map((p) => `<li><span class="mx-person-name">${esc(p.name)}</span><span class="mx-person-state">${esc(t(p.here ? 'mixer.guest_person_here' : 'mixer.guest_person_waiting'))}</span>
+          ${p.url ? `<button type="button" class="btn btn-secondary btn-sm" data-gpcopy="${esc(window.location.origin + p.url)}">${esc(t('mixer.guest_copy_short'))}</button><button type="button" class="btn btn-secondary btn-sm" data-gpdel="${esc(s.id)}" data-pid="${esc(p.id)}">${esc(t('mixer.guest_person_cancel'))}</button>` : ''}</li>`).join('')}</ul>` : ''}
+        ${open ? `${url ? `<input class="input mx-room-link" readonly value="${esc(url)}" aria-label="${esc(t('mixer.guest_link'))}" data-glink>` : ''}
           ${s.status.state === 'off' ? `<p class="mx-note mx-room-off">${esc(t('mixer.guest_need_standby'))} <button type="button" class="btn btn-secondary btn-sm" data-gstandby="${esc(s.id)}">${esc(t('mixer.standby'))}</button></p>` : ''}
           ${r.guests.length ? `<div class="mx-guest-list">${r.guests.map((g) => `
             <div class="mx-guest${g.on_air ? ' is-air' : ''}">
@@ -254,7 +257,7 @@ function guestsHtml() {
                 <button type="button" class="btn btn-secondary btn-sm${listening.has(g.id) || merged.has(s.id) ? ' is-on' : ''}" data-glisten="${esc(g.id)}" aria-pressed="${listening.has(g.id) || merged.has(s.id)}" ${merged.has(s.id) || !liveOf(g.id) ? 'disabled' : ''} title="${esc(liveOf(g.id) ? t('mixer.guest_listen_tip') : deskLink(g))}">${esc(t(listening.has(g.id) || merged.has(s.id) ? 'mixer.guest_listening' : 'mixer.guest_listen'))}</button>
                 <button type="button" class="btn btn-sm ${talking.has(g.id) || merged.has(s.id) ? 'mx-golive' : 'btn-secondary'}" data-gtalk="${esc(g.id)}" aria-pressed="${talking.has(g.id) || merged.has(s.id)}" ${merged.has(s.id) || !(liveOf(g.id) && guestLive.get(g.id).talk) ? 'disabled' : ''} title="${esc(liveOf(g.id) ? t('mixer.guest_talk_tip') : deskLink(g))}">${esc(t(talking.has(g.id) || merged.has(s.id) ? 'mixer.guest_talking' : 'mixer.guest_talk'))}</button>
                 <button type="button" class="btn btn-secondary btn-sm${g.cut ? ' is-on' : ''}" data-gcut="${esc(s.id)}" data-gid="${esc(g.id)}" data-on="${g.cut ? 0 : 1}" aria-pressed="${!!g.cut}" title="${esc(t(g.green ? 'mixer.guest_cut_tip_green' : 'mixer.guest_cut_tip'))}">${esc(t(g.cut ? 'mixer.guest_cut_on' : 'mixer.guest_cut'))}</button>
-                <button type="button" class="btn btn-secondary btn-sm" data-gdel="${esc(s.id)}" data-gid="${esc(g.id)}">${esc(t('mixer.guest_remove'))}</button></div>
+                <button type="button" class="btn btn-secondary btn-sm" data-gdel="${esc(s.id)}" data-gid="${esc(g.id)}" title="${esc(t(g.personal ? 'mixer.guest_remove_personal_tip' : 'mixer.guest_remove_room_tip'))}">${esc(t('mixer.guest_remove'))}</button></div>
             </div>`).join('')}</div>` : `<p class="mx-note">${esc(t('mixer.guest_none'))}</p>`}` : ''}
       </div>`; }).join('')}
     <p class="mx-note">${esc(t('mixer.guest_note'))}</p>`;
@@ -272,7 +275,7 @@ async function guestsRefresh(force) {
   const el = document.getElementById('mxGuests');
   const stills = new Map(Object.values(rooms).flatMap((r) => r.guests.filter((g) => g.thumb).map((g) => [g.id, g.thumb])));
   document.querySelectorAll('img[data-gthumb]').forEach((img) => { const src = stills.get(img.dataset.gthumb); if (src && img.getAttribute('src') !== src) img.setAttribute('src', src); });
-  const sig = JSON.stringify([closeArmed, [...merged], Object.entries(rooms).map(([sid, r]) => [sid, r.invite_url, r.layout, r.guests.map((g) => [g.id, g.name, g.on_air, g.state, liveOf(g.id) ? 'live' : !!g.thumb, listening.has(g.id), talking.has(g.id), g.cut, g.green, deskLink(g), g.level])])]) + streams().map((s) => s.status.state).join();
+  const sig = JSON.stringify([closeArmed, [...merged], Object.entries(rooms).map(([sid, r]) => [sid, r.invite_url, r.personal, r.layout, r.guests.map((g) => [g.id, g.name, g.on_air, g.state, liveOf(g.id) ? 'live' : !!g.thumb, listening.has(g.id), talking.has(g.id), g.cut, g.green, deskLink(g), g.level])])]) + streams().map((s) => s.status.state).join();
   // The sound console has a strip for each guest: when who is here (or how their strip stands) changes, it is drawn again,
   // unless the operator has a fader or a control in hand.
   const csig = JSON.stringify(Object.entries(rooms).map(([sid, r]) => [sid, r.guests.map((g) => [g.id, g.name, g.on_air, g.level, g.muted, g.hear, g.strip])]));
@@ -328,6 +331,18 @@ function guestsBind(el) {
   act('[data-gcut]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.gcut)}/guests/${encodeURIComponent(b.dataset.gid)}`, { method: 'POST', body: JSON.stringify({ cut: b.dataset.on === '1' }) }));
   act('[data-gdel]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.gdel)}/guests/${encodeURIComponent(b.dataset.gid)}`, { method: 'DELETE' }));
   el.querySelectorAll('[data-glink]').forEach((i) => i.addEventListener('focus', () => i.select()));
+  // Personal links: one per person, by name; copied as made.
+  el.querySelectorAll('[data-gperson]').forEach((f) => f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = f.elements.name.value.trim(); if (!name) { f.elements.name.focus(); return; }
+    try {
+      const r = await call(`/stream-out/${encodeURIComponent(f.dataset.gperson)}/guests/personal`, { method: 'POST', body: JSON.stringify({ name }) });
+      try { await navigator.clipboard.writeText(window.location.origin + r.invite_url); showToast(t('mixer.toast.guest_person_copied', { name }), 'success'); } catch { showToast(t('mixer.toast.guest_person_ready', { name }), 'info'); }
+    } catch (err) { showToast(err.message, 'error'); }
+    guestsRefresh(true);
+  }));
+  el.querySelectorAll('[data-gpcopy]').forEach((b) => b.addEventListener('click', async () => { try { await navigator.clipboard.writeText(b.dataset.gpcopy); showToast(t('mixer.toast.guest_copied'), 'success'); } catch { showToast(b.dataset.gpcopy, 'info'); } }));
+  act('[data-gpdel]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.gpdel)}/guests/personal/${encodeURIComponent(b.dataset.pid)}`, { method: 'DELETE' }));
 }
 // This computer's microphone, open into one stream: { sid, rec, media }. The browser records it
 // and the pieces are sent up in order, one request at a time.

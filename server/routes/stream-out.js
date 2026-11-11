@@ -51,10 +51,11 @@ const running = (id) => streamOut.status(id).state !== 'off';
 // Open invites outlive a restart of the server: they are kept on the output's row.
 try {
   guests.restore(
-    db.prepare('SELECT id, workspace_id, guest_invite, guest_invite_until FROM stream_outputs WHERE guest_invite IS NOT NULL').all()
-      .map((r) => ({ outputId: r.id, workspaceId: r.workspace_id, token: r.guest_invite, until: r.guest_invite_until })),
+    db.prepare('SELECT * FROM stream_outputs WHERE guest_invite IS NOT NULL OR guest_personal IS NOT NULL').all()
+      .map((r) => { let personal = []; try { personal = JSON.parse(r.guest_personal || '[]'); } catch { personal = []; } return { outputId: r.id, workspaceId: r.workspace_id, token: r.guest_invite, until: r.guest_invite_until, personal }; }),
     { save: (id, token, until) => { try { db.prepare('UPDATE stream_outputs SET guest_invite = ?, guest_invite_until = ? WHERE id = ?').run(token, until, id); } catch { /* kept in memory only */ } },
-      drop: (id) => { try { db.prepare('UPDATE stream_outputs SET guest_invite = NULL, guest_invite_until = NULL WHERE id = ?').run(id); } catch { /* already gone */ } } },
+      drop: (id) => { try { db.prepare('UPDATE stream_outputs SET guest_invite = NULL, guest_invite_until = NULL WHERE id = ?').run(id); } catch { /* already gone */ } },
+      savePersonal: (id, list) => { try { db.prepare('UPDATE stream_outputs SET guest_personal = ? WHERE id = ?').run(list.length ? JSON.stringify(list) : null, id); } catch { /* kept in memory only */ } } },
   );
 } catch { /* a database from before the columns: invites are kept in memory */ }
 /** Whether this request may change the workspace's fleet: a read-only member sees who is in a green room, not the way in. */
@@ -503,10 +504,10 @@ router.get('/guests', (req, res) => {
   for (const { id } of db.prepare('SELECT id FROM stream_outputs WHERE workspace_id = ?').all(req.workspaceId)) {
     // A desk that names itself (?desk=) is sent each guest's picture directly: lib/mixer-guests.js.
     const g = guests.forDesk(id, Date.now(), write && typeof req.query.desk === 'string' ? req.query.desk : null);
-    if (!(g.invite || g.guests.length)) continue;
-    // A read-only member: who is here and who is on air, without the link in or anyone's picture.
-    out[id] = write ? { ...g, invite: undefined, invite_url: g.invite ? `/guest/${g.invite}` : null }
-      : { ...g, invite: undefined, invite_url: null, expires_at: null, guests: g.guests.map((x) => ({ ...x, thumb: null })) };
+    if (!(g.invite || g.personal.length || g.guests.length)) continue;
+    // A read-only member: who is here and who is on air, without the links in or anyone's picture.
+    out[id] = write ? { ...g, invite: undefined, invite_url: g.invite ? `/guest/${g.invite}` : null, personal: g.personal.map(({ token, ...p }) => ({ ...p, url: `/guest/${token}` })) }
+      : { ...g, invite: undefined, invite_url: null, expires_at: null, personal: g.personal.map(({ token, until, ...p }) => p), guests: g.guests.map((x) => ({ ...x, thumb: null })) };
   }
   res.json({ rooms: out, ice_servers: write && Object.keys(out).length ? orgWebrtc.iceServersForWorkspace(req.workspaceId) : [] });
 });
@@ -522,6 +523,20 @@ router.post('/:id/guests/invite', gate, requireFleetWrite, (req, res) => {
   const r = mine(req, req.params.id);
   if (!r) return res.status(404).json({ error: 'Stream not found' });
   res.json({ invite_url: `/guest/${guests.invite(r)}` });
+});
+// A link for one person, by name (lib/mixer-guests.js PERSONAL LINKS), and cancelling one.
+router.post('/:id/guests/personal', gate, requireFleetWrite, (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'Stream not found' });
+  const p = guests.personal(r, (req.body || {}).name);
+  if (p.error) return res.status(p.status).json({ error: p.error });
+  res.json({ id: p.id, invite_url: `/guest/${p.token}` });
+});
+router.delete('/:id/guests/personal/:pid', requireFleetWrite, (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'Stream not found' });
+  if (!guests.cancelPersonal(r.id, req.params.pid)) return res.status(404).json({ error: 'That link is not open.' });
+  res.json({ success: true });
 });
 router.delete('/:id/guests/invite', requireFleetWrite, (req, res) => {
   const r = mine(req, req.params.id);
@@ -682,7 +697,7 @@ function renderer({ sendPlayer }) {
     const tk = lastTake.get(row.id);
     if (tk && Date.now() - tk.at < 15000) out.take = { seq: tk.seq, type: tk.type, ms: tk.ms, color: tk.color };
     // Guests: who is in the green room, who is on air, and the offer of anyone the renderer is not yet connected to.
-    if (guests.inviteOf(row.id)) out.guests = { ...guests.forRenderer(row.id, req.query.have), ice_servers: orgWebrtc.iceServersForWorkspace(row.workspace_id) };
+    if (guests.open(row.id)) out.guests = { ...guests.forRenderer(row.id, req.query.have), ice_servers: orgWebrtc.iceServersForWorkspace(row.workspace_id) };
     if (req.query.rev !== f.rev) out.payload = f.payload; else out.unchanged = true;
     res.json(out);
   });

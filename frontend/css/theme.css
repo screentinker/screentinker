@@ -728,3 +728,9 @@
 .mx-spad-edit { display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--border-light); border-radius: var(--radius); }
 @media (prefers-reduced-motion: no-preference) { .mx-spad-bar { transition: width .2s linear; } }
 .mx-group-name .mx-check { margin-left: auto; text-transform: none; letter-spacing: normal; font-size: 12px; font-weight: 600; color: var(--text-secondary); display: inline-flex; gap: 6px; align-items: center; }
+.mx-person-add { display: flex; gap: 8px; margin: 8px 0; }
+.mx-person-add .input { max-width: 220px; }
+.mx-people { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 6px; }
+.mx-people li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.mx-person-name { font-weight: 700; }
+.mx-person-state { color: var(--text-secondary); }

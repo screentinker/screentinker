@@ -1649,6 +1649,7 @@ const migrations = [
   "ALTER TABLE stream_outputs ADD COLUMN resume_state TEXT",
   "ALTER TABLE stream_outputs ADD COLUMN screens_json TEXT",
   "ALTER TABLE stream_outputs ADD COLUMN screens_sound INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE stream_outputs ADD COLUMN guest_personal TEXT",
 
   /*
    * What an ACTIVE SCHEDULE is currently imposing, kept apart from what the device is normally on.

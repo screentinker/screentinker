@@ -866,6 +866,7 @@ CREATE TABLE IF NOT EXISTS stream_outputs (
     resume_state    TEXT,                                    -- 'standby' while the operator has it running: brought back on standby after a restart
     screens_json    TEXT,                                    -- the screens following this stream (ids), kept across restarts
     screens_sound   INTEGER NOT NULL DEFAULT 0,              -- screens showing it get its sound too
+    guest_personal  TEXT,                                    -- JSON: its personal guest links [{ id, token, name, until }]
     created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_stream_outputs_ws ON stream_outputs(workspace_id);

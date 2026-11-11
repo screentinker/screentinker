@@ -1091,3 +1091,53 @@ test('the renderer\'s sound link answers only its own session\'s key', async () 
   assert.equal(await tryKey('not-a-key'), 404);
   assert.equal(await tryKey(''), 404);
 });
+
+test('a personal link lets in one person at a time, by name, and Remove ends it', async () => {
+  const G = require('../lib/mixer-guests');
+  const out = { id: 'out-pers-' + Date.now(), workspace_id: 'ws-pers' }, t0 = 5_000_000;
+  assert.equal(G.personal(out, '  ', t0).status, 400, 'a personal link names someone');
+  const p = G.personal(out, 'Dana', t0);
+  assert.equal(G.open(out.id), true, 'a green room with only personal links is open');
+  assert.equal(G.inviteOf(out.id), null, 'and has no room link');
+  const a = G.join(p.token, '', t0).guest;
+  assert.equal(a.name, 'Dana', 'named as the studio named them, unless they say otherwise');
+  assert.equal(G.join(p.token, 'Someone else', t0).status, 409, 'a second person cannot come in by the same link');
+  G.leave(a);
+  const back = G.join(p.token, 'Dana', t0).guest;
+  assert.ok(back, 'the same person can come back by it after losing the page');
+  const room = G.invite(out, t0); const r1 = G.join(room, 'Walk-in', t0).guest;
+  assert.equal(G.forDesk(out.id, t0).guests.find((g) => g.id === back.id).personal, true);
+  assert.equal(G.forDesk(out.id, t0).guests.find((g) => g.id === r1.id).personal, false);
+  assert.equal(G.remove(out.id, back.id, t0), true);
+  assert.equal(G.invited(p.token, t0), null, 'removed: their link no longer works');
+  assert.equal(G.join(p.token, 'Dana', t0).status, 404);
+  // Cancelling a link takes its guest out with it.
+  const q = G.personal(out, 'Eli', t0); const e = G.join(q.token, '', t0).guest;
+  assert.equal(G.cancelPersonal(out.id, q.id), true); assert.equal(G._guests.has(e.id), false);
+  assert.equal(G.cancelPersonal('other-output', q.id), false);
+  // The room link running out does not end personal links.
+  const z = G.personal(out, 'Fay', t0);
+  G.leave(r1); G.sweep(t0 + 25 * 3600 * 1000);
+  assert.equal(G.inviteOf(out.id), null);
+  G.revoke(out.id); assert.equal(G.invited(z.token, t0), null, 'closing the green room ends every link');
+  for (let i = 0; i < G.MAX_PERSONAL; i++) G.personal(out, 'P' + i, t0);
+  assert.equal(G.personal(out, 'One too many', t0).status, 409);
+  G.revoke(out.id);
+});
+
+test('personal links over the API: made and cancelled by the stream\'s own workspace only, and not shown to a read-only member', async () => {
+  const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'People', kind: 'record' })).body;
+  for (const [who, code] of [[V, 403], [B, 404], [null, 401]]) assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/personal`, who && who.jwt, { name: 'X' })).status, code);
+  const p = await call('POST', `/api/stream-out/${so.id}/guests/personal`, A.jwt, { name: 'Gil' });
+  assert.equal(p.status, 200); assert.match(p.body.invite_url, /^\/guest\/[A-Za-z0-9_-]{40,}$/);
+  assert.equal((await fetch(BASE + p.body.invite_url)).status, 200, 'its page opens');
+  const room = (await call('GET', '/api/stream-out/guests', A.jwt)).body.rooms[so.id];
+  assert.deepEqual(room.personal.map((x) => [x.name, x.here, x.url]), [['Gil', false, p.body.invite_url]]);
+  assert.equal(room.invite_url, null);
+  const seen = (await call('GET', '/api/stream-out/guests', V.jwt)).body.rooms[so.id];
+  assert.deepEqual(seen.personal.map((x) => Object.keys(x).sort()), [['here', 'id', 'name']], 'a read-only member sees who is invited, not the link');
+  assert.equal((await call('DELETE', `/api/stream-out/${so.id}/guests/personal/${room.personal[0].id}`, B.jwt)).status, 404);
+  assert.equal((await call('DELETE', `/api/stream-out/${so.id}/guests/personal/${room.personal[0].id}`, A.jwt)).status, 200);
+  assert.equal((await fetch(BASE + p.body.invite_url)).status, 404, 'cancelled: the page is gone');
+  await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+});

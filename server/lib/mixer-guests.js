@@ -49,13 +49,15 @@ const MAX_DESKS = 2;                        // desks one guest sends a picture t
 const DESK_GONE_MS = 30000;
 const MAX_LEVEL = 1.5;                       // a guest's fader goes as high as the console's other strips
 
-const invites = new Map();                  // token -> { outputId, workspaceId, until }
-const byOutput = new Map();                 // outputId -> token
+const invites = new Map();                  // token -> { outputId, workspaceId, until } (+ personal: { id, name, used } for a link for one person)
+const byOutput = new Map();                 // outputId -> the room's token (the link anyone may use)
+const MAX_PERSONAL = 12;
 const guests = new Map();                   // id -> guest
 const layouts = new Map();                  // outputId -> layout
 const hush = new Map();                     // outputId -> until when its (stopping) renderer is not listened to
 const removed = new Map();                  // guest id -> when the operator removed them
-// Where invites are kept so a restart of the server does not end them: { save(outputId, token, until), drop(outputId) }.
+// Where invites are kept so a restart of the server does not end them: { save(outputId, token, until), drop(outputId),
+// savePersonal(outputId, [{ id, token, name, until }]) }.
 let store = null;
 const desks = new Map();                    // outputId -> Map(deskId -> last seen)
 const deskOk = (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{8,40}$/.test(v);
@@ -66,7 +68,12 @@ const same = (a, b) => { const x = Buffer.from(String(a || '')), y = Buffer.from
 
 function sweep(now = Date.now()) {
   // An invite past its time lets nobody new in (invited()); it ends, with its green room, only once that room is empty.
-  for (const inv of [...invites.values()]) if (inv.until < now && !of(inv.outputId).length) revoke(inv.outputId);
+  for (const [token, inv] of [...invites]) {
+    if (inv.until >= now) continue;
+    // A personal link past its time goes once its guest has gone; the room's link ends its room once that is empty.
+    if (inv.personal) { if (!(inv.personal.used && guests.has(inv.personal.used))) dropPersonal(inv.outputId, token); }
+    else if (!of(inv.outputId).length) { if (personalOf(inv.outputId).length) dropRoomLink(inv.outputId); else revoke(inv.outputId); }
+  }
   for (const [id, at] of removed) if (now - at > REMOVED_MS) removed.delete(id);
   for (const [id, g] of guests) if (now - g.seenAt > GONE_MS) guests.delete(id);
   for (const [out, m] of desks) { for (const [d, at] of m) if (now - at > DESK_GONE_MS) m.delete(d); if (!m.size) desks.delete(out); }
@@ -99,20 +106,56 @@ function invite(output, now = Date.now()) {
 function restore(rows, keep, now = Date.now()) {
   store = keep || null;
   for (const r of rows || []) {
+    // Personal links of this output, kept as a list.
+    for (const p of Array.isArray(r && r.personal) ? r.personal.slice(0, MAX_PERSONAL) : []) {
+      if (p && typeof p.token === 'string' && p.token.length >= 40 && p.until > now && typeof p.id === 'string' && !invites.has(p.token)) invites.set(p.token, { outputId: r.outputId, workspaceId: r.workspaceId, until: p.until, personal: { id: p.id, name: cleanName(p.name), used: null } });
+    }
     if (!r || typeof r.token !== 'string' || r.token.length < 40 || !(r.until > now) || byOutput.has(r.outputId)) continue;
     invites.set(r.token, { outputId: r.outputId, workspaceId: r.workspaceId, until: r.until });
     byOutput.set(r.outputId, r.token);
   }
 }
-/** Ends an output's invite and everyone who came in by it. */
+/** Ends an output's invites (the room's and every personal one) and everyone who came in. */
 function revoke(outputId) {
   const token = byOutput.get(outputId);
   if (token) invites.delete(token);
   if (token && store) store.drop(outputId);
+  for (const [tk, inv] of [...invites]) if (inv.personal && inv.outputId === outputId) invites.delete(tk);
+  if (store && store.savePersonal) store.savePersonal(outputId, []);
   byOutput.delete(outputId); layouts.delete(outputId); desks.delete(outputId);
   for (const [id, g] of guests) if (g.outputId === outputId) guests.delete(id);
 }
 const inviteOf = (outputId) => { const t = byOutput.get(outputId); return t && invites.has(t) ? t : null; };
+/** The room's own link ends; personal links (and whoever came in by them) stay. */
+function dropRoomLink(outputId) { const token = byOutput.get(outputId); if (token) invites.delete(token); if (store) store.drop(outputId); byOutput.delete(outputId); }
+/*
+ * PERSONAL LINKS. A link for one person, by name: one guest at a time comes in by it (they can come back by it after
+ * losing the page), and removing that guest ends the link, so Remove keeps them out. The room's link is still there
+ * for a quick "anyone with this link"; a show that wants to know who comes in uses these.
+ */
+const personalOf = (outputId) => [...invites].filter(([, inv]) => inv.personal && inv.outputId === outputId);
+const savePersonal = (outputId) => { if (store && store.savePersonal) store.savePersonal(outputId, personalOf(outputId).map(([token, inv]) => ({ id: inv.personal.id, token, name: inv.personal.name, until: inv.until }))); };
+function personal(output, name, now = Date.now()) {
+  sweep(now);
+  const n = cleanName(name);
+  if (!n) return { status: 400, error: 'A personal link is for someone: give their name.' };
+  if (personalOf(output.id).length >= MAX_PERSONAL) return { status: 409, error: `A stream has at most ${MAX_PERSONAL} personal links. Cancel one first.` };
+  const token = crypto.randomBytes(32).toString('base64url');
+  invites.set(token, { outputId: output.id, workspaceId: output.workspace_id, until: now + INVITE_MS, personal: { id: crypto.randomBytes(6).toString('hex'), name: n, used: null } });
+  savePersonal(output.id);
+  return { token, id: invites.get(token).personal.id };
+}
+function dropPersonal(outputId, token) { const inv = invites.get(token); if (!inv || !inv.personal || inv.outputId !== outputId) return false; invites.delete(token); savePersonal(outputId); return true; }
+/** Cancels a personal link (by its id); its guest, if they are here, leaves with it. */
+function cancelPersonal(outputId, pid) {
+  const hit = personalOf(outputId).find(([, inv]) => inv.personal.id === pid);
+  if (!hit) return false;
+  const [token, inv] = hit;
+  if (inv.personal.used) { const g = guests.get(inv.personal.used); if (g) { guests.delete(g.id); removed.set(g.id, Date.now()); } }
+  return dropPersonal(outputId, token);
+}
+/** Whether anyone can come in to this output's green room: by its link or a personal one. */
+const open = (outputId) => !!inviteOf(outputId) || personalOf(outputId).length > 0;
 function invited(token, now = Date.now()) {
   const inv = typeof token === 'string' && token.length >= 40 ? invites.get(token) : null;
   return inv && inv.until >= now ? inv : null;
@@ -125,13 +168,15 @@ function join(token, name, now = Date.now()) {
   const inv = invited(token, now);
   if (!inv) return { status: 404, error: 'This invitation is no longer open. Ask for a new link.' };
   if (of(inv.outputId).length >= MAX_GUESTS) return { status: 409, error: 'The green room is full.' };
+  if (inv.personal && inv.personal.used && guests.has(inv.personal.used)) return { status: 409, error: 'This link is for one person, and they are already in. Ask the studio for a link of your own.' };
   const g = { id: crypto.randomUUID(), key: crypto.randomBytes(24).toString('base64url'), outputId: inv.outputId, workspaceId: inv.workspaceId,
-    name: cleanName(name) || `Guest ${of(inv.outputId).length + 1}`, offer: null, seq: 0, answer: null, answerSeq: 0, onAir: false,
+    name: cleanName(name) || (inv.personal && inv.personal.name) || `Guest ${of(inv.outputId).length + 1}`, via: token, offer: null, seq: 0, answer: null, answerSeq: 0, onAir: false,
     joinedAt: now, seenAt: now, thumb: null, state: 'new', legs: new Map(), green: false, cut: null, level: 1,
     // Their strip on the stream's sound console (lib/stream-audio.js): fader and mute above; the processing
     // the operator gave them (null: as new guests start); whether they hear the show (a mix without their own voice).
     muted: false, strip: null, hear: true };
   guests.set(g.id, g);
+  if (inv.personal) inv.personal.used = g.id;
   return { guest: g };
 }
 /** The guest named by this token, id and key, or null. Marks them seen. */
@@ -211,11 +256,13 @@ function fromRenderer(outputId, b, now = Date.now()) {
 /** The green room as the operator sees it. */
 function forDesk(outputId, now = Date.now(), deskId = null) {
   sweep(now);
-  const live = deskId != null && inviteOf(outputId) ? deskSeen(outputId, deskId, now) : false;
+  const live = deskId != null && open(outputId) ? deskSeen(outputId, deskId, now) : false;
   const tok = inviteOf(outputId);
-  return { invite: tok, expires_at: tok ? invites.get(tok).until : null, layout: layouts.get(outputId) || 'pip', layouts: LAYOUTS, max_on_air: MAX_ON_AIR, live,
+  return { invite: tok, expires_at: tok ? invites.get(tok).until : null,
+    personal: personalOf(outputId).map(([token, inv]) => ({ id: inv.personal.id, name: inv.personal.name, token, until: inv.until, here: !!(inv.personal.used && guests.has(inv.personal.used)) })),
+    layout: layouts.get(outputId) || 'pip', layouts: LAYOUTS, max_on_air: MAX_ON_AIR, live,
     guests: of(outputId).map((g) => {
-      const out = { id: g.id, name: g.name, on_air: g.onAir, state: g.state, thumb: g.thumb, joined_at: g.joinedAt, green: g.green, cut: cutOf(g), level: g.level, muted: g.muted, hear: g.hear, strip: g.strip };
+      const out = { id: g.id, name: g.name, on_air: g.onAir, state: g.state, thumb: g.thumb, joined_at: g.joinedAt, personal: !!(g.via && invites.get(g.via) && invites.get(g.via).personal), green: g.green, cut: cutOf(g), level: g.level, muted: g.muted, hear: g.hear, strip: g.strip };
       // This desk's own connection to the guest: the offer to answer, until it has been answered.
       const leg = live ? g.legs.get(deskId) : null;
       if (leg && leg.offer) { out.leg_seq = leg.seq; if (!(leg.answer && leg.answerSeq === leg.seq)) out.leg_offer = leg.offer; }
@@ -245,7 +292,13 @@ function setHear(outputId, id, on) { const g = mineOf(outputId, id); if (!g) ret
 /** The processing of a guest's strip (EQ, compressor, ...), as the console's strips take it; null puts back what new guests get. */
 function setStrip(outputId, id, set) { const g = mineOf(outputId, id); if (!g || (set !== null && (typeof set !== 'object' || Array.isArray(set)))) return false; g.strip = set; return true; }
 function setCut(outputId, id, on) { const g = guests.get(String(id || '')); if (!g || g.outputId !== outputId) return false; g.cut = on === true; return true; }
-function remove(outputId, id, now = Date.now()) { const g = guests.get(String(id || '')); if (!g || g.outputId !== outputId) return false; guests.delete(g.id); removed.set(g.id, now); return true; }
+function remove(outputId, id, now = Date.now()) {
+  const g = guests.get(String(id || '')); if (!g || g.outputId !== outputId) return false;
+  guests.delete(g.id); removed.set(g.id, now);
+  // Came in by a link of their own: it ends with them, so they cannot come straight back.
+  const inv = g.via ? invites.get(g.via) : null; if (inv && inv.personal) dropPersonal(outputId, g.via);
+  return true;
+}
 /** Whether the operator removed this guest (as opposed to the server having lost track of them). */
 const wasRemoved = (id) => removed.has(String(id || ''));
 function setLayout(outputId, layout) { if (!LAYOUTS.includes(layout)) return false; layouts.set(outputId, layout); return true; }
@@ -254,4 +307,4 @@ function setLayout(outputId, layout) { if (!LAYOUTS.includes(layout)) return fal
 function rendererBack(outputId) { hush.delete(outputId); }
 function rendererGone(outputId, now = Date.now()) { hush.set(outputId, now + 5000); for (const g of of(outputId)) { g.onAir = false; g.offer = null; g.answer = null; g.thumb = null; g.state = 'waiting'; g.seq += 1; } }
 
-module.exports = { MAX_GUESTS, MAX_ON_AIR, MAX_DESKS, LAYOUTS, deskSeen, setDeskOffer, fromDesk, restore, mayOffer, wasRemoved, sdpOk, setGreen, setCut, setLevel, invite, revoke, inviteOf, invited, join, who, setOffer, stateFor, leave, forRenderer, fromRenderer, forDesk, setOnAir, remove, setLayout, rendererGone, rendererBack, sweep, setMuted, setHear, setStrip, list: (outputId) => of(outputId), _guests: guests };
+module.exports = { MAX_GUESTS, MAX_ON_AIR, MAX_DESKS, LAYOUTS, deskSeen, setDeskOffer, fromDesk, restore, mayOffer, wasRemoved, sdpOk, setGreen, setCut, setLevel, invite, revoke, inviteOf, open, personal, cancelPersonal, MAX_PERSONAL, invited, join, who, setOffer, stateFor, leave, forRenderer, fromRenderer, forDesk, setOnAir, remove, setLayout, rendererGone, rendererBack, sweep, setMuted, setHear, setStrip, list: (outputId) => of(outputId), _guests: guests };
