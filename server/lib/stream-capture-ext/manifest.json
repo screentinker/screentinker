@@ -4,6 +4,17 @@
   "version": "1.0",
   "description": "Lets the stream renderer (server/lib/stream-out.js) hand its own picture to screens. Loaded only into the browser the server itself runs; never installed anywhere else.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4rvVhPTYehDqrSqz6LshW6DEsOTsJZ/Yso/GuvKDDx6hfSTtCljHIGjXbPsdS5GLTeq3WYUJ75BdN1Y2qsm0RNMFsdFQoeFWt0m8UGGrrd0O2Z15RfDPa+fmd95u3HOzZEPZy2eNT+6zH3t0WauDMPoBsjB3LnPX7wx0SoTnvcio+2S67z6r5+gx8xXDJxORnNnolYukbYVBNpvKKYDEvS+O+NtIvlyt166s8ReBy8YXpjYg76XBbp290EXWpqVSozvRWJ48k21MjaMoAj4f+4Pb7NGQb3zfv96DWBuyid4zwAJkPpEhif23u224Jm/L1m2koS0LJSYWxwnNEoRAuwIDAQAB",
-  "permissions": ["tabCapture", "tabs"],
-  "background": { "service_worker": "sw.js" }
+  "permissions": [
+    "tabCapture",
+    "tabs"
+  ],
+  "background": {
+    "service_worker": "sw.js"
+  },
+  "externally_connectable": {
+    "matches": [
+      "http://127.0.0.1/*",
+      "http://localhost/*"
+    ]
+  }
 }

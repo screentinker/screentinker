@@ -32,12 +32,17 @@ const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
 const config = require('../config');
 
 // The extension the renderer captures its own tab with (showOn). Its id follows from the key in its manifest.
 const CAPTURE_EXT = path.join(__dirname, 'stream-capture-ext');
 const CAPTURE_EXT_ID = 'ncdaglicfkfanohhhcdeidgndigimama';
 const MAX_STREAMS = Math.max(1, Math.min(8, parseInt(process.env.STREAM_OUT_MAX || '2', 10) || 2));
+// LIP SYNC. The picture is taken the moment it is on the renderer's display; the sound reaches the encoder through the
+// sound server and the mixer, a steady 170 ms or so later (measured: a flash and a beep each second, through the
+// programme and through a guest). The picture is held back by as much, so they go out together.
+const AV_DELAY_MS = (() => { const n = Number(process.env.STREAM_OUT_AV_DELAY_MS); return Number.isFinite(n) && n >= 0 && n <= 1000 ? Math.round(n) : 170; })();
 const ENCODER = /^[a-z0-9_]{2,32}$/.test(process.env.STREAM_OUT_ENCODER || '') ? process.env.STREAM_OUT_ENCODER : 'libx264';
 
 const KINDS = {
@@ -119,6 +124,46 @@ function clearStale(n) {
   for (const f of [lockOf(n), sockOf(n)]) { try { fs.unlinkSync(f); } catch { /* gone */ } }
   return !fs.existsSync(lockOf(n)) && !fs.existsSync(sockOf(n));
 }
+/*
+ * THE RENDERER'S OWN USER. The renderer opens pages with anonymous guests' camera and microphone in them, and
+ * inside a container Chromium's own sandbox cannot run (it needs kernel features a container's default rules
+ * withhold). So when this server runs as root and the system has a user for it (STREAM_RENDER_USER, default
+ * "st-render"; "" turns this off), the browser runs as that user instead: a browser that were taken over could
+ * neither write this server's data nor read its database, keys or uploads (those are made the owner's alone).
+ * Without such a user it runs as before, and the status says so.
+ */
+const RENDER_USER = process.env.STREAM_RENDER_USER === undefined ? 'st-render' : String(process.env.STREAM_RENDER_USER);
+let isolating = null;
+function renderUser() {
+  if (!isolating) {
+    isolating = (async () => {
+      if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(RENDER_USER) || process.platform !== 'linux' || typeof process.getuid !== 'function' || process.getuid() !== 0 || !onPath('setpriv')) return null;
+      const id = (flag) => new Promise((resolve) => execFile('id', [flag, RENDER_USER], (e, out) => resolve(e ? null : Number(String(out).trim()))));
+      const uid = await id('-u'), gid = await id('-g');
+      if (!uid || gid == null || !Number.isInteger(uid) || !Number.isInteger(gid)) return null;
+      const chrome = chromePath();
+      if (!chrome || !/^[\w./+-]+$/.test(chrome)) return null;
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'st-render-'));
+      fs.chmodSync(dir, 0o711);
+      const wrapper = path.join(dir, 'chromium');
+      fs.writeFileSync(wrapper, `#!/bin/sh\nexec setpriv --reuid=${uid} --regid=${gid} --clear-groups --no-new-privs -- '${chrome}' "$@"\n`, { mode: 0o755 });
+      // What the browser must not read: the database, the keys, the uploads (it is given what it shows over HTTP).
+      for (const d of [path.dirname(config.dbPath), config.certsDir, config.uploadsDir].filter(Boolean)) {
+        try { const st = fs.statSync(d); if (st.uid === 0 && (st.mode & 0o007)) fs.chmodSync(d, st.mode & ~0o007); } catch { /* not there */ }
+      }
+      console.log(`[stream-out] the renderer runs as "${RENDER_USER}" (uid ${uid}), not as root`);
+      return { uid, gid, wrapper, dir };
+    })().catch(() => null);
+  }
+  return isolating;
+}
+/** A profile of its own for one renderer, owned by the renderer's user. */
+function profileFor(iso) {
+  const d = fs.mkdtempSync(path.join(iso.dir, 'profile-'));
+  fs.chownSync(d, iso.uid, iso.gid); fs.chmodSync(d, 0o700);
+  return d;
+}
+
 /** Starts a virtual display of the stream's size. Resolves with { n, proc }, or null when it would not start. */
 async function openDisplay(width, height) {
   for (let n = 90; n < 130; n++) {
@@ -138,6 +183,7 @@ async function openDisplay(width, height) {
   }
   return null;
 }
+function dropProfile(s) { const d = s.profile; s.profile = null; if (d && path.basename(path.dirname(d)).startsWith('st-render-')) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* left for the system's own cleaning */ } } }
 /** Asks the display's server to end (it then removes its own files), and makes sure it does. */
 function closeDisplay(d) {
   if (!d || !d.proc) return;
@@ -223,6 +269,7 @@ function ffmpegArgs({ width, height, fps, bitrate_k, target, kind, recordFile = 
   return [
     '-hide_banner', '-loglevel', 'warning',
     // The picture: grabbed from the renderer's own display at the stream's rate, or JPEGs written to stdin.
+    ...(AV_DELAY_MS ? ['-itsoffset', (AV_DELAY_MS / 1000).toFixed(3)] : []),
     ...(display != null ? ['-progress', 'pipe:1', '-f', 'x11grab', '-framerate', String(fps), '-video_size', `${width}x${height}`, '-draw_mouse', '0', '-thread_queue_size', '64', '-i', `:${display}`]
       : ['-f', 'image2pipe', '-framerate', String(fps), '-c:v', 'mjpeg', '-i', 'pipe:0']),
     '-f', 's16le', '-ar', String(RATE), '-ac', '2', ...(display != null ? ['-thread_queue_size', '64'] : []), '-i', 'pipe:3',
@@ -250,7 +297,7 @@ function status(id) {
   if (!s) return { state: 'off' };
   return { state: s.state, since: s.since, frames: s.sent, error: s.error || null, audio_peak: Math.round(s.mix.held.master * 1e4) / 1e4,
     audio_peaks: Object.fromEntries(Object.entries(s.mix.held).map(([k, v]) => [k, Math.round(v * 1e4) / 1e4])), programme_audio: !!s.sink,
-    pads: s.mix.sounding(), sound_link: !!(s.audioWs && s.audioWs.readyState === 1),
+    pads: s.mix.sounding(), sound_link: !!(s.audioWs && s.audioWs.readyState === 1), renderer_isolated: !!s.isolated,
     limiting: Math.round(s.mix.limiting * 10) / 10, inputs_live: Object.keys(s.inputs),
     capture: s.display ? 'display' : 'screencast', share_error: s.shareError || null,
     recording: s.recFile ? path.basename(s.recFile) : null, record_skipped: !!s.recSkipped };
@@ -401,6 +448,7 @@ async function start(row, key, sound, { standby = false } = {}) {
     const b = s.browser; s.browser = null;
     try { if (b) await b.close(); } catch { /* gone */ }
     closeDisplay(s.display); s.display = null;
+    dropProfile(s);
     return true;
   };
   try {
@@ -412,9 +460,15 @@ async function start(row, key, sound, { standby = false } = {}) {
     if (await capture() === 'display') s.display = await openDisplay(row.width, row.height);
     if (await late()) return { state: 'off' };
     const shown = !!s.display;
+    const iso = await renderUser();
+    const pulseSock = iso && s.sink ? await audio.renderSocket() : null;
+    if (iso) s.profile = profileFor(iso);
+    s.isolated = !!iso;
     s.browser = await puppeteer().launch({
-      executablePath: chromePath(), headless: shown ? false : 'new', ...(shown ? { defaultViewport: null } : {}),
-      env: { ...process.env, ...(s.sink ? { PULSE_SINK: s.sink.name } : {}), ...(shown ? { DISPLAY: `:${s.display.n}` } : {}) },
+      executablePath: iso ? iso.wrapper : chromePath(), headless: shown ? false : 'new', ...(shown ? { defaultViewport: null } : {}),
+      ...(iso ? { userDataDir: s.profile } : {}),
+      env: { ...process.env, ...(s.sink ? { PULSE_SINK: s.sink.name } : {}), ...(shown ? { DISPLAY: `:${s.display.n}` } : {}),
+        ...(iso ? { HOME: s.profile, ...(pulseSock ? { PULSE_SERVER: `unix:${pulseSock}` } : {}) } : {}) },
       // puppeteer mutes a headless browser by default; with a sink to play into, it must not.
       // On a display, the "controlled by automated software" bar would be in the picture.
       ignoreDefaultArgs: [...(s.sink ? ['--mute-audio'] : []), ...(shown ? ['--enable-automation', '--disable-extensions'] : [])],
@@ -451,8 +505,7 @@ async function start(row, key, sound, { standby = false } = {}) {
     }
     if (await late()) return { state: 'off' };
     for (const name of [...audio.INPUTS, 'console']) startInput(s, name);
-    // Ready to be shown on screens (showOn). Not waited for: a stream starts whether or not this works.
-    if (shown) tabCapture(s);   // never throws
+    // The tab's picture is captured only while screens show the stream (showOn): held, it costs most of a core.
     s.ready = true;
     s.mix.onMix = (out, minus) => sendDown(s, out, minus);
     syncGuests(s); s.guestTimer = setInterval(() => syncGuests(s), 500);
@@ -650,9 +703,15 @@ function tabCapture(s) {
 async function captureTab(s) {
   try {
     if (await s.page.evaluate(() => !!(window.__stTab && window.__stTab.getVideoTracks().some((t) => t.readyState === 'live')))) return true;
-    const target = await s.browser.waitForTarget((t) => t.type() === 'service_worker' && t.url().startsWith(`chrome-extension://${CAPTURE_EXT_ID}/`), { timeout: 8000 });
-    const worker = await target.worker();
-    const captureId = await worker.evaluate(() => self.stTabId());
+    // Asked of the extension by the page itself (which wakes its worker if the browser has put it to sleep);
+    // through the worker's debugging target if the page cannot reach it.
+    let captureId = await s.page.evaluate((ext) => new Promise((resolve) => {
+      try { chrome.runtime.sendMessage(ext, { want: 'capture' }, (r) => resolve(r && r.id ? r.id : null)); } catch (e) { resolve(null); }
+    }), CAPTURE_EXT_ID).catch(() => null);
+    if (!captureId) {
+      const target = await s.browser.waitForTarget((t) => t.type() === 'service_worker' && t.url().startsWith(`chrome-extension://${CAPTURE_EXT_ID}/`), { timeout: 8000 });
+      captureId = await (await target.worker()).evaluate(() => self.stTabId());
+    }
     await s.page.evaluate(async (captureId, w, h, fps) => {
       window.__stTab = await navigator.mediaDevices.getUserMedia({ audio: false, video: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: captureId, minWidth: w, maxWidth: w, minHeight: h, maxHeight: h, maxFrameRate: fps } } });
     }, captureId, s.row.width, s.row.height, s.row.fps);
@@ -673,7 +732,11 @@ async function showOn(id, legs, wsPath, { sound = false } = {}) {
       // With sound: the stream's own mix (the console's master, as the stream sends it), from the sound link.
       const master = sound && window.__stAudio && window.__stAudio.masterTrack ? window.__stAudio.masterTrack() : null;
       const stream = master ? new MediaStream([...window.__stTab.getVideoTracks(), master]) : window.__stTab;
-      const sender = new lib.MultiShareSender({ legs, wsPath, stream, onEnded: () => { window.__stShares = window.__stShares.filter((x) => x !== sender); } });
+      const sender = new lib.MultiShareSender({ legs, wsPath, stream, onEnded: () => {
+        window.__stShares = window.__stShares.filter((x) => x !== sender);
+        // No screen shows the stream any more: the capture is let go (it is asked for again when one does).
+        if (!window.__stShares.length && window.__stTab) { window.__stTab.getTracks().forEach((t) => t.stop()); window.__stTab = null; }
+      } });
       window.__stShares.push(sender);
       sender.start();
       return true;
@@ -699,6 +762,7 @@ async function stop(id, why) {
   const browser = s.browser; s.browser = null;
   try { if (browser) await browser.close(); } catch { /* gone */ }
   closeDisplay(s.display); s.display = null;
+  dropProfile(s);
   return { state: 'off' };
 }
 function lastError(id) { const e = stopped.get(id); return e ? e.error : null; }

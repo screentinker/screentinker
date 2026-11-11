@@ -309,7 +309,8 @@ function micDecoder() {
   p.on('error', () => {}); p.stdin.on('error', () => {});
   return p;
 }
-const programmeArgs = (sink) => [...QUIET, '-f', 'pulse', '-i', `${sink}.monitor`, ...PCM_OUT];
+// Small pieces (20 ms) from the sound server: its default is large ones, which put the programme's sound behind its picture.
+const programmeArgs = (sink) => [...QUIET, '-f', 'pulse', '-fragment_size', '3528', '-i', `${sink}.monitor`, ...PCM_OUT];
 /** A console: every channel of the device, interleaved, as it comes. */
 const consoleArgs = (device, total) => [...QUIET, '-f', 'alsa', '-ac', String(total), '-i', device, '-f', 's16le', '-ar', String(RATE), '-ac', String(total), 'pipe:1'];
 /**
@@ -385,6 +386,27 @@ function pulse() {
   }
   return pulseReady;
 }
+/*
+ * A way in to the sound server for a renderer that runs as a user of its own (lib/stream-out.js RENDERER'S
+ * OWN USER): the server's usual socket is its owner's alone. One socket more, without the cookie, loaded once.
+ */
+const RENDER_SOCKET_DIR = '/tmp/st-pulse';
+let renderSock = null;
+function renderSocket() {
+  if (!renderSock) {
+    renderSock = (async () => {
+      if (!(await pulse())) return null;
+      const sock = RENDER_SOCKET_DIR + '/native';
+      if (fs.existsSync(sock)) return sock;
+      try { fs.mkdirSync(RENDER_SOCKET_DIR, { recursive: true, mode: 0o755 }); fs.chmodSync(RENDER_SOCKET_DIR, 0o755); } catch { return null; }
+      if (!(await run('pactl', ['load-module', 'module-native-protocol-unix', 'auth-anonymous=1', `socket=${sock}`]))) return null;
+      try { fs.chmodSync(sock, 0o777); } catch { /* as made */ }
+      return fs.existsSync(sock) ? sock : null;
+    })();
+    renderSock.then((s) => { if (!s) renderSock = null; });
+  }
+  return renderSock;
+}
 /** A sink of its own for one stream's browser. Returns { name, module } or null. */
 async function createSink(id) {
   if (!(await pulse())) return null;
@@ -394,4 +416,4 @@ async function createSink(id) {
 }
 function removeSink(sink) { if (sink && /^\d+$/.test(sink.module)) run('pactl', ['unload-module', sink.module]); }
 
-module.exports = { MAX_PADS, STRIPS, isGuestStrip, MAX_CHANNELS, channelNames, inputNames, consoleArgs, splitChannels, captureChannels, RATE, FRAME, SECOND, MAX_LEVEL, INPUTS, NET_SCHEMES, Mix, cleanSettings, netUrl, maskUrl, netArgs, bedArgs, lineArgs, programmeArgs, micArgs, micDecoder, decoder, parseCapture, captureDevices, pulse, createSink, removeSink };
+module.exports = { MAX_PADS, STRIPS, isGuestStrip, MAX_CHANNELS, channelNames, inputNames, consoleArgs, splitChannels, captureChannels, RATE, FRAME, SECOND, MAX_LEVEL, INPUTS, NET_SCHEMES, Mix, cleanSettings, netUrl, maskUrl, netArgs, bedArgs, lineArgs, programmeArgs, micArgs, micDecoder, decoder, parseCapture, captureDevices, pulse, createSink, removeSink, renderSocket };
