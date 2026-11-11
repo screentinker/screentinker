@@ -78,7 +78,8 @@
     // textContent only: the name is whatever a guest typed.
     badge.textContent = fmt(labels.sharedBy || 'Shared by {name}', { name: sharedBy }) + (guest ? ' · ' + (labels.guest || 'guest') : '');
     // A stream output's picture (not a person's screen) is the programme itself: nothing is written over it.
-    if (plain) { badge.style.display = 'none'; wait.style.display = 'none'; }
+    // (No words either: the dashboard's view of the screen draws the badge's text.)
+    if (plain) { badge.style.display = 'none'; badge.textContent = ''; wait.style.display = 'none'; }
     t.appendChild(v); t.appendChild(a); t.appendChild(wait); t.appendChild(badge);
     overlay().appendChild(t);
     return { tile: t, video: v, audio: a, wait: wait, badge: badge };
