@@ -377,10 +377,12 @@ async function start(row, key, sound, { standby = false } = {}) {
         '--disable-features=WebRtcHideLocalIpsWithMdns', `--window-size=${row.width},${row.height}`,
         // A cut-out guest is keyed on the graphics card where there is one; a server has none, so the software one is allowed.
         '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader',
+        // Shown on screens (showOn): the renderer shares its own tab, and there is nobody to ask.
+        '--auto-accept-this-tab-capture',
         ...(shown ? ['--kiosk', '--window-position=0,0', '--test-type', '--noerrdialogs', '--disable-infobars', '--no-first-run', '--disable-session-crashed-bubble'] : [])],
     });
     s.browser.on('disconnected', () => { if (s.wanted) { s.error = 'The renderer stopped.'; stop(row.id, 'error'); } });
-    const page = shown ? ((await s.browser.pages())[0] || await s.browser.newPage()) : await s.browser.newPage();
+    const page = s.page = shown ? ((await s.browser.pages())[0] || await s.browser.newPage()) : await s.browser.newPage();
     if (!shown) await page.setViewport({ width: row.width, height: row.height });
     await page.goto(`${localBaseUrl()}/stream-render/${row.feed_secret}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     // The player keeps media silent until someone has touched the page (the browser's autoplay
@@ -464,6 +466,31 @@ function encode(s) {
   });
 }
 
+/*
+ * ON SCREENS. A running stream's picture (programme, graphics, guests, as composed by the renderer)
+ * shown on screens of the workspace, over whatever they are playing, until released or the stream
+ * stops. It rides on screen share (lib/screen-share.js): the renderer is the sharer, capturing its
+ * own tab and sending it to each screen directly, so every player that can show a shared screen can
+ * show a stream, and a screen gets its own content back the way it does when a share ends.
+ * `legs` are the share's tickets (routes/stream-out.js made them). Resolves true once the renderer has them.
+ */
+async function showOn(id, legs, wsPath) {
+  const s = sessions.get(id);
+  if (!s || !s.page || !s.ready) return false;
+  return s.page.evaluate(async (legs, wsPath) => {
+    const lib = await import('/js/lib/screen-share-client.js');
+    // One capture of this tab (picture and sound) for every screen, kept for as long as the page lives.
+    if (!window.__stTab || !window.__stTab.getVideoTracks().some((t) => t.readyState === 'live')) {
+      window.__stTab = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 } }, audio: true, preferCurrentTab: true, selfBrowserSurface: 'include' });
+    }
+    window.__stShares = window.__stShares || [];
+    const sender = new lib.MultiShareSender({ legs, wsPath, stream: window.__stTab, onEnded: () => { window.__stShares = window.__stShares.filter((x) => x !== sender); } });
+    window.__stShares.push(sender);
+    sender.start();
+    return true;
+  }, legs, wsPath).catch((e) => { s.shareError = String((e && e.message) || e).slice(0, 200); return false; });
+}
+
 const stopped = new Map();   // id -> last error, so the desk can say why a stream went off
 async function stop(id, why) {
   const s = sessions.get(id);
@@ -484,4 +511,4 @@ function lastError(id) { const e = stopped.get(id); return e ? e.error : null; }
 async function stopAll() { await Promise.all([...sessions.keys()].map((id) => stop(id))); }
 process.on('exit', () => { for (const s of sessions.values()) { try { s.ff && s.ff.kill('SIGKILL'); } catch { /* */ } try { Object.values(s.inputs).forEach((p) => p.kill('SIGKILL')); } catch { /* */ } try { s.browser && s.browser.process() && s.browser.process().kill('SIGKILL'); } catch { /* */ } try { s.display && s.display.proc.kill('SIGKILL'); } catch { /* */ } } });
 
-module.exports = { pushMic, stopMic, recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, capture, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };
+module.exports = { showOn, pushMic, stopMic, recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, capture, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };

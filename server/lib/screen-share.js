@@ -260,6 +260,10 @@ function createSession(opts) {
     guest: !!opts.guest,
     ip: opts.ip || null,
     audio: !!opts.audio,
+    // A share the server itself makes (a stream output shown on screens, lib/stream-out.js): it runs for as
+    // long as its stream does, and the screen shows it without a "Shared by" badge.
+    system: opts.system === true,
+    streamId: opts.system === true && opts.streamId ? String(opts.streamId) : null,
     ticketHash: sha256(ticket),
     ticketUsed: false,
     createdAt: Date.now(),
@@ -1105,8 +1109,7 @@ function onSharer(ws) {
       s.sharer = ws;
       s.startedAt = Date.now();
       clearTimeout(s.timers.ticket);
-      s.timers.max = setTimeout(() => endSession(s, 'max_duration'), maxSeconds() * 1000);
-      unrefTimer(s.timers.max);
+      if (!s.system) { s.timers.max = setTimeout(() => endSession(s, 'max_duration'), maxSeconds() * 1000); unrefTimer(s.timers.max); }
       s.timers.join = setTimeout(() => { if (!s.device) endSession(s, 'screen_unreachable'); }, DEVICE_JOIN_MS);
       unrefTimer(s.timers.join);
       s.timers.sharerPing = keepAlive(ws, () => endSession(s, 'sharer_left'));
@@ -1114,7 +1117,7 @@ function onSharer(ws) {
       if (!deviceNs || !isOnline(s.deviceId)) { endSession(s, 'screen_unreachable'); return; }
       deviceNs.to(s.deviceId).emit('device:screenshare-start', {
         session_id: s.id, shared_by: s.sharedBy, guest: s.guest, audio: s.audio,
-        max_seconds: maxSeconds(), ice_servers: iceServersFor(s.deviceId),
+        max_seconds: maxSeconds(), ice_servers: iceServersFor(s.deviceId), ...(s.system ? { plain: true } : {}),
       });
       for (const n of s.notices.splice(0)) send(ws, n);
       // The screen lays its tiles out (and picks whose sound plays) from the room; this presenter's

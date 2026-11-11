@@ -500,6 +500,8 @@ function monitor(el, src, emptyText, fx) {
 const streams = () => (so && so.outputs) || [];
 const firstOutput = () => (state ? (state.screens.find((s) => outputs.has(s.id)) || streams().find((s) => outputs.has(s.id))) : null);
 const isStream = (o) => !!o && streams().includes(o);
+/** The stream whose picture a screen is showing, if any. */
+const followOf = (deviceId) => streams().find((s) => (s.on_screens || []).some((x) => x.id === deviceId)) || null;
 const streamTally = (s) => (s.status.state === 'live' ? 'air' : s.status.state === 'off' ? 'idle' : 'standby');
 async function load() {
   const [m, s] = await Promise.all([call('/mixer'), call('/stream-out').catch(() => null)]);
@@ -636,7 +638,7 @@ function draw(root) {
         <div class="mx-keys">
           ${state.screens.length ? state.screens.map((s) => `
             <button type="button" class="mx-key mx-out mx-tally-${tallyOf(s)}${outputs.has(s.id) ? ' is-on' : ''}" data-out="${esc(s.id)}" aria-pressed="${outputs.has(s.id)}" title="${esc(s.name)}">
-              <span class="mx-key-tally"></span><span class="mx-key-name">${esc(s.name)}</span><span class="mx-key-sub">${esc(s.playlist_name || t('mixer.no_playlist'))}</span>
+              <span class="mx-key-tally"></span><span class="mx-key-name">${esc(s.name)}</span><span class="mx-key-sub">${esc(followOf(s.id) ? t('mixer.screen_shows_stream', { name: followOf(s.id).name }) : (s.playlist_name || t('mixer.no_playlist')))}</span>
             </button>`).join('') : (streams().length ? '' : `<p class="mx-note">${esc(t('mixer.no_screens'))}</p>`)}
           ${streams().map((s) => `
             <button type="button" class="mx-key mx-out mx-stream mx-tally-${streamTally(s)}${outputs.has(s.id) ? ' is-on' : ''}" data-out="${esc(s.id)}" aria-pressed="${outputs.has(s.id)}" title="${esc(s.name)}">
@@ -657,6 +659,7 @@ function draw(root) {
                 ${s.status.error || s.status.last_error ? `<span class="mx-stream-err">${esc(s.status.error || s.status.last_error)}</span>` : ''}</div>
               ${s.status.recording ? `<span class="mx-rec" title="${esc(s.status.recording)}">${esc(t('mixer.rec_on'))}</span>` : (s.status.record_skipped ? `<span class="mx-stream-err">${esc(t('mixer.rec_skipped'))}</span>` : '')}
               ${s.file_only ? '' : `<label class="mx-rec-check"><input type="checkbox" data-record="${esc(s.id)}" ${s.record ? 'checked' : ''} ${s.status.state === 'off' ? '' : 'disabled'}> ${esc(t('mixer.rec_also'))}</label>`}
+              ${(s.on_screens || []).length ? `<button type="button" class="btn btn-secondary btn-sm" data-unscreen="${esc(s.id)}" title="${esc((s.on_screens || []).map((x) => x.name).join(', '))}">${esc(t('mixer.release_screens', { n: s.on_screens.length }))}</button>` : ''}
               <span class="mx-stream-state">${esc(t('mixer.stream_state.' + s.status.state))}</span>
               ${s.status.state === 'off'
                 ? `<button type="button" class="btn btn-secondary btn-sm" data-standby="${esc(s.id)}" title="${esc(t('mixer.standby_tip'))}">${esc(t('mixer.standby'))}</button><button type="button" class="btn btn-sm mx-golive" data-go="${esc(s.id)}">${esc(t(s.file_only ? 'mixer.rec_start' : 'mixer.stream_go'))}</button><button type="button" class="btn btn-secondary btn-sm" data-del="${esc(s.id)}">${esc(t('common.delete'))}</button>`
@@ -731,7 +734,22 @@ async function take(root) {
   if (btn) btn.disabled = true;
   try {
     const streamIds = streams().filter((s) => outputs.has(s.id)).map((s) => s.id);
-    const r = await call('/mixer/take', { method: 'POST', body: JSON.stringify({ device_ids: [...outputs].filter((id) => !streamIds.includes(id)), stream_ids: streamIds, playlist_id: pvw,
+    let screenIds = [...outputs].filter((id) => !streamIds.includes(id));
+    // Screens selected together with a running stream show that stream's picture (programme, graphics,
+    // guests, as composed), over whatever they play, instead of taking the source themselves.
+    const lead = streams().find((s) => outputs.has(s.id) && s.status.state !== 'off');
+    let followed = null;
+    if (lead && screenIds.length) {
+      try {
+        followed = await call(`/stream-out/${encodeURIComponent(lead.id)}/screens`, { method: 'POST', body: JSON.stringify({ device_ids: screenIds }) });
+        lead.on_screens = [...(lead.on_screens || []).filter((x) => !followed.shown.some((y) => y.device_id === x.id)), ...followed.shown.map((x) => ({ id: x.device_id, name: x.name, live: false }))];
+        // A screen that cannot show a stream's picture (an older player, offline) takes the source itself, as before.
+        screenIds = followed.skipped.map((x) => x.device_id);
+        if (followed.skipped.length) showToast(t('mixer.toast.on_screens_skipped', { n: followed.shown.length, skipped: followed.skipped.length, names: followed.skipped.map((x) => x.name || '?').join(', ') }), 'warning');
+        else showToast(t('mixer.toast.on_screens', { n: followed.shown.length, name: lead.name }), 'success');
+      } catch (err) { showToast(err.message, 'warning'); }
+    }
+    const r = await call('/mixer/take', { method: 'POST', body: JSON.stringify({ device_ids: screenIds, stream_ids: streamIds, playlist_id: pvw,
       transition: { type: tx.type, ms: tx.ms, color: (root.querySelector('#mxC') || {}).value || undefined } }) });
     for (const tk of r.streams || []) { const s = streams().find((x) => x.id === tk.stream_id); if (s) { s.playlist_id = r.playlist.id; s.playlist_name = r.playlist.name; } }
     const n = (r.taken || []).length + (r.streams || []).length, skipped = (r.skipped || []).length;
@@ -941,6 +959,7 @@ function bind(root) {
   }));
   act('[data-standby]', 'standby', async (id) => { await call(`/stream-out/${encodeURIComponent(id)}/start`, { method: 'POST', body: JSON.stringify({ standby: true }) }); showToast(t('mixer.toast.standby'), 'success'); });
   act('[data-go]', 'go', async (id) => { await call(`/stream-out/${encodeURIComponent(id)}/start`, { method: 'POST' }); showToast(t('mixer.toast.stream_starting'), 'success'); });
+  act('[data-unscreen]', 'unscreen', async (id) => { const r = await call(`/stream-out/${encodeURIComponent(id)}/screens`, { method: 'DELETE' }); showToast(t('mixer.toast.screens_released', { n: r.released }), 'success'); });
   act('[data-stop]', 'stop', (id) => call(`/stream-out/${encodeURIComponent(id)}/stop`, { method: 'POST' }));
   act('[data-del]', 'del', async (id) => { await call(`/stream-out/${encodeURIComponent(id)}`, { method: 'DELETE' }); outputs.delete(id); });
   root.querySelectorAll('[data-record]').forEach((el) => el.addEventListener('change', async () => {

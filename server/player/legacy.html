@@ -4120,6 +4120,7 @@ function connect(serverUrl) {
         sessionId: data.session_id,
         sharedBy: typeof data.shared_by === "string" ? data.shared_by : "",
         guest: !!data.guest,
+        plain: data.plain === true,
         maxSeconds: data.max_seconds,
         iceServers: Array.isArray(data.ice_servers) ? data.ice_servers : [],
         labels: shareLabels(),

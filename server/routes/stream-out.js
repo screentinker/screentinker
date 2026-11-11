@@ -76,6 +76,8 @@ function shown(mix) {
 }
 const audioOf = (row) => ({ file: bedOf(row).file, settings: mixOf(row) });
 
+const screenShare = require('../lib/screen-share');
+const onScreens = (streamId) => [...screenShare._sessions.values()].filter((s) => s.system && s.streamId === streamId && !s.ended);
 const pub = (r) => ({
   id: r.id, name: r.name, kind: r.kind, kind_label: streamOut.KINDS[r.kind] ? streamOut.KINDS[r.kind].label : r.kind,
   url: r.url || null, has_key: !!r.key_enc, playlist_id: r.playlist_id || null,
@@ -83,6 +85,8 @@ const pub = (r) => ({
   width: r.width, height: r.height, fps: r.fps, bitrate_k: r.bitrate_k, record: !!r.record || !!(streamOut.KINDS[r.kind] && streamOut.KINDS[r.kind].file),
   file_only: !!(streamOut.KINDS[r.kind] && streamOut.KINDS[r.kind].file),
   graphic: !!r.gfx_json,
+  // The screens showing this stream's picture right now (POST /:id/screens).
+  on_screens: onScreens(r.id).map((s) => ({ id: s.deviceId, name: s.deviceName, live: !!s.live })),
   // What is keyed over it, so the desk's Program monitor can show it too: the page and its box as fractions of the frame.
   graphic_on: (() => { try { const g = r.gfx_json ? JSON.parse(r.gfx_json) : null; return g && typeof g.uri === 'string' && g.uri.startsWith('/gfx/') ? { uri: g.uri, position: g.position, w: g.width / r.width, h: g.height / r.height } : null; } catch { return null; } })(),
   audio: { content_id: bedOf(r).id, name: bedOf(r).name, level: mixOf(r).bed.level, muted: mixOf(r).bed.muted, mix: shown(mixOf(r)) },
@@ -199,6 +203,51 @@ router.post('/:id/stop', requireFleetWrite, async (req, res) => {
   const r = mine(req, req.params.id);
   if (!r) return res.status(404).json({ error: 'Stream not found' });
   res.json({ status: await streamOut.stop(r.id) });
+});
+
+/*
+ * ON SCREENS: show this stream's composed picture (programme, graphics, guests) on screens of the
+ * workspace, over whatever they are playing, until released or the stream stops. The renderer shares
+ * its own picture to each screen (lib/stream-out.js showOn, on lib/screen-share.js), so a screen
+ * needs what a screen share needs: a player that can show one, online, sharing on in the workspace.
+ */
+router.post('/:id/screens', gate, requireFleetWrite, async (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'Stream not found' });
+  if (!running(r.id)) return res.status(409).json({ error: 'Put the stream on standby or live first: there is no picture to show until it is running.', code: 'off' });
+  const ids = Array.isArray((req.body || {}).device_ids) ? [...new Set(req.body.device_ids.filter((x) => typeof x === 'string'))].slice(0, 50) : [];
+  if (!ids.length) return res.status(400).json({ error: 'device_ids required: choose at least one screen' });
+  const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(req.workspaceId);
+  const already = new Set(onScreens(r.id).map((s) => s.deviceId));
+  const targets = [], skipped = [], shown = [];
+  for (const id of ids) {
+    const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(id);
+    if (!device || device.workspace_id !== req.workspaceId) { skipped.push({ device_id: id, reason: 'not_found' }); continue; }
+    if (already.has(id)) { shown.push({ device_id: id, name: device.name }); continue; }
+    const a = screenShare.availability(device, workspace);
+    if (!a.ok) { skipped.push({ device_id: id, name: device.name, reason: a.reason }); continue; }
+    targets.push({ device, workspace });
+  }
+  if (targets.length) {
+    const out = screenShare.createShare({ targets, sharedBy: r.name, userId: req.user && req.user.id, ip: req.ip, audio: true, system: true, streamId: r.id, source: 'stream' });
+    if (out.error) return res.status(409).json({ error: out.error === 'too_many_targets' ? `A stream can be shown on at most ${screenShare.maxTargets()} screens at once.` : 'One of those screens is showing something else that was shared to it.', code: out.error, device_id: out.device_id || null });
+    const legs = out.legs.map((l) => ({ device_id: l.device.id, screen_name: l.device.name || '', session_id: l.session.id, ticket: l.ticket, ice_servers: screenShare.iceServersFor(l.device.id) }));
+    if (!(await streamOut.showOn(r.id, legs, '/api/screen-share/ws'))) {
+      screenShare.stopShare(out.shareId, 'not_connected');
+      return res.status(502).json({ error: 'The stream\'s renderer could not send its picture. Stop the stream and start it again.' });
+    }
+    for (const l of out.legs) shown.push({ device_id: l.device.id, name: l.device.name });
+  }
+  res.json({ shown, skipped });
+});
+// Release screens: all of them, or the ones named. Each gets its own content back.
+router.delete('/:id/screens', requireFleetWrite, (req, res) => {
+  const r = mine(req, req.params.id);
+  if (!r) return res.status(404).json({ error: 'Stream not found' });
+  const only = Array.isArray((req.body || {}).device_ids) ? new Set(req.body.device_ids) : null;
+  let n = 0;
+  for (const s of onScreens(r.id)) if (!only || only.has(s.deviceId)) { screenShare.endSession(s, 'stopped_by_owner', req.user && req.user.id); n += 1; }
+  res.json({ released: n });
 });
 
 // The stream's sound: which audio bed (or none), the fader and mute. Live on a running stream.
