@@ -150,15 +150,24 @@ function renderUser() {
       fs.chmodSync(dir, 0o711);
       const wrapper = path.join(dir, 'chromium');
       fs.writeFileSync(wrapper, `#!/bin/sh\nexec setpriv --reuid=${uid} --regid=${gid} --clear-groups --no-new-privs -- '${chrome}' "$@"\n`, { mode: 0o755 });
-      // What the browser must not read: the database, the keys, the uploads (it is given what it shows over HTTP).
-      for (const d of [path.dirname(config.dbPath), config.certsDir, config.uploadsDir].filter(Boolean)) {
-        try { const st = fs.statSync(d); if (st.uid === 0 && (st.mode & 0o007)) fs.chmodSync(d, st.mode & ~0o007); } catch { /* not there */ }
+      // What the browser must not read: the database and the keys. Only this server's own folders for them, inside
+      // its data folder (never a shared system folder a DB_PATH or CERTS_DIR may point into); STREAM_RENDER_LOCKDOWN=0 leaves them as they are.
+      if (process.env.STREAM_RENDER_LOCKDOWN !== '0') {
+        const inData = (d) => { const r = path.relative(path.resolve(config.dataDir), path.resolve(d)); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
+        for (const d of [path.dirname(config.dbPath), config.certsDir].filter((d) => d && inData(d))) {
+          try { const st = fs.statSync(d); if (st.uid === 0 && (st.mode & 0o007)) { fs.chmodSync(d, st.mode & ~0o007); console.log(`[stream-out] ${d} is now its owner's alone (no access for other users)`); } } catch { /* not there */ }
+        }
       }
       console.log(`[stream-out] the renderer runs as "${RENDER_USER}" (uid ${uid}), not as root`);
       return { uid, gid, wrapper, dir };
     })().catch(() => null);
   }
   return isolating;
+}
+/** The renderer's environment: the few things a browser needs, none of the server's settings or secrets. */
+function rendererEnv() {
+  const keep = ['PATH', 'HOME', 'LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'TZ', 'TMPDIR', 'FONTCONFIG_PATH', 'FONTCONFIG_FILE', 'XDG_RUNTIME_DIR', 'PULSE_SERVER', 'PULSE_COOKIE'];
+  return Object.fromEntries(keep.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]]));
 }
 /** A profile of its own for one renderer, owned by the renderer's user. */
 function profileFor(iso) {
@@ -186,7 +195,7 @@ async function openDisplay(width, height) {
   }
   return null;
 }
-function dropProfile(s) { const d = s.profile; s.profile = null; if (d && path.basename(path.dirname(d)).startsWith('st-render-')) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* left for the system's own cleaning */ } } }
+function dropProfile(s) { const d = s.profile; s.profile = null; if (d && path.basename(path.dirname(d)).startsWith('st-render-') && path.basename(d).startsWith('profile-')) fs.rm(d, { recursive: true, force: true }, () => {}); }
 /** Asks the display's server to end (it then removes its own files), and makes sure it does. */
 function closeDisplay(d) {
   if (!d || !d.proc) return;
@@ -353,7 +362,7 @@ function startInput(s, name) {
   }
   const proc = audio.decoder(name === 'bed' ? audio.bedArgs(s.bedFile)
     : name === 'line' ? audio.lineArgs(set.device)
-      : name === 'programme' ? audio.programmeArgs(s.sink.name)
+      : name === 'programme' ? audio.programmeArgs(s.sink.name, s.sink.server)
         : audio.netArgs(set.url));
   s.inputs[name] = proc;
   s.mix.attach(name, proc.stdout, { live: name !== 'bed' });
@@ -455,23 +464,24 @@ async function start(row, key, sound, { standby = false } = {}) {
     return true;
   };
   try {
-    // Programme sound: the browser plays into a sink of its own, which the mixer reads back.
-    // Without PulseAudio there is no sink and the browser stays muted, as before.
-    s.sink = await audio.createSink(row.id).catch(() => null);
+    // Programme sound: the browser plays into a sink of its own, which the mixer reads back. A renderer of its own user
+    // plays into a sound server of that user (never root's). Without PulseAudio there is no sink and the browser stays muted, as before.
+    const iso = await renderUser();
+    const pulseServer = iso ? await audio.renderPulse(iso).catch(() => null) : null;
+    s.sink = iso && !pulseServer ? null : await audio.createSink(row.id, pulseServer).catch(() => null);
     // The renderer's own display, when the picture is grabbed from one (see capture()).
     if (await late()) return { state: 'off' };
     if (await capture() === 'display') s.display = await openDisplay(row.width, row.height);
     if (await late()) return { state: 'off' };
     const shown = !!s.display;
-    const iso = await renderUser();
-    const pulseSock = iso && s.sink ? await audio.renderSocket() : null;
     if (iso) s.profile = profileFor(iso);
     s.isolated = !!iso;
     s.browser = await puppeteer().launch({
       executablePath: iso ? iso.wrapper : chromePath(), headless: shown ? false : 'new', ...(shown ? { defaultViewport: null } : {}),
       ...(iso ? { userDataDir: s.profile } : {}),
-      env: { ...process.env, ...(s.sink ? { PULSE_SINK: s.sink.name } : {}), ...(shown ? { DISPLAY: `:${s.display.n}` } : {}),
-        ...(iso ? { HOME: s.profile, ...(pulseSock ? { PULSE_SERVER: `unix:${pulseSock}` } : {}) } : {}) },
+      // Only what a browser needs from the environment: never this server's secrets (JWT_SECRET, keys, passwords).
+      env: { ...rendererEnv(), ...(s.sink ? { PULSE_SINK: s.sink.name } : {}), ...(s.sink && s.sink.server ? { PULSE_SERVER: s.sink.server } : {}), ...(shown ? { DISPLAY: `:${s.display.n}` } : {}),
+        ...(iso ? { HOME: s.profile } : {}) },
       // puppeteer mutes a headless browser by default; with a sink to play into, it must not.
       // On a display, the "controlled by automated software" bar would be in the picture.
       ignoreDefaultArgs: [...(s.sink ? ['--mute-audio'] : []), ...(shown ? ['--enable-automation', '--disable-extensions'] : [])],
@@ -597,9 +607,12 @@ const audioLinks = new Map();      // session key -> session
 const AUDIO_PATH = '/api/stream-render/audio';
 // Runs in the renderer before its own scripts: a place for the player to hand guests' tracks to, until the link's module is loaded.
 const AUDIO_STUB = (key) => {
-  const q = []; let real = null;
+  // The renderer's own page only: not a frame inside it (a web page in the programme).
+  if (window !== window.top) return;
+  const q = []; let real = null, k = key;
   window.__stAudio = {
-    key,
+    // The link's key is handed over once, to the link's module, and is not left on the page for anything else to read.
+    _key() { const x = k; k = null; return x; },
     guest(id, track, sender) { if (real) real.guest(id, track, sender); else q.push(['guest', id, track, sender]); },
     drop(id) { if (real) real.drop(id); else q.push(['drop', id]); },
     active() { return !!(real && real.active()); },
@@ -609,14 +622,21 @@ const AUDIO_STUB = (key) => {
   document.addEventListener('DOMContentLoaded', () => { import('/js/stream-render-audio.js').catch((e) => console.warn('[sound link]', e && e.message)); });
 };
 const isLocal = (addr) => /^(::ffff:)?127\./.test(addr || '') || addr === '::1';
+/** Whether an upgrade may be the sound link: from this machine, from the renderer's own page (its origin), with a session's key. */
+function linkAllowed({ remoteAddress, origin, key }) {
+  const s = audioLinks.get(key || '');
+  if (!s || !isLocal(remoteAddress)) return null;
+  let own = null; try { own = new URL(localBaseUrl()).origin; } catch { own = null; }
+  return own && origin === own ? s : null;
+}
 function attachAudio(server) {
   const WebSocket = require('ws');
   const wss = new WebSocket.Server({ noServer: true, maxPayload: 64 * 1024 });
   server.on('upgrade', (req, socket, head) => {
     let u; try { u = new URL(req.url, 'http://localhost'); } catch { return; }
     if (u.pathname !== AUDIO_PATH) return;
-    const s = audioLinks.get(u.searchParams.get('k') || '');
-    if (!s || !isLocal(req.socket.remoteAddress)) { try { socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'); socket.destroy(); } catch { /* gone */ } return; }
+    const s = linkAllowed({ remoteAddress: req.socket.remoteAddress, origin: req.headers.origin, key: u.searchParams.get('k') });
+    if (!s) { try { socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'); socket.destroy(); } catch { /* gone */ } return; }
     wss.handleUpgrade(req, socket, head, (ws) => {
       if (s.audioWs) { try { s.audioWs.close(); } catch { /* gone */ } }
       s.audioWs = ws;
@@ -655,21 +675,35 @@ function syncGuests(s) {
  * so firing one is instant; the mixer plays it (lib/stream-audio.js Mix.fire) into the pads strip.
  */
 const PAD_SECONDS = 60;
-const padCache = new Map();        // file|mtime -> Promise<Buffer | null>
+const PAD_CACHE_BYTES = 96 * 1024 * 1024;     // about nine minutes of decoded sound across every stream
+const padCache = new Map();        // file|mtime -> Promise<Buffer | null>, oldest first
+let padBytes = 0, decoding = Promise.resolve();
+const padSize = new Map();         // file|mtime -> bytes, once decoded
 function padPcm(file) {
   let st; try { st = fs.statSync(file); } catch { return Promise.resolve(null); }
   const k = file + '|' + st.mtimeMs;
-  if (!padCache.has(k)) {
-    if (padCache.size >= 16) padCache.delete(padCache.keys().next().value);
-    const p = new Promise((resolve) => {
+  if (padCache.has(k)) { const p = padCache.get(k); padCache.delete(k); padCache.set(k, p); }   // used: the newest again
+  else {
+    // One decode at a time: firing many new pads at once queues them instead of starting a decoder for each.
+    const p = decoding.then(() => new Promise((resolve) => {
       const dec = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-t', String(PAD_SECONDS), '-vn', '-f', 's16le', '-ar', String(RATE), '-ac', '2', 'pipe:1'], { stdio: ['ignore', 'pipe', 'ignore'] });
       const parts = []; let size = 0;
       dec.stdout.on('data', (d) => { if (size < RATE * FRAME * PAD_SECONDS) { parts.push(d); size += d.length; } });
       dec.on('error', () => resolve(null));
       dec.on('close', () => { const b = size ? Buffer.concat(parts) : null; resolve(b && b.length >= FRAME ? b.subarray(0, b.length - (b.length % FRAME)) : null); });
-    });
+    }));
+    decoding = p.then(() => {}, () => {});
     padCache.set(k, p);
-    p.then((b) => { if (!b) padCache.delete(k); });
+    p.then((b) => {
+      if (!b) { padCache.delete(k); return; }
+      padSize.set(k, b.length); padBytes += b.length;
+      // Over the cap: the least recently used go (a sounding pad keeps its own copy until it ends).
+      for (const old of [...padCache.keys()]) {
+        if (padBytes <= PAD_CACHE_BYTES) break;
+        if (old === k || !padSize.has(old)) continue;
+        padCache.delete(old); padBytes -= padSize.get(old); padSize.delete(old);
+      }
+    });
   }
   return padCache.get(k);
 }
@@ -741,7 +775,7 @@ async function showOn(id, legs, wsPath, { sound = false } = {}) {
         if (!delayMs || !window.MediaStreamTrackProcessor || !window.MediaStreamTrackGenerator) return src;
         const proc = new MediaStreamTrackProcessor({ track: src }), gen = new MediaStreamTrackGenerator({ kind: 'video' });
         const reader = proc.readable.getReader(), writer = gen.writable.getWriter(), q = [];
-        (async () => { for (;;) { const r = await reader.read().catch(() => ({ done: true })); if (r.done) break; q.push([performance.now(), r.value]); } })();
+        (async () => { for (;;) { const r = await reader.read().catch(() => ({ done: true })); if (r.done) break; if (gen.readyState !== 'live') { r.value.close(); reader.cancel().catch(() => {}); break; } q.push([performance.now(), r.value]); } })();
         const pump = () => {
           const now = performance.now();
           while (q.length && now - q[0][0] >= delayMs) { const f = q.shift()[1]; writer.write(f).catch(() => { try { f.close(); } catch (e) { /* gone */ } }); }
@@ -751,7 +785,8 @@ async function showOn(id, legs, wsPath, { sound = false } = {}) {
         window.__stHeld = { src, track: gen };
         return gen;
       };
-      const stream = master ? new MediaStream([held(), master]) : window.__stTab;
+      // Each screen's share gets copies of the tracks: a share that ends stops its own, not the ones the next share needs.
+      const stream = master ? new MediaStream([held().clone(), master.clone()]) : new MediaStream(window.__stTab.getVideoTracks().map((x) => x.clone()));
       const sender = new lib.MultiShareSender({ legs, wsPath, stream, onEnded: () => {
         window.__stShares = window.__stShares.filter((x) => x !== sender);
         // No screen shows the stream any more: the capture is let go (it is asked for again when one does).
@@ -789,4 +824,4 @@ function lastError(id) { const e = stopped.get(id); return e ? e.error : null; }
 async function stopAll() { await Promise.all([...sessions.keys()].map((id) => stop(id))); }
 process.on('exit', () => { for (const s of sessions.values()) { try { s.ff && s.ff.kill('SIGKILL'); } catch { /* */ } try { Object.values(s.inputs).forEach((p) => p.kill('SIGKILL')); } catch { /* */ } try { s.browser && s.browser.process() && s.browser.process().kill('SIGKILL'); } catch { /* */ } try { s.display && s.display.proc.kill('SIGKILL'); } catch { /* */ } if (s.display) for (const f of [lockOf(s.display.n), sockOf(s.display.n)]) { try { fs.unlinkSync(f); } catch { /* */ } } } });
 
-module.exports = { attachAudio, AUDIO_PATH, firePad, stopPads, padPcm, showOn, shareError, CAPTURE_EXT, CAPTURE_EXT_ID, pushMic, stopMic, recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, capture, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };
+module.exports = { linkAllowed, rendererEnv, attachAudio, AUDIO_PATH, firePad, stopPads, padPcm, showOn, shareError, CAPTURE_EXT, CAPTURE_EXT_ID, pushMic, stopMic, recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, capture, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };

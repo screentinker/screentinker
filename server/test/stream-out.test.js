@@ -1101,10 +1101,11 @@ test('a personal link lets in one person at a time, by name, and Remove ends it'
   assert.equal(G.inviteOf(out.id), null, 'and has no room link');
   const a = G.join(p.token, '', t0).guest;
   assert.equal(a.name, 'Dana', 'named as the studio named them, unless they say otherwise');
-  assert.equal(G.join(p.token, 'Someone else', t0).status, 409, 'a second person cannot come in by the same link');
-  G.leave(a);
-  const back = G.join(p.token, 'Dana', t0).guest;
+  assert.equal(G.join(p.token, 'Someone else', t0 + 3000).status, 409, 'a second person cannot come in by the same link while the first is there');
+  // Dana's page dies without saying goodbye: after a few silent seconds the link is hers to come back by.
+  const back = G.join(p.token, 'Dana', t0 + 11000).guest;
   assert.ok(back, 'the same person can come back by it after losing the page');
+  assert.equal(G._guests.has(a.id), false, 'and the lost page\'s place is taken, not doubled');
   const room = G.invite(out, t0); const r1 = G.join(room, 'Walk-in', t0).guest;
   assert.equal(G.forDesk(out.id, t0).guests.find((g) => g.id === back.id).personal, true);
   assert.equal(G.forDesk(out.id, t0).guests.find((g) => g.id === r1.id).personal, false);
@@ -1140,4 +1141,29 @@ test('personal links over the API: made and cancelled by the stream\'s own works
   assert.equal((await call('DELETE', `/api/stream-out/${so.id}/guests/personal/${room.personal[0].id}`, A.jwt)).status, 200);
   assert.equal((await fetch(BASE + p.body.invite_url)).status, 404, 'cancelled: the page is gone');
   await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+});
+
+test('the renderer is given none of the server\'s secrets, and its sound link only answers its own page on this machine', () => {
+  const saved = { JWT_SECRET: process.env.JWT_SECRET, STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY };
+  process.env.JWT_SECRET = 'secret-jwt'; process.env.STRIPE_SECRET_KEY = 'sk_test_x';
+  const env = streamOut.rendererEnv();
+  for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  assert.equal(env.JWT_SECRET, undefined); assert.equal(env.STRIPE_SECRET_KEY, undefined);
+  assert.ok(env.PATH, 'what a browser needs is kept');
+  assert.ok(Object.keys(env).every((k) => /^(PATH|HOME|LANG|LANGUAGE|LC_ALL|LC_CTYPE|TZ|TMPDIR|FONTCONFIG_PATH|FONTCONFIG_FILE|XDG_RUNTIME_DIR|PULSE_SERVER|PULSE_COOKIE)$/.test(k)), Object.keys(env).join());
+  assert.equal(streamOut.linkAllowed({ remoteAddress: '127.0.0.1', origin: 'http://127.0.0.1:3001', key: 'nope' }), null, 'no session has that key');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'lib', 'stream-out.js'), 'utf8');
+  assert.match(src, /if \(window !== window\.top\) return;/, 'the key is put in the renderer\'s own page only, not in a frame inside it');
+  assert.match(src, /env: \{ \.\.\.rendererEnv\(\)/, 'the browser is launched with that environment');
+});
+
+test('a guest\'s mix-minus has none of their own voice, with reverb, delay and the master\'s processing on', () => {
+  const a = require('../lib/stream-audio');
+  const m = new a.Mix({ fx: { decay: 0.9, delay_ms: 100, delay_fb: 0.6 }, master: { eq: { low: 12, high: 12 }, comp: 1, level: 1.2 } });
+  let last = null; m.onMix = (out, minus) => { last = minus; };
+  m.setGuest('g:ana', { on: true, set: { fx: 1, dly: 1 } });
+  m.guestInput('g:ana');
+  let worst = 0;
+  for (let i = 0; i < 10; i++) { m.push('g:ana', tone(440, 0.1)); m.next(a.RATE / 10 * a.FRAME); worst = Math.max(worst, peakOf(last.get('g:ana'))); }
+  assert.ok(worst < 0.001, 'nothing of Ana comes back to Ana (' + worst + ')');
 });

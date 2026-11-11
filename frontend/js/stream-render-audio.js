@@ -14,8 +14,9 @@
 const A = window.__stAudio;
 const RATE = 44100;
 
-if (A && !A.__loaded) {
+if (A && !A.__loaded && window === window.top && typeof A._key === 'function') {
   A.__loaded = true;
+  const key = A._key();
   const ctx = new AudioContext({ sampleRate: RATE, latencyHint: 'interactive' });
   const ready = ctx.audioWorklet.addModule('/js/stream-render-worklet.js');
   const sink = ctx.createGain(); sink.gain.value = 0; sink.connect(ctx.destination);   // keeps the taps running, silently
@@ -31,7 +32,7 @@ if (A && !A.__loaded) {
     return b;
   };
   const connect = () => {
-    ws = new WebSocket(location.origin.replace(/^http/, 'ws') + '/api/stream-render/audio?k=' + encodeURIComponent(A.key));
+    ws = new WebSocket(location.origin.replace(/^http/, 'ws') + '/api/stream-render/audio?k=' + encodeURIComponent(key || ''));
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => { open = true; };
     ws.onclose = () => { open = false; setTimeout(connect, 2000); };
@@ -44,7 +45,8 @@ if (A && !A.__loaded) {
   };
   const play = (key) => {
     let p = plays.get(key);
-    if (p || !workletOk) return p || null;
+    // A guest's feed only while their sound is here: one that comes in just after they left makes nothing.
+    if (p || !workletOk || (key !== 'master' && !taps.has(key))) return p || null;
     const node = new AudioWorkletNode(ctx, 'st-play', { numberOfInputs: 0, outputChannelCount: [2] });
     const dest = ctx.createMediaStreamDestination();
     node.connect(dest);

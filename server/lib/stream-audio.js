@@ -47,6 +47,7 @@
 
 const { execFile, spawn } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 const dsp = require('./stream-dsp');
 
 const RATE = 44100;
@@ -262,6 +263,9 @@ class Mix {
       if (!set.duck && name !== 'programme' && name !== 'bed' && name !== 'pads' && heard !== 0 && peak > talk) talk = peak;
     }
     this.talk = talk;
+    // The mix-minus is taken from the dry sum (before the effects returns and the master's processing): the effects
+    // and the master's EQ would leave a late, coloured trace of a guest's own voice in their ear.
+    const dry = this.onMix && Object.keys(this.guests).length ? Float32Array.from(sum) : null;
     this.reverb.run(send, sum, this.settings.fx.decay, sending);
     this.delay.run(send2, sum, this.settings.fx.delay_ms, this.settings.fx.delay_fb, echoing);
     const master = this.settings.master;
@@ -270,10 +274,10 @@ class Mix {
     if (mg !== 1) for (let i = 0; i < len; i++) sum[i] *= mg;
     // Each guest who hears the show: the mix as it is now, less what they put into it. Soft-limited on its own.
     const minus = new Map();
-    if (this.onMix) for (const [name, g] of Object.entries(this.guests)) {
+    if (dry) for (const [name, g] of Object.entries(this.guests)) {
       if (!g.hear) continue;
       const mine = contrib.get(name), b = Buffer.alloc(n);
-      for (let i = 0; i < len; i++) { let v = sum[i] - (mine ? mine[i] * mg : 0); if (v > 0.9) v = 0.9 + 0.1 * Math.tanh((v - 0.9) / 0.1); else if (v < -0.9) v = -0.9 - 0.1 * Math.tanh((-v - 0.9) / 0.1); b.writeInt16LE(Math.round(v * 32767), i * 2); }
+      for (let i = 0; i < len; i++) { let v = (dry[i] - (mine ? mine[i] : 0)) * mg; if (v > 0.9) v = 0.9 + 0.1 * Math.tanh((v - 0.9) / 0.1); else if (v < -0.9) v = -0.9 - 0.1 * Math.tanh((-v - 0.9) / 0.1); b.writeInt16LE(Math.round(v * 32767), i * 2); }
       minus.set(name, b);
     }
     this.limiter.run(sum);                             // loud is held under full scale; it never wraps
@@ -310,7 +314,7 @@ function micDecoder() {
   return p;
 }
 // Small pieces (20 ms) from the sound server: its default is large ones, which put the programme's sound behind its picture.
-const programmeArgs = (sink) => [...QUIET, '-f', 'pulse', '-fragment_size', '3528', '-i', `${sink}.monitor`, ...PCM_OUT];
+const programmeArgs = (sink, server = null) => [...QUIET, '-f', 'pulse', ...(server ? ['-server', server] : []), '-fragment_size', '3528', '-i', `${sink}.monitor`, ...PCM_OUT];
 /** A console: every channel of the device, interleaved, as it comes. */
 const consoleArgs = (device, total) => [...QUIET, '-f', 'alsa', '-ac', String(total), '-i', device, '-f', 's16le', '-ar', String(RATE), '-ac', String(total), 'pipe:1'];
 /**
@@ -370,7 +374,7 @@ function captureDevices() {
 }
 
 // ── programme sound (PulseAudio) ─────────────────────────────────────────────────────────────────
-const run = (cmd, args, ms = 5000) => new Promise((resolve) => execFile(cmd, args, { timeout: ms }, (err, out) => resolve(err ? null : String(out))));
+const run = (cmd, args, ms = 5000, env = null) => new Promise((resolve) => execFile(cmd, args, { timeout: ms, ...(env ? { env: { ...process.env, ...env } } : {}) }, (err, out) => resolve(err ? null : String(out))));
 let pulseReady = null;
 /** Whether programme sound can be captured here: PulseAudio answers, started by us if need be. */
 function pulse() {
@@ -387,33 +391,36 @@ function pulse() {
   return pulseReady;
 }
 /*
- * A way in to the sound server for a renderer that runs as a user of its own (lib/stream-out.js RENDERER'S
- * OWN USER): the server's usual socket is its owner's alone. One socket more, without the cookie, loaded once.
+ * A SOUND SERVER OF THE RENDERER'S OWN (lib/stream-out.js RENDERER'S OWN USER). A renderer that runs as a user of
+ * its own plays into a PulseAudio that runs as that same user, in a folder only it (and root) can open: what the
+ * renderer can do to that sound server it could do anyway, and the server's own (root's) is out of its reach.
+ * `iso` is { uid, gid, dir }. Resolves with the server's address ("unix:..."), or null.
  */
-const RENDER_SOCKET_DIR = '/tmp/st-pulse';
-let renderSock = null;
-function renderSocket() {
-  if (!renderSock) {
-    renderSock = (async () => {
-      if (!(await pulse())) return null;
-      const sock = RENDER_SOCKET_DIR + '/native';
-      if (fs.existsSync(sock)) return sock;
-      try { fs.mkdirSync(RENDER_SOCKET_DIR, { recursive: true, mode: 0o755 }); fs.chmodSync(RENDER_SOCKET_DIR, 0o755); } catch { return null; }
-      if (!(await run('pactl', ['load-module', 'module-native-protocol-unix', 'auth-anonymous=1', `socket=${sock}`]))) return null;
-      try { fs.chmodSync(sock, 0o777); } catch { /* as made */ }
-      return fs.existsSync(sock) ? sock : null;
+let renderPulseReady = null;
+function renderPulse(iso) {
+  if (!renderPulseReady) {
+    renderPulseReady = (async () => {
+      const home = path.join(iso.dir, 'pulse'), sock = path.join(home, 'native'), server = `unix:${sock}`;
+      if (await run('pactl', ['info'], 3000, { PULSE_SERVER: server })) return server;
+      try { fs.mkdirSync(home, { recursive: true }); fs.chownSync(home, iso.uid, iso.gid); fs.chmodSync(home, 0o700); } catch { return null; }
+      const started = await run('setpriv', [`--reuid=${iso.uid}`, `--regid=${iso.gid}`, '--clear-groups', '--no-new-privs', 'env', '-i', `HOME=${home}`, `XDG_RUNTIME_DIR=${home}`, 'PATH=/usr/local/bin:/usr/bin:/bin',
+        'pulseaudio', '--daemonize=yes', '-n', '--exit-idle-time=-1', '--use-pid-file=no', `--load=module-native-protocol-unix auth-anonymous=1 socket=${sock}`], 10000);
+      if (started === null) return null;
+      for (let i = 0; i < 10; i++) { if (await run('pactl', ['info'], 3000, { PULSE_SERVER: server })) return server; await new Promise((r) => setTimeout(r, 300)); }
+      return null;
     })();
-    renderSock.then((s) => { if (!s) renderSock = null; });
+    renderPulseReady.then((s) => { if (!s) setTimeout(() => { renderPulseReady = null; }, 30000).unref(); });
   }
-  return renderSock;
+  return renderPulseReady;
 }
 /** A sink of its own for one stream's browser. Returns { name, module } or null. */
-async function createSink(id) {
-  if (!(await pulse())) return null;
+async function createSink(id, server = null) {
+  if (!server && !(await pulse())) return null;
+  const env = server ? { PULSE_SERVER: server } : null;
   const name = 'st_' + String(id).replace(/[^a-zA-Z0-9]/g, '').slice(0, 24);
-  const mod = await run('pactl', ['load-module', 'module-null-sink', `sink_name=${name}`, `sink_properties=device.description=${name}`]);
-  return mod ? { name, module: mod.trim() } : null;
+  const mod = await run('pactl', ['load-module', 'module-null-sink', `sink_name=${name}`, `sink_properties=device.description=${name}`], 5000, env);
+  return mod ? { name, module: mod.trim(), server } : null;
 }
-function removeSink(sink) { if (sink && /^\d+$/.test(sink.module)) run('pactl', ['unload-module', sink.module]); }
+function removeSink(sink) { if (sink && /^\d+$/.test(sink.module)) run('pactl', ['unload-module', sink.module], 5000, sink.server ? { PULSE_SERVER: sink.server } : null); }
 
-module.exports = { MAX_PADS, STRIPS, isGuestStrip, MAX_CHANNELS, channelNames, inputNames, consoleArgs, splitChannels, captureChannels, RATE, FRAME, SECOND, MAX_LEVEL, INPUTS, NET_SCHEMES, Mix, cleanSettings, netUrl, maskUrl, netArgs, bedArgs, lineArgs, programmeArgs, micArgs, micDecoder, decoder, parseCapture, captureDevices, pulse, createSink, removeSink, renderSocket };
+module.exports = { MAX_PADS, STRIPS, isGuestStrip, MAX_CHANNELS, channelNames, inputNames, consoleArgs, splitChannels, captureChannels, RATE, FRAME, SECOND, MAX_LEVEL, INPUTS, NET_SCHEMES, Mix, cleanSettings, netUrl, maskUrl, netArgs, bedArgs, lineArgs, programmeArgs, micArgs, micDecoder, decoder, parseCapture, captureDevices, pulse, createSink, removeSink, renderPulse };

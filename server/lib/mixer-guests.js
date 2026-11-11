@@ -52,6 +52,7 @@ const MAX_LEVEL = 1.5;                       // a guest's fader goes as high as 
 const invites = new Map();                  // token -> { outputId, workspaceId, until } (+ personal: { id, name, used } for a link for one person)
 const byOutput = new Map();                 // outputId -> the room's token (the link anyone may use)
 const MAX_PERSONAL = 12;
+const PERSONAL_IDLE_MS = 10000;             // a guest page asks every second or two: ten silent seconds is a lost page
 const guests = new Map();                   // id -> guest
 const layouts = new Map();                  // outputId -> layout
 const hush = new Map();                     // outputId -> until when its (stopping) renderer is not listened to
@@ -168,7 +169,13 @@ function join(token, name, now = Date.now()) {
   const inv = invited(token, now);
   if (!inv) return { status: 404, error: 'This invitation is no longer open. Ask for a new link.' };
   if (of(inv.outputId).length >= MAX_GUESTS) return { status: 409, error: 'The green room is full.' };
-  if (inv.personal && inv.personal.used && guests.has(inv.personal.used)) return { status: 409, error: 'This link is for one person, and they are already in. Ask the studio for a link of your own.' };
+  // A personal link: one person at a time. Whoever is in by it and has not been heard from for a few seconds (their page
+  // closed, their phone slept, their network dropped) has lost it: the person coming back by it takes their place.
+  if (inv.personal && inv.personal.used && guests.has(inv.personal.used)) {
+    const was = guests.get(inv.personal.used);
+    if (now - was.seenAt < PERSONAL_IDLE_MS) return { status: 409, error: 'This link is for one person, and they are already in. Ask the studio for a link of your own.' };
+    guests.delete(was.id);
+  }
   const g = { id: crypto.randomUUID(), key: crypto.randomBytes(24).toString('base64url'), outputId: inv.outputId, workspaceId: inv.workspaceId,
     name: cleanName(name) || (inv.personal && inv.personal.name) || `Guest ${of(inv.outputId).length + 1}`, via: token, offer: null, seq: 0, answer: null, answerSeq: 0, onAir: false,
     joinedAt: now, seenAt: now, thumb: null, state: 'new', legs: new Map(), green: false, cut: null, level: 1,
