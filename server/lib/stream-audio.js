@@ -396,16 +396,20 @@ function pulse() {
  * renderer can do to that sound server it could do anyway, and the server's own (root's) is out of its reach.
  * `iso` is { uid, gid, dir }. Resolves with the server's address ("unix:..."), or null.
  */
-let renderPulseReady = null;
+let renderPulseReady = null, renderPulseProc = null;
+process.on('exit', () => { try { if (renderPulseProc) renderPulseProc.kill('SIGKILL'); } catch { /* gone */ } });
 function renderPulse(iso) {
   if (!renderPulseReady) {
     renderPulseReady = (async () => {
       const home = path.join(iso.dir, 'pulse'), sock = path.join(home, 'native'), server = `unix:${sock}`;
       if (await run('pactl', ['info'], 3000, { PULSE_SERVER: server })) return server;
       try { fs.mkdirSync(home, { recursive: true }); fs.chownSync(home, iso.uid, iso.gid); fs.chmodSync(home, 0o700); } catch { return null; }
-      const started = await run('setpriv', [`--reuid=${iso.uid}`, `--regid=${iso.gid}`, '--clear-groups', '--no-new-privs', 'env', '-i', `HOME=${home}`, `XDG_RUNTIME_DIR=${home}`, 'PATH=/usr/local/bin:/usr/bin:/bin',
-        'pulseaudio', '--daemonize=yes', '-n', '--exit-idle-time=-1', '--use-pid-file=no', `--load=module-native-protocol-unix auth-anonymous=1 socket=${sock}`], 10000);
-      if (started === null) return null;
+      // A child of this server (not a daemon of its own): it ends when the server does.
+      const proc = spawn('setpriv', [`--reuid=${iso.uid}`, `--regid=${iso.gid}`, '--clear-groups', '--no-new-privs', 'env', '-i', `HOME=${home}`, `XDG_RUNTIME_DIR=${home}`, 'PATH=/usr/local/bin:/usr/bin:/bin',
+        'pulseaudio', '--daemonize=no', '-n', '--exit-idle-time=-1', '--use-pid-file=no', `--load=module-native-protocol-unix auth-anonymous=1 socket=${sock}`], { stdio: 'ignore' });
+      proc.on('error', () => {});
+      proc.on('exit', () => { if (renderPulseProc === proc) { renderPulseProc = null; renderPulseReady = null; } });
+      renderPulseProc = proc;
       for (let i = 0; i < 10; i++) { if (await run('pactl', ['info'], 3000, { PULSE_SERVER: server })) return server; await new Promise((r) => setTimeout(r, 300)); }
       return null;
     })();
