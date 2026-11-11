@@ -378,8 +378,8 @@ async function start(row, key, sound, { standby = false } = {}) {
         '--autoplay-policy=no-user-gesture-required',
         // Guests connect to this browser directly: it must offer its real addresses, not names only its own network can resolve.
         '--disable-features=WebRtcHideLocalIpsWithMdns', `--window-size=${row.width},${row.height}`,
-        // A cut-out guest is keyed on the graphics card where there is one; a server has none, so the software one is allowed.
-        '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader',
+        // No flags that force a software graphics card on a server without one: they make the whole page be composited
+        // through it (measured: 67% of a core against 28% with one cut-out guest on air). The cut-out key still works.
         // Shown on screens (showOn): the renderer's own tab is captured through a small extension of ours, which
         // (unlike the browser's own screen sharing) draws nothing over the picture. It is loaded into this browser only.
         ...(shown ? [`--load-extension=${CAPTURE_EXT}`, `--disable-extensions-except=${CAPTURE_EXT}`, `--allowlisted-extension-id=${CAPTURE_EXT_ID}`, '--disable-features=WebRtcHideLocalIpsWithMdns,DisableLoadExtensionCommandLineSwitch'] : []),

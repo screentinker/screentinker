@@ -201,13 +201,18 @@ router.post('/:id/start', gate, requireFleetWrite, async (req, res) => {
   if (!r.playlist_id && !standby) return res.status(400).json({ error: 'Take a source to this stream first, so it has something to show.' });
   const key = secretbox.decrypt(r.key_enc) || '';
   if (r.key_enc && !key) return res.status(400).json({ error: 'The stored stream key can no longer be read. Enter it again.' });
-  try { res.json({ status: await streamOut.start(r, key, audioOf(r), { standby }) }); }
-  catch (e) { res.status(e.code === 'limit' ? 409 : 500).json({ error: e.message, code: e.code || null }); }
+  try {
+    const status = await streamOut.start(r, key, audioOf(r), { standby });
+    remember(r.id, 'standby');
+    res.json({ status });
+  } catch (e) { res.status(e.code === 'limit' ? 409 : 500).json({ error: e.message, code: e.code || null }); }
 });
 
 router.post('/:id/stop', requireFleetWrite, async (req, res) => {
   const r = mine(req, req.params.id);
   if (!r) return res.status(404).json({ error: 'Stream not found' });
+  // Stopped by the operator: it does not come back by itself, and its screens are let go.
+  remember(r.id, null); following.delete(r.id); saveScreens(r.id);
   res.json({ status: await streamOut.stop(r.id) });
 });
 
@@ -221,6 +226,31 @@ router.post('/:id/stop', requireFleetWrite, async (req, res) => {
 // released or the stream stops; one that reloads, drops off the network or loses the connection is given the
 // picture again by itself (reconcile, below).
 const following = new Map();
+/*
+ * ACROSS A RESTART. A stream the operator has running is brought back ON STANDBY when the server
+ * starts again (an update, a crash), with the screens that followed it: never live, because sending
+ * to a streaming service is the operator's decision each time. Stopping it by hand forgets it.
+ */
+const remember = (id, state) => { try { db.prepare('UPDATE stream_outputs SET resume_state = ? WHERE id = ?').run(state, id); } catch { /* a database from before the column */ } };
+const saveScreens = (id) => { try { const set = following.get(id); db.prepare('UPDATE stream_outputs SET screens_json = ? WHERE id = ?').run(set && set.size ? JSON.stringify([...set.keys()]) : null, id); } catch { /* as above */ } };
+async function resumeAll() {
+  let rows = []; try { rows = db.prepare("SELECT * FROM stream_outputs WHERE resume_state IS NOT NULL").all(); } catch { return; }
+  if (!rows.length) return;
+  const a = await streamOut.availability().catch(() => null);
+  if (!a || !a.available) return;
+  for (const r of rows) {
+    if (running(r.id)) continue;
+    try {
+      const key = secretbox.decrypt(r.key_enc) || '';
+      await streamOut.start(r, key, audioOf(r), { standby: true });
+      let ids = []; try { ids = JSON.parse(r.screens_json || '[]'); } catch { ids = []; }
+      if (Array.isArray(ids) && ids.length) following.set(r.id, new Map(ids.filter((x) => typeof x === 'string').slice(0, 50).map((id) => [id, {}])));
+      console.log(`[stream-out] "${r.name}" is back on standby after a restart${ids.length ? `, followed by ${ids.length} screen(s)` : ''}`);
+    } catch (e) { console.warn(`[stream-out] "${r.name}" could not be brought back on standby: ${e.message}`); }
+  }
+}
+// Once the server is up and its screens have had a moment to reconnect. Not in tests: they start their own streams.
+if (process.env.NODE_ENV !== 'test') setTimeout(() => { resumeAll().catch(() => {}); }, 8000).unref();
 /** Shares the stream's picture to these screens. Returns { shown, skipped } or { error, status, code }. */
 async function putOnScreens(r, ids, by) {
   const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(r.workspace_id);
@@ -255,9 +285,13 @@ router.post('/:id/screens', gate, requireFleetWrite, async (req, res) => {
   const by = { userId: req.user && req.user.id, ip: req.ip };
   const out = await putOnScreens(r, ids, by);
   if (out.error) return res.status(out.status).json({ error: out.error, code: out.code, device_id: out.device_id });
-  // These screens follow the stream from now on.
+  // These screens follow the stream from now on: the ones showing it, and the ones that cannot take it just now
+  // (offline, or showing something that was shared to them), which are given it as soon as they can.
   if (!following.has(r.id)) following.set(r.id, new Map());
-  for (const x of out.shown) following.get(r.id).set(x.device_id, by);
+  const later = out.skipped.filter((x) => x.reason === 'offline' || x.reason === 'busy');
+  for (const x of [...out.shown, ...later]) following.get(r.id).set(x.device_id, by);
+  for (const x of later) x.waiting = true;
+  saveScreens(r.id);
   res.json(out);
 });
 // Release screens: all of them, or the ones named. Each gets its own content back.
@@ -268,6 +302,7 @@ router.delete('/:id/screens', requireFleetWrite, (req, res) => {
   const set = following.get(r.id);
   let n = 0;
   if (set) { for (const id of [...set.keys()]) if (!only || only.has(id)) { set.delete(id); n += 1; } if (!set.size) following.delete(r.id); }
+  saveScreens(r.id);
   for (const s of onScreens(r.id)) if (!only || only.has(s.deviceId)) screenShare.endSession(s, 'stopped_by_owner', req.user && req.user.id);
   res.json({ released: n });
 });
@@ -282,7 +317,7 @@ async function reconcile() {
   reconciling = true;
   try {
     for (const [streamId, set] of [...following]) {
-      if (!running(streamId)) { following.delete(streamId); continue; }
+      if (!running(streamId)) { following.delete(streamId); continue; }      // (what is saved stays: a restart brings both back)
       const have = new Set(onScreens(streamId).map((s) => s.deviceId));
       const missing = [...set.keys()].filter((id) => !have.has(id));
       if (!missing.length) continue;
@@ -583,6 +618,7 @@ function renderer({ sendPlayer }) {
 
 module.exports = router;
 module.exports.renderer = renderer;
+module.exports._resumeAll = resumeAll;
 module.exports.forgetFeed = (id) => feedCache.delete(id);
 let takeSeq = 0;
 module.exports.noteTake = (id, fx) => { if (fx) lastTake.set(id, { ...fx, seq: ++takeSeq + '-' + Date.now(), at: Date.now() }); else lastTake.delete(id); };

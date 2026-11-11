@@ -1645,6 +1645,9 @@ const migrations = [
   // A stream output's open guest invite, so a restart does not end it: lib/mixer-guests.js.
   "ALTER TABLE stream_outputs ADD COLUMN guest_invite TEXT",
   "ALTER TABLE stream_outputs ADD COLUMN guest_invite_until INTEGER",
+  // A stream the operator had running comes back on standby after a restart, with its screens: routes/stream-out.js.
+  "ALTER TABLE stream_outputs ADD COLUMN resume_state TEXT",
+  "ALTER TABLE stream_outputs ADD COLUMN screens_json TEXT",
 
   /*
    * What an ACTIVE SCHEDULE is currently imposing, kept apart from what the device is normally on.

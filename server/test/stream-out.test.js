@@ -957,3 +957,21 @@ test('the renderer captures its own picture through an extension of ours, whose 
   assert.doesNotMatch(src, /getDisplayMedia|auto-accept-this-tab-capture/, 'the browser\'s own screen sharing draws a bar over the picture, which is the stream');
   assert.match(src, /audio: false, video: \{ mandatory: \{ chromeMediaSource: 'tab'/, 'the tab\'s sound is not captured: capturing it would take it away from the stream');
 });
+
+test('a running stream and its screens are kept for after a restart; stopping by hand forgets them', async () => {
+  const cols = db.prepare("SELECT name FROM pragma_table_info('stream_outputs')").all().map((c) => c.name);
+  assert.ok(cols.includes('resume_state') && cols.includes('screens_json'));
+  const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Keeps', kind: 'record' })).body;
+  // As if it had been running with a screen when the server went down.
+  db.prepare("UPDATE stream_outputs SET resume_state = 'standby', screens_json = ? WHERE id = ?").run(JSON.stringify(['some-screen']), so.id);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/stop`, V.jwt)).status, 403);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/stop`, A.jwt)).status, 200);
+  const row = db.prepare('SELECT resume_state, screens_json FROM stream_outputs WHERE id = ?').get(so.id);
+  assert.deepEqual([row.resume_state, row.screens_json], [null, null], 'stopped by the operator: it does not come back by itself');
+  // Bringing streams back never throws, whatever is (or is not) installed on this server.
+  await require('../routes/stream-out')._resumeAll();
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'routes', 'stream-out.js'), 'utf8');
+  assert.match(src, /streamOut\.start\(r, key, audioOf\(r\), \{ standby: true \}\)/, 'a stream comes back on STANDBY: going live is the operator\'s decision each time');
+  assert.doesNotMatch(require('fs').readFileSync(require('path').join(__dirname, '..', 'lib', 'stream-out.js'), 'utf8'), /'--enable-unsafe-swiftshader'|'--ignore-gpu-blocklist'/, 'no forced software graphics card: it doubles the renderer\'s cost');
+  await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+});
