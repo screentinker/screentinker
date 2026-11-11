@@ -975,3 +975,25 @@ test('a running stream and its screens are kept for after a restart; stopping by
   assert.doesNotMatch(require('fs').readFileSync(require('path').join(__dirname, '..', 'lib', 'stream-out.js'), 'utf8'), /'--enable-unsafe-swiftshader'|'--ignore-gpu-blocklist'/, 'no forced software graphics card: it doubles the renderer\'s cost');
   await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
 });
+
+test('each guest has a volume of their own in the stream: 0 to 1, the operator\'s, and it leaves on air alone', async () => {
+  const G = require('../lib/mixer-guests');
+  const out = { id: 'out-lvl-' + Date.now(), workspace_id: 'ws-lvl' }, t0 = 3_000_000;
+  const token = G.invite(out, t0), g = G.join(token, 'Ana', t0).guest;
+  assert.equal(G.forRenderer(out.id, '', t0).list[0].level, 1, 'as they arrive, until someone moves their fader');
+  assert.equal(G.setLevel(out.id, g.id, 0.25), true); assert.deepEqual([G.forRenderer(out.id, '', t0).list[0].level, G.forDesk(out.id, t0).guests[0].level], [0.25, 0.25]);
+  assert.equal(G.setLevel(out.id, g.id, 7), true); assert.equal(g.level, 1, 'no louder than they arrive');
+  assert.equal(G.setLevel(out.id, g.id, -3), true); assert.equal(g.level, 0);
+  assert.equal(G.setLevel(out.id, g.id, 'loud'), false); assert.equal(G.setLevel('other-output', g.id, 0.5), false); assert.equal(g.level, 0);
+  G.revoke(out.id);
+  const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Levels', kind: 'record' })).body;
+  const tok = (await call('POST', `/api/stream-out/${so.id}/guests/invite`, A.jwt)).body.invite_url.split('/').pop();
+  const j = (await call('POST', `/api/stream-guest/${tok}/join`, null, { name: 'Bo' })).body;
+  await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}`, A.jwt, { on_air: true });
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}`, V.jwt, { level: 0.4 })).status, 403);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}`, B.jwt, { level: 0.4 })).status, 404);
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/${j.guest_id}`, A.jwt, { level: 0.4 })).status, 200);
+  const room = (await call('GET', '/api/stream-out/guests', A.jwt)).body.rooms[so.id].guests[0];
+  assert.deepEqual([room.level, room.on_air], [0.4, true], 'moving a guest\'s fader does not take them off air');
+  await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+});

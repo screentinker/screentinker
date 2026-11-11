@@ -3087,6 +3087,13 @@ function guestSync(gs, v) {
       c.onAir = !!g.on_air;
       c.cut = !!g.cut;
       if (c.label.textContent !== (g.name || "")) c.label.textContent = g.name || "";
+      var lv = typeof g.level === "number" ? Math.max(0, Math.min(1, g.level)) : 1;
+      if (c.video.volume !== lv) {
+        try {
+          c.video.volume = lv;
+        } catch (e) {
+        }
+      }
     }
   }
   for (id in guestConns) if (!seen[id]) guestDrop(id);

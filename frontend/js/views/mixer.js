@@ -244,6 +244,7 @@ function guestsHtml() {
               <div class="mx-guest-pic">${liveOf(g.id) ? `<video data-gvid="${esc(g.id)}" data-sound="1" autoplay muted playsinline></video>` : g.thumb ? `<img data-gthumb="${esc(g.id)}" src="${esc(g.thumb)}" alt="">` : `<span>${esc(t('mixer.guest_state.' + (s.status.state === 'off' ? 'waiting' : g.state === 'connected' ? 'connected' : 'connecting')))}</span>`}${g.on_air ? `<b>${esc(t('mixer.guest_on_air'))}</b>` : ''}${s.status.state !== 'off' && g.state !== 'connected' ? `<i class="mx-guest-badge">${esc(t('mixer.guest_state.connecting'))}</i>` : ''}</div>
               <div class="mx-guest-name" title="${esc(g.name)}">${esc(g.name)}</div>
               ${deskLink(g) ? `<div class="mx-guest-link">${esc(deskLink(g))}</div>` : ''}
+              <label class="mx-guest-level" title="${esc(t('mixer.guest_level_tip'))}"><span>${esc(t('mixer.guest_level'))}</span><input type="range" min="0" max="100" step="1" value="${Math.round((g.level == null ? 1 : g.level) * 100)}" data-glevel="${esc(s.id)}" data-gid="${esc(g.id)}" aria-label="${esc(t('mixer.guest_level_for', { name: g.name }))}"><output>${Math.round((g.level == null ? 1 : g.level) * 100)}%</output></label>
               <div class="mx-guest-keys"><button type="button" class="btn btn-sm ${g.on_air ? 'btn-secondary' : 'mx-golive'}" data-gair="${esc(s.id)}" data-gid="${esc(g.id)}" data-on="${g.on_air ? 0 : 1}" ${(s.status.state === 'off' || g.state !== 'connected') && !g.on_air ? `disabled title="${esc(t('mixer.guest_not_connected'))}"` : ''}>${esc(t(g.on_air ? 'mixer.guest_off' : 'mixer.guest_put_on'))}</button>
                 <button type="button" class="btn btn-secondary btn-sm${listening.has(g.id) || merged.has(s.id) ? ' is-on' : ''}" data-glisten="${esc(g.id)}" aria-pressed="${listening.has(g.id) || merged.has(s.id)}" ${merged.has(s.id) || !liveOf(g.id) ? 'disabled' : ''} title="${esc(liveOf(g.id) ? t('mixer.guest_listen_tip') : deskLink(g))}">${esc(t(listening.has(g.id) || merged.has(s.id) ? 'mixer.guest_listening' : 'mixer.guest_listen'))}</button>
                 <button type="button" class="btn btn-sm ${talking.has(g.id) || merged.has(s.id) ? 'mx-golive' : 'btn-secondary'}" data-gtalk="${esc(g.id)}" aria-pressed="${talking.has(g.id) || merged.has(s.id)}" ${merged.has(s.id) || !(liveOf(g.id) && guestLive.get(g.id).talk) ? 'disabled' : ''} title="${esc(liveOf(g.id) ? t('mixer.guest_talk_tip') : deskLink(g))}">${esc(t(talking.has(g.id) || merged.has(s.id) ? 'mixer.guest_talking' : 'mixer.guest_talk'))}</button>
@@ -266,7 +267,7 @@ async function guestsRefresh(force) {
   const el = document.getElementById('mxGuests');
   const stills = new Map(Object.values(rooms).flatMap((r) => r.guests.filter((g) => g.thumb).map((g) => [g.id, g.thumb])));
   document.querySelectorAll('img[data-gthumb]').forEach((img) => { const src = stills.get(img.dataset.gthumb); if (src && img.getAttribute('src') !== src) img.setAttribute('src', src); });
-  const sig = JSON.stringify([closeArmed, [...merged], Object.entries(rooms).map(([sid, r]) => [sid, r.invite_url, r.layout, r.guests.map((g) => [g.id, g.name, g.on_air, g.state, liveOf(g.id) ? 'live' : !!g.thumb, listening.has(g.id), talking.has(g.id), g.cut, g.green, deskLink(g)])])]) + streams().map((s) => s.status.state).join();
+  const sig = JSON.stringify([closeArmed, [...merged], Object.entries(rooms).map(([sid, r]) => [sid, r.invite_url, r.layout, r.guests.map((g) => [g.id, g.name, g.on_air, g.state, liveOf(g.id) ? 'live' : !!g.thumb, listening.has(g.id), talking.has(g.id), g.cut, g.green, deskLink(g), g.level])])]) + streams().map((s) => s.status.state).join();
   if (sig === roomsSig && !force) return;
   roomsSig = sig;
   guestLayer();
@@ -302,6 +303,15 @@ function guestsBind(el) {
   });
   act('[data-glayout]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.glayout)}/guests/layout`, { method: 'POST', body: JSON.stringify({ layout: b.dataset.layout }) }));
   act('[data-gair]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.gair)}/guests/${encodeURIComponent(b.dataset.gid)}`, { method: 'POST', body: JSON.stringify({ on_air: b.dataset.on === '1' }) }));
+  // A guest's volume: the number follows the fader as it moves, and the stream takes it when the fader is let go
+  // (the panel is not drawn again under a fader that is being held).
+  el.querySelectorAll('[data-glevel]').forEach((r) => {
+    r.addEventListener('input', () => { r.nextElementSibling.textContent = r.value + '%'; });
+    r.addEventListener('change', async () => {
+      try { await call(`/stream-out/${encodeURIComponent(r.dataset.glevel)}/guests/${encodeURIComponent(r.dataset.gid)}`, { method: 'POST', body: JSON.stringify({ level: Number(r.value) / 100 }) }); } catch (err) { showToast(err.message, 'error'); }
+      guestsRefresh(true);
+    });
+  });
   act('[data-gcut]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.gcut)}/guests/${encodeURIComponent(b.dataset.gid)}`, { method: 'POST', body: JSON.stringify({ cut: b.dataset.on === '1' }) }));
   act('[data-gdel]', (b) => call(`/stream-out/${encodeURIComponent(b.dataset.gdel)}/guests/${encodeURIComponent(b.dataset.gid)}`, { method: 'DELETE' }));
   el.querySelectorAll('[data-glink]').forEach((i) => i.addEventListener('focus', () => i.select()));

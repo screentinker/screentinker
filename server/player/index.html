@@ -3449,7 +3449,11 @@
       for (i = 0; i < list.length; i++) {
         g = list[i]; seen[g.id] = true; c = guestConns[g.id];
         if (g.offer && (!c || c.seq !== g.seq)) { guestConnect(g, gs.ice_servers, v); c = guestConns[g.id]; }
-        if (c) { c.onAir = !!g.on_air; c.cut = !!g.cut; if (c.label.textContent !== (g.name || '')) c.label.textContent = g.name || ''; }
+        if (c) {
+          c.onAir = !!g.on_air; c.cut = !!g.cut; if (c.label.textContent !== (g.name || '')) c.label.textContent = g.name || '';
+          // This guest's own volume in the stream (the operator's fader for them).
+          var lv = typeof g.level === 'number' ? Math.max(0, Math.min(1, g.level)) : 1; if (c.video.volume !== lv) { try { c.video.volume = lv; } catch (e) {} }
+        }
       }
       for (id in guestConns) if (!seen[id]) guestDrop(id);
       var air = []; for (i = 0; i < list.length; i++) if (guestConns[list[i].id] && guestConns[list[i].id].onAir) air.push(guestConns[list[i].id]);

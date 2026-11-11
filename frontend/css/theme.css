@@ -675,6 +675,9 @@
 .mx-guest { width: 272px; }
 .mx-guest-pic { position: relative; aspect-ratio: 16 / 9; background: #000; border: 2px solid var(--border-light); border-radius: 3px; overflow: hidden; display: grid; place-items: center; font-size: 12px; color: var(--text-secondary); }
 .mx-guest.is-air .mx-guest-pic { border-color: var(--tally, var(--danger)); box-shadow: 0 0 14px color-mix(in srgb, var(--tally, var(--danger)) 45%, transparent); }
+.mx-guest-level { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; font-size: 11px; color: var(--text-secondary); }
+.mx-guest-level input { flex: 1; min-width: 0; accent-color: var(--accent, #f5a623); }
+.mx-guest-level output { width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
 .mx-guest-link { margin: 2px 0 6px; font-size: 11px; line-height: 1.35; color: var(--warning, #f5a623); }
 .mx-guest-badge { position: absolute; right: 6px; top: 6px; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-style: normal; font-weight: 600; color: #111; background: var(--warning, #f5a623); }
 .mx-room-off { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--warning, #f5a623); }

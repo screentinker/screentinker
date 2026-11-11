@@ -474,7 +474,9 @@ router.post('/:id/guests/:gid', gate, requireFleetWrite, (req, res) => {
   const b = req.body || {};
   // Cut out (shown without their background) is set on its own or together with on air.
   if (typeof b.cut === 'boolean' && !guests.setCut(r.id, req.params.gid, b.cut)) return res.status(404).json({ error: 'That guest has left.' });
-  if (typeof b.on_air === 'boolean' || typeof b.cut !== 'boolean') {
+  // Their own volume in the stream, likewise.
+  if (typeof b.level === 'number' && !guests.setLevel(r.id, req.params.gid, b.level)) return res.status(404).json({ error: 'That guest has left.' });
+  if (typeof b.on_air === 'boolean' || (typeof b.cut !== 'boolean' && typeof b.level !== 'number')) {
     const x = guests.setOnAir(r.id, req.params.gid, b.on_air === true);
     if (!x.ok) return res.status(x.status).json({ error: x.error });
   }
