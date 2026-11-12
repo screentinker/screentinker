@@ -63,6 +63,9 @@ cp ../server/lib/screen-share-player.js js/screen-share.js
 # #299: same single-source discipline for the offline proof-of-play queue — the .wgt must never
 # carry a copy that has drifted from what the server and the web player agree on.
 cp ../server/lib/offline-play-queue.js js/offline-play-queue.js
+# #825: the offline schedule-plan selector is the Samsung SSSP3 player's STOfflinePlan, shipped
+# byte-identical (server/test/tizen-offline-plan.test.js fails if the copy drifts).
+cp ../samsung-sssp3/app/offline-plan.js js/offline-plan.js
 
 # transition-engine: rebuild the WebGL transition runtime (params + renderer + shaders) from
 # shared/Transitions into the .wgt, same single-source discipline. No npm deps needed.

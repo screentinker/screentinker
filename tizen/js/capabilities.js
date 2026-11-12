@@ -138,7 +138,8 @@
     //   system.shell         — no substantiated API on this surface. Claiming them would put back
     //                          exactly the dead buttons this change removes.
     //   sync.native          — no cross-player frame sync (that is BrightSign's SyncManager).
-    //   (offline.cache is deliberately absent from this list — it is a RUNTIME check below.)
+    //   (offline.cache and offline.schedule_plan are deliberately absent from this list; they are
+    //   RUNTIME checks below.)
 
     // offline.cache is a RUNTIME fact, not a platform one. app.js has always cached the payload,
     // but the media bytes were fetched from the network every time — so a panel survived an outage
@@ -148,6 +149,15 @@
     try {
       if (window.MediaCache && (window.__stMediaCache || window.MediaCache.create())) caps.push('offline.cache');
     } catch (e) { /* no storage: the claim stays absent, which is the honest answer */ }
+
+    // #825 offline.schedule_plan: the server then sends a 14-day UTC timeline plus a payload per
+    // state, and this player follows it while disconnected (js/offline-plan-tizen.js). Same runtime
+    // rule as offline.cache, which it depends on: app.js builds the controller ONLY when the media
+    // cache exists, localStorage takes a probe write, and both plan modules loaded. No controller,
+    // no claim, and the server keeps stripping the plan exactly as it does for an older .wgt.
+    try {
+      if (window.__stOfflinePlan && caps.indexOf('offline.cache') !== -1) caps.push('offline.schedule_plan');
+    } catch (e) { /* not claimed */ }
 
     return caps;
   }
