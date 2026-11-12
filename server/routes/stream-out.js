@@ -381,7 +381,10 @@ router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
     const gg = gm ? guests.list(r.id).find((x) => x.id === gm[1]) : null;
     if (gm && !gg) return res.status(404).json({ error: 'That guest has left.' });
     if (!st || (!gg && !stripNames.includes(st.strip))) return res.status(400).json({ error: `strip is one of: ${stripNames.join(', ')}, or g:<guest id>` });
-    const target = gg ? { ...mix.guest, ...(gg.strip || {}), level: gg.level, muted: gg.muted } : (Object.prototype.hasOwnProperty.call(mix, st.strip) ? mix[st.strip] : null);
+    // Found among the mix's own strips by name, not read as mix[name]: what is written to below is
+    // always one of them, whatever a body calls it.
+    const own = gg ? null : Object.entries(mix).find(([k, v]) => k === st.strip && v && typeof v === 'object' && !Array.isArray(v));
+    const target = gg ? { ...mix.guest, ...(gg.strip || {}), level: gg.level, muted: gg.muted } : (own ? own[1] : null);
     if (!target || typeof target !== 'object') return res.status(400).json({ error: `strip is one of: ${stripNames.join(', ')}, or g:<guest id>` });
     if (gg) touched.push([gg, target]);
     if (st.level !== undefined) {

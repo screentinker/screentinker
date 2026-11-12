@@ -15,6 +15,12 @@ function isParameterShapeError(err) {
   const msg = String((err && err.message) || '');
   if (err instanceof TypeError && /SQLite3 can only bind/i.test(msg)) return true;
   if (err instanceof RangeError && /Too many parameter values/i.test(msg)) return true;
+  // The same refusals from node:sqlite (db/sqlite-driver.js), which BrightSign players and the
+  // Node 24 CI job run: an array or an object where a value goes, a value of no SQLite type, one
+  // value too many.
+  if (err && err.code === 'ERR_INVALID_STATE' && /^Unknown named parameter/i.test(msg)) return true;
+  if (err && err.code === 'ERR_INVALID_ARG_TYPE' && /cannot be bound to SQLite parameter/i.test(msg)) return true;
+  if (err && err.code === 'ERR_SQLITE_ERROR' && /^column index out of range$/i.test(msg)) return true;
   return (err && err.code === 'SQLITE_MISMATCH') || /^datatype mismatch$/i.test(msg);
 }
 
@@ -44,7 +50,7 @@ function apiErrorHandler(err, req, res, next) {
     try { console.warn('[api] parameter refused by the database on %s %s: %s', req.method, url.split('?')[0], err && err.message); } catch { /* */ }
     return res.status(400).json({ error: 'A parameter has the wrong type or is out of range.' });
   }
-  try { console.error(`[api] unhandled error on ${req.method} ${url.split('?')[0]}:`, err && err.stack ? err.stack : err); } catch { /* */ }
+  try { console.error('[api] unhandled error on %s %s:', req.method, url.split('?')[0], err && err.stack ? err.stack : err); } catch { /* */ }
   return res.status(500).json({ error: 'Internal server error' });
 }
 
