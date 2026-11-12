@@ -2854,9 +2854,12 @@ function guestHave() {
   for (var id in guestConns) out.push(id + ":" + guestConns[id].seq);
   return out.join(",");
 }
+function viewerCreds(v) {
+  return v && v.cookie === true ? "same-origin" : "omit";
+}
 function guestPost(v, body) {
   try {
-    fetch(v.payload_url + "/guest", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "omit", body: JSON.stringify(body) }).catch(function() {
+    fetch(v.payload_url + "/guest", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: viewerCreds(v), body: JSON.stringify(body) }).catch(function() {
     });
   } catch (e) {
   }
@@ -3169,7 +3172,7 @@ function viewerPoll(v, first) {
   const have = guestHave();
   const url = v.payload_url + (viewerRev ? "?rev=" + encodeURIComponent(viewerRev) : "") + (have ? (viewerRev ? "&" : "?") + "have=" + encodeURIComponent(have) : "");
   const sentAt = Date.now();
-  fetch(url, { cache: "no-store", credentials: "omit" }).then(function(res) {
+  fetch(url, { cache: "no-store", credentials: viewerCreds(v) }).then(function(res) {
     if (res.status === 404 || res.status === 403 || res.status === 410) {
       viewerEnd(first);
       return null;

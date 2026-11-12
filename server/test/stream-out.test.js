@@ -36,6 +36,12 @@ const call = async (method, p, tok, body) => {
   const text = await res.text(); let json = null; try { json = JSON.parse(text); } catch { /* */ }
   return { status: res.status, body: json, text, headers: res.headers };
 };
+// As the renderer asks: the feed's secret in its cookie (routes/stream-out.js feedSecretOf), never in the address.
+const feedCall = async (method, p, secret, body, base = BASE) => {
+  const res = await fetch(base + p, { method, headers: { ...(secret ? { Cookie: 'st_feed=' + encodeURIComponent(secret) } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const text = await res.text(); let json = null; try { json = JSON.parse(text); } catch { /* */ }
+  return { status: res.status, body: json, text };
+};
 async function account(o, name) {
   const r = await call('POST', '/api/auth/register', null, { email: name + crypto.randomBytes(4).toString('hex') + '@example.com', password: 'Passw0rd123', name });
   assert.ok(r.body && r.body.token, r.text);
@@ -146,19 +152,19 @@ test('a stream shows what was taken to it, with its graphic, to whoever holds it
   assert.equal(take.body.streams[0].stream_id, A.stream);
   await call('POST', `/api/stream-out/${A.stream}/gfx`, A.jwt, { kind: 'lower-third', a: 'A name', b: 'A title' });
   const secret = db.prepare('SELECT feed_secret FROM stream_outputs WHERE id = ?').get(A.stream).feed_secret;
-  const feed = await call('GET', `/api/stream-feed/${secret}`);
+  const feed = await feedCall('GET', '/api/stream-feed', secret);
   assert.equal(feed.status, 200, feed.text);
   assert.equal(feed.body.payload.cut_now, true);
   assert.equal(feed.body.payload.assignments.length, 1);
   assert.match(feed.body.gfx.uri, /^\/gfx\/lower-third\?a=A\+name/);
   assert.equal(feed.body.gfx.keyed, true);
-  assert.equal((await call('GET', `/api/stream-feed/${secret}?rev=${feed.body.rev}`)).body.unchanged, true);
+  assert.equal((await feedCall('GET', `/api/stream-feed?rev=${feed.body.rev}`, secret)).body.unchanged, true);
   await call('POST', `/api/stream-out/${A.stream}/gfx/clear`, A.jwt);
-  assert.equal((await call('GET', `/api/stream-feed/${secret}`)).body.gfx, null);
-  assert.equal((await call('GET', '/api/stream-feed/' + 'x'.repeat(43))).status, 404);
-  assert.equal((await call('GET', `/api/stream-feed/${A.stream}`)).status, 404, 'the id is not the secret');
-  assert.equal((await call('GET', '/stream-render/' + 'x'.repeat(43))).status, 404);
-  const renderPage = (await call('GET', `/stream-render/${secret}`)).text;
+  assert.equal((await feedCall('GET', '/api/stream-feed', secret)).body.gfx, null);
+  assert.equal((await feedCall('GET', '/api/stream-feed', 'x'.repeat(43))).status, 404);
+  assert.equal((await feedCall('GET', '/api/stream-feed', A.stream)).status, 404, 'the id is not the secret');
+  assert.equal((await feedCall('GET', '/stream-render/live', 'x'.repeat(43))).status, 404);
+  const renderPage = (await feedCall('GET', '/stream-render/live', secret)).text;
   assert.match(renderPage, /stream-feed/);
   assert.match(renderPage, /"sound":true/, 'the renderer plays with sound from the first item: a live stream never waits on a click to unmute');
   assert.match(renderPage, /if \(v && v\.sound === true\) userHasInteracted = true;/);
@@ -759,10 +765,10 @@ test('the green room over the API: operators only, guests only as themselves, th
   assert.equal((await call('POST', `/api/stream-guest/${token}/state`, null, { guest_id: j.guest_id, key: 'nope' })).status, 404);
   // The renderer: the feed lists the guest with their offer; only the feed secret answers.
   const secret = db.prepare('SELECT feed_secret FROM stream_outputs WHERE id = ?').get(so.id).feed_secret;
-  const feed = (await call('GET', `/api/stream-feed/${secret}`)).body;
+  const feed = (await feedCall('GET', '/api/stream-feed', secret)).body;
   assert.equal(feed.guests.list[0].offer, 'v=0\r\no=x'); assert.equal(feed.guests.layout, 'pip'); assert.ok(!JSON.stringify(feed.guests).includes(j.key));
-  assert.equal((await call('POST', `/api/stream-feed/${'s'.repeat(43)}/guest`, null, { guest_id: j.guest_id, seq: 1, answer: 'v=0\r\na' })).status, 404);
-  assert.equal((await call('POST', `/api/stream-feed/${secret}/guest`, null, { guest_id: j.guest_id, seq: 1, answer: 'v=0\r\na', state: 'connected' })).status, 200);
+  assert.equal((await feedCall('POST', '/api/stream-feed/guest', 's'.repeat(43), { guest_id: j.guest_id, seq: 1, answer: 'v=0\r\na' })).status, 404);
+  assert.equal((await feedCall('POST', '/api/stream-feed/guest', secret, { guest_id: j.guest_id, seq: 1, answer: 'v=0\r\na', state: 'connected' })).status, 200);
   assert.equal((await call('POST', `/api/stream-guest/${token}/state`, null, { guest_id: j.guest_id, key: j.key })).body.answer, 'v=0\r\na');
   // The desk: the room is listed for its workspace only; on air and remove are the operator's.
   const rooms = (await call('GET', '/api/stream-out/guests', A.jwt)).body.rooms;
@@ -1181,13 +1187,15 @@ test('a guest\'s mix-minus has none of their own voice, with reverb, delay and t
 test('the renderer\'s page and feed answer this machine only: their secret never crosses a network', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
   const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Loop', kind: 'record' })).body;
   const secret = db.prepare('SELECT feed_secret FROM stream_outputs WHERE id = ?').get(so.id).feed_secret;
-  assert.equal((await fetch(`${BASE}/api/stream-feed/${secret}`)).status, 200, 'over loopback, as the renderer opens it');
+  assert.equal((await feedCall('GET', '/api/stream-feed', secret)).status, 200, 'over loopback, as the renderer opens it');
+  assert.equal((await feedCall('GET', '/api/stream-feed', null)).status, 404, 'without the cookie, nothing');
+  assert.equal((await feedCall('GET', '/api/stream-feed/' + secret, null)).status, 404, 'and the secret in the address is no longer a way in');
   // The same server reached on one of this machine's other addresses, as anyone on the network would.
   const ip = Object.values(require('node:os').networkInterfaces()).flat().find((i) => i && i.family === 'IPv4' && !i.internal);
   if (!ip) return;   // no network interface to try it on
   const other = BASE.replace('127.0.0.1', ip.address);
-  for (const p of [`/api/stream-feed/${secret}`, `/stream-render/${secret}`]) {
-    const r = await fetch(other + p).catch(() => null);
+  for (const p of ['/api/stream-feed', '/stream-render/live']) {
+    const r = await feedCall('GET', p, secret, null, other).catch(() => null);
     if (r) assert.equal(r.status, 404, p + ' from ' + ip.address);
   }
   await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);

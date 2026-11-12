@@ -5,7 +5,7 @@
  * RTMP/RTMPS or SRT ingest) instead of a screen.
  *
  * How a stream is made: this server opens its own headless browser on the web player
- * (/stream-render/<secret>, the player's follow-a-feed mode), takes the frames the browser paints,
+ * (/stream-render/live with the feed's secret in a cookie, the player's follow-a-feed mode), takes the frames the browser paints,
  * and hands them at a steady rate to ffmpeg, which encodes and sends them. What the output shows
  * is a playlist, chosen with TAKE on the mixer like any screen; graphics are keyed the same way.
  *
@@ -322,6 +322,7 @@ function status(id) {
     capture: s.display ? 'display' : 'screencast', share_error: s.shareError || null,
     recording: s.recFile ? path.basename(s.recFile) : null, record_skipped: !!s.recSkipped };
 }
+const FEED_COOKIE = 'st_feed';
 function localBaseUrl() { return global.__localApiOrigin || `http://127.0.0.1:${process.env.PORT || config.port || 3001}`; }
 
 /** A chunk of sound with the fader applied. Returns the loudest sample in it, 0..1. */
@@ -512,7 +513,10 @@ async function start(row, key, sound, { standby = false } = {}) {
     try { require('./mixer-guests').rendererBack(row.id); } catch { /* no guests */ }
     // The renderer's sound link (below): what it needs to find it, before the page's own scripts run.
     await page.evaluateOnNewDocument(AUDIO_STUB, s.audioKey);
-    await page.goto(`${localBaseUrl()}/stream-render/${row.feed_secret}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // Which stream this renderer draws: a cookie in its own browser profile, for this server's
+    // loopback address only, so the secret is in no URL (routes/stream-out.js feedSecretOf).
+    await page.setCookie({ name: FEED_COOKIE, value: row.feed_secret, url: localBaseUrl(), httpOnly: true, sameSite: 'Strict' });
+    await page.goto(`${localBaseUrl()}/stream-render/live`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     // The player keeps media silent until someone has touched the page (the browser's autoplay
     // rule, lib/media-mute.js). Nobody will: this click is that touch.
     if (s.sink) { try { await page.mouse.click(5, 5); } catch { /* it plays muted */ } }
@@ -832,4 +836,5 @@ function lastError(id) { const e = stopped.get(id); return e ? e.error : null; }
 async function stopAll() { await Promise.all([...sessions.keys()].map((id) => stop(id))); }
 process.on('exit', () => { for (const s of sessions.values()) { try { s.ff && s.ff.kill('SIGKILL'); } catch { /* */ } try { Object.values(s.inputs).forEach((p) => p.kill('SIGKILL')); } catch { /* */ } try { s.browser && s.browser.process() && s.browser.process().kill('SIGKILL'); } catch { /* */ } try { s.display && s.display.proc.kill('SIGKILL'); } catch { /* */ } if (s.display) for (const f of [lockOf(s.display.n), sockOf(s.display.n)]) { try { fs.unlinkSync(f); } catch { /* */ } } } });
 
-module.exports = { linkAllowed, rendererEnv, attachAudio, AUDIO_PATH, firePad, stopPads, padPcm, showOn, shareError, CAPTURE_EXT, CAPTURE_EXT_ID, pushMic, stopMic, recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, capture, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };
+module.exports = {
+  FEED_COOKIE, linkAllowed, rendererEnv, attachAudio, AUDIO_PATH, firePad, stopPads, padPcm, showOn, shareError, CAPTURE_EXT, CAPTURE_EXT_ID, pushMic, stopMic, recordingsDir, recordingPath, newRecording, listRecordings, MAX_LEVEL, applyGain, setAudio, learnNoise, KINDS, SIZES, MAX_STREAMS, availability, capture, ffmpegInfo, licenceOf, validate, targetUrl, ffmpegArgs, redact, start, stop, stopAll, status, lastError };

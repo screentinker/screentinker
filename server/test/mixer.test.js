@@ -290,7 +290,7 @@ test('on a hosted instance the mixer is not there and Broadcast cannot be chosen
     assert.equal(me.self_hosted, false, 'and the dashboard is told so, which is what hides the switch and the menu link');
     // Nor do the addresses the mixer's graphics, its renderer and its guests use.
     const secret = 'x'.repeat(48);
-    for (const [m, p] of [['GET', '/gfx/lower-third?title=a'], ['GET', '/stream-render/' + secret], ['GET', '/guest/' + secret], ['GET', '/api/stream-feed/' + secret],
+    for (const [m, p] of [['GET', '/gfx/lower-third?title=a'], ['GET', '/stream-render/live'], ['GET', '/guest/' + secret], ['GET', '/api/stream-feed'],
       ['POST', '/api/stream-guest/' + secret + '/join'], ['GET', '/stream-recording/' + secret]]) {
       assert.equal((await fetch(base + p, { method: m })).status, 404, `${m} ${p}`);
     }

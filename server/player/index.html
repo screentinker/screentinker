@@ -3295,7 +3295,10 @@
     var guestConns = {};          // id -> { seq, pc, video, tile, label }
     var guestThumbAt = 0;
     function guestHave() { var out = []; for (var id in guestConns) out.push(id + ':' + guestConns[id].seq); return out.join(','); }
-    function guestPost(v, body) { try { fetch(v.payload_url + '/guest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'omit', body: JSON.stringify(body) }).catch(function () {}); } catch (e) {} }
+    // A view link's requests carry no cookies; only the stream renderer's page (v.cookie) sends its
+    // own, which is how it proves its stream (routes/stream-out.js feedSecretOf).
+    function viewerCreds(v) { return v && v.cookie === true ? 'same-origin' : 'omit'; }
+    function guestPost(v, body) { try { fetch(v.payload_url + '/guest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: viewerCreds(v), body: JSON.stringify(body) }).catch(function () {}); } catch (e) {} }
     function guestDrop(id) {
       var c = guestConns[id]; if (!c) return;
       delete guestConns[id];
@@ -3501,7 +3504,7 @@
       const have = guestHave();
       const url = v.payload_url + (viewerRev ? ('?rev=' + encodeURIComponent(viewerRev)) : '') + (have ? ((viewerRev ? '&' : '?') + 'have=' + encodeURIComponent(have)) : '');
       const sentAt = Date.now();
-      fetch(url, { cache: 'no-store', credentials: 'omit' }).then(function (res) {
+      fetch(url, { cache: 'no-store', credentials: viewerCreds(v) }).then(function (res) {
         if (res.status === 404 || res.status === 403 || res.status === 410) { viewerEnd(first); return null; }
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();

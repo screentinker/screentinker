@@ -627,6 +627,19 @@ function feedFor(r) {
   return entry;
 }
 const bySecret = (secret) => (typeof secret === 'string' && secret.length >= 40 ? db.prepare('SELECT * FROM stream_outputs WHERE feed_secret = ?').get(secret) : null);
+/*
+ * The renderer proves which stream it renders with a cookie the server sets in its own browser
+ * (lib/stream-out.js FEED_COOKIE), never with the address: the secret is in no URL, so in no log,
+ * history or Referer. HttpOnly, and only for this server's loopback address.
+ */
+function feedSecretOf(req) {
+  const raw = String((req.headers && req.headers.cookie) || '');
+  for (const part of raw.split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0 && part.slice(0, i).trim() === streamOut.FEED_COOKIE) { try { return decodeURIComponent(part.slice(i + 1).trim()); } catch { return null; } }
+  }
+  return null;
+}
 
 function renderer({ sendPlayer }) {
   const r = express.Router();
@@ -640,10 +653,11 @@ function renderer({ sendPlayer }) {
   r.use(['/stream-render', '/api/stream-feed'], (req, res, next) => (
     LOOPBACK.has(req.socket && req.socket.remoteAddress) ? next() : res.status(404).type('text/plain').send('not found')));
   const quiet = (res) => { res.setHeader('Cache-Control', 'no-store'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('X-Robots-Tag', 'noindex, nofollow'); };
-  r.get('/stream-render/:secret', (req, res) => {
+  r.get('/stream-render/live', (req, res) => {
     quiet(res);
-    if (!bySecret(req.params.secret)) return res.status(404).type('text/plain').send('not found');
-    sendPlayer(res, 'index.html', { viewer: { payload_url: `/api/stream-feed/${req.params.secret}`, poll_ms: 1000, fast: true, sound: true } });
+    if (!bySecret(feedSecretOf(req))) return res.status(404).type('text/plain').send('not found');
+    // cookie: the player sends this page's cookie with its feed requests (a view link's never does).
+    sendPlayer(res, 'index.html', { viewer: { payload_url: '/api/stream-feed', cookie: true, poll_ms: 1000, fast: true, sound: true } });
   });
   // The guest's side: the page, and the four things it does. Addressed by the invite token; a
   // guest who has joined also proves who they are with the key they were given.
@@ -694,9 +708,9 @@ function renderer({ sendPlayer }) {
   r.post('/api/stream-guest/:token/state', limiter, (req, res) => { const g = me(req, res); if (!g) return; if (typeof req.body.green === 'boolean') guests.setGreen(g, req.body.green); res.json(told(g)); });
   r.post('/api/stream-guest/:token/leave', limiter, (req, res) => { const g = me(req, res); if (g) { guests.leave(g); res.json({ success: true }); } });
   // The renderer's side: its answer to a guest, the state of that connection, a thumbnail.
-  r.post('/api/stream-feed/:secret/guest', (req, res) => {
+  r.post('/api/stream-feed/guest', (req, res) => {
     quiet(res);
-    const row = bySecret(req.params.secret);
+    const row = bySecret(feedSecretOf(req));
     if (!row) return res.status(404).json({ error: 'not found' });
     if (!guests.fromRenderer(row.id, req.body || {})) return res.status(400).json({ error: 'refused' });
     res.json({ success: true });
@@ -707,9 +721,9 @@ function renderer({ sendPlayer }) {
     if (!t || t.until < Date.now() || !fs.existsSync(t.file)) return res.status(404).type('text/plain').send('This download link has expired. Ask for it again from the mixer.');
     res.download(t.file, t.name);
   });
-  r.get('/api/stream-feed/:secret', (req, res) => {
+  r.get('/api/stream-feed', (req, res) => {
     quiet(res);
-    const row = bySecret(req.params.secret);
+    const row = bySecret(feedSecretOf(req));
     if (!row) return res.status(404).json({ error: 'not found' });
     const f = feedFor(row);
     let graphic = null; try { graphic = row.gfx_json ? JSON.parse(row.gfx_json) : null; } catch { graphic = null; }
