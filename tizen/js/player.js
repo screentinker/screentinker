@@ -153,6 +153,39 @@ function stIsHold(it) { return !!(it && it.mime_type === HOLD_MIME); }
 function stHoldMode(it) { return it && it.remote_url === 'hold://freeze' ? 'freeze' : 'blank'; }
 
 /*
+ * An uploaded audio file (MP3, M4A, Ogg, WAV, FLAC). Uploads have always accepted these, but no
+ * branch here played them: full screen they fell to "unknown -> skip", in a zone to an empty div.
+ * It now plays like a clip (same mute, error skip, advance on end, loop when alone) on an HTML5
+ * <video> element, NOT AVPlay and NOT a separate <audio> element:
+ *   - AVPlay exists here only to rotate the hardware video plane for portrait (#170). Audio has no
+ *     picture to rotate, and an AVPlay session would show its black #avPlayer plane over the card
+ *     and leave currentVideoEl null (no live mute, no wall drift-correct).
+ *   - a <video> is what every existing teardown already looks for (clearStage, screen off, screen
+ *     share, hold freeze, wall-zone release all query 'video'), so nothing can keep sounding after
+ *     the item leaves. A media element with no video track paints nothing.
+ * Full screen it sits on stAudioCard so the screen is not an empty frame; in a zone it has no
+ * picture. Mirrors the web player (server/player/index.html isAudioMime / audioCard).
+ */
+function stIsAudio(it) { return !!(it && typeof it.mime_type === 'string' && it.mime_type.indexOf('audio/') === 0); }
+var ST_AUDIO_EL_CSS = 'position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
+function stAudioTitle(item) { return String((item && (item.filename || item.title)) || '').replace(/\.[a-z0-9]{2,4}$/i, ''); }
+function stAudioCard(item) {
+  var card = document.createElement('div');
+  card.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;display:-webkit-flex;display:flex;'
+    + '-webkit-flex-direction:column;flex-direction:column;-webkit-align-items:center;align-items:center;'
+    + '-webkit-justify-content:center;justify-content:center;background:#111;color:#ddd;'
+    + 'font:600 4vmin sans-serif;text-align:center';
+  var note = document.createElement('div');
+  note.style.cssText = 'font-size:14vmin;line-height:1;opacity:.85';
+  note.textContent = '\u266A';
+  var title = document.createElement('div');
+  title.style.cssText = 'margin-top:3vmin;max-width:80%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  title.textContent = stAudioTitle(item);
+  card.appendChild(note); card.appendChild(title);
+  return card;
+}
+
+/*
  * The CANONICAL clock-slot rule shared by group sync and wall zones — and by the web and Android
  * engines, so a mixed group/wall agrees on where everything is: each schedule-allowed item occupies
  * max(1, duration_sec || 10) seconds, in order; a dwell-0 live HLS item is infinite and gets NO slot.
@@ -382,6 +415,8 @@ PlaylistPlayer.prototype.preloadVideo = function (idx) {
   if (this.preloadIdx === idx) return;   // already handled this boundary
   var item = this.items[idx];
   if (!item) return;
+  // Audio is not warmed either: there is no black hold to hide (its card mounts at once), and
+  // renderAudio never takes a preload, so a warmed element would only hold a decoder.
   if ((item.mime_type || '').indexOf('video/') !== 0) { this.preloadIdx = idx; this.preloadEl = null; return; }
   // 3.0 TV-safe video: only the plain <video> path takes a preload; warming a file the flat layer,
   // AVPlay or a note will handle instead only costs a decoder.
@@ -967,6 +1002,7 @@ PlaylistPlayer.prototype.playCurrent = function () {
     if (item.widget_id && !item.content_id) return this.renderWidget(item, single);
     if (isBundle) return this.renderBundle(item, single);
     if (mime.indexOf('video/') === 0) return this.renderVideo(item, single);
+    if (stIsAudio(item)) return this.renderAudio(item, single);
     if (mime.indexOf('image/') === 0) return this.renderImage(item, single);
     // Fallback: a remote_url with unknown mime -> try iframe
     if (item.remote_url) return this.renderFrame(item.remote_url, single ? 0 : this.durationMs(item));
@@ -1433,6 +1469,37 @@ PlaylistPlayer.prototype.renderVideoFlat = function (item, single) {
   layer.appendChild(v);
   layer.style.display = 'block';
   var p = v.play(); if (p && p.catch) p.catch(function () {});
+  var applyMute = function () { try { v.muted = self.wallFollower ? true : !!item.muted; } catch (e) {} };
+  v.addEventListener('playing', applyMute, { once: true });
+  if (!single) {
+    var secs = Number(item.content_duration || item.duration_sec) || this.DEFAULT_DURATION;
+    this.schedule((secs + 5) * 1000);                        // safety net if 'ended' never fires
+  }
+};
+
+/*
+ * An audio item full screen (see stIsAudio): the "now playing" card plus a 1px media element with
+ * the plain-<video> rules of renderVideo below. Every orientation takes this path: the card is in
+ * #stage, which CSS rotates for portrait, and an audio-only element has no hardware plane to black
+ * out, so StVideoPlan / AVPlay / the flat layer never apply. A hard cut: there is no frame to
+ * composite a transition from or into.
+ */
+PlaylistPlayer.prototype.renderAudio = function (item, single) {
+  var self = this;
+  var url = this.contentUrl(item);
+  if (!url) { this.skipSoon(); return; }
+  this.stage.appendChild(stAudioCard(item));
+  var v = document.createElement('video');
+  this.currentVideoEl = v; // live mute, volume keys, wall leader position / follower drift-correct
+  v.autoplay = true; v.muted = true; v.setAttribute('playsinline', ''); v.preload = 'auto';
+  v.loop = single; // single item loops; multi advances on end
+  v.onended = function () { if (!single) self.advance(); };
+  v.onerror = function () { self.skipSoon(); };
+  v.style.cssText = ST_AUDIO_EL_CSS;
+  v.src = url;
+  this.stage.appendChild(v);
+  var p = v.play(); if (p && p.catch) p.catch(function () {});
+  // Same mute rule as a clip (#129): warm muted, then the item's flag; a wall follower stays silent.
   var applyMute = function () { try { v.muted = self.wallFollower ? true : !!item.muted; } catch (e) {} };
   v.addEventListener('playing', applyMute, { once: true });
   if (!single) {
@@ -2016,9 +2083,11 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
       zone.bundleReg = stRegisterBundleFrame(bf, function (reg, reason) { self._zoneBundleSkip(reg, zone, list, activeIdx, a, advance, reason); });
       zone.el.appendChild(bf);
       if (multi) this.scheduleAdvance(zone, dur, advance);
-    } else if (mime.indexOf('video/') === 0) {
+    } else if (mime.indexOf('video/') === 0 || stIsAudio(a)) {
+      // An audio item is a clip with no picture (see stIsAudio), muted like every zone clip here.
       var v = document.createElement('video');
       v.className = zrFitClass(a.fit_mode || zone.fit);
+      if (stIsAudio(a)) v.style.cssText = ST_AUDIO_EL_CSS;
       // Zone videos are muted: TV web autoplay needs muted, and overlapping zone audio
       // is rarely intended. (Single-zone fullscreen handles audio in PlaylistPlayer.)
       v.autoplay = true; v.muted = true; v.setAttribute('playsinline', '');
@@ -2544,7 +2613,7 @@ WallZoneRenderer.prototype.tick = function () {
     // A video CLIP remounts each pass of the loop (cycle), so a one-slot zone restarts its clip at the
     // boundary instead of holding the ended clip's last frame forever. Not live, not images/widgets.
     var mime = (item && item.mime_type) || '';
-    var isClip = mime.indexOf('video/') === 0 && mime !== WZ_LIVE_MIME;
+    var isClip = (mime.indexOf('video/') === 0 && mime !== WZ_LIVE_MIME) || stIsAudio(item);
     var key = t.index + '|' + WallZoneRenderer.itemKey(item) + (isClip ? '|c' + t.cycle : '');
     if (key !== zs.key) {
       this.mount(zs, item, t, items[t.prevIndex]);
@@ -2585,10 +2654,15 @@ WallZoneRenderer.prototype.element = function (zs, a, opts) {
     return { el: img, video: null };
   }
   // YouTube cannot be clock-aligned and HDMI IN is not a Tizen source: the zone shows its background.
-  if (mime.indexOf('video/') === 0 && mime !== 'video/youtube' && mime !== 'video/hdmi-in') {
+  // Audio is a clip with no picture (see stIsAudio): clock-aligned and voiced by the audio_zones
+  // rule like any clip. A freeze after it has no last frame to keep, so the zone shows its background.
+  var isAudio = stIsAudio(a);
+  if (isAudio && opts && opts.frozenAtEnd) return null;
+  if (isAudio || (mime.indexOf('video/') === 0 && mime !== 'video/youtube' && mime !== 'video/hdmi-in')) {
     var v = document.createElement('video');   // ⚠️ never AVPlay in a wall zone (see the header)
     v.className = fit;
     v.style.objectFit = fit;
+    if (isAudio) v.style.cssText = ST_AUDIO_EL_CSS;
     v.setAttribute('playsinline', '');
     v.preload = 'auto';
     v.muted = WallZoneRenderer.muted(zs.audio, a);
