@@ -301,7 +301,13 @@ class Mix {
 // ── the inputs' decoders ─────────────────────────────────────────────────────────────────────────
 const PCM_OUT = ['-vn', '-f', 's16le', '-ar', String(RATE), '-ac', '2', 'pipe:1'];
 const QUIET = ['-hide_banner', '-loglevel', 'error'];
-const bedArgs = (file) => [...QUIET, '-re', '-stream_loop', '-1', '-i', file, ...PCM_OUT];
+/*
+ * A workspace's own file: read from the disk only, and only by a media demuxer. Without the list, a
+ * file that is really an ffconcat or HLS playlist (its type is whatever the library says) would have
+ * the decoder read the files it names.
+ */
+const LOCAL_IN = ['-protocol_whitelist', 'file', '-format_whitelist', 'mp3,wav,ogg,flac,mov,mp4,m4a,matroska,webm,aac,ac3,eac3,avi,asf,aiff,w64,caf,wv,mpeg,mpegts,amr'];
+const bedArgs = (file) => [...QUIET, '-re', '-stream_loop', '-1', ...LOCAL_IN, '-i', file, ...PCM_OUT];
 const lineArgs = (device) => [...QUIET, '-f', 'alsa', '-ac', '2', '-i', device, ...PCM_OUT];
 // The protocol list is closed: a playlist or session description fetched from the network cannot
 // point the decoder at a local file.
@@ -427,4 +433,4 @@ async function createSink(id, server = null) {
 }
 function removeSink(sink) { if (sink && /^\d+$/.test(sink.module)) run('pactl', ['unload-module', sink.module], 5000, sink.server ? { PULSE_SERVER: sink.server } : null); }
 
-module.exports = { MAX_PADS, STRIPS, isGuestStrip, MAX_CHANNELS, channelNames, inputNames, consoleArgs, splitChannels, captureChannels, RATE, FRAME, SECOND, MAX_LEVEL, INPUTS, NET_SCHEMES, Mix, cleanSettings, netUrl, maskUrl, netArgs, bedArgs, lineArgs, programmeArgs, micArgs, micDecoder, decoder, parseCapture, captureDevices, pulse, createSink, removeSink, renderPulse };
+module.exports = { LOCAL_IN, MAX_PADS, STRIPS, isGuestStrip, MAX_CHANNELS, channelNames, inputNames, consoleArgs, splitChannels, captureChannels, RATE, FRAME, SECOND, MAX_LEVEL, INPUTS, NET_SCHEMES, Mix, cleanSettings, netUrl, maskUrl, netArgs, bedArgs, lineArgs, programmeArgs, micArgs, micDecoder, decoder, parseCapture, captureDevices, pulse, createSink, removeSink, renderPulse };

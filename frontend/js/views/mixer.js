@@ -448,7 +448,7 @@ function fmt(ctl, v) {
   if (ctl === 'fx.decay' || ctl === 'fx.delay_fb') return Math.round(v * 100) + '%';
   return v ? Math.round(v * 100) + '%' : t('mixer.audio_off');
 }
-const knob = (s, strip, ctl, label, value, min, max, step) => `<label class="mx-knob">${esc(label)}<input type="range" min="${min}" max="${max}" step="${step}" value="${value}" data-proc="${esc(s.id)}" data-strip="${strip}" data-ctl="${ctl}"><output>${esc(fmt(ctl, value))}</output></label>`;
+const knob = (s, strip, ctl, label, value, min, max, step) => `<label class="mx-knob">${esc(label)}<input type="range" min="${min}" max="${max}" step="${step}" value="${esc(String(value))}" data-proc="${esc(s.id)}" data-strip="${strip}" data-ctl="${ctl}"><output>${esc(fmt(ctl, value))}</output></label>`;
 const tick = (s, strip, ctl, label, on) => `<label class="mx-knob mx-knob-check"><input type="checkbox" ${on ? 'checked' : ''} data-proc="${esc(s.id)}" data-strip="${strip}" data-ctl="${ctl}"> ${esc(label)}</label>`;
 const sect = (title, body) => `<div class="mx-proc-sect"><h5>${esc(title)}</h5><div class="mx-knobs">${body}</div></div>`;
 /** A strip with every control at neutral: what "Set flat" sends. */

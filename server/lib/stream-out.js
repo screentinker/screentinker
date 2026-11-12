@@ -150,11 +150,12 @@ function renderUser() {
       fs.chmodSync(dir, 0o711);
       const wrapper = path.join(dir, 'chromium');
       fs.writeFileSync(wrapper, `#!/bin/sh\nexec setpriv --reuid=${uid} --regid=${gid} --clear-groups --no-new-privs -- '${chrome}' "$@"\n`, { mode: 0o755 });
-      // What the browser must not read: the database and the keys. Only this server's own folders for them, inside
+      // What the browser must not read: the database, the keys and every workspace's uploads (content and
+      // recordings; the browser is served what it shows over HTTP, never from the disk). Only this server's own folders for them, inside
       // its data folder (never a shared system folder a DB_PATH or CERTS_DIR may point into); STREAM_RENDER_LOCKDOWN=0 leaves them as they are.
       if (process.env.STREAM_RENDER_LOCKDOWN !== '0') {
         const inData = (d) => { const r = path.relative(path.resolve(config.dataDir), path.resolve(d)); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
-        for (const d of [path.dirname(config.dbPath), config.certsDir].filter((d) => d && inData(d))) {
+        for (const d of [path.dirname(config.dbPath), config.certsDir, config.uploadsDir].filter((d) => d && inData(d))) {
           try { const st = fs.statSync(d); if (st.uid === 0 && (st.mode & 0o007)) { fs.chmodSync(d, st.mode & ~0o007); console.log(`[stream-out] ${d} is now its owner's alone (no access for other users)`); } } catch { /* not there */ }
         }
       }
@@ -686,7 +687,7 @@ function padPcm(file) {
   else {
     // One decode at a time: firing many new pads at once queues them instead of starting a decoder for each.
     const p = decoding.then(() => new Promise((resolve) => {
-      const dec = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-t', String(PAD_SECONDS), '-vn', '-f', 's16le', '-ar', String(RATE), '-ac', '2', 'pipe:1'], { stdio: ['ignore', 'pipe', 'ignore'] });
+      const dec = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', ...audio.LOCAL_IN, '-i', file, '-t', String(PAD_SECONDS), '-vn', '-f', 's16le', '-ar', String(RATE), '-ac', '2', 'pipe:1'], { stdio: ['ignore', 'pipe', 'ignore'] });
       const parts = []; let size = 0;
       dec.stdout.on('data', (d) => { if (size < RATE * FRAME * PAD_SECONDS) { parts.push(d); size += d.length; } });
       dec.on('error', () => resolve(null));

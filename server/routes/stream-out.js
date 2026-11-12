@@ -399,7 +399,10 @@ router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
   }
   // A guest's strip lives as long as they are here (lib/mixer-guests.js), not in the stored mix.
   for (const [gg, target] of touched) {
-    const { level, muted, ...proc } = target;
+    const { level, muted } = target;
+    // Brought into range and into shape the way every other strip is (cleanSettings): what is kept
+    // goes back to every desk, so no value may be a string of a caller's choosing.
+    const { level: _l, muted: _m, noise: _n, ...proc } = audio.cleanSettings({ guest: target }).guest;
     guests.setLevel(r.id, gg.id, level); guests.setMuted(r.id, gg.id, muted); guests.setStrip(r.id, gg.id, proc);
   }
   // "Use for new guests": a guest's processing becomes what every guest who comes in after starts with.

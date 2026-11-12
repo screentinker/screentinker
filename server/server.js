@@ -3971,6 +3971,11 @@ global.__localApiOrigin = `http://127.0.0.1:${config.port}`;
 
 if (hasSsl) {
   const loopbackApi = http.createServer(app);
+  // The stream renderer loads its page from here when TLS is on (lib/stream-out.js localBaseUrl), so
+  // the two sockets that page opens must be answered here too: its sound link, and the screen-share
+  // signalling that "show on screens" uses. Each claims only its own paths.
+  try { require('./lib/screen-share').attach(loopbackApi); } catch (e) { console.warn('[screen-share] not attached to the loopback API:', e && e.message); }
+  try { require('./lib/stream-out').attachAudio(loopbackApi); } catch (e) { console.warn('[stream-out] sound link not attached to the loopback API:', e && e.message); }
   loopbackApi.listen(0, '127.0.0.1', () => {
     global.__localApiOrigin = `http://127.0.0.1:${loopbackApi.address().port}`;
     console.log(`[mesh] internal loopback API on ${global.__localApiOrigin} (127.0.0.1 only)`);

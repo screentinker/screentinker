@@ -1082,6 +1082,13 @@ test('the console\'s new keys: only this workspace\'s audio items on pads, nobod
   assert.deepEqual([g.level, g.muted, g.hear, g.strip.eq.high, g.on_air], [1.5, true, false, 4, false], 'kept, and none of it puts them on air');
   assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { guest_default_from: j.guest_id })).status, 200);
   assert.equal((await call('GET', '/api/stream-out', A.jwt)).body.outputs.find((o) => o.id === so.id).audio.mix.guest.eq.high, 4, 'new guests start from it');
+  // What a guest's strip keeps is numbers in range and the known controls only: it goes back to every desk.
+  const odd = '"><img src=x>';
+  assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { strips: [{ strip: 'g:' + j.guest_id, trim: odd, pan: 9, junk: 1, eq: { high: odd, extra: odd }, cmp: { thr: odd } }] })).status, 200);
+  const g2 = (await call('GET', '/api/stream-out/guests', A.jwt)).body.rooms[so.id].guests[0];
+  assert.deepEqual([g2.strip.trim, g2.strip.pan, g2.strip.eq.high, typeof g2.strip.cmp.thr], [0, 1, 0, 'number']);
+  assert.equal('junk' in g2.strip || 'extra' in g2.strip.eq, false);
+  assert.equal(JSON.stringify(g2.strip).includes('<img'), false);
   await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
 });
 
