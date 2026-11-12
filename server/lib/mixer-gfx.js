@@ -21,8 +21,9 @@
  */
 
 const KINDS = ['lower-third', 'crawl', 'bug', 'title', 'countdown', 'comment'];
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const colour = (v, dflt) => (/^#[0-9a-fA-F]{6}$/.test(String(v || '')) ? String(v) : dflt);
+const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+// Rebuilt from the number, so what goes into the page is never the text that was sent.
+const colour = (v, dflt) => (/^#[0-9a-fA-F]{6}$/.test(String(v || '')) ? '#' + parseInt(String(v).slice(1), 16).toString(16).padStart(6, '0') : dflt);
 const clip = (v, n) => String(v == null ? '' : v).slice(0, n);
 
 /** What the overlay box should be for each kind, as fractions of the screen (the client turns
@@ -60,8 +61,9 @@ function digit(total, unit, n) {
   return `<span class="d"><span class="col" style="animation:roll${n} ${cycle}s steps(${n}) -${offset}s ${((total + offset + 0.5) / cycle).toFixed(6)} both">${cells}</span></span>`;
 }
 
-function page(kind, q) {
-  if (!KINDS.includes(kind)) return null;
+function page(asked, q) {
+  const kind = KINDS.find((k) => k === asked);   // ours, not the request's
+  if (!kind) return null;
   const accent = colour(q.accent, '#ff2a1f');
   const ink = colour(q.ink, '#ffffff');
   const plate = colour(q.plate, '#0b0c0e');

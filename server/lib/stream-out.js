@@ -223,7 +223,8 @@ function validate(input, { needKey = true } = {}) {
     if (!okProto.includes(u.protocol) || !u.hostname) return { error: kind === 'srt' ? 'An SRT address starts with srt://' : 'An RTMP address starts with rtmp:// or rtmps://' };
     if (u.username || u.password) return { error: 'Put credentials in the stream key field, not in the address.' };
     if (kind === 'srt' && u.search) return { error: 'Put the SRT options (streamid, passphrase) in the stream key field.' };
-    url = String(input.url).trim().replace(/\/+$/, '').slice(0, 500);
+    url = String(input.url).trim().slice(0, 500);
+    while (url.endsWith('/')) url = url.slice(0, -1);   // no regex: /\/+$/ is quadratic on a run of slashes
   }
   const key = input.key == null ? '' : String(input.key).trim();
   if (/[\s\u0000-\u001f]/.test(key) || key.length > 600) return { error: 'The stream key has characters a key cannot have.' };
@@ -248,8 +249,14 @@ function recordingsDir(workspaceId) { return path.join(config.uploadsDir, 'recor
 /** The path of a recording by name, or null when the name is not one this module writes. */
 function recordingPath(workspaceId, name) {
   if (typeof name !== 'string' || !REC_NAME.test(name)) return null;
-  const dir = recordingsDir(workspaceId), file = path.join(dir, name);
-  return path.dirname(file) === dir ? file : null;
+  // The file is the one the folder lists under that name: the path is built from the listing, never
+  // from what was asked for, so nothing in a request can point it anywhere else.
+  const dir = recordingsDir(workspaceId);
+  let entry = null;
+  try { entry = fs.readdirSync(dir).find((f) => f === name) || null; } catch { entry = null; }
+  if (!entry) return null;
+  const file = path.resolve(dir, entry);
+  return file.startsWith(path.resolve(dir) + path.sep) ? file : null;
 }
 /** A new file for this output, or null when the disk is too full (or cannot be written). */
 function newRecording(row, now = new Date()) {

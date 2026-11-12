@@ -375,11 +375,14 @@ router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
   const strips = Array.isArray(b.strips) ? b.strips : (b.strip !== undefined || b.level !== undefined || b.muted !== undefined ? [{ ...b, strip: b.strip || 'bed' }] : []);
   const touched = [];
   for (const st of strips) {
+    // A strip name is looked up on the mix and written through: never a name that reaches the prototype.
+    if (st && (st.strip === '__proto__' || st.strip === 'constructor' || st.strip === 'prototype')) return res.status(400).json({ error: 'Unknown strip' });
     const gm = st && typeof st.strip === 'string' ? /^g:([A-Za-z0-9_-]{1,64})$/.exec(st.strip) : null;
     const gg = gm ? guests.list(r.id).find((x) => x.id === gm[1]) : null;
     if (gm && !gg) return res.status(404).json({ error: 'That guest has left.' });
     if (!st || (!gg && !stripNames.includes(st.strip))) return res.status(400).json({ error: `strip is one of: ${stripNames.join(', ')}, or g:<guest id>` });
-    const target = gg ? { ...mix.guest, ...(gg.strip || {}), level: gg.level, muted: gg.muted } : mix[st.strip];
+    const target = gg ? { ...mix.guest, ...(gg.strip || {}), level: gg.level, muted: gg.muted } : (Object.prototype.hasOwnProperty.call(mix, st.strip) ? mix[st.strip] : null);
+    if (!target || typeof target !== 'object') return res.status(400).json({ error: `strip is one of: ${stripNames.join(', ')}, or g:<guest id>` });
     if (gg) touched.push([gg, target]);
     if (st.level !== undefined) {
       const l = Number(st.level);
@@ -388,8 +391,10 @@ router.post('/:id/audio', gate, requireFleetWrite, async (req, res) => {
     }
     if (st.muted !== undefined) target.muted = st.muted === true;
     // The processing controls (lib/stream-dsp.js). Out-of-range values are brought into range when stored.
-    if (st.eq && typeof st.eq === 'object') target.eq = { ...target.eq, ...st.eq };
-    if (st.cmp && typeof st.cmp === 'object') target.cmp = { ...target.cmp, ...st.cmp };
+    // Only the known keys of each (lib/stream-dsp.js cleanProcessing), never whatever a body names.
+    const pick = (o, keys) => Object.fromEntries(keys.filter((k) => Object.prototype.hasOwnProperty.call(o, k)).map((k) => [k, o[k]]));
+    if (st.eq && typeof st.eq === 'object') target.eq = { ...target.eq, ...pick(st.eq, ['low', 'lomid', 'mid', 'high', 'low_f', 'lomid_f', 'lomid_q', 'mid_f', 'mid_q', 'high_f']) };
+    if (st.cmp && typeof st.cmp === 'object') target.cmp = { ...target.cmp, ...pick(st.cmp, ['on', 'thr', 'ratio', 'att', 'rel', 'gain']) };
     if (st.comp !== undefined) target.comp = st.comp;
     if (st.strip !== 'master') {
       for (const k of ['hpf', 'hpf_f', 'lpf', 'gate', 'fx', 'dly', 'trim', 'inv', 'pan', 'deess', 'chorus', 'duck']) if (st[k] !== undefined) target[k] = st[k];
@@ -626,6 +631,11 @@ function renderer({ sendPlayer }) {
   // exist (they only ever act on streams, invites and sessions the gated routes make, but off is off).
   r.use(['/stream-render', '/guest', '/stream-recording', '/api/stream-feed', '/api/stream-guest'], (req, res, next) => (
     config.selfHosted ? next() : res.status(404).type('text/plain').send('not found')));
+  // The renderer's own page and feed are opened by this server's renderer, over loopback
+  // (lib/stream-out.js localBaseUrl), and by nothing else: their secret never crosses a network.
+  const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+  r.use(['/stream-render', '/api/stream-feed'], (req, res, next) => (
+    LOOPBACK.has(req.socket && req.socket.remoteAddress) ? next() : res.status(404).type('text/plain').send('not found')));
   const quiet = (res) => { res.setHeader('Cache-Control', 'no-store'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('X-Robots-Tag', 'noindex, nofollow'); };
   r.get('/stream-render/:secret', (req, res) => {
     quiet(res);

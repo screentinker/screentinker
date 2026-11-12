@@ -403,7 +403,7 @@ test('noise subtraction takes steady noise down, with a learned print or without
   assert.ok(off.every((v, i) => v === ref[i]));
 });
 
-test('a noise print is kept only when it is one, belongs to its strip, and is never sent to the desk', async () => {
+test('a noise print is kept only when it is one, belongs to its strip, and is never sent to the desk', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
   const print = Buffer.alloc(513, 90).toString('base64');
   const s = audio.cleanSettings({ line: { noise: print, denoise: 0.4 }, bed: { noise: '../../etc/passwd' }, net: { noise: { a: 1 } }, programme: { denoise: 2 } });
   assert.equal(s.line.noise, print); assert.equal(s.bed.noise, null); assert.equal(s.net.noise, null); assert.equal(s.programme.denoise, 1);
@@ -449,15 +449,18 @@ test('an output can be recorded, or be a recording only, and the encoder is told
 });
 
 test('a recording is named by this server, lives in its workspace\'s own directory, and only such names resolve', () => {
-  const ws = 'ws-1234', dir = streamOut.recordingsDir(ws);
+  const ws = 'ws-' + crypto.randomBytes(4).toString('hex'), dir = streamOut.recordingsDir(ws);
   assert.ok(dir.endsWith(path.join('uploads', 'recordings', ws)));
   assert.ok(!dir.includes(path.join('uploads', 'content')), 'not under the directory the server serves');
+  assert.equal(streamOut.recordingPath(ws, 'Show-20261110-101500.mkv'), null, 'only a recording that is there resolves');
+  fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'Show-20261110-101500.mkv'), 'x');
   assert.equal(streamOut.recordingPath(ws, 'Show-20261110-101500.mkv'), path.join(dir, 'Show-20261110-101500.mkv'));
   for (const bad of ['../x.mkv', '..%2Fx.mkv', 'a/b.mkv', 'x.mp4', '.mkv', '', null, 'a\0.mkv', 'x.mkv/..', '../../db/remote_display.db']) assert.equal(streamOut.recordingPath(ws, bad), null, String(bad));
   assert.equal(streamOut.recordingsDir('../../etc'), streamOut.recordingsDir('etc'), 'a workspace id cannot climb either');
+  fs.rmSync(dir, { recursive: true, force: true });   // this process's uploads folder is the checkout's own
 });
 
-test('recordings are listed, linked and deleted per workspace; a link is a ticket for one file', async () => {
+test('recordings are listed, linked and deleted per workspace; a link is a ticket for one file', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
   const dirA = path.join(DATA_DIR, 'uploads', 'recordings', A.wsId); fs.mkdirSync(dirA, { recursive: true });
   fs.writeFileSync(path.join(dirA, 'Show-20261110-101500.mkv'), 'matroska-bytes'); fs.writeFileSync(path.join(dirA, 'notes.txt'), 'x');
   const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Rec', kind: 'record' })).body;
@@ -518,7 +521,7 @@ test('the meters endpoint lists only running outputs of the caller\'s workspace'
  * pieces of the browser's recording; only someone who may operate the workspace's streams can
  * send them, only into an output that is running, and only something that is a piece of sound.
  */
-test('microphone sound is taken only from an operator of the workspace, into a running output, as sound', async () => {
+test('microphone sound is taken only from an operator of the workspace, into a running output, as sound', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
   const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Mic', kind: 'record' })).body;
   const piece = Buffer.from('not really opus').toString('base64');
   assert.equal((await call('POST', `/api/stream-out/${so.id}/mic`, A.jwt, { chunk: piece, first: true })).status, 409, 'nothing is running to take it');
@@ -536,7 +539,7 @@ test('microphone sound is taken only from an operator of the workspace, into a r
   await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
 });
 
-test('the desk is told what graphic is over a stream, so its Program monitor can show it', async () => {
+test('the desk is told what graphic is over a stream, so its Program monitor can show it', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
   const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Gfx', kind: 'record' })).body;
   assert.equal(so.graphic_on, null);
   await call('POST', `/api/stream-out/${so.id}/gfx`, A.jwt, { kind: 'lower-third', a: 'Dana', b: 'Ops', accent: '#ff2a1f' });
@@ -572,7 +575,7 @@ test('each channel of a multichannel capture feeds its own strip, whatever sizes
   assert.ok(m.peaks.c1 > 0 && m.peaks.c2 === 0 && m.peaks.c3 > 0);
 });
 
-test('a console\'s settings are bounded, and it must be a device this server has', async () => {
+test('a console\'s settings are bounded, and it must be a device this server has', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
   const big = audio.cleanSettings({ console: { device: 'plughw:1,0', channels: 999, count: 999 } });
   assert.deepEqual(big.console, { device: 'plughw:1,0', channels: 64, count: audio.MAX_CHANNELS });
   assert.deepEqual(audio.cleanSettings({ console: { device: 'hw:0; reboot', channels: 8, count: 8 }, c1: { level: 1 } }).console, { device: null, channels: 8, count: 0 });
@@ -661,7 +664,7 @@ test('pan places a strip, the delay brings it back later, and a ducked strip giv
   assert.ok(m.peaks.bed > 0.29, 'and it comes back when the talking stops');
 });
 
-test('the new strip controls are stored through the API in range, and the master has a compressor', async () => {
+test('the new strip controls are stored through the API in range, and the master has a compressor', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
   const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Strip', kind: 'record' })).body;
   const r = await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { strips: [
     { strip: 'mic', trim: 99, inv: true, pan: -3, hpf_f: 5, lpf: 500, deess: 0.4, chorus: 2, dly: 0.3, duck: 0.5, eq: { lomid: 4, mid_f: 99999, mid_q: 0 }, cmp: { on: true, thr: -30, ratio: 99 } },
@@ -735,7 +738,7 @@ test('the green room: invite, join, backstage, on air, layouts, and its limits',
   const old = guestsLib.invite(out, t0); assert.equal(guestsLib.join(old, 'late', t0 + 13 * 3600 * 1000).status, 404, 'an invite ends by itself'); guestsLib.revoke('out-1');
 });
 
-test('the green room over the API: operators only, guests only as themselves, the renderer only by its secret', async () => {
+test('the green room over the API: operators only, guests only as themselves, the renderer only by its secret', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
   const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Guests', kind: 'record' })).body;
   assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/invite`, V.jwt)).status, 403, 'a read-only member cannot invite');
   assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/invite`, B.jwt)).status, 404);
@@ -867,7 +870,7 @@ test('an open invite outlives a restart: it is kept where the caller says, and g
   G.revoke('out-keep'); G.restore([], null);
 });
 
-test('cut out: a guest shown without their background follows what their page sends, until the operator says otherwise', async () => {
+test('cut out: a guest shown without their background follows what their page sends, until the operator says otherwise', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
   const G = require('../lib/mixer-guests');
   const out = { id: 'out-cut-' + Date.now(), workspace_id: 'ws-cut' }, t0 = 2_000_000;
   const token = G.invite(out, t0), g = G.join(token, 'Ana', t0).guest;
@@ -922,7 +925,7 @@ test('background removal ships whole and self-contained: the maths, the network,
 
 // What a running stream does with screens (which screens, waiting ones, release, after a restart) needs a real renderer: it is
 // checked end to end on a server with Chromium and Xvfb, not here.
-test('a stream on screens is refused while the stream is off, to another workspace, to a read-only member and without sign-in; the share it makes is marked as the stream\'s, and is exempt from the time limit and the badge', async () => {
+test('a stream on screens is refused while the stream is off, to another workspace, to a read-only member and without sign-in; the share it makes is marked as the stream\'s, and is exempt from the time limit and the badge', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
   const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'On screens', kind: 'record' })).body;
   assert.deepEqual(so.on_screens, [], 'a stream says which screens show it');
   assert.equal((await call('POST', `/api/stream-out/${so.id}/screens`, A.jwt, { device_ids: ['x'] })).status, 409, 'a stream that is off has no picture to show');
@@ -960,7 +963,7 @@ test('the renderer captures its own picture through an extension of ours, whose 
   assert.match(src, /audio: false, video: \{ mandatory: \{ chromeMediaSource: 'tab'/, 'the tab\'s sound is not captured: capturing it would take it away from the stream');
 });
 
-test('stopping a stream by hand forgets it for after a restart; bringing streams back never throws, and brings them back on standby', async () => {
+test('stopping a stream by hand forgets it for after a restart; bringing streams back never throws, and brings them back on standby', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
   const cols = db.prepare("SELECT name FROM pragma_table_info('stream_outputs')").all().map((c) => c.name);
   assert.ok(cols.includes('resume_state') && cols.includes('screens_json'));
   const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Keeps', kind: 'record' })).body;
@@ -991,7 +994,7 @@ test('a renderer started again right after a stop is listened to at once; the st
   G.revoke(out.id);
 });
 
-test('each guest has a volume of their own in the stream: 0 to the console\'s maximum, the operator\'s, and it leaves on air alone', async () => {
+test('each guest has a volume of their own in the stream: 0 to the console\'s maximum, the operator\'s, and it leaves on air alone', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
   const G = require('../lib/mixer-guests');
   const out = { id: 'out-lvl-' + Date.now(), workspace_id: 'ws-lvl' }, t0 = 3_000_000;
   const token = G.invite(out, t0), g = G.join(token, 'Ana', t0).guest;
@@ -1052,7 +1055,7 @@ test('pads: fired, again from the top, stopped with a fade; up to twelve, each a
   assert.equal(m.voices.length, 0, 'stopped: gone within the fade');
 });
 
-test('the console\'s new keys: only this workspace\'s audio items on pads, nobody else\'s stream, nothing while it is off', async () => {
+test('the console\'s new keys: only this workspace\'s audio items on pads, nobody else\'s stream, nothing while it is off', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
   const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Pads', kind: 'record' })).body;
   const mine = crypto.randomUUID(), theirs = crypto.randomUUID();
   db.prepare(`INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size, duration_sec) VALUES (?, ?, ?, 'sting.wav', 'sting.wav', 'audio/wav', 10, 1)`).run(mine, A.userId, A.wsId);
@@ -1133,7 +1136,7 @@ test('a personal link lets in one person at a time, by name, and Remove ends it'
   G.revoke(out.id);
 });
 
-test('personal links over the API: made and cancelled by the stream\'s own workspace only, and not shown to a read-only member', async () => {
+test('personal links over the API: made and cancelled by the stream\'s own workspace only, and not shown to a read-only member', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
   const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'People', kind: 'record' })).body;
   for (const [who, code] of [[V, 403], [B, 404], [null, 401]]) assert.equal((await call('POST', `/api/stream-out/${so.id}/guests/personal`, who && who.jwt, { name: 'X' })).status, code);
   const p = await call('POST', `/api/stream-out/${so.id}/guests/personal`, A.jwt, { name: 'Gil' });
@@ -1173,4 +1176,37 @@ test('a guest\'s mix-minus has none of their own voice, with reverb, delay and t
   let worst = 0;
   for (let i = 0; i < 10; i++) { m.push('g:ana', tone(440, 0.1)); m.next(a.RATE / 10 * a.FRAME); worst = Math.max(worst, peakOf(last.get('g:ana'))); }
   assert.ok(worst < 0.001, 'nothing of Ana comes back to Ana (' + worst + ')');
+});
+
+test('the renderer\'s page and feed answer this machine only: their secret never crosses a network', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
+  const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Loop', kind: 'record' })).body;
+  const secret = db.prepare('SELECT feed_secret FROM stream_outputs WHERE id = ?').get(so.id).feed_secret;
+  assert.equal((await fetch(`${BASE}/api/stream-feed/${secret}`)).status, 200, 'over loopback, as the renderer opens it');
+  // The same server reached on one of this machine's other addresses, as anyone on the network would.
+  const ip = Object.values(require('node:os').networkInterfaces()).flat().find((i) => i && i.family === 'IPv4' && !i.internal);
+  if (!ip) return;   // no network interface to try it on
+  const other = BASE.replace('127.0.0.1', ip.address);
+  for (const p of [`/api/stream-feed/${secret}`, `/stream-render/${secret}`]) {
+    const r = await fetch(other + p).catch(() => null);
+    if (r) assert.equal(r.status, 404, p + ' from ' + ip.address);
+  }
+  await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+});
+
+test('a strip name that reaches the prototype is refused, and nothing is written there', { skip: !HAS_FFMPEG && 'no ffmpeg here' }, async () => {
+  const so = (await call('POST', '/api/stream-out', A.jwt, { name: 'Proto', kind: 'record' })).body;
+  for (const strip of ['__proto__', 'constructor', 'prototype', 'toString']) {
+    assert.equal((await call('POST', `/api/stream-out/${so.id}/audio`, A.jwt, { strips: [{ strip, level: 1, trim: 3, eq: { low: 2 } }] })).status, 400, strip);
+  }
+  assert.equal(({}).trim, undefined); assert.equal(({}).eq, undefined);
+  await call('DELETE', `/api/stream-out/${so.id}`, A.jwt);
+});
+
+test('an RTMP address with a long run of slashes is read at once, not in quadratic time', () => {
+  const t0 = Date.now();
+  const r = streamOut.validate({ name: 'x', kind: 'rtmp', url: 'rtmp://h.example/' + '/'.repeat(200000) + 'x', key: 'k' });
+  assert.ok(Date.now() - t0 < 200, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(r.error || r.value.url.length <= 500);
+  const ok = streamOut.validate({ name: 'x', kind: 'rtmp', url: 'rtmp://h.example/live///', key: 'k' });
+  assert.ok(ok.ok, JSON.stringify(ok)); assert.equal(ok.value.url, 'rtmp://h.example/live');
 });
