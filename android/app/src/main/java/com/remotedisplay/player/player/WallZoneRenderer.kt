@@ -288,8 +288,9 @@ class WallZoneRenderer(
             }
             val item = list[t.index]
             val m0 = mimeOf(item)
+            // An audio clip restarts per cycle like a video (MediaKind).
             val key = WallZones.mountKey(t.index, identity(item),
-                m0.startsWith("video/") && !isLive(m0) && m0 != "video/youtube", t.cycle)
+                (m0.startsWith("video/") && !isLive(m0) && m0 != "video/youtube") || MediaKind.isAudio(m0), t.cycle)
             if (key != zs.key) {
                 try { mount(zs, item, t, list.getOrNull(t.prevIndex)) } catch (e: Throwable) {
                     Log.w(TAG, "zone ${zs.z.name}: mount failed: ${e.message}")
@@ -469,6 +470,9 @@ class WallZoneRenderer(
                 m
             }
             mime.startsWith("video/") && mime != "video/youtube" -> buildVideo(zs, a, t, mime, audible, frozenAtEnd)
+            // An uploaded audio file (MediaKind): a clip on the wall clock with no picture. Audible
+            // only in the wall's audio zones, like a video (WallZones.audible above).
+            MediaKind.isAudio(mime) -> buildVideo(zs, a, t, mime, audible, frozenAtEnd)
             // YouTube (cannot be put on a clock) and unknown types: the zone shows its background.
             else -> null
         }
@@ -476,7 +480,9 @@ class WallZoneRenderer(
 
     private fun buildVideo(zs: ZoneState, a: JSONObject, t: WallZones.Target, mime: String, audible: Boolean, frozenAtEnd: Boolean): Media? {
         val src = srcOf(a) ?: return null
-        val pv = (android.view.LayoutInflater.from(context)
+        // Audio (MediaKind) has no picture: an empty view, not a PlayerView and its black shutter.
+        val audio = MediaKind.isAudio(mime)
+        val pv = if (audio) null else (android.view.LayoutInflater.from(context)
             .inflate(com.remotedisplay.player.R.layout.zone_player, null) as PlayerView).apply {
             useController = false
             resizeMode = when (fitOf(a, zs.z)) {
@@ -486,7 +492,7 @@ class WallZoneRenderer(
             }
         }
         val p = ExoPlayer.Builder(context).build()
-        val m = Media(pv, player = p)
+        val m = Media(pv ?: View(context), player = p)
         val live = isLive(mime)
         m.alignable = !live && !frozenAtEnd
         val mountedAt = syncedNow()
@@ -548,10 +554,12 @@ class WallZoneRenderer(
                 m.health?.error(SystemClock.elapsedRealtime())
             }
         })
-        pv.player = p
+        pv?.player = p
         p.prepare()
         p.playWhenReady = !frozenAtEnd
-        if (frozenAtEnd) revealNow(m)
+        // Audio never renders a first frame: reveal (and drop the outgoing picture) at once rather
+        // than holding the previous item over it until REVEAL_TIMEOUT_MS.
+        if (frozenAtEnd || audio) revealNow(m)
         return m
     }
 

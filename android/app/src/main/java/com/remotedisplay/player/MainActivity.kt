@@ -30,6 +30,7 @@ import androidx.core.content.ContextCompat
 import androidx.media3.ui.PlayerView
 import com.remotedisplay.player.data.ContentCache
 import com.remotedisplay.player.data.ServerConfig
+import com.remotedisplay.player.player.MediaKind
 import com.remotedisplay.player.player.MediaPlayerManager
 import com.remotedisplay.player.player.TransitionGLView
 import com.remotedisplay.player.player.TransitionGeometry
@@ -522,9 +523,10 @@ class MainActivity : AppCompatActivity() {
             report = { msg -> wsService?.sendLog("sync", "info", msg) },
             // Double buffer: warm the NEXT clip's second player if it's a locally-cached video, so the
             // boundary switch is a warm swap (no black hold). Non-video / uncached items just skip it.
+            // An audio file plays on the same clip player (MediaKind), so it warms the same way.
             onPreloadNext = { idx ->
                 val next = playlistController.itemAt(idx)
-                if (next != null && !next.isRemote && next.mimeType.startsWith("video/")) {
+                if (next != null && !next.isRemote && MediaKind.playsAsClip(next.mimeType)) {
                     contentCache.getCachedFile(next.contentId)?.let { mediaPlayer.preloadVideo(it) }
                 }
             }
@@ -1862,6 +1864,9 @@ class MainActivity : AppCompatActivity() {
                 applyVideoTurn(item)
                 mediaPlayer.playVideoFromUrl(item.remoteUrl!!, item.muted, item.tlsSelfSigned,
                     item.fisheye?.let { com.remotedisplay.player.player.Fisheye.View(it, item.contentId) }) // remote video: plain (no wipe)
+            } else if (MediaKind.isAudio(item.mimeType)) {
+                // A remote audio URL: streamed on the clip player, on the now-playing card.
+                mediaPlayer.playAudioFromUrl(item.remoteUrl!!, item.muted, MediaKind.audioTitle(item.filename))
             } else if (item.mimeType.startsWith("image/")) {
                 mediaPlayer.showImageFromUrl(item.remoteUrl!!, item.transition)
             }
@@ -1952,6 +1957,10 @@ class MainActivity : AppCompatActivity() {
             // A counter-turned view cannot be composited into a wipe (the snapshot is the stage's).
             val turn = applyVideoTurn(item)
             mediaPlayer.playVideo(file, item.muted, if (turn != 0f) null else item.transition)
+        } else if (MediaKind.isAudio(item.mimeType)) {
+            // An uploaded audio file (MediaKind): the clip path with no picture, on the now-playing
+            // card. It used to land in the else below and be skipped.
+            mediaPlayer.playAudio(file, item.muted, MediaKind.audioTitle(item.filename), item.transition)
         } else if (item.mimeType.startsWith("image/")) {
             mediaPlayer.showImage(file, item.transition)
         } else {
