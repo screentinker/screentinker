@@ -222,4 +222,15 @@ class ScreenShareProtocolTest {
         assertEquals(listOf("a"), ScreenShareProtocol.toReplace(listOf("a", "b", "c", "d")))
         assertEquals(listOf("a", "b"), ScreenShareProtocol.toReplace(listOf("a", "b", "c", "d", "e")))
     }
+
+    // A presenter's sound plays as media (USAGE_MEDIA = 1), never as a voice call (2), which on
+    // Android TV sticks follows the call volume and routing and could leave a share silent.
+    @Test fun shareSoundPlaysAsMediaNotACall() {
+        assertEquals(1, ScreenShareProtocol.PLAYOUT_USAGE)
+        assertEquals(3, ScreenShareProtocol.PLAYOUT_CONTENT_TYPE)
+        val src = java.io.File("src/main/java/com/remotedisplay/player/remote/ScreenShareReceiver.kt").readText()
+        assertTrue("the receiver's audio module is built with those attributes",
+            Regex("""JavaAudioDeviceModule\.builder\(appContext\)\s*\.setAudioAttributes\(playout\)""").containsMatchIn(src))
+        assertTrue(src.contains(".setUsage(ScreenShareProtocol.PLAYOUT_USAGE)"))
+    }
 }

@@ -18,6 +18,17 @@ object ScreenShareProtocol {
     const val CONNECT_TIMEOUT_MS = 45_000L
     /** Presenters on one screen at once (remote.screen_share_tiles; web: MAX_TILES). */
     const val MAX_TILES = 4
+
+    /*
+     * A presenter's sound plays as MEDIA, like the playlist's own videos. WebRTC's default is a voice
+     * call (USAGE_VOICE_COMMUNICATION): on Android TV sticks that follows the call volume and the
+     * device's call routing, and a screen played a share's picture with no sound "sometimes"
+     * (reported on an ONN stick, sharing from ChromeOS). A share only ever plays sound here (the
+     * microphone is never opened), so nothing a call needs is lost.
+     * The values of android.media.AudioAttributes, kept here so a JVM test can pin them.
+     */
+    const val PLAYOUT_USAGE = 1          // AudioAttributes.USAGE_MEDIA (USAGE_VOICE_COMMUNICATION is 2)
+    const val PLAYOUT_CONTENT_TYPE = 3   // AudioAttributes.CONTENT_TYPE_MOVIE
     /** The black frame round each tile when more than one is visible (web: border 2px solid #000). */
     const val TILE_BORDER_PX = 2
     private const val MAX_NAME = 40

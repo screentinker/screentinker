@@ -1,6 +1,7 @@
 package com.remotedisplay.player.remote
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -132,7 +133,16 @@ class ScreenShareReceiver(
                     PeerConnectionFactory.InitializationOptions.builder(appContext).createInitializationOptions()
                 )
                 // Playout only: with no local audio track the module never opens the microphone.
-                val module = JavaAudioDeviceModule.builder(appContext).createAudioDeviceModule().also { adm = it }
+                // Played as media, not as a call (ScreenShareProtocol.PLAYOUT_USAGE).
+                val playout = AudioAttributes.Builder()
+                    .setUsage(ScreenShareProtocol.PLAYOUT_USAGE)
+                    .setContentType(ScreenShareProtocol.PLAYOUT_CONTENT_TYPE)
+                    .build()
+                val module = JavaAudioDeviceModule.builder(appContext)
+                    .setAudioAttributes(playout)
+                    .setUseHardwareAcousticEchoCanceler(false)
+                    .setUseHardwareNoiseSuppressor(false)
+                    .createAudioDeviceModule().also { adm = it }
                 val egl = EglBase.create().also { eglBase = it }
                 val f = PeerConnectionFactory.builder()
                     .setAudioDeviceModule(module)
