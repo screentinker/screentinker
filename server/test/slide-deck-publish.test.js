@@ -220,6 +220,25 @@ test('duplicate slide ids are separated, so two slides cannot fight over one wid
   assert.notEqual(d.slides[0].id, d.slides[1].id);
 });
 
+test('⚠️ a slide copied with its original\'s widget_id publishes as its own widget and item, and the original keeps its widget', () => {
+  const db = freshDb();
+  const first = pub(db, { slides: [slide('s1', 'Original'), slide('s2', 'Other')] });
+  const origWidget = first.doc.slides[0].widget_id;
+  // A copy that kept everything, widget_id included: what a naive "duplicate" (or an old client) sends.
+  const copy = { ...JSON.parse(JSON.stringify(first.doc.slides[0])), id: 's1copy', fields: { head: 'Copy, edited' } };
+  const doc2 = { slides: [first.doc.slides[0], copy, first.doc.slides[1]] };
+  const second = pub(db, doc2, deckRow({ playlist_id: first.playlistId }), first.publishedWidgetIds);
+
+  assert.equal(second.doc.slides[0].widget_id, origWidget, 'the original lost its widget');
+  assert.ok(second.doc.slides[1].widget_id && second.doc.slides[1].widget_id !== origWidget,
+    'the copy shares the original\'s widget, so publishing one overwrites the other');
+  assert.equal(JSON.parse(db.prepare('SELECT config FROM widgets WHERE id = ?').get(origWidget).config).fields.head, 'Original',
+    'publishing the copy rewrote the original\'s widget');
+  const items = db.prepare('SELECT widget_id FROM playlist_items WHERE playlist_id = ? ORDER BY sort_order').all(second.playlistId);
+  assert.deepEqual(items.map((i) => i.widget_id), second.doc.slides.map((s) => s.widget_id),
+    'the playlist does not play the three slides in deck order');
+});
+
 test('dwell is clamped and defaulted rather than trusted', () => {
   const d = deckLib.normalizeDeck({ slides: [
     { id: 'a', dwell_sec: 0 }, { id: 'b', dwell_sec: 99999 }, { id: 'c' }, { id: 'd', dwell_sec: 'soon' }] });

@@ -118,3 +118,51 @@ test('history: an unrecorded change is recorded before undoing it', async () => 
   assert.equal(h.undo('B'), 'A');
   assert.equal(h.redo('A'), 'B');
 });
+
+test('a duplicated slide is a new, unpublished copy placed right after its original', async () => {
+  const { duplicateSlide } = await load();
+  const original = {
+    id: 's_orig', name: 'Lobby', dwell_sec: 17, widget_id: 'w-published',
+    template: {
+      background: '#123456', background_content_id: 'img1', background_dim: 0.3, audio: { vo: 'a1', vo_volume: 0.5 },
+      elements: [
+        { id: 'el_a', slot: 'f_a', kind: 'head', box: { x: 5, y: 6, w: 50 }, style: { color: '#FF0000', size_cqw: 7 },
+          motion: { animation: 'fade', delay: 0.4, duration: 0.9 } },
+        { id: 'el_b', slot: 'f_b', kind: 'image', content_id: 'img2', box: { x: 60, y: 10, w: 30, h: 30 } },
+        { slot: 'f_c', kind: 'body', box: { x: 5, y: 70, w: 80 } },
+      ],
+    },
+    fields: { f_a: 'Welcome', f_c: 'Details' },
+  };
+  const slides = [{ id: 's_first', widget_id: 'w1', template: { elements: [] }, fields: {} }, original,
+    { id: 's_last', widget_id: 'w3', template: { elements: [] }, fields: {} }];
+  const before = JSON.stringify(original);
+
+  const at = duplicateSlide(slides, 1, 'Lobby (copy)');
+  assert.equal(at, 2);
+  assert.equal(slides.length, 4);
+  assert.deepEqual(slides.map((s) => s.id).filter((id) => id !== slides[2].id), ['s_first', 's_orig', 's_last'],
+    'the copy did not land directly after its original');
+  const copy = slides[2];
+
+  // Nothing published carries over, and the identity is new.
+  assert.equal(copy.widget_id, null, 'the copy kept the original\'s widget_id, so publishing it would overwrite the original');
+  assert.notEqual(copy.id, original.id);
+  assert.equal(new Set(slides.map((s) => s.id)).size, slides.length, 'slide ids are not unique in the deck');
+  assert.equal(copy.name, 'Lobby (copy)');
+  const origIds = original.template.elements.map((e) => e.id).filter(Boolean);
+  for (const e of copy.template.elements) if (e.id != null) assert.ok(!origIds.includes(e.id), `element id ${e.id} was reused`);
+  assert.equal(copy.template.elements[2].id, undefined, 'an element without an id was given one');
+
+  // Everything the author made is the same.
+  const strip = (s) => ({ ...s, id: 0, name: 0, widget_id: 0,
+    template: { ...s.template, elements: s.template.elements.map((e) => ({ ...e, id: e.id == null ? e.id : 0 })) } });
+  assert.deepEqual(strip(copy), strip(original));
+
+  // ...and independent: editing the copy leaves the original untouched.
+  copy.fields.f_a = 'Changed'; copy.template.elements[0].box.x = 99; copy.template.audio.vo = 'other';
+  assert.equal(JSON.stringify(original), before, 'the copy shares objects with the original');
+
+  assert.equal(duplicateSlide(slides, 9), -1);
+  assert.equal(slides.length, 4);
+});

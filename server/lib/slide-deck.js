@@ -80,6 +80,7 @@ function normalizeDeck(raw) {
   const slidesIn = Array.isArray(doc.slides) ? doc.slides.slice(0, MAX_SLIDES) : [];
 
   const seen = new Set();
+  const seenWidgets = new Set();
   const slides = slidesIn.map((s, i) => {
     const src = (s && typeof s === 'object') ? s : {};
     // ⚠️ Slide ids must be unique WITHIN the deck: they are how a republish recognises a slide it
@@ -89,6 +90,14 @@ function normalizeDeck(raw) {
     if (!id || seen.has(id)) id = `s_${uuidv4().slice(0, 8)}`;
     seen.add(id);
 
+    // ⚠️ Likewise one widget per slide. A slide copied with its widget_id (a duplicate made by an
+    // older editor, a hand-edited document) would make publish write both slides into ONE widget
+    // and one playlist item, so the copy would replace the original on screen. The later twin is
+    // treated as never published and gets its own widget on the next publish.
+    let widgetId = typeof src.widget_id === 'string' && src.widget_id.length <= 64 ? src.widget_id : null;
+    if (widgetId && seenWidgets.has(widgetId)) widgetId = null;
+    if (widgetId) seenWidgets.add(widgetId);
+
     const dwell = Number(src.dwell_sec);
     return {
       id,
@@ -96,7 +105,7 @@ function normalizeDeck(raw) {
       dwell_sec: Number.isFinite(dwell) ? Math.min(MAX_DWELL, Math.max(MIN_DWELL, Math.round(dwell))) : 10,
       // Carried through publish so a republish updates the same widget rather than making another.
       // Never trusted for authorization — publish re-checks that the widget is this workspace's.
-      widget_id: typeof src.widget_id === 'string' && src.widget_id.length <= 64 ? src.widget_id : null,
+      widget_id: widgetId,
       ...sanitizeStored(src.template, src.fields),
     };
   });
