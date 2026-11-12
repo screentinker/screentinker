@@ -63,6 +63,18 @@ YT_CONSOLE_SHIM = ("<script>window.STYoutube={duration:function(t,d){console.log
                    "ended:function(t){console.log('ST_YT ended')}};</script>")
 
 
+def audio_title(filename):
+    """The "now playing" card's title: the file name without its extension."""
+    base = str(filename or "")
+    return re.sub(r"\.[A-Za-z0-9]{2,4}$", "", base) or base
+
+
+def audio_card(it):
+    """Slot fields for an audio item. `card` (a dark "now playing" card with a music note and the
+    title) is on by default; a zone turns it off and the audio plays with no picture."""
+    return {"card": True, "title": audio_title(it.filename)}
+
+
 def youtube_html(url, muted, play_to_end=False):
     """Android WebViewSupport.youtubeEmbedHtml, byte-compatible when the video loops. Loaded with a
     screentinker.com base so the iframe has a valid origin (a bare embed load gives YouTube's Error 153).
@@ -209,9 +221,10 @@ class ZoneRunner:
         self.token = rendered
         if not self.multi:
             return
-        # ⚠️ A widget arrives with no mime_type and Item defaults it to video/mp4, so ask is_widget
-        # first: a web page never sends "ended", and a zone that waited for one never rotated.
-        if it.mime_type.startswith("video/") and it.mime_type != "video/youtube" and not it.is_widget:
+        # ⚠️ A widget arrives with no mime_type and Item defaults it to video/mp4, so is_clip asks
+        # is_widget first: a web page never sends "ended", and a zone that waited for one never rotated.
+        # Audio is a clip too: it advances on "ended" like a video.
+        if it.is_clip:
             if it.is_live:
                 if it.duration_sec > 0:
                     self.timer.start(it.duration_sec * 1000)
@@ -667,7 +680,9 @@ class PlaybackEngine:
                 d.update(kind="web", source=it.remote_url)
             return d
         if it.is_remote:
-            if it.mime_type.startswith("video/"):
+            if it.is_audio:
+                d.update(kind="audio", source=it.remote_url, **audio_card(it))
+            elif it.mime_type.startswith("video/"):
                 d.update(kind="video", source=it.remote_url, holdEnd=not loop and not it.is_live)
             elif it.mime_type.startswith("image/"):
                 d.update(kind="image", source=it.remote_url)
@@ -678,7 +693,9 @@ class PlaybackEngine:
         if not path:
             return None
         src = pathlib.Path(path).as_uri()   # file:///C:/... on Windows; "file://"+path is not a URL there
-        if it.mime_type.startswith("video/"):
+        if it.is_audio:
+            d.update(kind="audio", source=src, **audio_card(it))
+        elif it.mime_type.startswith("video/"):
             d.update(kind="video", source=src, holdEnd=not loop)
         elif it.mime_type.startswith("image/"):
             d.update(kind="image", source=src)
@@ -693,6 +710,8 @@ class PlaybackEngine:
         d = self.item_dict(it, fit=fit, loop=loop, play_to_end=play_to_end)
         if d is None:
             return None
+        if surface.startswith("zone:"):
+            d["card"] = False              # audio in a zone plays with no picture
         tok = self._new_token(surface, it)
         d["token"] = tok
         skip_token = d.pop("skipToken", None)
@@ -815,8 +834,8 @@ class PlaybackEngine:
                                                      "current_content_id": it.content_id or "",
                                                      "position_sec": 0})
             return
-        # Group/wall followers loop video so they never freeze between leader updates.
-        loop = bool(self.controller.wall_follower and it.mime_type.startswith("video/"))
+        # Group/wall followers loop video (and audio) so they never freeze between leader updates.
+        loop = bool(self.controller.wall_follower and (it.mime_type.startswith("video/") or it.is_audio))
         tok = self.render(it, "main", loop=loop, play_to_end=self.controller.plays_to_end(it))
         if tok is None:
             if it.content_id and not it.is_remote:
@@ -879,7 +898,7 @@ class PlaybackEngine:
             self.controller.on_youtube_length(detail)
         elif event == "failed":
             self.app.log_remote("warn", "Player", "playback failed: %s (%s)" % (it.filename if it else "?", rtsp_tls.redact(detail)))
-            if it and it.mime_type.startswith("video/"):
+            if it and (it.mime_type.startswith("video/") or it.is_audio):
                 self.controller.close_play_log(False)
                 self.controller.on_video_fault()
             else:
@@ -1167,6 +1186,7 @@ class PlaybackEngine:
         d = self.item_dict(it, fit=fit, loop=False, muted=wz.zone_muted(zs.zid, self.wz_config, it.muted))
         if d is None:
             return None
+        d["card"] = False                  # audio in a wall zone plays with no picture
         if extra:
             d.update(extra)
         tok = self._new_token(zs.sid, it)
@@ -1209,7 +1229,7 @@ class PlaybackEngine:
         if self._wz_render(zs, it) is None:
             self._wz_release(zs)           # nothing this player can draw: the zone's background
             return
-        zs.video = it.mime_type.startswith("video/") and it.mime_type != "video/youtube" and not it.is_live
+        zs.video = it.is_clip and not it.is_live      # audio keeps to the wall clock like a clip
 
     def _wz_correct(self, zs, t):
         if not zs.video:

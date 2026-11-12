@@ -57,6 +57,9 @@ object ZoneTransitionPolicy {
             // pull frame 0 from without a second download, so it cuts (full screen: playVideoFromUrl).
             if (remoteUrl.isNullOrEmpty() && hasCachedFile) ZoneTarget.VIDEO_FILE else ZoneTarget.VIDEO_STREAM
         mimeType.startsWith("image/") -> ZoneTarget.IMAGE
+        // An audio file shows no picture and never renders a first frame: nothing to wipe into, and
+        // nothing an awaitVideoFrame could wait on. It cuts.
+        MediaKind.isAudio(mimeType) -> ZoneTarget.NONE
         else -> ZoneTarget.NONE
     }
 

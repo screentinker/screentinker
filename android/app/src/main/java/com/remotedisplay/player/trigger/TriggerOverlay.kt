@@ -171,7 +171,8 @@ class TriggerOverlay(
 
         val durMs = (item.optInt("duration_sec", 10).coerceAtLeast(1)) * 1000L
         val mime = item.optString("mime_type", "")
-        if (mime.startsWith("video/") || file.name.endsWith(".mp4") || file.name.endsWith(".webm")) {
+        // An audio file (an alarm tone) plays on the same player: sound over the overlay's dark frame.
+        if (mime.startsWith("video/") || com.remotedisplay.player.player.MediaKind.isAudio(mime) || file.name.endsWith(".mp4") || file.name.endsWith(".webm")) {
             val view = PlayerView(context)
             view.useController = false
             view.layoutParams = FrameLayout.LayoutParams(

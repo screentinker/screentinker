@@ -31,7 +31,7 @@ permissions:
 jobs:
   macos-player:
     name: macOS native player (tests, headless start, .app/.dmg)
-    runs-on: macos-14
+    runs-on: macos-15   # macos-14 is retired: GitHub cancels the job at once ("configuration not supported")
     timeout-minutes: 45
     env:
       # ⚠️ Never the runner's (or anyone's) mixer, exactly like a workstation run.

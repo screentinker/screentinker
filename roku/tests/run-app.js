@@ -7,7 +7,8 @@
  *
  * Starts this checkout's server (or SERVER_DIR) with a throwaway DATA_DIR, packages roku/, launches
  * it with the deep link server=<local>, pairs the code it shows through the dashboard API, gives the
- * display an image, a short generated video and a clock widget, and reads the player's "[st]" console
+ * display an image, a short generated video, a clock widget and two generated audio files (a WAV
+ * that must be played, an Ogg that must be skipped with a log line), and reads the player's "[st]" console
  * lines to check it showed each of them and reported plays.
  *
  * ⚠️ brs-node is a simulator. It runs the BrightScript and the SceneGraph node tree faithfully enough
@@ -95,6 +96,10 @@ function dropFirstRegisterProxy(target) {
     await srv.admin();
     const img = await srv.upload(path.join(REPO, 'frontend/assets/icon-512.png'), 'image/png');
     const vid = await srv.upload(srv.testVideo(4), 'video/mp4');
+    // Audio is asked for on the Video node like a clip; the simulator decodes nothing, so like the
+    // video it is moved past by the watchdog. Ogg is never asked for (no Ogg on Roku): skipped + logged.
+    const wav = await srv.upload(srv.testAudio(3, 'wav'), 'audio/wav');
+    const ogg = await srv.upload(srv.testAudio(3, 'ogg'), 'audio/ogg');
     const clock = await srv.widget('clock', 'Lobby clock', { timezone: 'America/Chicago' });
     // a widget the Roku cannot draw itself: shown as a server-rendered frame
     const note = await srv.widget('text', 'Welcome note', { html: '<h1 style="color:#fff;font:700 96px sans-serif;text-align:center;margin-top:40vh">Welcome to the lobby</h1>' });
@@ -130,8 +135,8 @@ function dropFirstRegisterProxy(target) {
         if (m && !pairing) {
           pairing = true;
           try {
-            deviceId = await srv.pairAndAssign(m[1], [{ content_id: img.id, duration_sec: 6 }, { content_id: vid.id }, { widget_id: clock.id, duration_sec: 8 }, { widget_id: note.id, duration_sec: 8 }]);
-            console.log(`  test> paired ${deviceId}; assigned and published image, video, clock`);
+            deviceId = await srv.pairAndAssign(m[1], [{ content_id: img.id, duration_sec: 6 }, { content_id: vid.id }, { content_id: wav.id }, { content_id: ogg.id }, { widget_id: clock.id, duration_sec: 8 }, { widget_id: note.id, duration_sec: 8 }]);
+            console.log(`  test> paired ${deviceId}; assigned and published image, video, audio (wav + ogg), clock`);
           } catch (e) { fail('pair/assign: ' + e.message); }
         }
       }
@@ -144,23 +149,28 @@ function dropFirstRegisterProxy(target) {
     if (proxy && !proxy.wasDropped()) fail('--drop-first-register: no device:register POST was ever seen to drop');
     if (proxy && !has(/session closed: post (timeout|rejected)/)) fail('--drop-first-register: the app never gave up on the dropped POST');
     if (!has(/\[st\] pairing: code \d{6}/)) fail('the app never showed a pairing code');
-    if (!has(/\[st\] payload: items=4/)) fail('the app never received the 4-item playlist');
+    if (!has(/\[st\] payload: items=6/)) fail('the app never received the 6-item playlist');
     if (!has(/\[st\] launch: complete/)) fail('the AppLaunchComplete beacon was never signalled');
     if (pressedAt < 0) fail('with Autoplay off the player never waited for OK');
     else {
       const started = seen.findIndex((l) => /\[st\] autoplay: started by the viewer/.test(l));
       if (started < 0) fail('OK did not start playback');
-      const early = seen.slice(0, started < 0 ? seen.length : started).filter((l) => /\[st\] play: play_start|show (image|video|raster) /.test(l));
+      const early = seen.slice(0, started < 0 ? seen.length : started).filter((l) => /\[st\] play: play_start|show (image|video|audio|raster) /.test(l));
       if (early.length) fail('something played before OK was pressed: ' + early[0]);
     }
     if (!has(/show image icon-512/)) fail('the image was never started');
     if (!has(/on screen .*\/uploads\/content\//)) fail('the image never reached the screen');
     if (!has(/show video /)) fail('the video was never started');
+    if (wav.mime_type !== 'audio/wav') fail(`the WAV upload was stored as ${wav.mime_type}`);
+    if (ogg.mime_type !== 'audio/ogg') fail(`the Ogg upload was stored as ${ogg.mime_type}`);
+    if (!has(/show audio test-tone\.wav/)) fail('the WAV audio item was never started');
+    if (has(/show \w+ test-tone\.og/)) fail('the Ogg audio item was started; it must be skipped');
+    if (!has(/skipping test-tone\.og\w* \(audio\/ogg\): Ogg\/Opus audio is not supported/)) fail('the Ogg skip was never logged');
     if (!has(/native clock /)) fail('the clock widget was not drawn natively');
     if (!has(/show raster Welcome note/)) fail('the text widget was never started');
     if (!has(/\[st\] play: play_start/)) fail('no play_start was reported');
     if (process.env.EXPECT_RASTER && !has(/on screen tmp:\/st\//)) fail('no server-rendered frame reached the screen');
-    if (process.env.EXPECT_TZ && !has(/payload: items=4 tz=America\/Chicago\/\d+/)) fail('the payload carried no tz_table');
+    if (process.env.EXPECT_TZ && !has(/payload: items=6 tz=America\/Chicago\/\d+/)) fail('the payload carried no tz_table');
     const crashes = seen.filter((l) => /BRIGHTSCRIPT: ERROR|Runtime Error/i.test(l));
     if (crashes.length) { fail('BrightScript errors:'); for (const c of crashes.slice(0, 10)) console.log('   ' + c); }
     // A playlist push must not restart playback from item one (#234).

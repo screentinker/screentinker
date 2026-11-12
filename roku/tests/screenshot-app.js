@@ -12,6 +12,7 @@
  *
  * Saves: 01-pairing.png, then one frame every few seconds once the display has a playlist
  * (image, video request, server-rendered widget frame), and a layout run if --layout is given.
+ * --audio instead plays an image and a generated MP3, for the full-screen "now playing" card.
  * A visual check, not an assertion suite — run-app.js is the assertion suite.
  */
 
@@ -131,6 +132,9 @@ let logsRef = [];
         { content_id: vid.id, zone_id: main.id }, { content_id: img.id, zone_id: main.id, duration_sec: 6 },
         { widget_id: ny.id, zone_id: side.id, duration_sec: 10 }, { content_id: img.id, zone_id: side.id, duration_sec: 6 },
       ], 'Roku lobby', lay.id);
+    } else if (process.argv.includes('--audio')) {
+      const mp3 = await srv.upload(srv.testAudio(10, 'mp3'), 'audio/mpeg');
+      id = await srv.pairAndAssign(code, [{ content_id: img.id, duration_sec: 6 }, { content_id: mp3.id }]);
     } else {
       id = await srv.pairAndAssign(code, [{ content_id: img.id, duration_sec: 6 }, { widget_id: clock.id, duration_sec: 8 }, { widget_id: ny.id, duration_sec: 8 }, { content_id: vid.id }]);
     }
