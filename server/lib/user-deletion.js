@@ -93,6 +93,8 @@ const WORKSPACE_INTEGRATIONS = [
   ['cloud_folders', [['cloud_folder_items', 'folder_id'], ['cloud_folder_removed', 'folder_id']]],
   ['social_feeds', [['social_posts', 'feed_id']]],
   ['rooms', [['room_bookings', 'room_id'], ['room_checkins', 'room_id']]],
+  // "Now serving" queues (lib/queue/service.js): tickets and the staff log go with their queue.
+  ['queues', [['queue_tickets', 'queue_id'], ['queue_events', 'queue_id']]],
   ['automation_hooks', [['automation_hook_calls', 'hook_id']]],
   ['automation_subscriptions', [['automation_deliveries', 'subscription_id']]],
   // Includes the hidden push-mode feeds automation hooks raise their alerts on (source = 'hook').

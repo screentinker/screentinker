@@ -48,6 +48,13 @@ const LIMIT_PATH_SHAPES = [
    * code is a secret — folded so a guess neither mints its own bucket nor lands in a 429 log line.
    */
   [/^\/r\/[^/]+$/, () => '/r/:code'],
+  /*
+   * "Now serving" queues: the customer page's token is a credential in the path, folded so a guess
+   * neither mints its own bucket nor writes the token into a 429 log line.
+   */
+  [/^\/queue\/[^/]+$/, () => '/queue/:token'],
+  [/^\/api\/public\/queue\/c\/[^/]+\/(state|ticket)$/, (m) => `/api/public/queue/c/:token/${m[1]}`],
+  [/^\/api\/public\/queue\/c(\/.*)?$/, () => '/api/public/queue/c/:unmatched'],
   [/^\/api\/public\/requests\/form\/[^/]+\/uploads\/[^/]+$/, () => '/api/public/requests/form/:code/uploads/:id'],
   [/^\/api\/public\/requests\/form\/[^/]+(\/start|\/verify|\/verify\/confirm|\/sso|\/uploads|\/submit)?$/, (m) => `/api/public/requests/form/:code${m[1] || ''}`],
   [/^\/api\/public\/requests\/form(\/.*)?$/, () => '/api/public/requests/form/:unmatched'],

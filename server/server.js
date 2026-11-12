@@ -1632,6 +1632,24 @@ app.use('/api/hooks/in', rateLimit(60000, 240), require('./routes/hooks-in'));
  */
 app.use('/api/room-panel', rateLimit(60000, 1200), require('./routes/room-panel'));
 /*
+ * "Now serving" queues (lib/queue/service.js, docs/now-serving-queue.md): the customer page a QR code
+ * opens (/queue/<public token>), the staff page (/queue-staff, its key in the URL FRAGMENT so it never
+ * reaches this server's logs) and the API both poll. No session by design. The pages are static and
+ * run under the dashboard CSP; the per-IP limit on the API is generous because a venue's customers
+ * share one Wi-Fi address, and the router adds tighter ones per action (20 new tickets a minute).
+ */
+{
+  const queuePage = (file) => (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.set('Referrer-Policy', 'no-referrer');
+    res.set('X-Robots-Tag', 'noindex, nofollow');
+    res.sendFile(path.join(config.frontendDir, file));
+  };
+  app.get('/queue/:token', rateLimit(60000, 240), queuePage('queue.html'));
+  app.get(['/queue-staff', '/queue-staff/'], rateLimit(60000, 240), queuePage('queue-staff.html'));
+  app.use('/api/public/queue', rateLimit(60000, 2400), require('./routes/queue-public'));
+}
+/*
  * 3.0 site cache: the door a site's cache BOX uses (manifest, bytes, status) — routes/site-cache-node.js.
  * Its own token, no session, so it is outside the router loops. 1200/min per IP: a box pre-warming a
  * new playlist asks for one blob after another, and a whole site sits behind one NAT address.
@@ -2253,6 +2271,7 @@ const { PUBLIC_ROUTERS, JWT_ONLY_ROUTERS, AGENCY_ROUTERS } = require('./config/a
 // BEFORE their parent router mount so the _skipAuth bypass / the limiter fire first.
 app.get('/api/widgets/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
 app.get('/api/widgets/:id/data.json', (req, res, next) => { req._skipAuth = true; next(); });
+app.get('/api/widgets/:id/queue.json', (req, res, next) => { req._skipAuth = true; next(); }); // "Now serving" widget poll (lib/queue/widget.js)
 app.post('/api/widgets/:id/telemetry', (req, res, next) => { req._skipAuth = true; next(); }); // diag widget reports frame stats (null-origin iframe)
 app.get('/api/widgets/:id/telemetry', (req, res, next) => { req._skipAuth = true; next(); });
 app.get('/api/widgets/preview-session/:id', (req, res, next) => { req._skipAuth = true; next(); });

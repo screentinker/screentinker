@@ -5464,6 +5464,62 @@ migrationStep('#796 library folders for widgets, playlists and schedules', () =>
   if (!had) console.log('[migrate] library_folders + library_folder_items created (#796)');
 });
 
+migrationStep('now serving queues', () => {
+  /*
+   * "Now serving" queues (lib/queue/service.js, docs/now-serving-queue.md). One row per queue holds
+   * the whole live state: the local day it belongs to, how many numbers were handed out and which
+   * one is being served. `round` goes up on every restart (local midnight or a manual start of
+   * day), so a ticket from an earlier round can never be mistaken for one of today's.
+   *
+   * public_token opens the customer page; staff_token is the staff link's capability (compared in
+   * constant time, never logged, never shown to a read-only member). Both are 32 random bytes.
+   * Tickets keep a number and an optional browser-made random id (for "scan again, same number"),
+   * nothing about the person. queue_events is the staff log, trimmed to the last 20 per queue.
+   */
+  const had = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'queues'").get();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS queues (
+      id            TEXT PRIMARY KEY,
+      workspace_id  TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      name          TEXT NOT NULL,
+      timezone      TEXT NOT NULL DEFAULT 'UTC',
+      public_token  TEXT NOT NULL UNIQUE,
+      staff_token   TEXT,
+      day           TEXT NOT NULL,
+      round         INTEGER NOT NULL DEFAULT 1,
+      last_issued   INTEGER NOT NULL DEFAULT 0,
+      now_serving   INTEGER NOT NULL DEFAULT 0,
+      call_seq      INTEGER NOT NULL DEFAULT 0,
+      rev           INTEGER NOT NULL DEFAULT 1,
+      max_per_day   INTEGER NOT NULL DEFAULT 999,
+      sound_on      INTEGER NOT NULL DEFAULT 1,
+      created_by    TEXT,
+      created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at    INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_queues_ws ON queues (workspace_id);
+    CREATE TABLE IF NOT EXISTS queue_tickets (
+      queue_id   TEXT NOT NULL REFERENCES queues(id) ON DELETE CASCADE,
+      round      INTEGER NOT NULL,
+      number     INTEGER NOT NULL,
+      client_id  TEXT,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (queue_id, round, number)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_tickets_client ON queue_tickets (queue_id, round, client_id) WHERE client_id IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS queue_events (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      queue_id  TEXT NOT NULL REFERENCES queues(id) ON DELETE CASCADE,
+      at        INTEGER NOT NULL,
+      kind      TEXT NOT NULL,
+      number    INTEGER,
+      source    TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_queue_events_queue ON queue_events (queue_id, id);
+  `);
+  if (!had) console.log('[migrate] queues + queue_tickets + queue_events created (now serving)');
+});
+
 /*
  * #792: a content request can carry a WEBSITE instead of a file. It becomes a webpage widget (the
  * thing every player already renders for a URL), so the request points at a widget instead of a

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0f172a">
+<title>Queue staff</title>
+<style>
+  :root { --bg:#0b1120; --card:#111827; --text:#f1f5f9; --muted:#94a3b8; --border:#1f2937; --accent:#16a34a; --accent2:#2563eb; --danger:#f87171; --big:#facc15; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  .wrap { max-width:640px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:14px; margin-bottom:16px; }
+  .now { text-align:center; background:var(--card); border:1px solid var(--border); border-radius:18px; padding:18px; }
+  .now .label { color:var(--muted); font-size:14px; text-transform:uppercase; letter-spacing:.06em; }
+  .now .num { font-size:120px; font-weight:800; line-height:1; color:var(--big); font-variant-numeric:tabular-nums; }
+  .now .waiting { font-size:16px; color:var(--muted); margin-top:6px; }
+  button { font:inherit; font-weight:700; border:0; border-radius:14px; cursor:pointer; color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  #next { width:100%; font-size:40px; padding:28px 16px; background:var(--accent); margin:16px 0; min-height:120px; }
+  .row { display:flex; gap:10px; margin:10px 0; flex-wrap:wrap; }
+  .row input[type=number] { flex:1; min-width:120px; font:inherit; font-size:22px; padding:12px; border-radius:12px; border:1px solid var(--border); background:var(--card); color:var(--text); }
+  .row button { font-size:18px; padding:12px 18px; background:var(--accent2); }
+  .secondary { background:transparent !important; border:1px solid var(--border) !important; color:var(--text) !important; font-size:16px; padding:12px 16px; }
+  .toggle { display:flex; align-items:center; gap:10px; font-size:17px; }
+  .toggle input { width:26px; height:26px; }
+  .msg { min-height:1.4em; color:var(--danger); font-size:15px; margin:8px 0; }
+  h2 { font-size:15px; color:var(--muted); margin:22px 0 8px; font-weight:600; }
+  ol { list-style:none; margin:0; padding:0; }
+  li { display:flex; gap:12px; padding:8px 0; border-bottom:1px solid var(--border); font-size:15px; }
+  li time { color:var(--muted); min-width:96px; white-space:nowrap; flex:none; font-variant-numeric:tabular-nums; }
+  .stale { color:var(--muted); font-size:13px; text-align:center; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1 id="qname"></h1>
+  <div class="sub" id="sub"></div>
+  <div id="bad" class="msg" hidden></div>
+  <div id="app" hidden>
+    <div class="now">
+      <div class="label" id="nowLabel"></div>
+      <div class="num" id="num">&#8211;</div>
+      <div class="waiting" id="waiting"></div>
+    </div>
+    <button type="button" id="next"></button>
+    <div class="msg" id="msg" aria-live="polite"></div>
+    <div class="row">
+      <input type="number" id="callNum" min="1" inputmode="numeric">
+      <button type="button" id="callBtn"></button>
+    </div>
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <label class="toggle"><input type="checkbox" id="sound"> <span id="soundLabel"></span></label>
+      <button type="button" class="secondary" id="reset"></button>
+    </div>
+    <div class="stale" id="stale"></div>
+    <h2 id="logTitle"></h2>
+    <ol id="log"></ol>
+  </div>
+</main>
+<script type="module" src="/js/queue-staff-page.js"></script>
+</body>
+</html>

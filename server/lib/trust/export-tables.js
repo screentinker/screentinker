@@ -100,6 +100,10 @@ const EXPORTED = {
   qr_links: { category: 'signs', scope: ws() },
   mixer_scenes: { category: 'signs', scope: ws() },
   qr_scans: { category: 'signs', scope: via('link_id', 'qr_links') },
+  // "Now serving" queues: the queue's settings and its last 20 staff events. Both links are tokens
+  // (dropped by name like every credential); the day's tickets are excluded below.
+  queues: { category: 'signs', scope: ws() },
+  queue_events: { category: 'signs', scope: via('queue_id', 'queues') },
   // widgets
   widgets: { category: 'widgets', scope: ws() },
   // data sources and feeds (configs only: secrets are redacted)
@@ -261,6 +265,7 @@ const EXCLUDED = {
   embedded_cursor: 'transient player position',
   embedded_zone_cursor: 'transient player position',
   room_panel_presence: 'transient panel heartbeat',
+  queue_tickets: 'today\'s queue numbers: transient, deleted every day, and nothing about the person',
   play_log_rollup_dirty: 'internal rollup bookkeeping',
   play_log_rollup_state: 'internal rollup bookkeeping',
   player_debug_logs: 'short-lived player diagnostics keyed by device, not tenant',

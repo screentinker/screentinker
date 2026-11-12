@@ -24,6 +24,7 @@ import * as servers from './views/servers.js';
 import * as noc from './views/noc.js';
 import * as triggers from './views/triggers.js';
 import * as qrCodes from './views/qr-codes.js';
+import * as queuePage from './views/queue.js';
 import * as experiments from './views/experiments.js';
 import * as socialFeeds from './views/social.js';
 import * as alerts from './views/alerts.js';
@@ -276,6 +277,7 @@ const NAV_LABEL_KEYS = {
   servers: 'nav.servers',
   triggers: 'nav.triggers',
   'qr-codes': 'nav.qr_codes',
+  queue: 'nav.queue',
   social: 'nav.social',
   alerts: 'nav.alerts',
   'site-caches': 'nav.site_caches',
@@ -819,6 +821,10 @@ function route() {
   } else if (hash === '#/qr-codes') {
     currentView = qrCodes;
     qrCodes.render(app);
+  } else if (hash === '#/queue') {
+    // "Now serving" queues (views/queue.js, docs/now-serving-queue.md).
+    currentView = queuePage;
+    queuePage.render(app);
   } else if (hash === '#/social') {
     currentView = socialFeeds;
     socialFeeds.render(app);

@@ -2458,6 +2458,63 @@
       }
     }
 
+    /* =============== "Now serving" chime (lib/queue/widget.js) ===============
+     *
+     * The queue widget never makes a sound itself, for the reason the slide audio above lives in the
+     * shell: noise from inside a widget iframe would sit outside the mute decision. It only ASKS, once
+     * per called number, with {type:'st-queue-chime', volume}. Here the request is honoured only when
+     *   - it came from a frame this page mounted,
+     *   - the same decision every other sound obeys says the screen may be heard (wall follower,
+     *     remote mute, the item's own mute when the widget is the playing item, the autoplay gesture,
+     *     an alarm overlay holding the audio), and
+     *   - no chime played in the last 3 seconds (a burst of calls is one chime, never a run).
+     * The sound is two short synthesised tones, ~0.9 s, through the shared AudioContext: nothing to
+     * download, nothing that loops. If the context cannot run (no gesture on a browser that wants
+     * one), nothing plays and nothing else changes.
+     */
+    let queueChimeAt = 0;
+    function playQueueChime(volume, widgetId) {
+      try {
+        const cur = playlist[currentIndex];
+        const item = cur && widgetId && cur.widget_id === widgetId ? cur : null;
+        if (applyMuteWanted(item)) return;
+        let v = Number(volume);
+        if (!isFinite(v)) v = 0.6;
+        v = Math.max(0, Math.min(1, v));
+        if (typeof mediaVolume === 'number' && isFinite(mediaVolume)) v *= Math.max(0, Math.min(1, mediaVolume));
+        if (!(v > 0)) return;
+        const now = Date.now();
+        if (now - queueChimeAt < 3000) return;
+        queueChimeAt = now;
+        if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const ctx = _audioCtx;
+        const go = () => {
+          if (ctx.state !== 'running') return;
+          const t0 = ctx.currentTime + 0.02;
+          [[880, 0, 0.35], [660, 0.38, 0.5]].forEach(([freq, at, len]) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.0001, t0 + at);
+            gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.5 * v), t0 + at + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + len);
+            osc.connect(gain); gain.connect(ctx.destination);
+            osc.start(t0 + at); osc.stop(t0 + at + len + 0.05);
+          });
+        };
+        if (ctx.state === 'suspended') ctx.resume().then(go).catch(() => { /* no gesture: stay silent */ });
+        else go();
+      } catch (e) { /* sound is optional; never disturb playback */ }
+    }
+    window.addEventListener('message', (ev) => {
+      const d = ev.data;
+      if (!d || d.type !== 'st-queue-chime' || !ev.source) return;
+      const ours = Array.prototype.some.call(document.querySelectorAll('iframe'), (f) => f.contentWindow === ev.source);
+      if (!ours) return;
+      playQueueChime(d.volume, typeof d.widget_id === 'string' ? d.widget_id : null);
+    });
+
     /*
      * A click target for sound, because the slide's own iframe eats the one the player relies on.
      *

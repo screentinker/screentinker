@@ -213,6 +213,12 @@ const JWT_ONLY_ROUTERS = [
    */
   { path: '/api/rooms', mod: './routes/rooms', tenancy: true },
   /*
+   * "Now serving" queues (lib/queue). JWT only: the answer to a member who can write carries the
+   * staff link, which is a credential. The customer page, the staff link and the widget's poll are
+   * mounted separately in server.js (/api/public/queue, /api/widgets/:id/queue.json).
+   */
+  { path: '/api/queues', mod: './routes/queues', tenancy: true },
+  /*
    * Audience counting (lib/audience.js). JWT only: switching a screen's camera on is a privacy
    * decision for an org owner or admin, never something an API token can do.
    */
