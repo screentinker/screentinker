@@ -30,6 +30,11 @@
   var codeState = null; // last code payload, so the badge can come back after a share
   var lastLabels = {};
   var overlayEl = null;
+  // #845: an emergency/trigger overlay is on screen (the player calls suppress()). The shares stay
+  // connected but are hidden and silent, and the "share your screen" QR is off, until it clears.
+  // The server already ends shares and drops the code for alerts it knows about; this covers a
+  // trigger fired at the screen itself (HTTP/UDP), which the server never hears of.
+  var suppressed = false;
 
   function dbg(msg) { try { if (window.__stTalkDebug) console.log('[share] ' + msg); } catch (_) {} }
 
@@ -50,6 +55,7 @@
     var o = document.createElement('div');
     o.id = 'st-share-overlay';
     o.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;background:#000;z-index:2147483100;overflow:hidden';
+    if (suppressed) o.style.visibility = 'hidden';
     document.body.appendChild(o);
     overlayEl = o;
     return o;
@@ -132,7 +138,7 @@
         // One tile: no frame, exactly as a single share always looked.
         s.tile.style.borderWidth = vis.length > 1 ? '2px' : '0';
       }
-      try { s.audio.muted = s.id !== sound; } catch (_) {}
+      try { s.audio.muted = suppressed || s.id !== sound; } catch (_) {}
     }
     try { paintCode(lastLabels); } catch (_) {}
   }
@@ -161,7 +167,7 @@
 
   function paintCode(labels) {
     var el = codeBadge();
-    if (!codeState || !codeState.code) { el.style.display = 'none'; el.removeAttribute('data-compact'); return; }
+    if (!codeState || !codeState.code || suppressed) { el.style.display = 'none'; el.removeAttribute('data-compact'); return; }
     var parts = el.__parts;
     var img = parts.img;
     var compact = order.length > 0;
@@ -339,6 +345,7 @@
     // What is on screen, for the remote viewer's capture: the visible tiles, in fractions of the
     // screen, each with its video (if any frames yet), its label and its "connecting" line.
     tilesOnScreen: function () {
+      if (suppressed) return [];   // #845: the remote view shows the alert, as the screen does
       var vis = visibleIds();
       var o = overlayEl;
       var portrait = !!(o && o.clientHeight > o.clientWidth);
@@ -354,6 +361,19 @@
       }
       return out;
     },
+
+    // #845: hide (true) or bring back (false) every share and the code, for an alert on screen.
+    // Idempotent; sessions keep running underneath, so a share comes back intact afterwards.
+    suppress: function (on) {
+      on = !!on;
+      if (on === suppressed) return;
+      suppressed = on;
+      try { if (overlayEl) overlayEl.style.visibility = on ? 'hidden' : ''; } catch (_) {}
+      for (var i = 0; i < order.length; i++) { try { sessions[order[i]].audio.muted = true; } catch (_) {} }
+      try { relayout(); } catch (_) {}
+      try { paintCode(lastLabels); } catch (_) {}
+    },
+    suppressed: function () { return suppressed; },
 
     // The meeting-room code. payload: { code, url, qr } or { code: null } to hide it.
     showCode: function (payload, labels) {

@@ -4883,6 +4883,11 @@
       // 3.0: a screen share ducks the playlist the same way (typeof: tests compile this alone).
       const sharing = typeof shareDucking !== 'undefined' && shareDucking;
       try { setBaseAudioSuppressed(!!(triggerActive && triggerActive.coversBase) || talkDucking || sharing); } catch (e) {}
+      // #845: a trigger (an emergency / automation alert) outranks a screen share. The share overlay
+      // and its QR draw above everything, so while ANY trigger is on screen they are hidden and
+      // silent, and they come back when it clears. (The server ends shares for alerts it knows of;
+      // a trigger fired at this screen directly is only known here.)
+      try { if (window.STScreenShare && window.STScreenShare.suppress) window.STScreenShare.suppress(!!triggerActive); } catch (e) {}
     }
 
     // #talk: while a voice call / PA announcement is active on this device, duck the playlist so the

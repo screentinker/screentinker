@@ -296,12 +296,14 @@ async function pollFeed(db, feed, { fetcher = testFetcher } = {}) {
 /* ============================== live state + pushes ============================== */
 
 function pushTo(deviceIds) {
-  if (!io || !deviceIds.length) return;
-  try {
+  if (!deviceIds.length) return;
+  if (io) try {
     const { buildPlaylistPayload } = require('../../ws/deviceSocket');
     const commandQueue = require('../command-queue');
     for (const id of deviceIds) commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), id, buildPlaylistPayload);
   } catch (e) { /* best effort: the next payload build reads the same state */ }
+  // #845: the alert outranks a screen share: end shares on the screens it now covers, hide their codes.
+  try { require('../screen-share').alertChanged(deviceIds); } catch (_) { /* best effort */ }
 }
 
 /**

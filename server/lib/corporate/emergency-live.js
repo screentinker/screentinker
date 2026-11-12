@@ -140,8 +140,8 @@ function pushDevices(ids) {
   if (!ids || !ids.length) return { online: 0, queued: 0 };
   let online = 0;
   let queued = 0;
-  try {
-    if (!io) return { online: 0, queued: ids.length };
+  if (!io) queued = ids.length;
+  else try {
     const { buildPlaylistPayload } = require('../../ws/deviceSocket');
     const commandQueue = require('../command-queue');
     const ns = io.of('/device');
@@ -150,6 +150,8 @@ function pushDevices(ids) {
       if (r && r.delivered) online++; else queued++;
     }
   } catch (e) { console.warn(`[emergency] push failed: ${e && e.message}`); }
+  // #845: the alert outranks a screen share: end shares on the screens it now covers, hide their codes.
+  try { require('../screen-share').alertChanged(ids); } catch (e) { console.warn(`[emergency] screen share update failed: ${e && e.message}`); }
   return { online, queued };
 }
 

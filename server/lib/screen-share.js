@@ -107,15 +107,32 @@ function isOnline(deviceId) {
 }
 
 /*
+ * #845: AN EMERGENCY ALERT OUTRANKS A SCREEN SHARE. While head office has an alert live on this
+ * screen (lib/corporate/emergency-live.js) or a CAP feed's alert has taken it (lib/cap/feeds.js),
+ * the screen takes no share, shows no "share your screen" code, and a share already on it is ended
+ * the moment the alert is raised (alertChanged, called by both). The share overlay and its QR draw
+ * above everything on every player, so this is the only place the alert can win; deciding it here
+ * covers every player with no player change. The same two checks the payload build makes, both a
+ * Map.size test when nothing is live.
+ */
+function alertLive(deviceId) {
+  if (!deviceId) return false;
+  try { if (require('./corporate/emergency-live').activationFor(db, deviceId)) return true; } catch (_) { /* no emergency tables */ }
+  try { if (require('./cap/feeds').overrideFor(db, deviceId)) return true; } catch (_) { /* no CAP tables */ }
+  return false;
+}
+
+/*
  * Whether this screen can be shared to right now, and if not, why — the reason is what the
  * dashboard shows, so each is distinct: 'disabled' (server), 'workspace_disabled', 'unsupported'
- * (the player does not declare remote.screen_share), 'offline', 'busy'.
+ * (the player does not declare remote.screen_share), 'offline', 'emergency' (#845), 'busy'.
  */
 function availability(device, workspace, roomKey) {
   if (!featureOn()) return { ok: false, reason: 'disabled' };
   if (!workspaceOn(workspace)) return { ok: false, reason: 'workspace_disabled' };
   if (!playerCapabilities.supports(device, CAP)) return { ok: false, reason: 'unsupported' };
   if (!isOnline(device.id)) return { ok: false, reason: 'offline' };
+  if (alertLive(device.id)) return { ok: false, reason: 'emergency' };
   // A leg on a display's MIRROR, for a share started on the display (roomKey): see legRoomFor.
   if (roomKey && roomKey !== device.id) {
     const why = legRoomFor(device, roomKey, null);
@@ -348,7 +365,8 @@ function endSession(s, reason, by) {
   if (s.onMirrorAlone && !legsOn(src).length) dropCode(src);
   if (codes.has(src) || guestEnabled(src)) pushCode(s.deviceId);
   // A mirror leg that failed is not handed to the same presenter again until the mirror reconnects.
-  if (s.roomKey !== s.deviceId && reason !== 'spotlight_changed' && roomState.has(s.roomKey)) {
+  // (An alert taking the mirror is not a failure: it rejoins when the alert clears, #845.)
+  if (s.roomKey !== s.deviceId && reason !== 'spotlight_changed' && reason !== 'emergency' && roomState.has(s.roomKey)) {
     const st = roomState.get(s.roomKey);
     if (!st.gaveUp) st.gaveUp = new Map();
     if (!st.gaveUp.has(s.deviceId)) st.gaveUp.set(s.deviceId, new Set());
@@ -651,9 +669,10 @@ function rotateCode(deviceId) {
 }
 
 // The current code for a screen that should show one, minting or rotating as needed; null when the
-// screen should show none (feature off, guest sharing off, offline, or a share is running).
+// screen should show none (feature off, guest sharing off, offline, a share is running, or an
+// emergency alert is on it: #845, the QR must never sit on an alert).
 function currentCode(deviceId) {
-  if (!guestEnabled(deviceId) || !isOnline(deviceId) || !roomHasSlot(deviceId)) { dropCode(deviceId); return null; }
+  if (!guestEnabled(deviceId) || !isOnline(deviceId) || !roomHasSlot(deviceId) || alertLive(deviceId)) { dropCode(deviceId); return null; }
   const c = codes.get(deviceId);
   if (c && c.expiresAt > Date.now()) return c;
   return rotateCode(deviceId);
@@ -690,6 +709,7 @@ function codeSource(deviceId) { return mirrorsLib().sourceOf(deviceId) || device
 function mirrorShowsCode(mirrorId, srcWorkspaceId) {
   const src = codeSource(mirrorId);
   if (legsOn(mirrorId).some((l) => l.roomKey !== src)) return false;
+  if (alertLive(mirrorId)) return false;   // #845: never over an alert
   try {
     const m = db.prepare('SELECT * FROM devices WHERE id = ?').get(mirrorId);
     return !!(m && m.workspace_id && m.workspace_id === srcWorkspaceId && playerCapabilities.supports(m, CAP));
@@ -817,7 +837,7 @@ function mintLeg(p, mirror, ws, roomKey) {
 const filling = new Set();
 function fillScreen(mirrorId, roomKey, all) {
   const made = [];
-  if (filling.has(mirrorId) || !featureOn() || !isOnline(mirrorId)) return made;
+  if (filling.has(mirrorId) || !featureOn() || !isOnline(mirrorId) || alertLive(mirrorId)) return made;   // #845
   const presenters = roomPresenters(roomKey);
   if (!presenters.length) return made;
   const mirror = deviceRow(mirrorId);
@@ -1232,6 +1252,24 @@ function attach(server) {
   return wss;
 }
 
+/*
+ * #845: an emergency alert was raised or cleared on these screens (lib/corporate/emergency-live.js
+ * and lib/cap/feeds.js call this right after pushing the new playlist). A screen the alert now covers
+ * loses every share on it, ended with reason 'emergency' so the presenter is told why, and its code
+ * (and its mirrors') goes away. A screen the alert has left gets its code back, and a mirror rejoins
+ * a share still running on its display. Shares on screens outside the alert are untouched.
+ */
+function alertChanged(deviceIds) {
+  if (!featureOn() || !Array.isArray(deviceIds)) return;
+  for (const id of new Set(deviceIds)) {
+    try {
+      if (alertLive(id)) stopForDevice(id, 'emergency', null);
+      else joinLiveShare(id);
+      pushCode(id);
+    } catch (e) { console.warn(`[screen-share] alert change on ${id}: ${e && e.message}`); }
+  }
+}
+
 function init(io) {
   deviceNs = io ? io.of('/device') : null;
   if (!sweepTimer) { sweepTimer = setInterval(sweep, 30 * 1000); unrefTimer(sweepTimer); }
@@ -1250,5 +1288,6 @@ module.exports = {
   maxPresenters, multiOn, slotsFor, canTile, roomPresenters, roomHasSlot, publicPresenters, setSpotlight, removePresenter, opaqueId, guestName,
   maxTargets, expandShareTargets, withMirrors, createDisplayShare, displayShareBody, createShare, stopShare, sessionsForShare,
   guestEnabled, currentCode, rotateCode, redeemCode, normaliseCode, formatCode, pushCode, dropCode, onDeviceRegistered, codeSource, joinLiveShare,
+  alertLive, alertChanged,
   _reset, _sessions: sessions, _codes: codes, _sweep: sweep,
 };
