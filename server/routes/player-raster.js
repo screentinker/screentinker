@@ -195,6 +195,7 @@ const DEVICE_SCOPED_WIDGETS = new Set(['room-display', 'diag-smoothness']);
 const RASTER_EXTRA_PERIODS = {
   cap_alert: 60,          // live alerts change under the card
   'room-display': 60,     // meetings start and end
+  queue: 15,              // "Now serving": the number changes when staff press Next
   'menu-board': 300,      // prices and 86'd items come from a data source
   template: 300,          // a template may bind data or draw the time
   'bi-dashboard': 300,

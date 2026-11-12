@@ -157,6 +157,8 @@ const ORG_IMPORT_SKIPS = {
 
 /* Never restored, in either mode — each with the reason. */
 const NOT_RESTORED = {
+  queues: 'A queue\'s customer and staff links are credentials that do not leave a server. Create the queue again on the new server, print its new QR code and hand staff the new link.',
+  queue_events: 'The old server\'s queue log (the last 20 calls) follows the queue, which is created again.',
   mixer_scenes: 'Mixer scenes name their source and cameras by ids that change in a move. Save them again on the new server (Mixer → Save as a scene).',
   org_deletion_requests: 'A scheduled deletion of the old organization does not follow it to the new server.',
   storage_profiles: 'Storage bucket credentials never leave a server, so the media is restored into this server\'s storage. Set a bucket up again if you used one.',

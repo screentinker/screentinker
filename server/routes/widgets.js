@@ -163,6 +163,16 @@ function validateRoomDisplay(type, config, workspaceId) {
   return ok ? null : 'That room is not in this workspace.';
 }
 
+// A "Now serving" widget may only show a queue of its OWN workspace, for the same reason: its poll
+// answers with whatever queue the config names (lib/queue/widget.js).
+function validateQueueWidget(type, config, workspaceId) {
+  if (type !== 'queue') return null;
+  const id = config && config.queue_id;
+  if (!id) return null;   // an unconfigured widget shows a dash
+  const ok = workspaceId && db.prepare('SELECT 1 FROM queues WHERE id = ? AND workspace_id = ?').get(String(id), workspaceId);
+  return ok ? null : 'That queue is not in this workspace.';
+}
+
 // Validate ISO date string format
 function safeDateString(d) {
   if (!d) return '';
@@ -218,6 +228,8 @@ router.post('/', (req, res) => {
   }
   const roomErr = validateRoomDisplay(widget_type, config, req.workspaceId);
   if (roomErr) return res.status(400).json({ error: roomErr });
+  const queueErr = validateQueueWidget(widget_type, config, req.workspaceId);
+  if (queueErr) return res.status(400).json({ error: queueErr });
 
   const id = uuidv4();
   db.prepare('INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config) VALUES (?, ?, ?, ?, ?, ?)')
@@ -389,6 +401,8 @@ router.put('/:id', (req, res) => {
   }
   const roomErr = config ? validateRoomDisplay(widget.widget_type, config, widget.workspace_id) : null;
   if (roomErr) return res.status(400).json({ error: roomErr });
+  const queueErr = config ? validateQueueWidget(widget.widget_type, config, widget.workspace_id) : null;
+  if (queueErr) return res.status(400).json({ error: queueErr });
 
   /*
    * Approval on: the edit becomes a DRAFT. Players keep rendering `config` (their rev is
@@ -867,6 +881,8 @@ function renderWidgetHtml(type, config, opts = {}) {
     case 'directory-search': return opts.legacyDataFrame ? renderLegacyDirectorySearch(config, opts.workspaceId) : renderDirectorySearch(config);
     case 'cloud-doc': return require('../lib/cloud-docs').renderCloudDoc(config);
     case 'diag-smoothness': return renderDiagSmoothness(config);
+    // Only reached by the editor's Preview (a sample number, no polling): a saved widget's /render is handled above.
+    case 'queue': return require('../lib/queue/widget').renderQueueWidget({ config });
     // Only reached by the editor's Preview: a saved widget's /render is handled above.
     case 'bi-dashboard': return require('../lib/bi/widget').previewHtml(config);
     /*
@@ -1082,6 +1098,26 @@ router.get('/:id/render', (req, res) => {
       });
   }
   /*
+   * "Now serving" (lib/queue/widget.js): the page holds only the widget's look; the number comes from
+   * /queue.json below. Same opaque-origin sandbox and connect-src as the room display.
+   */
+  if (widget.widget_type === 'queue') {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const qw = require('../lib/queue/widget');
+    res.setHeader('Content-Security-Policy', qw.renderCsp(origin));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    if (req.query.rev) res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    // A rev-pinned copy is cached for a year, so it carries no number; an uncached one starts with it.
+    let initial = null;
+    if (!req.query.rev && config.queue_id) {
+      const svc = require('../lib/queue/service');
+      const q = db.prepare('SELECT * FROM queues WHERE id = ? AND workspace_id = ?').get(String(config.queue_id), widget.workspace_id);
+      if (q) initial = svc.widgetState(svc.current(db, q));
+    }
+    return res.send(qw.renderQueueWidget({ widgetId: widget.id, origin, config, initial }));
+  }
+  /*
    * The news widget (renderRSS): items and pictures come from this server only, and its policy says
    * so — a screen showing headlines contacts no publisher and no feed service.
    */
@@ -1215,6 +1251,32 @@ router.get('/:id/data.json', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'no-store');
   res.json({ categories });
+});
+
+/*
+ * What a "Now serving" widget polls (lib/queue/widget.js): its queue's number, revision and sound
+ * switch. Public and CORS-open like data.json (the widget runs in a null-origin sandboxed frame), and
+ * it exposes nothing the screen does not already show: no tokens, no ticket count beyond "waiting".
+ * `?rev=` that matches answers {unchanged:true}, so an idle queue costs a primary-key read.
+ * A missing widget, queue or wrong type is a 404 the widget treats like any failed poll: it keeps
+ * the last number it had.
+ */
+router.get('/:id/queue.json', (req, res) => {
+  res.removeHeader('X-Frame-Options');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  const widget = db.prepare('SELECT id, workspace_id, widget_type, config FROM widgets WHERE id = ?').get(req.params.id);
+  if (!widget || widget.widget_type !== 'queue') return res.status(404).json({ error: 'Not a queue widget' });
+  let cfg = {};
+  try { cfg = JSON.parse(widget.config || '{}'); } catch { cfg = {}; }
+  const svc = require('../lib/queue/service');
+  let q = cfg.queue_id ? db.prepare('SELECT * FROM queues WHERE id = ? AND workspace_id = ?').get(String(cfg.queue_id), widget.workspace_id) : null;
+  if (!q) return res.status(404).json({ error: 'No queue' });
+  q = svc.current(db, q);
+  const rev = svc.revOf(q);
+  if (typeof req.query.rev === 'string' && req.query.rev === rev) return res.json({ rev, unchanged: true });
+  res.json(svc.widgetState(q));
 });
 
 // Latest frame-rate telemetry per widget, reported by the diag-smoothness widget running on a device.

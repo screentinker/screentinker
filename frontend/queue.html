@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0f172a">
+<title>Your number</title>
+<style>
+  :root { --bg:#f8fafc; --card:#ffffff; --text:#0f172a; --muted:#64748b; --border:#e2e8f0; --accent:#2563eb; --ok:#15803d; --danger:#b91c1c; --big:#0f172a; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0b1120; --card:#111827; --text:#f1f5f9; --muted:#94a3b8; --border:#1f2937; --accent:#60a5fa; --ok:#4ade80; --danger:#f87171; --big:#facc15; } }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  .wrap { max-width:440px; margin:0 auto; padding:6vh 16px 32px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:24px 20px; text-align:center; }
+  h1 { font-size:18px; margin:0 0 16px; color:var(--muted); font-weight:600; }
+  .label { font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+  .mine { font-size:96px; font-weight:800; line-height:1; margin:6px 0 18px; color:var(--big); font-variant-numeric:tabular-nums; }
+  .serving { font-size:20px; margin:0 0 8px; }
+  .serving b { font-size:30px; font-variant-numeric:tabular-nums; }
+  .status { font-size:17px; margin-top:14px; padding:12px; border-radius:12px; background:color-mix(in srgb, var(--accent) 10%, transparent); }
+  .status.called { background:color-mix(in srgb, var(--ok) 16%, transparent); color:var(--ok); font-weight:700; font-size:20px; }
+  .status.passed { background:color-mix(in srgb, var(--danger) 12%, transparent); color:var(--danger); }
+  .msg { margin-top:14px; font-size:15px; color:var(--danger); }
+  .note { margin-top:18px; font-size:13px; color:var(--muted); }
+  button { font:inherit; font-size:17px; font-weight:700; padding:14px 20px; border-radius:12px; border:0; background:var(--accent); color:#fff; width:100%; margin-top:16px; cursor:pointer; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="card" id="root" aria-live="polite">
+    <h1 id="qname"></h1>
+    <div id="ticket" hidden>
+      <div class="label" id="mineLabel"></div>
+      <div class="mine" id="mine"></div>
+    </div>
+    <p class="serving" id="serving"></p>
+    <div class="status" id="status" hidden></div>
+    <div class="msg" id="msg" hidden></div>
+    <button type="button" id="again" hidden></button>
+    <div class="note" id="note"></div>
+  </div>
+</main>
+<script type="module" src="/js/queue-page.js"></script>
+</body>
+</html>

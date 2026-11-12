@@ -415,7 +415,7 @@ export async function openContentPicker(opts = {}) {
   const WIDGET_ICONS = {
     clock: '&#128339;', weather: '&#9925;', rss: '&#128240;', text: '&#128221;', webpage: '&#127760;', social: '&#128172;',
     slide: '&#128444;', template: '&#10024;', 'directory-board': '&#127970;', 'directory-search': '&#128269;',
-    'menu-board': '&#127860;', 'cloud-doc': '&#128209;', 'bi-dashboard': '&#128202;', 'room-display': '&#128682;',
+    'menu-board': '&#127860;', 'cloud-doc': '&#128209;', 'bi-dashboard': '&#128202;', 'room-display': '&#128682;', queue: '&#127915;',
     transition: '&#127916;',
   };
 

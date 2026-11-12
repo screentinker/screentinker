@@ -2236,6 +2236,52 @@ function resumeSlideAudio() {
     });
   }
 }
+let queueChimeAt = 0;
+function playQueueChime(volume, widgetId) {
+  try {
+    const cur = playlist[currentIndex];
+    const item = cur && widgetId && cur.widget_id === widgetId ? cur : null;
+    if (applyMuteWanted(item)) return;
+    let v = Number(volume);
+    if (!isFinite(v)) v = 0.6;
+    v = Math.max(0, Math.min(1, v));
+    if (typeof mediaVolume === "number" && isFinite(mediaVolume)) v *= Math.max(0, Math.min(1, mediaVolume));
+    if (!(v > 0)) return;
+    const now = Date.now();
+    if (now - queueChimeAt < 3e3) return;
+    queueChimeAt = now;
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = _audioCtx;
+    const go = () => {
+      if (ctx.state !== "running") return;
+      const t0 = ctx.currentTime + 0.02;
+      [[880, 0, 0.35], [660, 0.38, 0.5]].forEach(([freq, at, len]) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(1e-4, t0 + at);
+        gain.gain.exponentialRampToValueAtTime(Math.max(2e-4, 0.5 * v), t0 + at + 0.02);
+        gain.gain.exponentialRampToValueAtTime(1e-4, t0 + at + len);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t0 + at);
+        osc.stop(t0 + at + len + 0.05);
+      });
+    };
+    if (ctx.state === "suspended") ctx.resume().then(go).catch(() => {
+    });
+    else go();
+  } catch (e) {
+  }
+}
+window.addEventListener("message", (ev) => {
+  const d = ev.data;
+  if (!d || d.type !== "st-queue-chime" || !ev.source) return;
+  const ours = Array.prototype.some.call(document.querySelectorAll("iframe"), (f) => f.contentWindow === ev.source);
+  if (!ours) return;
+  playQueueChime(d.volume, typeof d.widget_id === "string" ? d.widget_id : null);
+});
 function offerSlideUnmute(item) {
   const old = document.getElementById("slideAudioUnmute");
   if (old) old.remove();
