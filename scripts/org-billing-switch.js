@@ -35,10 +35,18 @@ if (cmd === 'status') {
   if (orgBilling.source(db) !== 'org') {
     console.log(`organizations that disagree with their owner: ${new Set(d.map((x) => x.organization_id)).size}`);
     console.log(`organizations riding on a sibling's subscription: ${follows}`);
+    console.log(`people paying who own no organization (block the switch): ${orgBilling.strandedPayers(db).length}`);
   }
 } else if (cmd === 'to-organizations') {
   const r = orgBilling.switchToOrganizations(db);
-  if (!r.ok) { console.error('refused: organizations disagree with their owners'); console.error(JSON.stringify(r.drift.slice(0, 20), null, 2)); process.exit(1); }
+  if (!r.ok) {
+    if (r.drift.length) { console.error('refused: organizations disagree with their owners'); console.error(JSON.stringify(r.drift.slice(0, 20), null, 2)); }
+    if (r.stranded && r.stranded.length) {
+      console.error(`refused: ${r.stranded.length} person(s) pay for a subscription but own no organization; move or cancel each first:`);
+      for (const x of r.stranded) console.error(`  ${x.user_id} ${x.email || ''} ${x.stripe_subscription_id}`);
+    }
+    process.exit(1);
+  }
   console.log(r.already ? 'already organizations' : 'organizations are now the paying accounts');
 } else if (cmd === 'to-people') {
   const r = orgBilling.switchToPeople(db, { force });

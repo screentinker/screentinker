@@ -92,7 +92,12 @@ function mayManageBilling(req, org) {
 function accountOfStripe(meta, subId, custId) {
   if (!orgPays()) return (meta && meta.user_id) || null;
   const has = (id) => id && db.prepare('SELECT id FROM organizations WHERE id = ?').get(id);
-  if (meta && has(meta.org_id)) return meta.org_id;
+  if (meta && meta.org_id) {
+    // Made for one organization: that one, or none. A deleted organization's events must not be
+    // guessed onto the owner's other organization (a cancellation would end its trial; a renewal
+    // would give it a plan it never bought).
+    return has(meta.org_id) ? meta.org_id : null;
+  }
   const bySub = subId && db.prepare('SELECT id FROM organizations WHERE stripe_subscription_id = ?').get(subId);
   if (bySub) return bySub.id;
   const byCust = custId && db.prepare('SELECT id FROM organizations WHERE stripe_customer_id = ?').get(custId);

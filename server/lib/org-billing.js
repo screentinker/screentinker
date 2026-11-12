@@ -246,6 +246,11 @@ function install(db, log = console) {
     // A half-installed mirror must not be able to fail a billing write on `users`.
     try { dropTriggers(db); } catch { /* */ }
     if (log) log.error(`[org-billing] mirror not installed: ${e.message}`);
+    // The billing emails read the view, so it has to exist even when the mirror does not: on the
+    // person-pays path it reads `users` alone and does not depend on the mirror at all.
+    try {
+      createView(db, source(db) === 'org' ? 'org' : 'user', columnsOf(db, 'users'), columnsOf(db, 'organizations'));
+    } catch (e2) { if (log) log.error(`[org-billing] no ${VIEW} view either: ${e2.message}`); }
   }
   return out;
 }
@@ -277,6 +282,21 @@ function drift(db) {
 }
 
 /**
+ * People who hold a subscription but own no organization (an invited member who pays for
+ * themselves, or someone who handed every organization over and kept paying). Once organizations
+ * pay, nothing would map that subscription to an account: its renewals and cancellation would be
+ * ignored while it kept charging. The switch refuses while there are any. [{ user_id, email,
+ * stripe_subscription_id }]
+ */
+function strandedPayers(db) {
+  const userCols = columnsOf(db, 'users');
+  if (!userCols.includes('stripe_subscription_id') || !columnsOf(db, 'organizations').includes('owner_user_id')) return [];
+  return db.prepare(`SELECT u.id AS user_id, ${userCols.includes('email') ? 'u.email' : 'NULL'} AS email, u.stripe_subscription_id
+    FROM users u WHERE u.stripe_subscription_id IS NOT NULL AND u.stripe_subscription_id != ''
+      AND NOT EXISTS (SELECT 1 FROM organizations o WHERE o.owner_user_id = u.id)`).all();
+}
+
+/**
  * Make the ORGANIZATION the source of truth. Refuses unless every organization currently agrees
  * with its owner (so nothing is lost by the switch). After it: billing writes go to
  * `organizations`, the owner's row is a copy of their primary organization, and an organization
@@ -287,7 +307,8 @@ function switchToOrganizations(db) {
   if (source(db) === 'org') return { ok: true, already: true };
   install(db, null);
   const d = drift(db);
-  if (d.length) return { ok: false, drift: d };
+  const stranded = strandedPayers(db);
+  if (d.length || stranded.length) return { ok: false, drift: d, stranded };
   db.prepare("INSERT INTO app_settings (key, value, updated_at) VALUES ('billing_source', 'org', strftime('%s','now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run();
   try { require('./app-settings').__reload(); } catch { /* */ }
   install(db, null);
@@ -313,4 +334,4 @@ function switchToPeople(db, { force = false } = {}) {
   return { ok: true, overwritten: lost };
 }
 
-module.exports = { install, drift, source, switchToOrganizations, switchToPeople, MIRRORED, SHARED, PRIMARY_ONLY, TRIGGERS, REVERSE_TRIGGERS, VIEW };
+module.exports = { install, drift, strandedPayers, source, switchToOrganizations, switchToPeople, MIRRORED, SHARED, PRIMARY_ONLY, TRIGGERS, REVERSE_TRIGGERS, VIEW };
