@@ -374,6 +374,7 @@
 
     socket.on('device:unpaired', function (data) {
       del(LS.id); del(LS.token); del(LS.code); del(LS.payload);
+      clearOfflinePlan(); // #825: a schedule plan belongs to the pairing that sent it
       deviceId = null; deviceToken = null;
       // Deleted on the dashboard: nothing it downloaded belongs to a screen any more. ONLY on
       // 'deleted' — the register path's 'not_found' is also what a restored backup or an
@@ -400,11 +401,12 @@
       toast((data && data.error) ? data.error : 'Auth error', false);
       // Bad/stale token or fingerprint-reclaim block: drop creds and re-pair.
       del(LS.id); del(LS.token); del(LS.payload); // A2: clear cached content when identity is lost
+      clearOfflinePlan();                         // #825: and the schedule plan with it
       deviceId = null; deviceToken = null;
       scheduleRegister(3000);
     });
 
-    socket.on('device:playlist-update', onPlaylist);
+    socket.on('device:playlist-update', onLivePlaylist);
     // #473 v2: the server names the usage records it stored; only those leave the queue.
     socket.on('device:kiosk-sessions-ack', function (d) { if (kioskOutbox) kioskOutbox.onAck(d); });
 
@@ -1044,6 +1046,68 @@
     document.body.style.background = ok ? c : '';
   }
 
+  /* ===================== #825 offline schedule plan =====================
+   * Opt-in (capabilities.js declares offline.schedule_plan only when this controller exists). The
+   * logic is in js/offline-plan-tizen.js on top of the shared STOfflinePlan; this is the wiring.
+   * FAIL OPEN: if anything here is missing or throws, the player does exactly what it did before
+   * (replay st_payload_cache at boot, keep the last payload through an outage).
+   */
+  function lastPayload() { try { return JSON.parse(get(LS.payload) || 'null'); } catch (e) { return null; } }
+  var offlinePlan = (function () {
+    try {
+      var mcOk = false;
+      try {
+        if (!window.__stMediaCache && window.MediaCache) window.__stMediaCache = window.MediaCache.create();
+        mcOk = !!window.__stMediaCache;
+      } catch (e) { mcOk = false; }
+      var usable = mcOk && window.STOfflinePlan && window.STTizenOfflinePlan
+        && STTizenOfflinePlan.storageUsable(localStorage);
+      if (!usable) {
+        // Not declared, so never driven: a plan left over from a build or a panel that could do it
+        // must not steer this one.
+        if (window.STTizenOfflinePlan) del(STTizenOfflinePlan.PLAN_KEY);
+        return null;
+      }
+      return STTizenOfflinePlan.create({
+        plan: window.STOfflinePlan,
+        storage: { get: get, set: set, del: del },
+        now: syncedNow,
+        cache: function () { return window.__stMediaCache || null; },
+        cacheItems: function (items, orientation) {
+          return window.StVideoPlan ? window.StVideoPlan.cacheItems(items, orientation) : items;
+        },
+        log: function (level, msg) {
+          try { if (socket && socket.connected && deviceId && authenticated) socket.emit('device:log', { device_id: deviceId, tag: 'offline-plan', level: level, message: msg }); } catch (e) {}
+        }
+      });
+    } catch (e) { return null; }
+  })();
+  window.__stOfflinePlan = offlinePlan;
+  function clearOfflinePlan() {
+    try { if (offlinePlan) offlinePlan.clear(); else if (window.STTizenOfflinePlan) del(STTizenOfflinePlan.PLAN_KEY); } catch (e) {}
+  }
+  // Every live device:playlist-update comes through here; replays and offline states do not.
+  function onLivePlaylist(payload) {
+    var p = payload;
+    if (offlinePlan) {
+      try { p = offlinePlan.ingestLive(payload); } catch (e) { p = payload; }
+    }
+    onPlaylist(p);
+  }
+  // The offline driver. Acts only while this socket is not live; the server owns the screen
+  // otherwise. 1s keeps a boundary within a second of the trusted clock and costs one scan of at
+  // most 1024 in-memory intervals.
+  if (offlinePlan) {
+    setInterval(function () {
+      try {
+        if (!deviceId || !deviceToken) return;
+        if (socket && socket.connected && authenticated) return;
+        var p = offlinePlan.tick(lastPayload);   // parsed only when an edge is crossed
+        if (p) onPlaylist(p);
+      } catch (e) { /* the screen keeps what it has */ }
+    }, 1000);
+  }
+
   function onPlaylist(payload) {
     if (!payload) return;
     // #473: a visitor is using an interactive page. Park the update (latest wins) and apply it on
@@ -1090,12 +1154,19 @@
         // (its own key and revision); the original it replaces is one this TV cannot decode.
         if (window.StVideoPlan) mcItems = window.StVideoPlan.cacheItems(mcItems, payload.wall_config ? 'landscape' : (payload.orientation || 'landscape'));
         var mcBase = serverUrl.replace(/\/+$/, '');
+        // #825: with a committed or pending schedule plan, the sweep also keeps (and fetches) what
+        // every future interval needs, then lets the plan commit once all of it is on disk. Without
+        // a plan this hands back mcItems untouched.
+        if (offlinePlan) mcItems = offlinePlan.cacheItems(mcItems, payload);
         setTimeout(function () {
-          mc.sync(mcItems, function (it) {
+          var swept = mc.sync(mcItems, function (it) {
             if (it.__path) return mcBase + it.__path;
             return mcBase + '/api/content/' + it.content_id + '/file'
               + (it.content_rev ? '?rev=' + encodeURIComponent(it.content_rev) : '');
           });
+          if (offlinePlan && swept && typeof swept.then === 'function') {
+            swept.then(function () { offlinePlan.afterSync(lastPayload()); }, function () {});
+          }
         }, 2000);
       }
     } catch (e) { /* caching must never break the payload path */ }
@@ -1204,6 +1275,7 @@
     var v = (elUrl.value || '').trim();
     if (!v) { elSetupStatus.textContent = 'Enter a server URL'; return; }
     if (!/^https?:\/\//i.test(v)) v = 'https://' + v;
+    if (serverUrl && v !== serverUrl) clearOfflinePlan(); // #825: another server's schedule is not this one's
     serverUrl = v; set(LS.url, serverUrl);
     elSetupStatus.className = 'status';
     elSetupStatus.textContent = 'Connecting…';
@@ -1211,6 +1283,7 @@
   }
   elReset.addEventListener('click', function () {
     del(LS.url); del(LS.id); del(LS.token); del(LS.code); del(LS.payload);
+    clearOfflinePlan(); // #825
     deviceId = null; deviceToken = null; serverUrl = null;
     if (socket) { try { socket.disconnect(); } catch (e) {} }
     teardownSession(); // H4: stop heartbeat/stream/player-loop + pending register (no dangling timers on setup)
@@ -1332,7 +1405,13 @@
     // A2: render cached content IMMEDIATELY so a cold-start/offline TV isn't blank while the socket
     // connects (or if it can't). The socket's fresh device:playlist-update replaces it on connect.
     show(elStage);
-    var _cp = get(LS.payload);
+    // #825: with a committed schedule plan, boot into the interval the clock is in, so content
+    // whose schedule ended while the panel was off never flashes up. No plan, or no opinion from
+    // it, is the A2 replay exactly as before.
+    var _bp = null;
+    try { _bp = offlinePlan ? offlinePlan.boot(lastPayload) : null; } catch (e) { _bp = null; }
+    if (_bp) { try { onPlaylist(_bp); } catch (e) { _bp = null; } }
+    var _cp = _bp ? null : get(LS.payload);
     if (_cp) { try { onPlaylist(JSON.parse(_cp)); } catch (e) {} }
     connect();                                      // paired — reconnect to playback
   } else if (serverUrl) {
