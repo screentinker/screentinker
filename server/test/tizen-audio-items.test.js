@@ -170,7 +170,7 @@ test('preload: an audio next item warms nothing (no hidden decoder held for it)'
   assert.equal(p._videoWillComposite(song({ transition: { effects: [{ type: 'fade' }] } })), false, 'never composites');
 });
 
-test('zone: audio plays with no picture and is heard (warms muted, then the item mute), advances on end', () => {
+test('zone: audio plays with no picture and is heard in the first zone only (warms muted, then the item mute), advances on end', () => {
   const h = load();
   const zr = new h.sb.ZoneRenderer(makeEl('div'), () => 'http://srv');
   const div = makeEl('div');
@@ -197,6 +197,11 @@ test('zone: audio plays with no picture and is heard (warms muted, then the item
   zr.showItem({ id: 'z3', el: m }, [song({ muted: 1 })], 0);
   m.children[0].fire('playing');
   assert.equal(m.children[0].muted, true, 'a muted item stays silent');
+
+  const second = makeEl('div');
+  zr.showItem({ id: 'z5', el: second, sort: 1 }, [song()], 0);
+  second.children[0].fire('playing');
+  assert.equal(second.children[0].muted, true, 'only the first zone sounds, as on the web player');
 
   const vid = makeEl('div');
   zr.showItem({ id: 'z4', el: vid }, [{ content_id: 'clip', mime_type: 'video/mp4', duration_sec: 10 }], 0);

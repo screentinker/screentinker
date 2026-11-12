@@ -1883,6 +1883,7 @@ ZoneRenderer.prototype.render = function (layout, assignments) {
       x: zrNum(z.x_percent, 0), y: zrNum(z.y_percent, 0),
       w: zrNum(z.width_percent, 100), h: zrNum(z.height_percent, 100),
       z: zrNum(z.z_index, 0),
+      sort: zrNum(z.sort_order, 0),   // the first zone (0) is the one that may sound, as on the web player
       fit: z.fit_mode || 'cover'
     };
   });
@@ -2084,9 +2085,9 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
       zone.el.appendChild(bf);
       if (multi) this.scheduleAdvance(zone, dur, advance);
     } else if (mime.indexOf('video/') === 0 || stIsAudio(a)) {
-      // An audio item is a clip with no picture (see stIsAudio). Unlike a zone video it is HEARD:
-      // sound is the whole point of the item. It warms muted (TV autoplay) and takes the item's own
-      // mute once playing, the same rule as full screen.
+      // An audio item is a clip with no picture (see stIsAudio). Unlike a zone video it is HEARD,
+      // but only in the FIRST zone (sort_order 0), the web player's rule, so two zones never play
+      // over each other. It warms muted (TV autoplay) and then takes the item's own mute.
       var isAud = stIsAudio(a);
       var v = document.createElement('video');
       v.className = zrFitClass(a.fit_mode || zone.fit);
@@ -2097,7 +2098,7 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
       v.loop = !multi; // single-item zone loops; multi advances on end
       v.onended = function () { if (multi) advance(); };
       v.onerror = function () { if (multi) self.scheduleAdvance(zone, 2000, advance); };
-      if (isAud) v.addEventListener('playing', function () { try { v.muted = !!a.muted; } catch (e) {} }, { once: true });
+      if (isAud && !(zone.sort > 0)) v.addEventListener('playing', function () { try { v.muted = !!a.muted; } catch (e) {} }, { once: true });
       v.src = this.contentUrl(a);
       zone.el.appendChild(v);
       this.videos[zone.id] = v;
