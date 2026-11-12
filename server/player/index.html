@@ -2069,9 +2069,17 @@
         item.widget_id ||
         item.mime_type === BUNDLE_MIME ||
         item.mime_type === 'video/youtube' ||
-        (typeof item.mime_type === 'string' && (item.mime_type.startsWith('video/') || item.mime_type.startsWith('image/')))
+        (typeof item.mime_type === 'string' && (item.mime_type.startsWith('video/') || item.mime_type.startsWith('image/') || item.mime_type.startsWith('audio/')))
       ));
     }
+    /*
+     * An uploaded audio file (MP3, M4A, Ogg, WAV, FLAC). Uploads have always accepted these, but no
+     * branch here played them, so every one was "skipping item with unrecognised type: audio/mpeg".
+     * It plays through a <video> element exactly like a clip (the same mute, autoplay fallback,
+     * error skip and advance on `ended`), because a media element plays an audio-only file and
+     * paints nothing. Full screen it sits on audioCard so the screen is not an empty frame.
+     */
+    function isAudioMime(m) { return typeof m === 'string' && m.startsWith('audio/'); }
     /* The mime lib/html-bundle.js stamps on an uploaded HTML bundle. Deliberately matches no
      * image/ or video/ prefix, so nothing routes it as media by accident. */
     const BUNDLE_MIME = 'application/vnd.screentinker.bundle+zip';
@@ -8382,6 +8390,19 @@
     // so the element errors SRC_NOT_SUPPORTED (or stalls) and we lazily load the VENDORED hls.js
     // (server/player/hls.light.min.js — no CDN, works on an air-gapped LAN) and attach it. Every
     // failure path skips the item (P4), never a stuck decoder.
+    function audioCard(item) {
+      const card = document.createElement('div');
+      card.style.cssText = 'width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#111;color:#ddd;font:600 4vmin system-ui,sans-serif;text-align:center';
+      const note = document.createElement('div');
+      note.style.cssText = 'font-size:14vmin;line-height:1;opacity:.85';
+      note.textContent = '\u266A';
+      const title = document.createElement('div');
+      title.style.cssText = 'margin-top:3vmin;max-width:80vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      title.textContent = String(item.filename || '').replace(/\.[a-z0-9]{2,4}$/i, '');
+      card.appendChild(note); card.appendChild(title);
+      return card;
+    }
+
     function hdmiInCard(item) {
       const card = document.createElement('div');
       card.style.cssText = 'width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#111;color:#ddd;font:600 4vmin system-ui,sans-serif;text-align:center';
@@ -8866,7 +8887,8 @@
       // sends it to a web player — this branch is the dashboard PREVIEW, which gets the whole
       // playlist. A card for the item's dwell instead of a <video src="hdmi://1"> that fails.
       const isHdmiIn = item.mime_type === 'video/hdmi-in';
-      const isVideo = !isYoutube && !isHls && !isHdmiIn && item.mime_type?.startsWith('video/');
+      const isAudio = isAudioMime(item.mime_type);
+      const isVideo = !isYoutube && !isHls && !isHdmiIn && (item.mime_type?.startsWith('video/') || isAudio);
       const isImage = item.mime_type?.startsWith('image/');
       const remoteUrl = item.remote_url;
       const serverUrl = config.serverUrl;
@@ -8912,6 +8934,10 @@
           if (!wallConfig && Number(item.video_prerotated) === 1 && cssQuarterTurn) {
             video.style.cssText = 'position:absolute;left:50%;top:50%;width:100vw;height:100vh;object-fit:contain;background:transparent;'
               + 'transform:translate(-50%,-50%) rotate(-' + cssQuarterTurn + 'deg)';
+          }
+          if (isAudio) {
+            mount.appendChild(audioCard(item));
+            video.style.cssText = 'position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
           }
           mount.appendChild(video);
           currentVideoEl = video;
@@ -9355,7 +9381,9 @@
 
       const isYoutube = a.mime_type === 'video/youtube';
       const isHls = a.mime_type === 'video/hls';   // literal: showZoneItem is extracted + eval'd in isolation by a test
-      const isVideo = !isYoutube && !isHls && a.mime_type?.startsWith('video/');
+      // Audio plays as a picture-less clip (see isAudioMime). Inline test: this function is
+      // extracted + eval'd in isolation, so no helper call here.
+      const isVideo = !isYoutube && !isHls && (a.mime_type?.startsWith('video/') || a.mime_type?.startsWith('audio/'));
       const src = mediaUrl(a);
       const dur = (a.duration_sec || 10) * 1000;
 
