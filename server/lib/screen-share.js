@@ -1119,7 +1119,9 @@ function onSharer(ws) {
       if (!deviceNs || !isOnline(s.deviceId)) { endSession(s, 'screen_unreachable'); return; }
       deviceNs.to(s.deviceId).emit('device:screenshare-start', {
         session_id: s.id, shared_by: s.sharedBy, guest: s.guest, audio: s.audio,
-        max_seconds: maxSeconds(), ice_servers: iceServersFor(s.deviceId), ...(s.system ? { plain: true } : {}),
+        // A system share (a stream on screens) has no server limit; every player still arms a local
+        // backstop from this, capped at 8 h, so it is given the cap rather than the hour a person gets.
+        max_seconds: s.system ? SYSTEM_MAX_SECONDS : maxSeconds(), ice_servers: iceServersFor(s.deviceId), ...(s.system ? { plain: true } : {}),
       });
       for (const n of s.notices.splice(0)) send(ws, n);
       // The screen lays its tiles out (and picks whose sound plays) from the room; this presenter's
@@ -1210,6 +1212,8 @@ function reject(socket, code, text) {
   try { socket.destroy(); } catch (_) {}
 }
 
+const SYSTEM_MAX_SECONDS = 8 * 3600;   // the players' own cap on their backstop
+
 // Claim our two upgrade paths on the shared HTTP server; every other upgrade is left untouched.
 function attach(server) {
   const wss = new WebSocket.Server({ noServer: true, maxPayload: MAX_SDP + 4096 });
@@ -1239,7 +1243,7 @@ function _reset() {
 }
 
 module.exports = {
-  CAP, TILES_CAP, MAX_TILES, CODE_TTL_MS, TICKET_TTL_MS,
+  CAP, TILES_CAP, MAX_TILES, CODE_TTL_MS, TICKET_TTL_MS, SYSTEM_MAX_SECONDS,
   init, attach,
   featureOn, workspaceOn, availability, isOnline, maxSeconds, iceServersFor, guestIceServersFor, cleanName,
   createSession, endSession, stopForDevice, stopForDisplay, stopWorkspace, sessionForDevice, publicSession, deviceGone,

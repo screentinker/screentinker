@@ -57,6 +57,11 @@ test('a recurrence with a key and no value is read, not thrown on', () => {
   }
   assert.deepEqual(scheduler.parseSimpleRRule('FREQ=WEEKLY;BYDAY=MO,WE'), { freq: 'WEEKLY', byDay: [1, 3] },
     'and a well-formed rule still parses to exactly what it did');
+  assert.deepEqual(scheduler.parseSimpleRRule('FREQ=YEARLY;BYDAY='), { freq: 'YEARLY', byDay: [] },
+    'an empty day list is still a day list (no days), not "every day"');
+  for (const r of ['FREQ=YEARLY;BYDAY=', 'FREQ=WEEKLY;BYDAY=']) {
+    assert.equal(scheduler.isScheduleActiveNow({ start_time: '2026-01-01T00:00', end_time: '2026-01-01T23:59', recurrence: r }, new Date(Date.UTC(2026, 10, 11, 12, 0)), 'UTC'), false, r + ' is never active');
+  }
 });
 
 test('a screen with an unreadable recurrence does not stop the tick, and the others are still scheduled', () => {

@@ -319,7 +319,7 @@ function parseSimpleRRule(rrule) {
     const [key, val] = part.split('=');
     // A key with no value ("BYDAY", a stray ";") says nothing. It is skipped rather than read:
     // this string is stored as the client sent it, and `val.split` on undefined took the tick down.
-    if (val === undefined || val === '') continue;
+    if (val === undefined) continue;   // an empty value ("BYDAY=") is still read: no days, so never active
     if (key === 'FREQ') rule.freq = val;
     if (key === 'BYDAY') rule.byDay = val.split(',').map(d => dayMap[d]).filter(d => d !== undefined);
     if (key === 'INTERVAL') rule.interval = parseInt(val);
