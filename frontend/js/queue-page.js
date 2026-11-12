@@ -38,7 +38,8 @@ export function aheadOf(ticket, nowServing) {
   if (!Number.isInteger(tk) || tk < 1) return { status: 'none', ahead: 0 };
   if (s === tk) return { status: 'called', ahead: 0 };
   if (s > tk) return { status: 'passed', ahead: 0 };
-  return { status: 'waiting', ahead: Math.max(0, tk - s) };
+  const ahead = Math.max(0, tk - s - 1);
+  return { status: ahead ? 'waiting' : 'next', ahead };
 }
 
 let state = null;
@@ -81,6 +82,7 @@ function paint() {
     st.className = 'status ' + a.status;
     if (a.status === 'called') st.textContent = t('queue.pub.called');
     else if (a.status === 'passed') st.textContent = t('queue.pub.passed');
+    else if (a.status === 'next') st.textContent = t('queue.pub.next');
     else st.textContent = a.ahead === 1 ? t('queue.pub.ahead_one') : t('queue.pub.ahead', { n: a.ahead });
   } else if (mine) {
     // The queue was restarted (start of day) since this number was taken.

@@ -306,8 +306,10 @@ function aheadOf(ticket, nowServing) {
   if (!Number.isInteger(t) || t < 1) return { status: 'none', ahead: 0 };
   if (s === t) return { status: 'called', ahead: 0 };
   if (s > t) return { status: 'passed', ahead: 0 };
-  // The product owner's definition: their number minus the number now being served.
-  return { status: 'waiting', ahead: Math.max(0, t - s) };
+  // The numbers still to be called before theirs (the one being served is not counted: it has
+  // been called). 0 means they are next.
+  const ahead = Math.max(0, t - s - 1);
+  return { status: ahead ? 'waiting' : 'next', ahead };
 }
 
 module.exports = {

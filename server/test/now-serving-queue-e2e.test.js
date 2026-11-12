@@ -54,7 +54,7 @@ describe('now serving, end to end', { skip: SKIP }, () => {
       await cp.setViewport({ width: 390, height: 800 });
       await cp.goto(srv.base + q.customer_path, { waitUntil: 'domcontentloaded' });
       assert.ok(await waitFor(async () => (await text(cp, '#mine')) === '1', 10000), 'the customer got number 1');
-      assert.match(await text(cp, '#status'), /1 number ahead/);
+      assert.match(await text(cp, '#status'), /You are next/);
       // Scanning again the same day keeps the number.
       await cp.reload({ waitUntil: 'domcontentloaded' });
       assert.ok(await waitFor(async () => (await text(cp, '#mine')) === '1', 10000), 'same number after a second scan');

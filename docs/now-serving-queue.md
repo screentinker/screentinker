@@ -50,7 +50,7 @@ Open the dashboard at the address your customers' phones can reach before printi
 
 If a printed code should stop working (for example it ended up somewhere it should not be), use **Settings → New QR code**. The old code stops working at once, so print the new one.
 
-What customers see: their number, the number being served, and "About X numbers ahead of you" (their number minus the one being served). When their number is called the page says it is their turn; if it has already passed, it says so. Opening the link again on the same phone the same day shows the same number instead of taking a new one.
+What customers see: their number, the number being served, and "About X numbers ahead of you" (the numbers still to be called before theirs; the one being served is not counted), or "You are next". When their number is called the page says it is their turn; if it has already passed, it says so. Opening the link again on the same phone the same day shows the same number instead of taking a new one.
 
 ## 4. Give staff the link
 

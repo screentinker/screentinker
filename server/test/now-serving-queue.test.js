@@ -293,15 +293,19 @@ test('the staff sound switch reaches the widget poll and is logged', async () =>
 });
 
 test('the customer is told how many are ahead and never a negative number', () => {
-  assert.deepEqual(svc.aheadOf(7, 3), { status: 'waiting', ahead: 4 });
-  assert.deepEqual(svc.aheadOf(7, 0), { status: 'waiting', ahead: 7 });
+  // 3 is being served, so 4, 5 and 6 are called before 7.
+  assert.deepEqual(svc.aheadOf(7, 3), { status: 'waiting', ahead: 3 });
+  // Nobody called yet: 1 to 6 go first.
+  assert.deepEqual(svc.aheadOf(7, 0), { status: 'waiting', ahead: 6 });
+  assert.deepEqual(svc.aheadOf(7, 6), { status: 'next', ahead: 0 });
+  assert.deepEqual(svc.aheadOf(1, 0), { status: 'next', ahead: 0 });
   assert.deepEqual(svc.aheadOf(7, 7), { status: 'called', ahead: 0 });
   assert.deepEqual(svc.aheadOf(7, 9), { status: 'passed', ahead: 0 });
   for (let s = 0; s < 20; s++) assert.ok(svc.aheadOf(5, s).ahead >= 0);
   // The page uses the same rule (frontend/js/queue-page.js mirrors it).
   const page = require('node:fs').readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'queue-page.js'), 'utf8');
   assert.match(page, /if \(s > tk\) return \{ status: 'passed', ahead: 0 \};/);
-  assert.match(page, /ahead: Math\.max\(0, tk - s\)/);
+  assert.match(page, /const ahead = Math\.max\(0, tk - s - 1\);/);
 });
 
 test('tickets are capped per day with a clear message', async () => {

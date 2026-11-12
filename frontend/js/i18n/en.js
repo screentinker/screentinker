@@ -9284,6 +9284,7 @@ export default {
   'queue.pub.your_number': 'Your number',
   'queue.pub.called': 'It is your turn now.',
   'queue.pub.passed': 'Your number has been called. Please ask a member of staff.',
+  'queue.pub.next': 'You are next',
   'queue.pub.ahead_one': 'About 1 number ahead of you',
   'queue.pub.ahead': 'About {n} numbers ahead of you',
   'queue.pub.restarted': 'The queue has started again since you took this number.',
