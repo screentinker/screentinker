@@ -46,7 +46,8 @@ export function renderLog(ol, events) {
     try { time.dateTime = new Date(e.at).toISOString(); } catch { /* bad stamp */ }
     const what = document.createElement('span');
     what.textContent = `${eventText(e)} (${eventSource(e)})`;
-    li.append(time, what);
+    // The space separates time and text in the dashboard's plain list; the staff page's flex row ignores it.
+    li.append(time, ' ', what);
     ol.appendChild(li);
   }
 }

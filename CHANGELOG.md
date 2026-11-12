@@ -102,6 +102,19 @@
   with or without the slash; `/favicon.ico` is served; the OpenAPI document matches the responses;
   and smaller ones listed in the PR.
 
+- Dashboard wording: the Now serving widget's chime note lists every player that chimes (it still
+  said web only), the queue page's activity list puts a space between the time and the event, the
+  Broadcast guest note describes each guest's own strip and "Hears show", and the Broadcast view
+  toast no longer promises a menu that view hides.
+
+### Website
+
+- New solution page **Queue management displays** (`/solutions/queue-management-display.html`),
+  linked from the home page and the solutions hub.
+- New guides: **Now serving queue**, **Music and audio** and **Broadcast view** (self-hosted), with
+  screenshots from a real server. The emergency alerts, triggers and slides guides and the emergency
+  alert solution page cover an alert outranking a screen share and duplicating a slide.
+
 ### Dependencies
 
 - `fast-xml-parser` 5.12.0 (CVE-2026-126066, low; via `@azure/storage-blob`) (#848), `htmlparser2`

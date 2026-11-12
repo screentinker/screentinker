@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Now Serving Queue: Set Up Take-a-Number Screens | ScreenTinker</title>
+  <meta name="description" content="Set up a Now serving queue: print the QR code, show the number in a layout zone, give staff a Next button on a phone, and choose whether screens chime.">
+  <meta name="keywords" content="now serving queue, take a number screen, queue number display, qr code ticket queue, now serving widget, screentinker queue">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/digital-signage-now-serving-queue.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/digital-signage-now-serving-queue.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/digital-signage-now-serving-queue.html">
+  <meta property="og:title" content="Now serving queue: set up take-a-number screens">
+  <meta property="og:description" content="Set up a Now serving queue: print the QR code, show the number in a layout zone, give staff a Next button on a phone, and choose whether screens chime.">
+  <meta property="og:image" content="https://screentinker.com/assets/guides/now-serving-queue/screen-layout.webp">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Now serving queue: set up take-a-number screens">
+  <meta name="twitter:description" content="Set up a Now serving queue: print the QR code, show the number in a layout zone, give staff a Next button on a phone, and choose whether screens chime.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/guides/now-serving-queue/screen-layout.webp">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/guides/">Guides</a>
+      <span>/</span>
+      <span>Now serving queue</span>
+    </nav>
+
+    <h1>Now serving queue: set up take-a-number screens</h1>
+    <p class="lead">A Now serving queue replaces the paper ticket roll. Customers scan a QR code and their phone gives them a number. Staff press <strong>Next</strong> on a phone or tablet. Your screens show the number being served, in a corner of whatever they are already playing, with a short chime if you want one.</p>
+
+    <p>This guide follows a pharmacy counter from start to finish: create the queue, put the number on the screen, print the QR code, give staff their link, and decide about sound. For an overview of what it does and does not do, see <a href="/solutions/queue-management-display.html">queue management displays</a>.</p>
+
+    <h2 id="before">Before you start</h2>
+    <ul>
+      <li><strong>Now serving is in Advanced view.</strong> New accounts start in Simple view. Switch with the <strong>Simple / Advanced</strong> buttons at the top of the menu. Now serving is under <strong>Create</strong> in the sidebar.</li>
+      <li><strong>You need edit access to the workspace.</strong> Only people who can edit can create a queue, call numbers or see the staff link. A <strong>Viewer</strong> sees the queue and its QR code, and nothing else.</li>
+      <li><strong>You need a screen already showing something.</strong> If you have not set one up yet, start with <a href="/guides/digital-signage-getting-started.html">Getting started</a>.</li>
+      <li><strong>Customers&rsquo; phones must be able to open your ScreenTinker address.</strong> On hosted ScreenTinker they can. On your own server, see <a href="#self-hosted">the note below</a>.</li>
+    </ul>
+
+    <h2 id="page">The Now serving page</h2>
+    <p>Choose <strong>Now serving</strong> in the sidebar. Each queue has a card with everything on it: the number being served, how many are waiting, how many numbers were handed out today out of the daily limit, and the queue&rsquo;s time zone. Under that are <strong>Next</strong>, a box to <strong>Call number</strong>, <strong>Start of day</strong>, and the <strong>Chime on the screens</strong> switch. The QR code customers scan is on the right, with <strong>Print QR code</strong> and <strong>Copy customer link</strong>.</p>
+    <figure>
+      <img src="/assets/guides/now-serving-queue/dashboard.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The ScreenTinker Now serving page with one queue, Northwind Pharmacy. It reads 3 waiting, 15 of 999 handed out today, America/Chicago, and Now serving 12. Below are a blue Next button, a Number box, Call number and Start of day buttons, and a ticked Chime on the screens switch. A QR code is on the right with Print QR code and Copy customer link. Further down is the Staff link with Copy, Open, Replace and Turn off, and the closed Recent activity and Settings sections.">
+      <figcaption>The Northwind Pharmacy queue: number 12 is being served and three people are waiting.</figcaption>
+    </figure>
+
+    <h2 id="create">Create the queue</h2>
+    <ol class="steps">
+      <li>Press <strong>New queue</strong>.</li>
+      <li>Type a name your customers will recognise, such as &ldquo;Pharmacy&rdquo; or &ldquo;Front desk&rdquo;. Customers see it on their phone and staff see it on theirs.</li>
+      <li>Open <strong>Settings</strong> on the new card and check the <strong>Timezone</strong>. The queue takes the time zone of the browser you created it from, and numbers restart at midnight in that zone. Type another one as a name like <code>Europe/Lisbon</code> or <code>America/Chicago</code> if it is wrong.</li>
+      <li>Optionally change <strong>Most numbers a day</strong> (1 to 9999, 999 to start with), then press <strong>Save</strong>.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/now-serving-queue/settings-activity.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Northwind Pharmacy card scrolled down with Recent activity and Settings open. Recent activity lists twelve entries such as Next: called 12 (staff link) and Next: called 8 (dashboard), each with a time. Settings shows the Name Northwind Pharmacy, the Timezone America/Chicago with the note numbers restart at midnight here, Most numbers a day 999, and Save, New QR code and Delete queue buttons.">
+      <figcaption>Recent activity shows who called each number, and Settings holds the name, time zone and daily limit.</figcaption>
+    </figure>
+    <p>You can make more than one queue, for example one for the pharmacy and one for the photo desk. Each has its own QR code, staff link and numbers.</p>
+
+    <h2 id="widget">Make the Now serving widget</h2>
+    <p>The number reaches your screens through a widget, like a clock or a menu board does. See <a href="/guides/digital-signage-widgets.html">Widgets</a> if you have not made one before.</p>
+    <ol class="steps">
+      <li>Open <strong>Widgets</strong>, press <strong>New widget</strong> and choose <strong>Now serving</strong>.</li>
+      <li>Pick the <strong>Queue</strong>. When there is only one, it is picked for you.</li>
+      <li>Optionally change the <strong>Heading</strong> (&ldquo;Now serving&rdquo; to start with) and the <strong>Background</strong>, <strong>Text</strong> and <strong>Number</strong> colours.</li>
+      <li>Tick <strong>Play a chime when a number is called</strong> if you want sound, and set the <strong>Volume</strong>. See <a href="#sound">Sound</a> first: it is off unless you tick it.</li>
+      <li>Press <strong>Save</strong>.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/now-serving-queue/widget-editor.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Edit Now serving window. The Widget Name is Pharmacy: now serving, the Queue is Northwind Pharmacy, the Heading is Now serving, the Background colour is dark green, the Text colour white and the Number colour yellow. Play a chime when a number is called is ticked with the Volume at 60 percent. Cancel, Preview and Save buttons are at the bottom.">
+      <figcaption>The pharmacy&rsquo;s widget: dark green with a yellow number, and the chime switched on at 60%.</figcaption>
+    </figure>
+
+    <h2 id="screen">Put it on a screen</h2>
+    <p>Use the widget like any other widget: in a <a href="/guides/digital-signage-layouts-zones.html">layout zone</a> next to your posters, menus or videos, as an item in a playlist, or on its own. In a zone, the number scales to the size of the zone. Publish the playlist as usual.</p>
+    <figure>
+      <img src="/assets/guides/now-serving-queue/screen-layout.webp" width="1440" height="900" loading="lazy" decoding="async" alt="A pharmacy screen split into three zones. On the left, a poster reads Flu vaccines available today, No appointment needed, Ask at the pharmacy counter. On the right, a dark green panel reads Now serving above a large yellow 16. Along the bottom, a strip reads Take a number: scan the QR code at the door.">
+      <figcaption>The counter screen: a poster in the main zone, the Now serving widget on the right, and a text strip pointing people to the QR code.</figcaption>
+    </figure>
+    <p>The screen checks for a new number every 4 seconds, so a call shows up within a few seconds. Until the first number of the day is called, the widget shows a dash. If the screen loses its connection it keeps showing the last number it had, and after about 20 seconds a small dot appears in its corner. It never goes blank and never shows an error.</p>
+
+    <h2 id="qr">Print the QR code</h2>
+    <ol class="steps">
+      <li>Open the dashboard at the address your customers&rsquo; phones will use. The QR code contains the address you are on, and the page warns you if that address looks private to your network.</li>
+      <li>On the queue&rsquo;s card, press <strong>Print QR code</strong>. A page opens with the queue&rsquo;s name, &ldquo;Scan to get your number&rdquo;, the QR code and its address, and your browser&rsquo;s print window. If nothing opens, allow pop-ups for the site.</li>
+      <li>Put the printout where customers arrive: the door, the end of the counter, the waiting area.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/now-serving-queue/print-qr.webp" width="1440" height="900" loading="lazy" decoding="async" alt="A white print page with the heading Northwind Pharmacy, the line Scan to get your number, a large black QR code, and the customer address underneath.">
+      <figcaption>The page Print QR code opens, ready for the printer.</figcaption>
+    </figure>
+    <p><strong>Copy customer link</strong> copies the same address, for your website or a message. If a printed code should stop working (for example, it ended up somewhere it should not be), open <strong>Settings</strong> and press <strong>New QR code</strong>. The old code stops working at once, so print the new one.</p>
+    <p>This QR code belongs to the queue. For QR codes that count scans or point at your own pages, see <a href="/guides/digital-signage-qr-codes.html">QR codes</a>.</p>
+
+    <h2 id="customer">What customers see</h2>
+    <p>Scanning the code opens a web page that gives the customer the next number straight away. It shows their number, the number being served, and one of these:</p>
+    <ul>
+      <li><strong>About 3 numbers ahead of you</strong>: the numbers still to be called before theirs. The one being served is not counted.</li>
+      <li><strong>You are next</strong>.</li>
+      <li><strong>It is your turn now.</strong> when their number is called.</li>
+      <li>&ldquo;Your number has been called. Please ask a member of staff.&rdquo; when it has already passed.</li>
+    </ul>
+    <figure>
+      <img src="/assets/guides/now-serving-queue/customer-phone.webp" width="1440" height="900" loading="lazy" decoding="async" alt="Two phones showing the Northwind Pharmacy customer page for number 16. On the first, Now serving is 12 and a blue box says About 3 numbers ahead of you. On the second, Now serving is 16 and a green box says It is your turn now. Both say Keep this page open: it updates by itself. Opening the link again today shows the same number.">
+      <figcaption>Number 16 on a customer&rsquo;s phone, while 12 is served and then when staff call 16.</figcaption>
+    </figure>
+    <p>The page updates by itself while it is open. Opening the link again on the same phone the same day shows the same number rather than taking a new one. If the queue restarts while someone is holding a number, their page says so and offers <strong>Take a new number</strong>. Nothing about the customer is stored apart from the number and a random code their browser made.</p>
+
+    <h2 id="staff">Give staff the link</h2>
+    <p>Staff do not need an account. Under <strong>Staff link</strong> on the queue&rsquo;s card:</p>
+    <ul>
+      <li><strong>Copy</strong> or <strong>Open</strong> the link, and open it on the shared phone or tablet at the counter. Add it to the home screen for one-tap access.</li>
+      <li><strong>Replace</strong> makes a new link. The old one stops working immediately. Use it when a device is lost or someone leaves.</li>
+      <li><strong>Turn off</strong> disables the staff link until you make a new one with <strong>Make a staff link</strong>. The dashboard keeps working.</li>
+    </ul>
+    <p>The staff page has the number being served and how many are waiting, a large <strong>Next</strong> button, a box to <strong>Call number</strong> (any number handed out today, to skip ahead or call someone back), the <strong>Chime on the screens</strong> switch, <strong>Start of day</strong>, and <strong>Recent activity</strong>. <strong>Next</strong> greys out when nobody is waiting.</p>
+    <figure>
+      <img src="/assets/guides/now-serving-queue/staff-page.webp" width="1440" height="900" loading="lazy" decoding="async" alt="A phone showing the Northwind Pharmacy staff page next to the counter screen. The phone shows 16 of 999 numbers handed out today, Now serving 16, 0 waiting, a large green Next button greyed out, a Number box with a Call number button, the Chime on the screens switch ticked, a Start of day button, and Recent activity listing Next: called 16, 15, 14 and 13 from the staff link. The screen beside it shows Now serving 16.">
+      <figcaption>The staff page on a phone after four presses of Next. The counter screen already shows 16.</figcaption>
+    </figure>
+    <p>If the phone loses its connection, the page says &ldquo;Not connected: showing the last known state.&rdquo; and catches up when it can.</p>
+    <div class="callout warn">
+      <span class="callout-title">The staff link is a key</span>
+      <p>Anyone holding it can call numbers and restart the day. Keep it on the counter devices, and press <strong>Replace</strong> if it gets out. The secret part of the link is never sent to the server in the address, so it does not end up in logs.</p>
+    </div>
+
+    <h2 id="sound">Sound</h2>
+    <p>The chime is one short two-tone sound, played once each time a number is called with <strong>Next</strong> or <strong>Call number</strong>. It never repeats or loops, and it does not play when a screen starts up or when the day restarts. Several calls within 3 seconds make one chime. Two things must both be on:</p>
+    <ul>
+      <li><strong>The widget&rsquo;s chime</strong>: <strong>Play a chime when a number is called</strong>, with its <strong>Volume</strong> from 0 to 100%. It is <strong>off by default</strong>.</li>
+      <li><strong>Chime on the screens</strong>, on the staff page and on the dashboard. It is on to start with, so staff can silence every screen showing the queue (and switch it back on) without editing a widget. Each change appears in Recent activity.</li>
+    </ul>
+    <p>Screens follow the same sound rules as the rest of their content. The chime does not play when the screen is muted from the dashboard or the playlist item is muted, on a follower panel of a video wall (the wall chimes once, not once per panel), or while an emergency alert is playing.</p>
+
+    <h2 id="restart">Daily restart and Start of day</h2>
+    <p>Numbers start again at 1 in two ways:</p>
+    <ul>
+      <li><strong>Automatically at midnight</strong>, in the queue&rsquo;s time zone. Nothing has to be running at midnight: the first time a screen, a phone or a staff page looks at the queue after midnight, the new day starts. Screens show a dash until the first number of the day is called.</li>
+      <li><strong>With Start of day</strong>, on the staff page or the dashboard, whenever you like, for example when you open in the morning. It asks you to confirm first.</li>
+    </ul>
+    <p>Either way, every number handed out before stops counting, and those numbers are deleted. Recent activity keeps the last 20 entries, such as each call, each restart and each change to the sound switch, with who made it: the staff link, the dashboard, or the automatic midnight restart.</p>
+
+    <h2 id="players">Which players chime</h2>
+    <div class="compare-table-wrap">
+    <table class="compare-table">
+      <thead><tr><th>Player</th><th>Shows the number</th><th>Chime</th></tr></thead>
+      <tbody>
+        <tr><td>Web player (any browser or kiosk browser showing the player)</td><td class="yes">Yes</td><td class="partial">After one click on the screen, or when started with <code>?autoplay_audio=1</code> on a kiosk browser that allows sound</td></tr>
+        <tr><td>LG webOS, BrightSign</td><td class="yes">Yes</td><td class="yes">Yes: they run the web player with sound allowed</td></tr>
+        <tr><td>Android (tablets, Android TV, Fire TV)</td><td class="yes">Yes</td><td class="yes">Yes. The device&rsquo;s media volume applies on top of the widget&rsquo;s volume</td></tr>
+        <tr><td>Samsung Tizen</td><td class="yes">Yes</td><td class="yes">Yes, no click needed. The volume set from the dashboard applies</td></tr>
+        <tr><td>Raspberry Pi and Windows native player</td><td class="yes">Yes</td><td class="yes">Yes, through the default sound output. Silent while the screen is turned off or during a screen share</td></tr>
+        <tr><td>Roku</td><td class="yes">Yes</td><td class="yes">Yes, from a sound built into the Roku app, at the widget&rsquo;s volume</td></tr>
+        <tr><td>Samsung SSSP3 signage displays</td><td class="no">Not yet</td><td class="no">No</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>Android, Tizen, the native player and Roku chime whether the widget is full screen, in a zone or on a video wall. On a Roku the chime only plays for a number called while the widget is on screen: a number that was already showing when the widget came round again in the playlist does not chime.</p>
+
+    <h2 id="troubleshooting">Troubleshooting</h2>
+    <h3>The screen shows a dash</h3>
+    <p>No number has been called yet today, the widget is not linked to a queue (edit it and pick one), or the queue was deleted.</p>
+    <h3>The screen shows a number with a small dot in the corner</h3>
+    <p>The screen cannot reach the server. It keeps the last number and catches up by itself when the connection comes back.</p>
+    <h3>&ldquo;This staff link is not valid any more.&rdquo;</h3>
+    <p>The link was replaced or turned off. Copy the current one from the queue&rsquo;s card.</p>
+    <h3>&ldquo;This queue link is not active.&rdquo;</h3>
+    <p>The QR code was replaced with <strong>New QR code</strong>, or the queue was deleted. Print the current code.</p>
+    <h3>&ldquo;No more numbers today&rdquo;</h3>
+    <p>The queue reached its daily limit. Raise <strong>Most numbers a day</strong> in Settings, or press <strong>Start of day</strong>.</p>
+    <h3>There is no chime</h3>
+    <p>Check, in order: the widget&rsquo;s chime is ticked and its volume is above 0; <strong>Chime on the screens</strong> is on; the screen and the playlist item are not muted; and the player is one that chimes (see the table above). A web player needs one click on the screen or <code>?autoplay_audio=1</code>, an Android player needs its media volume up, and a Raspberry Pi or Windows player needs its system volume up and a working sound output. On Android and the native player, the device log (in the screenthe screen&rsquo;s live log saysrsquo;s live debug panel) says <code>QueueChime: chime refused</code> with the reason when a chime was asked for but not allowed.</p>
+    <h3>The numbers restarted at the wrong time</h3>
+    <p>Check the queue&rsquo;s <strong>Timezone</strong> under Settings.</p>
+    <h3>Several customers on our Wi-Fi could not get a number</h3>
+    <p>One network address can take at most 20 new numbers a minute, so nobody can empty the queue. Customers on the same guest Wi-Fi share that limit. Ask them to try again a minute later, or to use mobile data. Opening the link again for a number a phone already holds is never limited.</p>
+
+    <div class="callout self-hosted" id="self-hosted">
+      <span class="callout-title">On a self-hosted server</span>
+      <p>Everything works the same, and the customer and staff pages are served by your own server. The one thing to check is the address: the QR code contains the address you opened the dashboard at, and customers&rsquo; phones must be able to open it. A server that is only reachable on your local network works for customers on your Wi-Fi, but not for customers on mobile data.</p>
+    </div>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>Do customers need an app?</h3>
+    <p>No. The QR code opens a web page in the phone&rsquo;s browser.</p>
+    <h3>Can staff use the dashboard instead of the staff link?</h3>
+    <p>Yes. Anyone who can edit the workspace has the same buttons on the queue&rsquo;s card, and Recent activity shows which was used.</p>
+    <h3>Can the screen tell customers which desk to go to?</h3>
+    <p>No. A queue has one number being served. For a second service point with its own numbers, make a second queue with its own widget and QR code.</p>
+
+    <div class="cta">
+      <h2>Try it at your own counter</h2>
+      <p>Start a 14-day Pro trial on hosted ScreenTinker: up to 15 screens, every feature, no credit card.</p>
+      <p><a href="/app#/login" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Start your free trial</a></p>
+      <p class="cta-alt">Or host it yourself, free and open source: <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/solutions/queue-management-display.html">Queue management displays</a></li>
+        <li><a href="/guides/digital-signage-layouts-zones.html">Layouts and zones</a></li>
+        <li><a href="/guides/digital-signage-widgets.html">Widgets</a></li>
+        <li><a href="/guides/digital-signage-qr-codes.html">QR codes</a></li>
+        <li><a href="/guides/digital-signage-troubleshooting.html">Troubleshooting</a></li>
+        <li><a href="/guides/">All guides</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="/guides/">Guides</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Guides",
+      "item": "https://screentinker.com/guides/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Now serving queue",
+      "item": "https://screentinker.com/guides/digital-signage-now-serving-queue.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Now serving queue: set up take-a-number screens",
+  "description": "Set up a Now serving queue: print the QR code, show the number in a layout zone, give staff a Next button on a phone, and choose whether screens chime.",
+  "image": "https://screentinker.com/assets/guides/now-serving-queue/screen-layout.webp",
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Create the queue",
+      "text": "In Advanced view choose Now serving, press New queue, give it a name customers recognise, and check its time zone under Settings.",
+      "url": "https://screentinker.com/guides/digital-signage-now-serving-queue.html#create"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Make the Now serving widget",
+      "text": "In Widgets press New widget, choose Now serving, pick the queue, set the heading and colours, optionally tick the chime, and Save.",
+      "url": "https://screentinker.com/guides/digital-signage-now-serving-queue.html#widget"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Put it on a screen",
+      "text": "Put the widget in a layout zone or a playlist on the screen in your waiting area, and publish the playlist.",
+      "url": "https://screentinker.com/guides/digital-signage-now-serving-queue.html#screen"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 4,
+      "name": "Print the QR code",
+      "text": "Open the dashboard at the address customers' phones can reach, press Print QR code on the queue's card, and put the printout where customers arrive.",
+      "url": "https://screentinker.com/guides/digital-signage-now-serving-queue.html#qr"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 5,
+      "name": "Give staff the link",
+      "text": "Under Staff link, copy or open the link on the shared phone or tablet at the counter. Staff press Next to call the next number.",
+      "url": "https://screentinker.com/guides/digital-signage-now-serving-queue.html#staff"
+    }
+  ]
+}
+  </script>
+</body>
+</html>

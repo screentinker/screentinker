@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Broadcast view: a vision mixer and live streaming | ScreenTinker</title>
+  <meta name="description" content="On your own ScreenTinker server, run screens like a live show: take sources to air, add graphics and guests, and stream to YouTube, Facebook or Twitch.">
+  <meta name="keywords" content="vision mixer, church live stream, school live stream, stream to youtube, rtmp srt streaming, lower third graphics, remote guests, self-hosted digital signage, screentinker broadcast view">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://screentinker.com/guides/digital-signage-broadcast-view.html">
+  <link rel="alternate" type="text/markdown" href="https://screentinker.com/guides/digital-signage-broadcast-view.md">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://screentinker.com/guides/digital-signage-broadcast-view.html">
+  <meta property="og:title" content="Broadcast view: a vision mixer and live streaming">
+  <meta property="og:description" content="On your own ScreenTinker server, run screens like a live show: take sources to air, add graphics and guests, and stream to YouTube, Facebook or Twitch.">
+  <meta property="og:image" content="https://screentinker.com/assets/guides/broadcast-view/desk.webp">
+  <meta property="og:site_name" content="ScreenTinker">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Broadcast view: a vision mixer and live streaming">
+  <meta name="twitter:description" content="On your own ScreenTinker server, run screens like a live show: take sources to air, add graphics and guests, and stream to YouTube, Facebook or Twitch.">
+  <meta name="twitter:image" content="https://screentinker.com/assets/guides/broadcast-view/desk.webp">
+
+  <meta name="theme-color" content="#111827">
+  <link rel="icon" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
+  <link rel="stylesheet" href="/css/seo-page.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-logo">
+        <a href="/" style="display:flex;align-items:center;gap:10px">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span class="nav-logo-text">ScreenTinker</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="/#features">Features</a>
+        <a href="/solutions/">Solutions</a>
+        <a href="/integrations/">Integrations</a>
+        <a href="/certified-hardware">Certified Hardware</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#compare">Compare</a>
+        <a href="/app#/login" class="btn btn-outline" style="margin-left:16px">Sign In</a>
+        <a href="/app#/login" class="btn btn-primary" style="margin-left:8px">Try Free</a>
+      </div>
+    </div>
+  </nav>
+
+    <main class="article">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/">Home</a>
+      <span>/</span>
+      <a href="/guides/">Guides</a>
+      <span>/</span>
+      <span>Broadcast view</span>
+    </nav>
+
+    <h1>Broadcast view: a vision mixer and live streaming for your own server</h1>
+
+    <div class="callout warn">
+      <span class="callout-title">Only on a server you run yourself</span>
+      <p>Broadcast view exists only on self-hosted ScreenTinker, from version 3.2.0. On hosted ScreenTinker (screentinker.com) you won't find it: there is no Broadcast button, and the mixer and streaming are switched off.</p>
+      <p>The reason is the work it does. A live stream is encoded on the server itself, and each stream keeps one to two processor cores busy for as long as it runs. To do that, the server also runs a hidden web browser and the ffmpeg video program, and that browser opens your guests' cameras and microphones. That belongs on a machine you own and control, not on a shared hosted service. If you don't run your own server yet, start with the <a href="/guides/self-hosted-digital-signage.html">self-hosting guide</a>.</p>
+    </div>
+
+    <p class="lead">Broadcast view turns the ScreenTinker dashboard into a production desk. You pick what goes on air, see it in Preview, and press <strong>Take</strong> to put it on your screens. You can lay a name caption or a news crawl over the picture, steer a camera, bring in guests from their own homes, mix the sound, and send the whole thing live to YouTube, Facebook, Twitch or any RTMP or SRT address. You can also show that live picture on your signage screens, so the overflow room sees what the stream sees.</p>
+
+    <p>It is made for the person running the screens and the livestream at a church service, a school assembly or a company town hall. This guide covers the desk, stream outputs, the sound console, guests, and what whoever looks after the server has to install.</p>
+
+    <h2 id="before">Before you start</h2>
+    <ul>
+      <li><strong>A self-hosted server, version 3.2.0 or newer.</strong> Without it the <strong>Broadcast</strong> button does not appear.</li>
+      <li><strong>Playlists with something in them.</strong> Each one becomes a <em>source</em> on the desk: a welcome slide, the notices, the hymn words, a countdown video. Make them in <a href="/guides/digital-signage-content-playlists.html">Content and playlists</a>.</li>
+      <li><strong>The desk itself needs nothing extra.</strong> Taking sources to your screens, graphics, scenes and camera control all work as soon as you switch to Broadcast view.</li>
+      <li><strong>Streaming, recording and guests need programs installed on the server</strong>: ffmpeg, Chromium, and PulseAudio for the programme's own sound. Until they are there, the Streams page says what is missing. See <a href="#install">What the server needs</a>.</li>
+      <li><strong>Guests need an https address.</strong> A browser only lets a guest use their camera and microphone on a secure (https) page, so put the server behind a reverse proxy with a certificate, as the self-hosting guide describes.</li>
+      <li>Anyone in the workspace except a <strong>Viewer</strong> can use the desk. A Viewer can look, but can't take anything to air or start a stream.</li>
+    </ul>
+
+    <h2 id="switch">Switch to Broadcast view</h2>
+    <p>At the top of the menu there are three buttons: <strong>Simple</strong>, <strong>Advanced</strong> and <strong>Broadcast</strong>. Press <strong>Broadcast</strong>. The dashboard changes to a dark control-room look, the mixer becomes your home page, and the menu becomes the desk's sections: <strong>Mixer</strong>, <strong>Audio</strong>, <strong>Cameras</strong>, <strong>Graphics</strong>, <strong>Streams</strong>, plus <strong>Screens</strong> and <strong>Settings</strong>.</p>
+    <p>The choice belongs to your account, so it follows you to another computer. To get the usual signage menu back (content, playlists, schedules and the rest), press <strong>Advanced</strong>. Nothing on your screens changes when you switch.</p>
+
+    <h2 id="desk">The desk: Preview, Program and Take</h2>
+    <p>The <strong>Mixer</strong> page is laid out like a broadcast desk.</p>
+    <ul>
+      <li><strong>Sources</strong>: one key per playlist. Press one and it plays in <strong>Preview</strong> (the green monitor). Nothing changes on any screen yet.</li>
+      <li><strong>Outputs</strong>: one key per screen, plus a key for each stream destination. Select the ones the next Take goes to. <strong>All</strong>, <strong>None</strong> and a key per screen group select several at once.</li>
+      <li><strong>Program</strong> (the red monitor) shows what the first selected output is playing right now.</li>
+      <li><strong>Take</strong> puts Preview on the selected outputs. What was on Program drops back into Preview, so pressing Take again cuts straight back.</li>
+    </ul>
+    <figure>
+      <img src="/assets/guides/broadcast-view/desk.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Mixer page in Broadcast view. On the left, the green Preview monitor shows the Welcome slide. In the middle is a large red Take button with transition keys Cut, Fade, Flash and Wipe, Fade lit, and a Rate of 0.6 seconds, sending to 1 screen. On the right, the red Program monitor shows Sanctuary screen playing the Sermon title slide, Built on rock. Below are the Scenes and Audio sections.">
+      <figcaption>Sermon title has just been taken to the sanctuary screen with a fade. The welcome loop that was on before is now in Preview, one press away.</figcaption>
+    </figure>
+    <p>Pick the transition under Take: <strong>Cut</strong>, <strong>Fade</strong>, <strong>Flash</strong> or <strong>Wipe</strong>, and how long it lasts with <strong>Rate</strong> (0.3 to 2 seconds). Your choice is remembered in this browser.</p>
+    <p>Keyboard: <strong>1</strong> to <strong>9</strong> choose a source, <strong>Enter</strong> or <strong>Space</strong> takes, <strong>Esc</strong> clears graphics.</p>
+    <div class="callout">
+      <span class="callout-title">What Take does to a screen</span>
+      <p>Take sets the screen's playlist, the same as choosing a playlist for that screen on the Playlists page. It stays after you close the desk. Screens running the web player (a browser, ChromeOS, a computer in kiosk mode) switch at once and show the transition. The other players, such as the Android, Raspberry Pi and Windows apps or a Samsung or LG screen, take the new playlist at the end of the item they are showing, with no transition. Screens that head office controls are skipped, and the message after Take says how many.</p>
+    </div>
+
+    <h3 id="scenes">Scenes</h3>
+    <p>A scene remembers a look so you can call it back with one key. Set up Preview, type a graphic's text, move a camera if you have one, then press <strong>Save as a scene</strong> and give it a name such as "Sermon" or "Wide shot". A scene can hold a source, a graphic and camera positions. Pressing a scene key gets it ready; <strong>Take</strong> puts it on air. A workspace can keep up to 100 scenes.</p>
+
+    <h2 id="graphics">Graphics</h2>
+    <p>On the <strong>Graphics</strong> page, select the outputs, type <strong>Line 1</strong> and <strong>Line 2</strong>, choose a <strong>Colour</strong>, and press a key:</p>
+    <ul>
+      <li><strong>Lower third</strong>: a name and title along the bottom left.</li>
+      <li><strong>Crawl</strong>: a ticker along the bottom.</li>
+      <li><strong>Bug</strong>: a small label in the top right corner.</li>
+      <li><strong>Title card</strong>: full screen.</li>
+      <li><strong>Countdown</strong>: put the time on Line 1, like <code>5:00</code>, or <code>10</code> for ten minutes.</li>
+      <li><strong>Comment</strong>: who said it, and what they said.</li>
+    </ul>
+    <figure>
+      <img src="/assets/guides/broadcast-view/graphics.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Graphics page. The Program monitor shows the sermon slide with a lower third reading Pastor Ruth Okafor. The Sanctuary screen output is selected. Line 1 says Pastor Ruth Okafor, Line 2 says Senior pastor, Riverbend Community Church, and the colour is red. Below are keys for Lower third, Crawl, Bug, Title card, Countdown, Comment and Clear graphics.">
+      <figcaption>A lower third over the sermon slide on the sanctuary screen. It stays until you press Clear graphics or Esc.</figcaption>
+    </figure>
+    <p>A graphic goes over whatever the selected outputs are showing and stays until you clear it. On a stream it is drawn into the stream's picture. On a screen it uses the screen's picture-in-picture overlay, so a screen whose player can't show overlays won't show it; the message after you press the key says how many outputs took it.</p>
+
+    <h2 id="cameras">Camera control</h2>
+    <p>If you have a network camera that can pan, tilt and zoom, and it speaks ONVIF, add it in <strong>Content</strong> as a camera first (see the <a href="https://github.com/screentinker/screentinker/blob/main/docs/onvif-cameras.md" target="_blank" rel="noopener">ONVIF camera notes</a>). It then appears on the <strong>Cameras</strong> page. Choose it, then steer it with the arrows, <strong>Home</strong>, <strong>Zoom in</strong>, <strong>Zoom out</strong> and <strong>Speed</strong>, or jump to one of its saved <strong>Presets</strong>. A scene can move cameras to their presets when you take it.</p>
+
+    <h2 id="streams">Stream out: YouTube, Facebook, Twitch, RTMP, SRT</h2>
+    <p>A stream destination is an output like a screen: you take a source to it, key graphics over it and put guests in it. The difference is that the server turns its picture and sound into a live video and sends it to a streaming service.</p>
+    <ol class="steps">
+      <li>Open <strong>Streams</strong> and press <strong>Add a destination</strong>.</li>
+      <li><strong>Name</strong> it, for example "Sunday livestream".</li>
+      <li><strong>Stream to</strong>: <strong>YouTube Live</strong>, <strong>Facebook Live</strong>, <strong>Twitch</strong>, <strong>Custom RTMP / RTMPS</strong>, <strong>SRT</strong>, or <strong>Record to a file (no stream)</strong>.</li>
+      <li>Paste the <strong>Stream key</strong> from the streaming service. For Custom RTMP, also fill in the <strong>Server address</strong> (it starts with <code>rtmp://</code> or <code>rtmps://</code>). For SRT, the address starts with <code>srt://</code>, and options such as the stream ID or passphrase go in the key box.</li>
+      <li>Choose the <strong>Picture</strong>: 720p or 1080p. Tick <strong>Record</strong> to also keep a copy on the server.</li>
+      <li>Press <strong>Save destination</strong>.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/broadcast-view/stream-destination.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Stream outputs section. Two destinations are listed, each Off with Standby, Go live or Record, and Delete buttons. Below is the form for a new destination named Sunday on Facebook, with Stream to set to Facebook Live, an empty Stream key box, Picture 720p and a Record tick box, then Save destination and Cancel. Under it a note says a stream uses one to two processor cores and this server runs up to 2 at once, and a yellow Licence notice describes the ffmpeg installed on this server.">
+      <figcaption>Adding a Facebook destination. The note under the list says how many streams this server runs at once, and the licence notice says which ffmpeg it found.</figcaption>
+    </figure>
+    <p>The stream key is stored encrypted and never shown again. To change other settings later, leave the key box empty and the saved key is kept. A stream must be stopped before you change it.</p>
+
+    <h3 id="go-live">Standby, Go live and Stop</h3>
+    <ol class="steps">
+      <li>On the <strong>Mixer</strong> page, select the stream's output key, choose a source, and press <strong>Take</strong>. A stream with nothing taken to it can't go live.</li>
+      <li>Press <strong>Standby</strong>. Everything starts except the sending: the picture is drawn, inputs are connected and the meters move, so you can set levels, invite guests and check the look. Nothing leaves the building.</li>
+      <li>When you are ready, press <strong>Go live</strong>. It takes a few seconds to come up. The row then says <strong>Live</strong>, or <strong>Reconnecting</strong> if the connection to the service drops.</li>
+      <li>Press <strong>Stop stream</strong> when you are done.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/broadcast-view/standby.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Streams page with the Sunday livestream on standby: its lamp is amber, it says Standby, and it offers Go live and Stop stream. Program shows the stream playing the Welcome slide. Above, the Guests section has Invite guests and Invite a person for each stream.">
+      <figcaption>On standby: the stream is drawn and its sound is mixed, but nothing is being sent. Go live starts sending.</figcaption>
+    </figure>
+    <p>If the server restarts while a stream is running (an update, a power cut), the stream comes back on standby, never live by itself: going live is always your decision. A server runs up to 2 streams at once unless whoever runs it changes that (see <a href="#install">What the server needs</a>).</p>
+
+    <h3 id="record">Recording</h3>
+    <p>Tick <strong>Record</strong> on a stream to save a copy while it streams, or add a <strong>Record to a file</strong> destination to record without streaming (its button says <strong>Record</strong> instead of Go live). Recordings are Matroska (.mkv) files, about 1.6 GB an hour at 720p, kept on the server. They are listed under <strong>Recordings</strong> with <strong>Download</strong> and <strong>Delete</strong>. A recording doesn't start when the server has less than 2 GB free; the stream row says so.</p>
+
+    <h2 id="sound">The sound console</h2>
+    <p>The <strong>Audio</strong> page gives each stream its own mixing desk. Each input is a strip with a meter, a fader, <strong>Mute</strong> and <strong>EQ / FX</strong>, and they all feed the <strong>Master</strong>, which ends in a limiter so the sound doesn't clip. Every control works live.</p>
+    <ul>
+      <li><strong>Programme</strong>: the sound of the videos in the source you took. This needs PulseAudio on the server; without it the strip is greyed out and a note says so.</li>
+      <li><strong>Bed</strong>: an audio file from Content, looped under everything.</li>
+      <li><strong>Desk mic</strong>: the microphone of the computer you have the desk open on. Press <strong>Use this computer's microphone</strong>.</li>
+      <li><strong>Console on this server</strong>: a mixing desk or multichannel sound card plugged into the server by USB, each channel on its own strip.</li>
+      <li><strong>Line</strong>: a sound card input on the server.</li>
+      <li><strong>Network 1</strong> and <strong>Network 2</strong>: a sound feed from the network, for example an SRT, RTSP, RTP, UDP or RTMP address, or an internet radio stream.</li>
+      <li><strong>Pads</strong>: up to 12 sound clips (a jingle, a chime, applause) fired with one press. Press <strong>Set up pads</strong> to choose the audio files, name them, set their levels and loop them.</li>
+      <li>A strip for each <strong>guest</strong>, while they are here (see <a href="#guests">Guests</a>).</li>
+    </ul>
+    <figure>
+      <img src="/assets/guides/broadcast-view/sound-console.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The sound console for the Sunday livestream on standby. Strips for Programme, Bed, Desk mic, Line, Network 1, Network 2, Pads, a guest called Grace Lee marked On air, and Master, each with a meter, fader, Mute and EQ / FX. The Bed and Grace Lee meters are moving. Below, two pads named chime.mp3 and soft-bed.mp3, and boxes for the desk mic, a console on this server, the audio bed, the line input and two network feeds.">
+      <figcaption>The livestream's console on standby, with a soft music bed, a guest on air and two pads ready to fire.</figcaption>
+    </figure>
+    <p><strong>EQ / FX</strong> opens a strip's processing: trim, pan, high-pass and low-pass filters, a noise reducer that can learn a room's hum, a four-band equaliser, gate, de-esser, ducking under speech, a compressor, and sends to reverb, delay and chorus. <strong>Set flat</strong> puts a strip back to neutral. You don't need any of it to get started: the faders and mutes are enough.</p>
+    <p>Tick <strong>Sound on screens</strong> to give screens that show this stream its sound as well. When screens are selected on the desk, they get their own volume faders on this page too.</p>
+
+    <h2 id="guests">Guests</h2>
+    <p>A guest is someone who joins from their own phone or computer, such as a missionary calling in, a parent on a school trip, or a speaker at another site. They need only the link: no app and no account.</p>
+    <ol class="steps">
+      <li>In <strong>Guests</strong> on the Streams page, press <strong>Invite guests</strong> next to the stream. The link is copied. Anyone with it can join, for 12 hours. Or type a name and press <strong>Invite a person</strong> for a link that only one person can use at a time.</li>
+      <li>Send the link. The guest opens it, allows their camera and microphone, types their name and presses <strong>Join</strong>.</li>
+      <li>They wait in the green room (<strong>Backstage</strong>). You see them live on the desk; the audience doesn't.</li>
+      <li>Press <strong>Put on air</strong> to show and hear them in the stream, and <strong>Take off air</strong> to send them back.</li>
+    </ol>
+    <figure>
+      <img src="/assets/guides/broadcast-view/guests.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The Outputs and Guests sections. The Sanctuary screen and the Sunday livestream are selected, and a button offers Show Sunday livestream on 1 screen. In Guests, the Sunday livestream's green room has layout keys Corner, Side and Full screen, Merge, Copy invite link and Close the green room, the invite link, and one guest, Grace Lee, marked On air, with a Volume slider and Take off air, Listen, Talk, Cut out and Remove buttons.">
+      <figcaption>Grace Lee is on air in the livestream. The layout keys place on-air guests in a corner, at the side, or full screen.</figcaption>
+    </figure>
+    <ul>
+      <li>The stream must be on <strong>Standby</strong> or <strong>Live</strong> before a guest can go on air. You can see and hear guests while it is off.</li>
+      <li>Up to 6 guests can be in a stream's green room, and up to 4 can be on air at once. <strong>Corner</strong>, <strong>Side</strong> and <strong>Full screen</strong> set where they appear.</li>
+      <li><strong>Volume</strong> sets how loud that guest is in the stream. <strong>Listen</strong> lets you hear a guest on your computer only.</li>
+      <li><strong>Talk</strong> sends your microphone to one guest, and <strong>Merge</strong> puts you and all the guests in one conversation. Neither goes to air: use them to cue people.</li>
+      <li><strong>Hears show</strong> (on the guest's strip on the Audio page) sends the guest the show in their ear without their own voice, a "mix-minus", so they don't hear themselves echo back late. Turn it off for a guest on speakers who causes echo.</li>
+      <li><strong>Cut out</strong> shows the guest without their background, over the programme. It needs a green background: the guest ticks <strong>Remove my background</strong> on their page (it runs on their device, and a slow device says so), or stands in front of a real green screen.</li>
+      <li><strong>Remove</strong> takes a guest out. Someone who came in by the room link could come back by it, so to keep them out press <strong>Close the green room</strong> (twice, a few seconds apart). That disconnects everyone and the link stops working.</li>
+    </ul>
+    <figure>
+      <img src="/assets/guides/broadcast-view/guest-page.webp" width="1440" height="900" loading="lazy" decoding="async" alt="The guest's page, titled You are on air, The audience can see and hear you now. Their camera picture has a red ON AIR tag. Below are a sound level bar, Mute microphone, Turn camera off and Leave buttons, a slider for The show in your ear (without your own voice), Camera and Microphone choices, and a Remove my background tick box.">
+      <figcaption>What the guest sees. The tag says Backstage while they wait and ON AIR once you put them on.</figcaption>
+    </figure>
+    <p>Guests connect straight to your server's streaming browser over WebRTC, the way video calls do; their picture and sound don't pass through ScreenTinker's own process. If guests outside your building can't connect, your network may need a STUN or TURN server; the server uses the same settings as live video and Talk. If your desk's browser hides its network addresses (some VPN and privacy settings), it can't show guests live, but the stream itself is not affected, and the desk says so.</p>
+
+    <h2 id="screens">Show the stream on your screens</h2>
+    <p>You can put a stream's finished picture, with its graphics and on-air guests, on your signage screens: the foyer, the overflow room, the hall. On the <strong>Mixer</strong> page, select the stream's output key together with the screens, then press <strong>Show (stream name) on (n) screen(s)</strong>. The stream must be on standby or live.</p>
+    <figure>
+      <img src="/assets/guides/broadcast-view/screen-shows-stream.webp" width="1440" height="900" loading="lazy" decoding="async" alt="A signage screen showing the stream's picture: the sermon slide, Built on rock, with the guest Grace Lee in a box in the bottom right corner.">
+      <figcaption>The sanctuary screen showing the livestream's picture, guest included.</figcaption>
+    </figure>
+    <ul>
+      <li>The picture goes over whatever the screen was playing. The screen's key on the desk says <strong>Showing stream</strong>. Press <strong>Release (n) screen(s)</strong> on the stream's row on the Streams page to give each screen its own content back.</li>
+      <li>A screen that is offline, or showing something else that was shared to it, gets the stream as soon as it can. One that reloads or drops off the network is given it again by itself. Stopping the stream releases its screens.</li>
+      <li>It uses screen sharing, so screen sharing must be on for the server and the workspace, and the screen's player must be able to show a share: the web player, the Android app, the Raspberry Pi, Windows and macOS apps, the iPad app, and Samsung Tizen 10 or newer. LG webOS, BrightSign, Fire TV (Vega) and Roku can't. The message after you press the button names any screen that can't and says why. More detail is in the <a href="https://github.com/screentinker/screentinker/blob/main/docs/screen-share.md" target="_blank" rel="noopener">screen share notes</a>.</li>
+      <li>A screen shows the picture only, unless you tick <strong>Sound on screens</strong> on the Audio page.</li>
+    </ul>
+
+    <h2 id="install">What the server needs</h2>
+    <p>This part is for whoever looks after the server. The desk works on any self-hosted install. Stream outputs, recording, guests and showing a stream on screens need these programs installed as normal system packages on the machine that runs the server. ScreenTinker doesn't bundle them.</p>
+    <ul>
+      <li><strong>ffmpeg</strong>: encodes the stream. The official Docker image already includes it.</li>
+      <li><strong>Chromium</strong>: the hidden browser that draws the stream. Install it and set <code>CHROME_PATH</code> to it (for example <code>/usr/bin/chromium</code>). The official Docker image does not include a browser. Use Chromium itself: in our testing, a branded Google Chrome build drew and mixed the stream, but couldn't show it on screens, because it refuses the small extension ScreenTinker loads for that.</li>
+      <li><strong>PulseAudio</strong> (the <code>pulseaudio</code> and <code>pulseaudio-utils</code> packages): carries the programme's own sound into the mix. Without it everything else works, and the Programme strip stays off. The server starts PulseAudio itself if it is installed but not running.</li>
+      <li><strong>Xvfb</strong> (optional): with it, the stream captures every frame, so camera pictures and videos move smoothly. Without it the stream still works, but moving pictures top out at about 10 to 15 frames a second.</li>
+      <li><strong>A user called <code>st-render</code>, when the server runs as root</strong> (as it does in Docker). The hidden browser opens guests' cameras, and inside a container Chromium's own safety sandbox can't run, so ScreenTinker runs the browser as this separate user instead. It then can't read the database, keys or uploads, and the server makes those folders private to their owner. The official Dockerfile already creates the user. On a plain Linux install running as root, create it with <code>useradd --system --no-create-home --shell /usr/sbin/nologin st-render</code>.</li>
+      <li><strong>With Docker Compose, keep <code>init: true</code></strong> (it is in <code>docker-compose.example.yml</code>). A stream's browser leaves a few small processes behind each time it stops, and this collects them.</li>
+      <li><strong>An https address</strong> for guests, and screen sharing switched on (it is unless <code>SCREEN_SHARE_ENABLED=false</code>) for showing a stream on screens.</li>
+    </ul>
+    <p>On Docker, one way is a small image built on the official one:</p>
+    <pre><code>FROM ghcr.io/screentinker/screentinker:latest
+RUN apt-get update \
+    &amp;&amp; apt-get install -y --no-install-recommends chromium pulseaudio pulseaudio-utils xvfb \
+    &amp;&amp; rm -rf /var/lib/apt/lists/*
+ENV CHROME_PATH=/usr/bin/chromium</code></pre>
+    <p>Restart the server after installing, and open <strong>Streams</strong>: if something is still missing, the page says which. Each stream uses one to two processor cores while it runs. The server runs 2 at once by default; <code>STREAM_OUT_MAX</code> changes that, from 1 to 8.</p>
+
+    <div class="callout self-hosted">
+      <span class="callout-title">Licences</span>
+      <p>ScreenTinker contains no GPL code and does not ship ffmpeg. It runs whatever ffmpeg you installed, as a separate program. The Streams page reads that ffmpeg and shows a licence notice: most distribution builds are GPL, which is fine to run but applies to that ffmpeg if you redistribute the server together with it; a "nonfree" build may be used but not redistributed; an LGPL build gets a short note. Chromium and PulseAudio are likewise your system's own packages under their own licences.</p>
+    </div>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>Can I use this on screentinker.com?</h3>
+    <p>No. Broadcast view, the mixer and streaming exist only on self-hosted servers. See the box at the top of this page for why.</p>
+    <h3>Does it stream to two places at once?</h3>
+    <p>Add a destination for each and go live on each one. Every running stream is encoded separately and uses its own processor cores, up to the server's limit (2 unless changed).</p>
+    <h3>Will a press of Take change what my screens play after the service?</h3>
+    <p>Yes. Take sets the screen's playlist, and it stays until you change it. Take the usual playlist back at the end, or change it on the Playlists page.</p>
+    <h3>A guest can't turn on their camera.</h3>
+    <p>The link must be https: browsers block cameras on plain http pages, and the guest's page says so. Also check that the guest allowed the camera and microphone when their browser asked.</p>
+
+    <div class="cta">
+      <h2>Run it on your own server</h2>
+      <p>Broadcast view comes with every self-hosted ScreenTinker server, free and open source.</p>
+      <p><a href="/guides/self-hosted-digital-signage.html" class="btn btn-primary" style="padding:14px 28px;font-size:16px">Read the self-hosting guide</a></p>
+      <p class="cta-alt">Or try signage first on hosted ScreenTinker: <a href="/app#/login">start a free trial</a> &middot; <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a></p>
+    </div>
+
+    <div class="related">
+      <h2>Related guides</h2>
+      <ul>
+        <li><a href="/guides/self-hosted-digital-signage.html">Self-hosting ScreenTinker</a></li>
+        <li><a href="/guides/digital-signage-content-playlists.html">Content and playlists</a></li>
+        <li><a href="/guides/digital-signage-groups-video-walls.html">Groups and video walls</a></li>
+        <li><a href="/guides/digital-signage-emergency-alerts.html">Emergency alerts</a></li>
+        <li><a href="/guides/">All guides</a></li>
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div style="color:var(--dim);font-size:13px">&copy; 2026 ScreenTinker. All rights reserved.</div>
+    <div class="links">
+      <a href="/solutions/">Solutions</a>
+      <a href="/integrations/">Integrations</a>
+      <a href="/guides/">Guides</a>
+      <a href="https://github.com/screentinker/screentinker" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/utTdsrqq4Z" target="_blank" rel="noopener">Discord</a>
+      <a href="/legal/terms.html">Terms</a>
+      <a href="/legal/privacy.html">Privacy</a>
+      <a href="/legal/third-party.html">Licenses</a>
+      <a href="/app#/login">Sign In</a>
+    </div>
+  </footer>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "https://screentinker.com/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Guides",
+      "item": "https://screentinker.com/guides/"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Broadcast view",
+      "item": "https://screentinker.com/guides/digital-signage-broadcast-view.html"
+    }
+  ]
+}
+  </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Broadcast view: a vision mixer and live streaming for your own server",
+  "description": "On your own ScreenTinker server, run screens like a live show: take sources to air, add graphics and guests, and stream to YouTube, Facebook or Twitch.",
+  "image": "https://screentinker.com/assets/guides/broadcast-view/desk.webp",
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Switch to Broadcast view",
+      "text": "On a self-hosted server, press Broadcast at the top of the menu. The mixer becomes your home page.",
+      "url": "https://screentinker.com/guides/digital-signage-broadcast-view.html#switch"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Take a source to air",
+      "text": "Press a source key to see it in Preview, select the screens under Outputs, choose a transition and press Take.",
+      "url": "https://screentinker.com/guides/digital-signage-broadcast-view.html#desk"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Add a stream destination",
+      "text": "On Streams, press Add a destination, choose YouTube Live, Facebook Live, Twitch, Custom RTMP, SRT or Record to a file, paste the stream key and save.",
+      "url": "https://screentinker.com/guides/digital-signage-broadcast-view.html#streams"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 4,
+      "name": "Go live",
+      "text": "Take a source to the stream, press Standby to check the picture and sound, then press Go live.",
+      "url": "https://screentinker.com/guides/digital-signage-broadcast-view.html#go-live"
+    },
+    {
+      "@type": "HowToStep",
+      "position": 5,
+      "name": "Invite guests",
+      "text": "Press Invite guests, send the link, and press Put on air when the guest is ready in the green room.",
+      "url": "https://screentinker.com/guides/digital-signage-broadcast-view.html#guests"
+    }
+  ]
+}
+  </script>
+</body>
+</html>
