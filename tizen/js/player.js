@@ -2084,16 +2084,20 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
       zone.el.appendChild(bf);
       if (multi) this.scheduleAdvance(zone, dur, advance);
     } else if (mime.indexOf('video/') === 0 || stIsAudio(a)) {
-      // An audio item is a clip with no picture (see stIsAudio), muted like every zone clip here.
+      // An audio item is a clip with no picture (see stIsAudio). Unlike a zone video it is HEARD:
+      // sound is the whole point of the item. It warms muted (TV autoplay) and takes the item's own
+      // mute once playing, the same rule as full screen.
+      var isAud = stIsAudio(a);
       var v = document.createElement('video');
       v.className = zrFitClass(a.fit_mode || zone.fit);
-      if (stIsAudio(a)) v.style.cssText = ST_AUDIO_EL_CSS;
+      if (isAud) v.style.cssText = ST_AUDIO_EL_CSS;
       // Zone videos are muted: TV web autoplay needs muted, and overlapping zone audio
       // is rarely intended. (Single-zone fullscreen handles audio in PlaylistPlayer.)
       v.autoplay = true; v.muted = true; v.setAttribute('playsinline', '');
       v.loop = !multi; // single-item zone loops; multi advances on end
       v.onended = function () { if (multi) advance(); };
       v.onerror = function () { if (multi) self.scheduleAdvance(zone, 2000, advance); };
+      if (isAud) v.addEventListener('playing', function () { try { v.muted = !!a.muted; } catch (e) {} }, { once: true });
       v.src = this.contentUrl(a);
       zone.el.appendChild(v);
       this.videos[zone.id] = v;

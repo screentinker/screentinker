@@ -170,7 +170,7 @@ test('preload: an audio next item warms nothing (no hidden decoder held for it)'
   assert.equal(p._videoWillComposite(song({ transition: { effects: [{ type: 'fade' }] } })), false, 'never composites');
 });
 
-test('zone: audio plays with no picture, muted like every Tizen zone clip, advances on end', () => {
+test('zone: audio plays with no picture and is heard (warms muted, then the item mute), advances on end', () => {
   const h = load();
   const zr = new h.sb.ZoneRenderer(makeEl('div'), () => 'http://srv');
   const div = makeEl('div');
@@ -181,7 +181,9 @@ test('zone: audio plays with no picture, muted like every Tizen zone clip, advan
   assert.equal(v.tag, 'video', 'audio must not fall through to an empty zone');
   assert.equal(v.src, 'http://srv/api/content/song/file');
   assert.match(v.style.cssText, /width:1px;height:1px/);
-  assert.equal(v.muted, true, 'same audio rule as a zone video on this player');
+  assert.equal(v.muted, true, 'warms muted for TV autoplay');
+  v.fire('playing');
+  assert.equal(v.muted, false, 'zone audio is heard once playing');
   assert.equal(v.loop, false);
   assert.ok(h.timers.some((t) => t.ms === 205000), 'safety net');
   v.onended();
@@ -190,6 +192,16 @@ test('zone: audio plays with no picture, muted like every Tizen zone clip, advan
   const one = makeEl('div');
   zr.showItem({ id: 'z2', el: one }, [song()], 0);
   assert.equal(one.children[0].loop, true, 'a one-item zone loops');
+
+  const m = makeEl('div');
+  zr.showItem({ id: 'z3', el: m }, [song({ muted: 1 })], 0);
+  m.children[0].fire('playing');
+  assert.equal(m.children[0].muted, true, 'a muted item stays silent');
+
+  const vid = makeEl('div');
+  zr.showItem({ id: 'z4', el: vid }, [{ content_id: 'clip', mime_type: 'video/mp4', duration_sec: 10 }], 0);
+  vid.children[0].fire('playing');
+  assert.equal(vid.children[0].muted, true, 'zone VIDEO is still muted on this player');
 });
 
 test('wall zone: audio is a clip with no picture, voiced only by its audio zone, no frozen frame', () => {
