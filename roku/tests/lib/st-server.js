@@ -104,6 +104,13 @@ async function start({ serverDir = process.env.SERVER_DIR || path.join(REPO, 'se
       spawnSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', `testsrc2=s=1280x720:r=30:d=${seconds}`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', f]);
       return f;
     },
+    /** A short generated tone (no third-party media): `ext` picks the container, e.g. wav, ogg. */
+    testAudio(seconds = 3, ext = 'wav') {
+      const f = path.join(work, `test-tone.${ext}`);
+      const codec = ext === 'ogg' ? ['-c:a', 'libvorbis'] : [];
+      spawnSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${seconds}`, ...codec, f]);
+      return f;
+    },
     async widget(type, name, config) {
       return s.api('/widgets', { method: 'POST', body: JSON.stringify({ widget_type: type, name, config }) });
     },

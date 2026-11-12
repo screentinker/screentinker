@@ -135,7 +135,8 @@ end sub
 
 ' ---------------------------------------------------------------- media classification
 
-' What the Roku does with an item: "video", "stream", "image", "raster" (server renders it), "skip".
+' What the Roku does with an item: "video", "stream", "audio", "image", "raster" (server renders
+' it), "skip".
 '
 ' ⚠️ THE DEFAULT IS "raster", NOT "skip". Anything the server can draw — every widget type, web
 ' pages, HTML bundles, PDFs, types added after this player shipped — is shown as a rendered frame.
@@ -148,14 +149,65 @@ function ST_ItemKind(item as object) as string
     if mime = "video/hls" or mime = "application/vnd.apple.mpegurl" or mime = "application/x-mpegurl" or mime = "application/dash+xml" then return "stream"
     if Left(mime, 6) = "video/" then return "video"
     if mime = "image/jpeg" or mime = "image/png" or mime = "image/gif" or mime = "image/webp" or mime = "image/bmp" then return "image"
-    if Left(mime, 6) = "audio/" then return "skip"
+    if Left(mime, 6) = "audio/" then
+        if ST_IsOggAudio(item) then return "skip"
+        return "audio"
+    end if
     if item.content_id = invalid and item.widget_id = invalid then return "skip"
     return "raster"
 end function
 
-' Roku's streamFormat for a video/stream item.
+' True for an Ogg / Opus / WebM audio upload (uploads sniff any Ogg stream, Vorbis, Opus or Ogg
+' FLAC, as audio/ogg). Roku's media player does not take the Ogg container, so these are skipped up
+' front: queued on the Video node they would only come back as an error after a network round trip,
+' every round, and the zone's play log would fill with failed starts.
+function ST_IsOggAudio(item as object) as boolean
+    mime = LCase(ST_Str(item, "mime_type"))
+    if mime = "audio/ogg" or mime = "audio/opus" or mime = "audio/webm" or mime = "audio/vorbis" or Left(mime, 11) = "audio/x-ogg" or mime = "audio/x-vorbis+ogg" then return true
+    name = LCase(ST_Str(item, "filename"))
+    for each ext in [".ogg", ".oga", ".opus", ".weba"]
+        if Len(name) > Len(ext) and Right(name, Len(ext)) = ext then return true
+    end for
+    return false
+end function
+
+' Roku's streamFormat for an uploaded audio file (MP3, M4A, WAV, FLAC). The MIME type first, the
+' file extension when the MIME type is a generic one; "mp3" when neither says (MPEG audio is what
+' the upload sniffer falls back to as well).
+function ST_AudioFormat(item as object) as string
+    mime = LCase(ST_Str(item, "mime_type"))
+    name = LCase(ST_Str(item, "filename"))
+    if mime = "audio/mpeg" or mime = "audio/mp3" or mime = "audio/mpeg3" or mime = "audio/x-mpeg" then return "mp3"
+    if mime = "audio/mp4" or mime = "audio/m4a" or mime = "audio/x-m4a" or mime = "audio/aac" or mime = "audio/x-aac" then return "mp4"
+    if mime = "audio/wav" or mime = "audio/x-wav" or mime = "audio/wave" or mime = "audio/vnd.wave" then return "wav"
+    if mime = "audio/flac" or mime = "audio/x-flac" then return "flac"
+    if Right(name, 4) = ".m4a" or Right(name, 4) = ".aac" or Right(name, 4) = ".mp4" then return "mp4"
+    if Right(name, 4) = ".wav" then return "wav"
+    if Right(name, 5) = ".flac" then return "flac"
+    return "mp3"
+end function
+
+' The "now playing" title of an audio item: its file name without the extension (as the web player
+' shows it), or "Audio" when the item carries no name.
+function ST_TrackTitle(item as object) as string
+    name = ST_Str(item, "filename")
+    dot = 0
+    for i = Len(name) to 1 step -1
+        if Mid(name, i, 1) = "." then
+            dot = i
+            exit for
+        end if
+    end for
+    ext = Len(name) - dot
+    if dot > 1 and ext >= 2 and ext <= 4 and Instr(1, Mid(name, dot + 1), " ") = 0 then name = Left(name, dot - 1)
+    if name = "" then name = "Audio"
+    return name
+end function
+
+' Roku's streamFormat for a video/stream/audio item.
 function ST_StreamFormat(item as object) as string
     mime = LCase(ST_Str(item, "mime_type"))
+    if Left(mime, 6) = "audio/" then return ST_AudioFormat(item)
     name = LCase(ST_Str(item, "filename") + " " + ST_Str(item, "remote_url"))
     if mime = "video/hls" or mime = "application/vnd.apple.mpegurl" or mime = "application/x-mpegurl" or Instr(1, name, ".m3u8") > 0 then return "hls"
     if mime = "application/dash+xml" or Instr(1, name, ".mpd") > 0 then return "dash"
