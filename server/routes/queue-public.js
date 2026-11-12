@@ -31,6 +31,30 @@ const { getClientIp } = require('../services/activity');
 
 const ipOf = (req) => String(getClientIp(req) || req.ip || '');
 
+/*
+ * Scale-out (docs/scale-out.md): these calls land in the workspace the QUEUE belongs to, which no
+ * session names, so resolveTenancy's interceptor never sees them. When that workspace is a copy on
+ * this node, EVERY call is forwarded to the primary, reads included: a poll can start the new day
+ * (svc.current writes), and a copy's numbers are stale anyway. It runs before anything here reads
+ * or writes the queue. The customer token comes from the path, the staff key from its header.
+ */
+const replicaProxy = require('../lib/replica-proxy');
+const appConfig = require('../config');
+function copiedQueue(q) {
+  if (!q) return false;
+  const ws = db.prepare('SELECT id, origin_node_id FROM workspaces WHERE id = ?').get(q.workspace_id);
+  return !!(ws && replicaProxy.isCopiedWorkspace(ws));
+}
+router.param('token', (req, res, next, token) => {
+  if (copiedQueue(svc.byPublicToken(db, token))) return replicaProxy.proxyToPrimary(req, res, appConfig);
+  next();
+});
+router.use('/s', (req, res, next) => {
+  const key = req.get('x-queue-staff-key');
+  if (key && copiedQueue(svc.byStaffKey(db, key))) return replicaProxy.proxyToPrimary(req, res, appConfig);
+  next();
+});
+
 // Bounded per-IP sliding windows.
 const hits = new Map();
 function limited(bucket, key, max, windowMs = 60000) {

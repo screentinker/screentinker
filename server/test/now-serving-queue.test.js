@@ -350,3 +350,33 @@ test('the customer token in a path never names its own rate-limit bucket', () =>
   assert.equal(canonicalLimitPath(`/api/public/queue/c/${tok}/ticket`), '/api/public/queue/c/:token/ticket');
   assert.equal(canonicalLimitPath(`/api/public/queue/c/${tok}/state`), '/api/public/queue/c/:token/state');
 });
+
+test('scale-out: on a node holding a COPY of the workspace, every customer and staff call goes to the primary', async () => {
+  const q = await newQueue({ name: 'Copy desk' });
+  assert.equal((await take(q, cid())).body.number, 1);
+  const before = db.prepare('SELECT * FROM queues WHERE id = ?').get(q.id);
+  db.prepare('UPDATE workspaces SET origin_node_id = ? WHERE id = ?').run('primary-node-uuid', WS);
+  try {
+    // No PRIMARY_URL in this test, so the proxy answers 409 instead of forwarding: proof it was taken.
+    const calls = [
+      await pub('GET', `/api/public/queue/c/${tokenFromCustomer(q)}/state`),   // reads too: a poll can start the day
+      await take(q, cid()),
+      await staff(q, 'GET', 'state'),
+      await staff(q, 'POST', 'next'),
+      await staff(q, 'POST', 'call', { number: 1 }),
+      await staff(q, 'POST', 'reset'),
+      await staff(q, 'POST', 'sound', { on: false }),
+    ];
+    for (const r of calls) {
+      assert.equal(r.status, 409, JSON.stringify(r.body));
+      assert.equal(r.body.code, 'read_only_replica');
+    }
+    assert.deepEqual(db.prepare('SELECT * FROM queues WHERE id = ?').get(q.id), before, 'the copy was not written');
+    // A wrong staff key is still just a wrong key (nothing to forward).
+    const bad = await pub('POST', '/api/public/queue/s/next', {}, { 'X-Queue-Staff-Key': q.id + '.' + 'A'.repeat(43) });
+    assert.equal(bad.status, 401);
+  } finally {
+    db.prepare('UPDATE workspaces SET origin_node_id = NULL WHERE id = ?').run(WS);
+  }
+  assert.equal((await staff(q, 'POST', 'next')).status, 200, 'back to normal once the workspace is the primary again');
+});
