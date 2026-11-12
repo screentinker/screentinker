@@ -622,6 +622,10 @@ const bySecret = (secret) => (typeof secret === 'string' && secret.length >= 40 
 
 function renderer({ sendPlayer }) {
   const r = express.Router();
+  // Self-hosted only, like everything else here: on the hosted service none of these addresses
+  // exist (they only ever act on streams, invites and sessions the gated routes make, but off is off).
+  r.use(['/stream-render', '/guest', '/stream-recording', '/api/stream-feed', '/api/stream-guest'], (req, res, next) => (
+    config.selfHosted ? next() : res.status(404).type('text/plain').send('not found')));
   const quiet = (res) => { res.setHeader('Cache-Control', 'no-store'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('X-Robots-Tag', 'noindex, nofollow'); };
   r.get('/stream-render/:secret', (req, res) => {
     quiet(res);

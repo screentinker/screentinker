@@ -762,6 +762,8 @@ app.get('/favicon.ico', (req, res) => {
 // these are public; they render only the escaped text they are handed and carry a policy with no
 // script at all. Frameable from any player (some are not same-origin with this server).
 app.get('/gfx/:kind', (req, res) => {
+  // The mixer's, so self-hosted only like the mixer (routes/mixer.js).
+  if (!config.selfHosted) return res.status(404).type('text/plain').send('not found');
   const gfx = require('./lib/mixer-gfx');
   const html = gfx.page(req.params.kind, req.query || {});
   if (!html) return res.status(404).type('text/plain').send('not found');
