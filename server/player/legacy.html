@@ -2351,6 +2351,14 @@ function applyMute(item) {
   const want = window.MediaMute ? window.MediaMute.resolveMuted(muteState(activeMuteItem)) : true;
   document.querySelectorAll("video, audio").forEach((el) => {
     if (isOverlayMedia(el)) return;
+    if (el.__stZoneItem) {
+      const z = el.__stZoneQuiet || (window.MediaMute ? window.MediaMute.resolveMuted(muteState(el.__stZoneItem)) : true);
+      try {
+        el.muted = z || baseAudioSuppressed;
+      } catch (e) {
+      }
+      return;
+    }
     try {
       el.muted = want || baseAudioSuppressed;
     } catch (e) {
@@ -3998,15 +4006,21 @@ function connect(serverUrl) {
     if (data.type === "set_server_url") moveToServer(data.payload && data.payload.url || data.url, data.payload && data.payload.enrol_key);
   });
   socket.on("device:mute-changed", (data) => {
-    const item = playlist[currentIndex];
-    if (data && item && data.content_id && item.content_id === data.content_id && currentVideoEl) {
-      remoteMuteOverride = !!data.muted;
-      applyMute();
-      try {
-        currentVideoEl.muted = !!data.muted || baseAudioSuppressed;
-      } catch (_) {
+    if (!data || !data.content_id && !data.widget_id) return;
+    let hit = false;
+    for (const it of playlist) {
+      if (!it) continue;
+      if (data.content_id && it.content_id === data.content_id || data.widget_id && it.widget_id === data.widget_id) {
+        it.muted = data.muted ? 1 : 0;
+        hit = true;
       }
     }
+    if (!hit) return;
+    try {
+      savePlaylistCache(playlist);
+    } catch (_) {
+    }
+    applyMute(playlist[currentIndex]);
   });
   let liveCaptureStop = null;
   function captureVideoDirect() {
@@ -5909,7 +5923,7 @@ function handlePlaylistUpdate(data) {
         if (live[k] && typeof live[k] === "object" && JSON.stringify(live[k]) === JSON.stringify(next[k])) continue;
         live[k] = next[k];
         patched = true;
-        if (k === "muted" && i === currentIndex) liveMuteChanged = true;
+        if (k === "muted") liveMuteChanged = true;
       }
     }
     if (patched) {
@@ -8016,7 +8030,9 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     video.src = src;
     video.autoplay = true;
     video.__stOverlay = !!div.__stOverlay;
-    video.muted = div.__stOverlay ? false : zone.sort_order > 0;
+    video.__stZoneItem = div.__stOverlay ? null : a;
+    video.__stZoneQuiet = !div.__stOverlay && zone.sort_order > 0;
+    video.muted = div.__stOverlay ? false : video.__stZoneQuiet || !!a.muted;
     video.loop = !multi;
     video.playsInline = true;
     video.style.cssText = "width:100%;height:100%;object-fit:".concat(itemFit(a, zone));

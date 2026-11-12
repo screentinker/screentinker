@@ -120,14 +120,21 @@ test('muting the item on screen applies immediately, through the mute resolver',
   assert.equal(r.muteCalls[0], r.playlist[0]);
 });
 
-test('muting an item that is NOT on screen patches it but touches no surface', () => {
+/*
+ * In a layout another zone may be playing item b right now, so a mute edit on ANY item re-resolves.
+ * It is resolved for the item on screen (a), never applied as b's flag to a's surface: applyMute
+ * gives each zone's media its own item's answer.
+ */
+test('muting an item that is NOT the current one patches it and re-resolves for the item on screen', () => {
   const r = runSync({
     playlist: [item({ content_id: 'a' }), item({ content_id: 'b', muted: false })],
     newItems: [item({ content_id: 'a' }), item({ content_id: 'b', muted: true })],
     currentIndex: 0,
   });
-  assert.equal(r.playlist[1].muted, true, 'still patched, for the next time it mounts');
-  assert.equal(r.muteCalls.length, 0, 'but nothing was applied to the playing item');
+  assert.equal(r.playlist[1].muted, true, 'patched, for a zone playing it and the next time it mounts');
+  assert.equal(r.muteCalls.length, 1, 'mute is re-resolved, since a layout zone may be playing b');
+  assert.equal(r.muteCalls[0], r.playlist[0], 'resolved for the item on screen, not b');
+  assert.equal(r.playlist[0].muted, false, 'the item on screen keeps its own flag');
 });
 
 /*

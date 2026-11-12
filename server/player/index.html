@@ -2376,7 +2376,8 @@
     // The item currently mounted, so a live mute toggle can re-resolve without waiting for the
     // next advance, and #129's per-item flag survives a remote override being cleared.
     let activeMuteItem = null;
-    // Live operator override: null means "not set", which defers to the item. Distinguishing
+    // Live operator override, kept for the resolver's contract but no longer set: a live toggle now
+    // writes the item's own flag (device:mute-changed). Null means "not set", which defers to the item. Distinguishing
     // null from false is the difference between "operator wants sound" and "nobody has said".
     let remoteMuteOverride = null;
 
@@ -2637,6 +2638,16 @@
        */
       document.querySelectorAll('video, audio').forEach((el) => {
         if (isOverlayMedia(el)) return;   // the overlay belongs to the trigger/PiP engines
+        /*
+         * A layout zone's media answers to ITS OWN item, not to the page-wide one. In layout mode
+         * activeMuteItem is just the first playlist item, so muting (say) the menu picture used to
+         * silence the music zone, and un-muting it un-muted a zone that is never meant to be heard.
+         */
+        if (el.__stZoneItem) {
+          const z = el.__stZoneQuiet || (window.MediaMute ? window.MediaMute.resolveMuted(muteState(el.__stZoneItem)) : true);
+          try { el.muted = z || baseAudioSuppressed; } catch (e) { /* torn down */ }
+          return;
+        }
         try { el.muted = want || baseAudioSuppressed; } catch (e) { /* torn down */ }
       });
       if (activeYtPlayer) {
@@ -4484,16 +4495,25 @@
       // #129: real-time mute. Apply immediately if the toggled item is the one playing now;
       // the value is also persisted in the snapshot so it sticks on the next playlist load.
       socket.on('device:mute-changed', (data) => {
-        const item = playlist[currentIndex];
-        if (data && item && data.content_id && item.content_id === data.content_id && currentVideoEl) {
-          // Was `<video>`-only, so a YouTube item ignored the toggle entirely.
-          remoteMuteOverride = !!data.muted;
-          applyMute();
-          // currentVideoEl is the BASE surface by definition. applyMute has already resolved the
-          // right value (and honours suppression); writing data.muted straight in would let an
-          // operator's un-mute punch through a live overlay's silence.
-          try { currentVideoEl.muted = !!data.muted || baseAudioSuppressed; } catch (_) {}
+        if (!data || (!data.content_id && !data.widget_id)) return;
+        /*
+         * The toggle belongs to ONE item. It used to set a page-wide override, compared against
+         * playlist[currentIndex] only: in layout mode that is just the first item, so muting it
+         * silenced every zone (and a zone's own item could never be muted live), and in full screen
+         * the override then stuck to every later item until a reload. Now the matching items' own
+         * flags change (zones hold these same objects), the cache keeps it, and applyMute resolves
+         * each surface from its own item, still honouring wall followers, gestures and an overlay.
+         */
+        let hit = false;
+        for (const it of playlist) {
+          if (!it) continue;
+          if ((data.content_id && it.content_id === data.content_id) || (data.widget_id && it.widget_id === data.widget_id)) {
+            it.muted = data.muted ? 1 : 0; hit = true;
+          }
         }
+        if (!hit) return;
+        try { savePlaylistCache(playlist); } catch (_) {}
+        applyMute(playlist[currentIndex]);
       });
 
       // #109: PiP overlay — a pushed floating layer above the playlist. The player
@@ -6963,7 +6983,7 @@
             if (live[k] && typeof live[k] === 'object' && JSON.stringify(live[k]) === JSON.stringify(next[k])) continue;
             live[k] = next[k];
             patched = true;
-            if (k === 'muted' && i === currentIndex) liveMuteChanged = true;
+            if (k === 'muted') liveMuteChanged = true;   // any item: a layout zone may be playing it
           }
         }
         if (patched) {
@@ -9478,7 +9498,11 @@
          * was an opaque black box over the playlist, forever. Stated explicitly now rather than
          * falling out of a comparison against undefined.
          */
-        video.muted = div.__stOverlay ? false : (zone.sort_order > 0); // Only first zone has audio
+        // Only the first zone is heard; an item muted by the operator stays silent there too (it
+        // used to be ignored in a zone). applyMute re-resolves zone media per item, see below.
+        video.__stZoneItem = div.__stOverlay ? null : a;
+        video.__stZoneQuiet = !div.__stOverlay && zone.sort_order > 0;
+        video.muted = div.__stOverlay ? false : (video.__stZoneQuiet || !!a.muted);
         video.loop = !multi; // single-item zone loops; multi advances on end
         video.playsInline = true;
         video.style.cssText = `width:100%;height:100%;object-fit:${itemFit(a, zone)}`;

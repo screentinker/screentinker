@@ -89,6 +89,12 @@
 - **Android: a screen share's sound plays as media, not as a voice call** (#840), the likely cause
   of silent shares on Android TV sticks (not confirmed on the reporting stick).
 
+- **Web player: mute in a layout** works per item. An item muted in a layout zone kept its sound
+  (live and after a reload), and muting the first playlist item silenced every zone, because the
+  live toggle set one page-wide override checked against the first item; in full screen that
+  override also stuck to every later item until a reload. Each zone's media now resolves its mute
+  from its own item.
+
 - **Native player: a video kept playing past its end after a live mute toggle** (#844). Every later
   event from the re-rendered item, including "ended", was dropped as stale.
 
