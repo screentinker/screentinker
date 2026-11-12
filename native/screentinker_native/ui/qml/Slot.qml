@@ -27,6 +27,9 @@ Item {
     signal ytLength(real sec)
     // #649: a bundle page asked to be skipped: "<token> <reason>" (the engine checks the token).
     signal bundleSkip(string detail)
+    // The "Now serving" widget asked for its chime: "<token> <volume> <view url>" (engine.on_queue_chime
+    // checks the token, the URL and the screen's sound rules; logic/queue_chime.py).
+    signal queueChime(string detail)
     signal position(real posMs, real durMs)
     // A fisheye camera steered by touch (only when its item allows it): "drag dx dy aspect",
     // "pinch scale" or "reset" (player/engine.py on_fisheye_touch).
@@ -70,6 +73,7 @@ Item {
     function setLoop(b) { if (loader.item && loader.item.setLoop) loader.item.setLoop(b) }
     function runJs(js) { if (loader.item && loader.item.runJs) loader.item.runJs(js) }
     function setFisheye(u) { if (loader.item && loader.item.setFisheye) loader.item.setFisheye(u) }
+    function installChime() { if (loader.item && loader.item.installChime) loader.item.installChime() }
 
     Loader {
         id: loader
@@ -297,6 +301,13 @@ Item {
             audioMuted: slot.forceMute || (slot.item ? !!slot.item.muted : false) || !slot.front
             property int attempts: 0
             function runJs(js) { runJavaScript(js) }
+            // The queue chime bridge (logic/queue_chime.bridge_script), only on THIS item's widget
+            // render page: never on a page the widget navigated to. Python checks the URL again.
+            function samePage(a, b) { return String(a).split(/[?#]/)[0].toLowerCase() === String(b).split(/[?#]/)[0].toLowerCase() }
+            function installChime() {
+                if (slot.item && slot.item.kind === "web" && slot.item.chimeJs && samePage(web.url, slot.item.source))
+                    runJavaScript(slot.item.chimeJs)
+            }
             function start() {
                 if (!slot.item) return
                 if (slot.item.html !== undefined && slot.item.html !== null && slot.item.html !== "")
@@ -329,6 +340,7 @@ Item {
             onLoadingChanged: function(req) {
                 if (req.status === WebEngineView.LoadSucceededStatus) {
                     attempts = 0
+                    installChime()                    // every load, a reload of the page too
                     if (slot.isReady) return          // a reload of a page already on screen
                     paintCap.restart()
                     runJavaScript(paintProbe)
@@ -348,6 +360,9 @@ Item {
             onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
                 // #780: the paint probe above (any web kind).
                 if (message === "ST_PAINTED") { if (!slot.isReady) paintSettle.restart(); return }
+                // The "Now serving" widget's STQueueChime.chime(volume), with the view's own URL.
+                if (slot.item && slot.item.kind === "web" && slot.item.chimeJs && typeof message === "string"
+                        && message.indexOf("ST_QUEUE_CHIME ") === 0) { slot.queueChime(message.substring(15) + " " + web.url); return }
                 // #649: a bundle page (engine.item_dict, logic/bundle_skip.inject) asking to be skipped.
                 if (slot.item && slot.item.kind === "html" && typeof message === "string"
                         && message.indexOf("ST_BUNDLE_SKIP ") === 0) { slot.bundleSkip(message.substring(15)); return }

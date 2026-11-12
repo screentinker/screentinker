@@ -24,6 +24,7 @@ import urllib.parse
 from PySide6.QtCore import QTimer
 
 from ..logic import bundle_skip as BS
+from ..logic import queue_chime as QC
 from ..logic import transparent_bg as TB
 from ..logic import kiosk as kiosk_logic
 from ..logic import playlist_logic as PL
@@ -315,6 +316,10 @@ class PlaybackEngine:
         self.controller.on_bundle_log = lambda msg: app.log_remote("info", "bundle", msg, mirror=True)
         self.controller.on_play_skipped = lambda it, ms: app.play_skipped(it, ms)
         self.skip_tokens = {}              # render token -> the bundle page's skip token (#649)
+        # The "Now serving" chime (logic/queue_chime.py): render token -> {token, src} of the
+        # widget mounted with it, and one gate for the whole player (two widgets on one queue chime once).
+        self.chime_mounts = {}
+        self.chime_gate = QC.Gate()
         self.timezone = None
         self.mode = "single"
         self.zones = []
@@ -700,6 +705,7 @@ class PlaybackEngine:
             self.skip_tokens[tok] = skip_token
             while len(self.skip_tokens) > 64:
                 self.skip_tokens.pop(next(iter(self.skip_tokens)))
+        self._attach_chime(tok, it, d)
         if transition is None:
             transition = surface == "main"
         tr = self.shaders.resolve(it.transition) if transition else None
@@ -712,6 +718,18 @@ class PlaybackEngine:
             return tok
         self.stage.showItem.emit(surface, d)
         return tok
+
+    def _attach_chime(self, tok, it, d):
+        """A widget page gets window.STQueueChime (logic/queue_chime.py): Slot.qml runs `chimeJs` in
+        the page after each load of THIS render page, and on_queue_chime honours a call only with
+        this mount's token. Never on the trigger overlay (it does not come through here)."""
+        if not it.is_widget or d.get("kind") != "web" or not QC.is_widget_page(d.get("source")):
+            return
+        ct = QC.new_token()
+        self.chime_mounts[tok] = {"token": ct, "src": d["source"]}
+        while len(self.chime_mounts) > 64:
+            self.chime_mounts.pop(next(iter(self.chime_mounts)))
+        d["chimeJs"] = QC.bridge_script(ct)
 
     def _attach_fisheye(self, surface, it, d):
         """A fisheye camera (the item's `fisheye`, logic/fisheye.py) is drawn as a normal view by a
@@ -841,6 +859,9 @@ class PlaybackEngine:
         if event == "fisheye_touch":
             self.on_fisheye_touch(surface, detail)
             return
+        if event == "queue_chime":
+            self.on_queue_chime(surface, token, detail)
+            return
         if event == "bundle_skip":
             # #649: honoured only with the skip token of THIS render, from a layout zone or the main
             # surface; never on wall zones (the shared clock) or the trigger overlay.
@@ -886,6 +907,68 @@ class PlaybackEngine:
                 self.controller.close_play_log(False)
                 self.controller.next()
 
+    def on_queue_chime(self, surface, token, detail):
+        """The "Now serving" widget asked for its chime (logic/queue_chime.py, Slot.qml). Played only
+        when every rule below holds, at the moment of the call; anything else is refused and logged."""
+        mount = self.chime_mounts.get(token)
+        ok, raw, url = QC.parse_console(detail, mount["token"] if mount else None)
+        if not ok:
+            return                         # not this mount's bridge: a stale page or a frame inside it
+        where = surface
+        why = self.queue_chime_refusal(surface, token, url)
+        if why:
+            self.app.log_remote("info", "QueueChime", "chime refused (%s): %s" % (where, why))
+            return
+        v = QC.volume(raw) * self.app.content_volume()
+        if not v > 0:
+            return
+        if not self.chime_gate.admit():
+            return                         # a burst of calls is one chime
+        self.app.play_queue_chime(v, where)
+
+    def queue_chime_refusal(self, surface, token, url):
+        """Why the widget mounted with `token` on `surface` may NOT chime now, or None when it may.
+        The same decision every other sound on this player obeys: the item's own mute (and the live
+        mute toggle), a video-wall follower, the wall zone audio rule, and the screen-wide silence
+        (screen off, talk/PA call, screen share, trigger alarm: app.may_be_heard)."""
+        mount = self.chime_mounts.get(token)
+        held = self.tokens.get(token)
+        if mount is None or held is None or held[0] != surface or self.surface_token.get(surface) != token:
+            return "not the widget on screen"
+        it = held[1]
+        if not it.is_widget:
+            return "not the widget on screen"
+        if surface == "main":
+            if self.mode != "single" or token != self.main_token:
+                return "not the widget on screen"
+        elif surface.startswith("zone:"):
+            zid = surface[5:]
+            if self.mode == "zones":
+                r = self.zone_runners.get(zid)
+                if r is None or r.token != token:
+                    return "not the widget on screen"
+            elif self.mode == "wallzones":
+                zs = next((z for z in self.wz_zones if z.sid == surface), None)
+                if zs is None or zs.token != token:
+                    return "not the widget on screen"
+                if not wz.zone_has_audio(zid, self.wz_config):
+                    return "another screen of the wall plays this zone's sound"
+            else:
+                return "not the widget on screen"
+        else:
+            return "not the widget on screen"   # the trigger overlay, or anything new
+        if not QC.same_widget_page(url, mount["src"]):
+            return "the page is not the widget's render page"
+        # Live, not what the page was mounted with: the live mute toggle and a wall role change apply
+        # to the next call straight away.
+        if it.muted:
+            return "the item is muted"
+        if self.wall and not self.wall["leader"] and self.mode != "wallzones":
+            return "a video-wall follower stays silent"
+        if not self.app.may_be_heard():
+            return "the screen must stay silent (screen off, alarm, talk or share)"
+        return None
+
     def on_slot_position(self, surface, token, pos_ms, dur_ms):
         self.video_pos[surface] = (pos_ms, dur_ms, time.monotonic(), token)
 
@@ -904,11 +987,18 @@ class PlaybackEngine:
     def _seek(self, ms):
         self.stage.control.emit("main", {"seek_ms": int(ms)})
 
-    def set_muted_for(self, content_id, muted):
+    def set_muted_for(self, content_id, muted, widget_id=""):
         if self.mode == "wallzones":
             return                         # the zone audio rule owns sound on a wall layout
         it = self.main_item
-        if not it or it.content_id != content_id or self.main_token is None:
+        if not it or self.main_token is None:
+            return
+        # A widget item has no content_id; the server names it by widget_id (lib/mute-sync.js). Its
+        # mute silences the "Now serving" chime (re-rendered below: the page stays, the token is new).
+        if content_id:
+            if it.content_id != content_id:
+                return
+        elif not (widget_id and it.is_widget and it.widget_id == widget_id):
             return
         it.muted = muted
         if it.mime_type == "video/youtube":
@@ -916,7 +1006,11 @@ class PlaybackEngine:
                                              "f.contentWindow.postMessage(JSON.stringify({event:'command',func:'%s',args:[]}),'*')}catch(e){}})()"
                                              % ("mute" if muted else "unMute")})
         else:
-            self.render(it, "main", loop=self.controller.wall_follower)
+            # The re-render is the item on screen now: its token must be main_token, or every later
+            # slot event (a video's "ended", the queue chime) is dropped as stale.
+            tok = self.render(it, "main", loop=self.controller.wall_follower)
+            if tok is not None:
+                self.main_token = tok
 
     # ------------------------------------------------------------------ proof of play
     def _on_play_log(self, event, it, completed):
@@ -1172,6 +1266,7 @@ class PlaybackEngine:
         tok = self._new_token(zs.sid, it)
         d["token"] = tok
         zs.token = tok
+        self._attach_chime(tok, it, d)
         self.surface_token[zs.sid] = tok
         self._attach_fisheye(zs.sid, it, d)
         if it.is_live and rtsp_tls.is_rtsps(it.remote_url):

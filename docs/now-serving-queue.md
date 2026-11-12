@@ -89,10 +89,11 @@ Which players chime:
 - **webOS and BrightSign**: they run the web player, and their apps start it with sound allowed.
 - **Android** (phones, tablets, Android TV, Fire TV): full screen, in a zone, or on a video wall. It plays as media, so the device's media volume (and the remote volume control) applies on top of the widget's own volume.
 - **Samsung Tizen**: full screen, in a zone, or on a video wall. No click needed; the volume set from the dashboard applies.
-- **Native Pi and Windows player, Roku**: show the number but stay silent.
+- **Native Pi and Windows player**: full screen, in a zone, or on a video wall, through the system's default sound output (the device volume and the remote volume control apply). It also stays silent while the screen is turned off or during a screen share.
+- **Roku**: shows the number but stays silent.
 - **Samsung SSSP3**: does not show the Now serving widget yet.
 
-On a video wall only the screen that plays that zone's sound chimes, so the wall chimes once, not once per panel. Everywhere, the chime stays silent on a wall follower, when the playlist item showing the widget is muted (the live mute toggle applies straight away), and on Android during a trigger alarm or a talk/PA call.
+On a video wall only the screen that plays that zone's sound chimes, so the wall chimes once, not once per panel. Everywhere, the chime stays silent on a wall follower, when the playlist item showing the widget is muted (the live mute toggle applies straight away), and on Android and the native player during a trigger alarm or a talk/PA call. A burst of calls within 3 seconds is one chime.
 
 ## Recent activity
 
@@ -119,5 +120,5 @@ The staff page and the dashboard show the last 20 things that happened in the qu
 - **The widget shows a number but a dot in the corner.** The screen cannot reach the server; it will catch up by itself when it can.
 - **"This staff link is not valid any more."** It was replaced or turned off. Copy the current one from the dashboard.
 - **"This queue link is not active."** The QR code was replaced (Settings → New QR code) or the queue deleted. Print the current code.
-- **No chime.** Check the widget's chime and volume, the queue's **Chime on the screens** switch, that the screen is not muted, and that the player is one that chimes (see [Sound](#sound)): a web player needs one click or `?autoplay_audio=1`, an Android player needs its media volume up. On Android the device log (live debug panel) says `QueueChime: chime refused` with the reason when a chime was asked for but not allowed.
+- **No chime.** Check the widget's chime and volume, the queue's **Chime on the screens** switch, that the screen is not muted, and that the player is one that chimes (see [Sound](#sound)): a web player needs one click or `?autoplay_audio=1`, an Android player needs its media volume up, a native Pi or Windows player needs its system volume up and a sound output. On Android and on the native player the device log (live debug panel) says `QueueChime: chime refused` with the reason when a chime was asked for but not allowed; the native player also logs `could not play: no usable audio output` when the device has no sound output it can use.
 - **Numbers restarted at the wrong time.** Check the queue's timezone under Settings.
