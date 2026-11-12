@@ -1007,7 +1007,7 @@ export const api = {
   adminStaleAccounts: (days) => request(`/admin/cleanup/stale-accounts?days=${encodeURIComponent(days)}`),
   adminPurgeStale: (body) => request('/admin/cleanup/stale-accounts', { method: 'POST', body: JSON.stringify(body) }),
   adminWarnStale: (body) => request('/admin/cleanup/stale-accounts/warn', { method: 'POST', body: JSON.stringify(body) }),
-  adminDeleteOrg: (id) => request(`/admin/orgs/${id}`, { method: 'DELETE' }),
+  adminDeleteOrg: (id, opts = {}) => request(`/admin/orgs/${id}`, { method: 'DELETE', ...(opts.acknowledge_stripe ? { body: JSON.stringify({ acknowledge_stripe: true }) } : {}) }),
   // #talk: per-org talk flag + optional per-org ICE (STUN/TURN) override. data = { talk_enabled, ice_servers }.
   adminSetOrgTalk: (id, data) => request(`/admin/orgs/${id}/talk`, { method: 'PUT', body: JSON.stringify(data) }),
   adminDeleteWorkspace: (id) => request(`/admin/workspaces/${id}`, { method: 'DELETE' }),

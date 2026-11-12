@@ -168,6 +168,9 @@ test('once the organization pays, a hand-over leaves its plan and subscription e
   const { o, w } = organization(owner, 'OrgPays');
   joinWorkspace(w, next);
   const nextOwn = organization(next, 'Successor personal');       // the successor already owns one of their own, on Free
+  // The test above left a person who still pays after handing over their only organization: the
+  // switch waits until that subscription is dealt with (here, as if cancelled).
+  for (const x of orgBilling.strandedPayers(db)) db.prepare('UPDATE users SET stripe_subscription_id = NULL WHERE id = ?').run(x.user_id);
   assert.equal(orgBilling.switchToOrganizations(db).ok, true);
   try {
     const r = await req('POST', `/api/organizations/${o}/ownership`, owner, { user_id: next });

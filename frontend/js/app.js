@@ -1,4 +1,4 @@
-import { connectSocket } from './socket.js';
+import { connectSocket, on as onSocket } from './socket.js';
 import * as dashboard from './views/dashboard.js';
 import * as deviceDetail from './views/device-detail.js';
 import * as contentLibrary from './views/content-library.js';
@@ -1271,6 +1271,9 @@ if (isAuthenticated()) {
 // Refresh the cached user on every route transition so plan/role changes
 // made by an admin propagate without requiring a re-login.
 window.addEventListener('hashchange', () => { if (isAuthenticated()) refreshCurrentUser(); });
+// A hand-over or a departure changed what this person may do in an organization (the server already
+// applies it on every request; only this page's copy of them is old): re-read it and redraw.
+onSocket('access-changed', () => { if (isAuthenticated()) refreshCurrentUser().then(() => { updateSidebarUser(); route(); }); });
 
 // Register PWA service worker
 if ('serviceWorker' in navigator) {

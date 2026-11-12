@@ -156,6 +156,8 @@ export function connectSocket() {
   });
 
   // Wall changed — dashboard refreshes wall cards + device-grouping layout
+  // This person's place in an organization changed (a hand-over, leaving): the page re-reads who they are.
+  dashboardSocket.on('dashboard:access-changed', () => emit('access-changed', {}));
   dashboardSocket.on('dashboard:wall-changed', () => {
     emit('wall-changed');
   });

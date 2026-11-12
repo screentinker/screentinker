@@ -777,7 +777,15 @@ async function loadOrgs() {
       expected: name,
       confirmLabel: t('admin.orgs.delete_org'),
       onConfirm: async () => {
-        await api.adminDeleteOrg(id);
+        try {
+          await api.adminDeleteOrg(id);
+        } catch (e) {
+          // Stripe still charges for it: say which subscriptions, so they can be cancelled or moved there first.
+          if (!e || e.code !== 'STRIPE_PAYMENTS') throw e;
+          const subs = ((e.body && e.body.subscriptions) || []).map((x) => `  ${x.id}${x.status ? ' (' + x.status + ')' : ''}, ${x.holder === 'owner' ? t('admin.orgs.stripe_owner') : t('admin.orgs.stripe_org')}${x.customer ? ' ' + x.customer : ''}`).join('\n');
+          if (!confirm(`${e.message}\n\n${subs}\n\n${t('admin.orgs.stripe_delete_anyway')}`)) throw new Error(t('admin.orgs.stripe_not_deleted'));
+          await api.adminDeleteOrg(id, { acknowledge_stripe: true });
+        }
         showToast(t('admin.orgs.org_deleted', { name }), 'success');
         loadOrgs(); loadUsers();
       },

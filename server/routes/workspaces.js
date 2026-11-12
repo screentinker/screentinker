@@ -729,11 +729,13 @@ router.delete('/:id/members/:userId', (req, res) => {
   }
   // What they set up here under their own name goes with the membership (Canva links, folder syncs,
   // REST-hook subscriptions) - lib/user-deletion.js releaseWorkspaceMember.
+  let released = null;
   db.transaction(() => {
     db.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?')
       .run(ws.id, req.params.userId);
-    releaseWorkspaceMember(db, { userId: req.params.userId, workspaceIds: [ws.id] });
+    released = releaseWorkspaceMember(db, { userId: req.params.userId, workspaceIds: [ws.id] });
   })();
+  require('../lib/user-deletion').pushMovedScreens(req.app.get('io'), released, req.params.userId);
   // Their open dashboards joined this workspace's socket room at connect; take them out of it.
   try { require('../ws/dashboardSocket').dropUserFromWorkspace(req.params.userId, ws.id); } catch (_) { /* best-effort: writes are re-checked live anyway */ }
   res.json({ success: true });

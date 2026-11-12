@@ -112,12 +112,18 @@ test('a member leaves: their memberships in it go, their work stays', async () =
   join(w, member); join(w2, member, 'workspace_viewer');
   db.prepare("INSERT INTO organization_members (organization_id, user_id, role) VALUES (?, ?, 'org_member')").run(o, member);
   const other = organization(member, 'Their own');                 // an organization of their own, untouched
-  const d = screen(w, member);
+  const d = screen(w, member), mineElsewhere = screen(other.w, member);
+  const file = rid('c');
+  db.prepare("INSERT INTO content (id, user_id, workspace_id, filename, filepath, mime_type, file_size) VALUES (?, ?, ?, 'a.jpg', 'a.jpg', 'image/jpeg', 5000000)").run(file, member, w);
   const r = await req('POST', `/api/organizations/${o}/leave`, member, {});
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(wsRole(w, member), null); assert.equal(wsRole(w2, member), null); assert.equal(orgRole(o, member), null);
   assert.equal(wsRole(other.w, member), 'workspace_admin', 'their own organization is untouched');
   assert.ok(db.prepare('SELECT 1 FROM devices WHERE id = ?').get(d), 'the screen they paired stays with the workspace');
+  // and counts against the owner's plan now, not the plan of someone who is gone (the owner upgrades if it has to)
+  assert.equal(db.prepare('SELECT user_id FROM devices WHERE id = ?').get(d).user_id, owner);
+  assert.equal(db.prepare('SELECT user_id FROM content WHERE id = ?').get(file).user_id, owner, 'and so does the storage of what they uploaded');
+  assert.equal(db.prepare('SELECT user_id FROM devices WHERE id = ?').get(mineElsewhere).user_id, member, 'a screen in their own organization stays theirs');
   assert.equal(orgRow(o).owner_user_id, owner);
   assert.equal((await req('POST', `/api/organizations/${o}/leave`, member, {})).status, 404, 'they are no longer in it');
   const log = db.prepare("SELECT details FROM activity_log WHERE action = 'org:member_left' ORDER BY id DESC LIMIT 1").get();
@@ -158,6 +164,8 @@ test('the owner leaves by handing over: the successor owns and administers it, t
   assert.equal(orgRow(o).owner_user_id, member); assert.equal(orgRole(o, member), 'org_owner');
   assert.equal(orgRole(o, owner), null); assert.equal(wsRole(w, owner), null);
   assert.ok(db.prepare('SELECT 1 FROM devices WHERE id = ?').get(d));
+  assert.equal(db.prepare('SELECT user_id FROM devices WHERE id = ?').get(d).user_id, member, 'the screen the old owner paired is the new owner\'s');
+  assert.equal(r.body.organization.id, o);
   assert.equal(db.prepare("SELECT COUNT(*) c FROM organization_members WHERE organization_id = ? AND role = 'org_owner'").get(o).c, 1);
 });
 

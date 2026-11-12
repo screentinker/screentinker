@@ -102,6 +102,7 @@ function handOver(req, org, targetId) {
   if (isDisabled(targetId)) return { refuse: [400, { error: 'That account is deactivated.' }] };
 
   const previousId = org.owner_user_id;
+  let moved = { devices: 0, content: 0 };
   const orgPays = limits.billingSource() === 'org';
   if (!orgPays) {
     // The plan is the owner's. Say what will change before changing it.
@@ -109,7 +110,7 @@ function handOver(req, org, targetId) {
     const fromId = from ? from.plan_id : null, toId = to ? to.plan_id : null;
     if (fromId !== toId && !(req.body && req.body.acknowledge_plan_change === true)) {
       return { refuse: [409, {
-        error: `This organization runs on its owner's plan. Handing it over moves it from ${from ? from.plan_display_name : 'no plan'} to ${to ? to.plan_display_name : 'no plan'}; the current subscription stays with the person paying for it.`,
+        error: `This organization runs on its owner's plan. Handing it over moves it, and the screens you added to it, from ${from ? from.plan_display_name : 'no plan'} to ${to ? to.plan_display_name : 'no plan'}; the current subscription stays with the person paying for it.`,
         code: 'PLAN_FOLLOWS_OWNER', from_plan: fromId, to_plan: toId,
       }] };
     }
@@ -126,7 +127,11 @@ function handOver(req, org, targetId) {
     if (!prev && db.prepare('SELECT 1 FROM users WHERE id = ?').get(previousId)) {
       db.prepare("INSERT INTO organization_members (organization_id, user_id, role, invited_by) VALUES (?, ?, 'org_admin', ?)").run(org.id, previousId, req.user.id);
     }
+    // The screens and files the previous owner added here are the new owner's now (lib/user-deletion.js handToOwner).
+    moved = require('../lib/user-deletion').handToOwner(db, { userId: previousId, orgId: org.id });
   })();
+  if (moved.devices) planToScreens(req, [targetId, previousId]);
+  for (const id of [targetId, previousId]) { try { require('../ws/dashboardSocket').tellAccessChanged(id); } catch (_) { /* best effort */ } }
 
   const previous = db.prepare('SELECT id, name, email FROM users WHERE id = ?').get(previousId);
   logActivity(req.user.id, 'org:ownership_transferred',
@@ -142,7 +147,15 @@ function handOver(req, org, targetId) {
       } catch (e) { console.warn(`[org-ownership] could not move the Stripe contact for ${org.id}: ${e.message}`); }
     });
   }
-  return { target, previous, orgPays };
+  return { target, previous, orgPays, moved };
+}
+
+/** Screens just changed whose plan they count against: each of these people's screens learns where it stands now. */
+function planToScreens(req, userIds) {
+  const io = req.app && req.app.get('io');
+  for (const id of new Set(userIds.filter(Boolean))) {
+    try { require('../services/trialExpiry').pushDowngradedUserScreens(io, id); } catch (e) { console.warn('[org-ownership] could not tell screens their plan:', e.message); }
+  }
 }
 
 router.post('/:orgId/ownership', requireAuth, loadOrg, (req, res) => {
@@ -156,6 +169,7 @@ router.post('/:orgId/ownership', requireAuth, loadOrg, (req, res) => {
     owner: publicUser(r.target),
     previous_owner: publicUser(r.previous),
     plan_follows_owner: !r.orgPays,
+    screens_moved: r.moved.devices,
   });
 });
 
@@ -241,15 +255,19 @@ router.post('/:orgId/leave', requireAuth, (req, res) => {
 
   const wsIds = db.prepare(`SELECT wm.workspace_id AS id FROM workspace_members wm JOIN workspaces w ON w.id = wm.workspace_id
                              WHERE w.organization_id = ? AND wm.user_id = ?`).all(org.id, me).map((r) => r.id);
+  let released = null;
   db.transaction(() => {
     db.prepare('DELETE FROM organization_members WHERE organization_id = ? AND user_id = ?').run(org.id, me);
     if (wsIds.length) {
       db.prepare(`DELETE FROM workspace_members WHERE user_id = ? AND workspace_id IN (${wsIds.map(() => '?').join(',')})`).run(me, ...wsIds);
-      // What they set up under their own name goes with the membership (lib/user-deletion.js).
-      require('../lib/user-deletion').releaseWorkspaceMember(db, { userId: me, workspaceIds: wsIds });
+      // What they set up under their own name goes with the membership, and the screens and files
+      // they added go to the owner (lib/user-deletion.js).
+      released = require('../lib/user-deletion').releaseWorkspaceMember(db, { userId: me, workspaceIds: wsIds });
     }
   })();
+  if (released && released.devices_moved) planToScreens(req, [...released.owners, me]);
   for (const id of wsIds) { try { require('../ws/dashboardSocket').dropUserFromWorkspace(me, id); } catch (_) { /* best effort */ } }
+  try { require('../ws/dashboardSocket').tellAccessChanged(me); } catch (_) { /* best effort */ }
   logActivity(me, 'org:member_left', `${org.name} (${wsIds.length} workspace${wsIds.length === 1 ? '' : 's'})`, null, getClientIp(req));
   const now = db.prepare('SELECT owner_user_id FROM organizations WHERE id = ?').get(org.id);
   res.json({ success: true, organization: { id: org.id, name: org.name }, left_workspaces: wsIds.length,

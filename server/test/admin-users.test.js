@@ -431,6 +431,44 @@ test('delete org: 404 unknown; 403 for non-admin + operator (no delete)', async 
   assert.equal(db.prepare("SELECT COUNT(*) c FROM organizations WHERE id='org-keep'").get().c, 1, 'denied callers did not delete');
 });
 
+// Deleting an organization does not touch Stripe, so the admin is told what is still charging first.
+test('delete org: a Stripe subscription still paying for it is named before anything is deleted', async () => {
+  const delWith = (pathname, body) => fetch(base + pathname, { method: 'DELETE', headers: { Authorization: `Bearer ${tokens.admin}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  db.prepare("INSERT INTO users (id, email, name, password_hash, auth_provider, role, stripe_customer_id, stripe_subscription_id) VALUES ('u-payer', 'payer@t.local', 'P', 'x', 'local', 'user', 'cus_payer', 'sub_payer')").run();
+  db.prepare("INSERT INTO organizations (id, name, owner_user_id) VALUES ('org-paid','Paid','u-payer')").run();
+  const r = await delReq('/api/admin/orgs/org-paid', tokens.admin);
+  assert.equal(r.status, 409);
+  const b = await r.json();
+  assert.equal(b.code, 'STRIPE_PAYMENTS');
+  assert.deepEqual(b.subscriptions.map((x) => [x.id, x.holder]), [['sub_payer', 'owner']], 'the owner pays for nothing else, so their subscription is this organization\'s');
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM organizations WHERE id='org-paid'").get().c, 1, 'nothing deleted');
+  // Told, and going ahead: deleted, and the log names what was left in Stripe.
+  const ok = await delWith('/api/admin/orgs/org-paid', { acknowledge_stripe: true });
+  assert.equal(ok.status, 200);
+  assert.deepEqual((await ok.json()).stripe_subscriptions_left, ['sub_payer']);
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM organizations WHERE id='org-paid'").get().c, 0);
+  assert.match(db.prepare("SELECT details FROM activity_log WHERE action='admin_delete_org' ORDER BY rowid DESC LIMIT 1").get().details, /sub_payer/);
+});
+
+test('delete org: with Stripe configured, every live subscription on its customers is found, duplicates too', async () => {
+  const stripeClient = require('../lib/stripe-client');
+  stripeClient.__setForTests({ subscriptions: { list: async ({ customer }) => ({ data: customer === 'cus_dup'
+    ? [{ id: 'sub_one', status: 'active' }, { id: 'sub_two', status: 'trialing' }, { id: 'sub_old', status: 'canceled' }] : [] }) } });
+  try {
+    db.prepare("INSERT INTO users (id, email, name, password_hash, auth_provider, role, stripe_customer_id, stripe_subscription_id) VALUES ('u-dup', 'dup@t.local', 'D', 'x', 'local', 'user', 'cus_dup', 'sub_one')").run();
+    db.prepare("INSERT INTO organizations (id, name, owner_user_id) VALUES ('org-dup','Dup','u-dup')").run();
+    const r = await delReq('/api/admin/orgs/org-dup', tokens.admin);
+    assert.equal(r.status, 409);
+    const b = await r.json();
+    assert.deepEqual(b.subscriptions.map((x) => x.id).sort(), ['sub_one', 'sub_two'], 'both live ones; the cancelled one is not');
+    assert.equal(b.stripe_checked, true);
+    assert.match(b.error, /more than one/);
+    // An owner who pays and owns another organization too: their subscription is not this one's.
+    db.prepare("INSERT INTO organizations (id, name, owner_user_id) VALUES ('org-dup2','Dup2','u-dup')").run();
+    assert.equal((await delReq('/api/admin/orgs/org-dup2', tokens.admin)).status, 200, 'an organization with nothing of its own in Stripe, whose owner pays for another, goes without a question');
+  } finally { stripeClient.__setForTests(undefined); }
+});
+
 test('platform_admin deletes a workspace (200): ws gone, parent org intact', async () => {
   db.prepare("INSERT INTO organizations (id, name, owner_user_id) VALUES ('org-wd','WD','u-admin')").run();
   db.prepare("INSERT INTO workspaces (id, organization_id, name) VALUES ('ws-wd','org-wd','WD WS')").run();

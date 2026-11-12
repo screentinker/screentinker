@@ -597,4 +597,13 @@ module.exports.dropUserFromWorkspace = function dropUserFromWorkspace(userId, wo
     _dashboardNs.in(userRoom(userId)).socketsLeave(require('../lib/socket-rooms').workspaceRoom(workspaceId));
   } catch (_) { /* best-effort */ }
 };
+/*
+ * What this person may do in an organization changed (ownership handed over, they left). The server
+ * reads organization roles fresh on every request, so nothing is stale there and no new sign-in is
+ * needed; the open dashboard holds a copy of their role, though, and re-reads it on this.
+ */
+module.exports.tellAccessChanged = function tellAccessChanged(userId) {
+  if (!_dashboardNs || !userId) return;
+  try { _dashboardNs.to(userRoom(userId)).emit('dashboard:access-changed', {}); } catch (_) { /* best-effort */ }
+};
 module.exports.revalidateSocket = revalidateSocket;
