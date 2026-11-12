@@ -358,7 +358,8 @@ class MainActivity : AppCompatActivity() {
             root = rootView as FrameLayout,
             stageIndex = { (rootView as ViewGroup).indexOfChild(youtubeWebView) + 1 },
             syncedNow = { syncedNowMs() },
-            report = { msg -> wsService?.sendLog("sync", "info", msg) }
+            report = { msg -> wsService?.sendLog("sync", "info", msg) },
+            mayBeHeard = { !::mediaPlayer.isInitialized || mediaPlayer.mayBeHeard() },
         )
 
         // Setup playlist controller

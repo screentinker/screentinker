@@ -49,7 +49,9 @@ class WallZoneRenderer(
     // overlay and anything added later (trigger layer, kiosk).
     private val stageIndex: () -> Int,
     private val syncedNow: () -> Long,
-    private val report: (String) -> Unit = {}
+    private val report: (String) -> Unit = {},
+    // Screen-wide silence (trigger alarm, talk/PA call): MediaPlayerManager.mayBeHeard.
+    private val mayBeHeard: () -> Boolean = { true },
 ) {
     private val TAG = "WallZones"
     private val handler = Handler(Looper.getMainLooper())
@@ -422,11 +424,18 @@ class WallZoneRenderer(
         return when {
             widgetType != null || widgetId != null -> {
                 val wv = WebView(context).also { com.remotedisplay.player.util.WebViewSupport.configure(it, "WallZone") }
+                var media: Media? = null
+                // The "Now serving" chime (QueueChimeBridge) follows the wall's audio rule: only the
+                // screen and zone that WallZones.audible picks may sound, so a wall chimes once, not
+                // once per panel; and only while this widget is still mounted.
+                wv.addJavascriptInterface(QueueChimeBridge("wall zone '${zs.z.name}'", {
+                    audible && media?.released == false && mayBeHeard()
+                }), QueueChime.BRIDGE)
                 wv.loadUrl("$serverUrl/api/widgets/$widgetId/render" +
                     (if (deviceId.isNotEmpty()) "?device=" + Uri.encode(deviceId) else "?d=") + "&rev=" + a.optLong("widget_rev", 0L) +
                     com.remotedisplay.player.util.WidgetUrls.transparentParam(a.optInt("transparent_bg", 0) == 1) +
                     com.remotedisplay.player.util.WidgetUrls.panelFragment(a.optString("widget_panel", "")))
-                Media(wv)
+                Media(wv).also { media = it }
             }
             mime == ItemTiming.BUNDLE_MIME -> {
                 val wv = WebView(context).also { com.remotedisplay.player.util.WebViewSupport.configure(it, "WallZone") }
