@@ -1,5 +1,117 @@
 # Changelog
 
+## 3.2.0
+
+### Added
+
+- **"Now serving" queues** (#843). Customers take a number from a QR code (`/queue/<token>`), staff
+  call numbers from a phone or tablet with no account (`/queue-staff#<key>`, the key never in a URL
+  path or log), and a **Now serving** widget shows the current number in any layout zone while the
+  rest of the layout keeps playing. The customer page shows the number being served and how many
+  are ahead. Next, Call number and Start of day run in transactions; tickets are idempotent per
+  browser; the queue restarts at midnight in its own timezone. An optional two-tone chime plays
+  once per called number when both the widget's chime (off by default) and the staff switch are on.
+  Setup in `docs/now-serving-queue.md`.
+
+- **The "Now serving" chime on every player that can play it** (#844): Android (incl. walls),
+  Samsung Tizen, the native Pi / Windows player, Roku (polls the queue and plays a bundled WAV),
+  webOS and BrightSign. Never on load or a new day, at most one per 3 s, silent when the item is
+  muted and on a wall follower. Not on SSSP3, which does not render the queue widget yet.
+
+- **Uploaded audio files play** (#846). MP3, M4A, Ogg, WAV and FLAC uploads were accepted but every
+  player skipped them ("skipping item with unrecognised type: audio/mpeg"). Every player now plays
+  an audio item through its video path (mute, live mute, skip on error, advance on end, loop). Full
+  screen shows a dark "now playing" card with the file name; in a zone it plays with no picture,
+  heard in the first zone on the web player and Tizen. Roku skips Ogg. SSSP3 is unchanged.
+
+- **Broadcast view and the vision mixer, self-hosted only** (#839). A Preview / Program mixer desk
+  with transitions, keyed graphics, scenes and camera control; stream out to YouTube, Facebook,
+  Twitch, any RTMP or SRT, or record to a file (a server-side Chromium renderer, encoded by ffmpeg);
+  a sound console with full channel strips, a master limiter and sound pads; browser guests with a
+  green room, background cut-out and mix-minus; and a running stream shown on signage screens in lip
+  sync. The renderer runs as an unprivileged `st-render` user when the server runs as root. No GPL
+  code is bundled: ffmpeg, Chromium and PulseAudio are operator-installed system packages, and the
+  dashboard shows the ffmpeg licence notice. On the hosted service none of it exists (`/api/mixer`
+  answers 404 `on_prem_only`). `docker-compose.example.yml` gains `init: true`.
+
+- **Dashboard themes** (#839): Graphite (the new default), Control room, Light, and Classic (the
+  3.x look). The Barlow typeface is bundled with its OFL licence.
+
+- **Organization hand-over and leave** (#839). An owner can give an organization to someone in it,
+  and a member can leave (the owner only by naming a successor); screens and files a leaver added
+  move to the owner's plan. A platform admin deleting an organization is first shown any Stripe
+  subscriptions still charging for it.
+
+- **Per-organization billing, off by default** (#839). With it off, limits and Stripe stay per
+  person exactly as before. `scripts/org-billing-switch.js` (`status`, `to-organizations`,
+  `to-people`) switches it and refuses while organizations and owners disagree.
+
+- **Duplicate a whole slide** (#832, #841): right-click a slide in the filmstrip, or **Duplicate
+  slide** on the Slide tab. The copy is a new, unpublished slide placed after the original. The
+  server now also treats a second slide claiming the same `widget_id` as unpublished, so a copy can
+  never replace its original on screen. Requested by @WirAGDD.
+
+- **API tokens can pair a screen and create a web player** (#827, #831). `POST /api/provision/pair`
+  and `POST /api/devices/web-player` accept a `full`-scope workspace token, bound to the token's
+  workspace and audited. Rate limited per token, with the failed-code lockout per token owner.
+  Requested by @freefos.
+
+- **Tizen follows the offline schedule plan while disconnected** (#825, #842), as Android does
+  since 3.1.4: playlist A, a gap, playlist B, from cached media only, committed only once every file
+  it needs is cached. Every Tizen 5.0+ panel on the new WGT opts in, so the server attaches the plan
+  (usually a few KB, at most 2 MB) to its payloads. Requested by @MashaWaleed.
+
+### Changed
+
+- ⚠️ **webOS and BrightSign videos now play their sound** (#844). Their shells pass
+  `autoplay_audio=1` so the queue chime can play; operator mutes, wall followers and the remote
+  mute still apply. Mute an item if it should stay silent on these players.
+
+- ⚠️ **YouTube items without "Play to end" stop at their duration on full-screen web players**
+  (#828, #830), as they already did in zones and on Android. Mostly items made before "Play to end"
+  existed; new YouTube items default to it and are unaffected.
+
+- **Screen share says why there is no sound** (#838), from what was picked: a window (cannot carry
+  sound), a tab with tab audio switched off, the entire screen without system audio, or Firefox /
+  Safari (cannot share screen sound).
+
+### Fixed
+
+- **An emergency alert outranks a screen share** (#845, #847). A share running when a head office
+  alert or a CAP feed alert is raised is ended (the presenter is told why), new shares are refused
+  while it is live, and the meeting-room code / QR is hidden; both come back when the alert ends.
+  A trigger fired at a screen directly hides the share and QR on the web, Android and native
+  players until it clears. Reported by @ChrisChrome.
+
+- **A YouTube live stream moves on at its item duration** (#828, #830). A live stream never ends,
+  and its reported length is the time since the broadcast started. Reported by @MarcinWad.
+
+- **Android: a screen share's sound plays as media, not as a voice call** (#840), the likely cause
+  of silent shares on Android TV sticks (not confirmed on the reporting stick).
+
+- **Native player: a video kept playing past its end after a live mute toggle** (#844). Every later
+  event from the re-rendered item, including "ended", was dropped as stale.
+
+- **Android: the live mute toggle reaches a full-screen widget** (#844); it matched `content_id`
+  only, which a widget item has none of.
+
+- QA fixes from #839, one invariant and test each: device credentials only for roles that may
+  control the screen; the scheduler tick survives one screen's bad data; route errors answer in
+  JSON and malformed input is a 400; an API token reads its own workspace's files; a one-off
+  schedule is stored as a window it can run in; a layout change applies at once; `/flash` loads
+  with or without the slash; `/favicon.ico` is served; the OpenAPI document matches the responses;
+  and smaller ones listed in the PR.
+
+### Dependencies
+
+- `fast-xml-parser` 5.12.0 (CVE-2026-126066, low; via `@azure/storage-blob`) (#848), `htmlparser2`
+  12.0.0 (#837), and routine server, Actions and Docker bumps (#834, #835, #836).
+
+### Contributors
+
+Thanks to @MashaWaleed, @freefos, @MarcinWad, @WirAGDD and @ChrisChrome for the issues behind this
+release.
+
 ## 3.1.5
 
 ### Added

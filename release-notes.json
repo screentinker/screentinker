@@ -14,6 +14,20 @@
   ],
   "releases": [
     {
+      "version": "3.2.0",
+      "date": "2026-11-12",
+      "notes": [
+        "New Now serving queues: customers take a number from a QR code, staff call the next number from a phone, and a widget shows it on screen with an optional chime.",
+        "Uploaded audio files (MP3 and others) now play on screens instead of being skipped. Full screen shows a now playing card; in a zone they play without a picture.",
+        "An emergency alert now always takes over a screen, ending any screen share on it and hiding the share code until the alert ends.",
+        "You can duplicate a whole slide from the slide editor.",
+        "LG webOS and BrightSign screens now play the sound of videos. Mute an item if it should stay silent.",
+        "YouTube items without Play to end now stop at their set duration on every screen, and live streams move on at their duration.",
+        "New dashboard themes, with a fresh default look. To keep the old look, pick Classic under Settings, Appearance.",
+        "Self-hosted servers gain a Broadcast view: a vision mixer that can stream to YouTube, Twitch and others."
+      ]
+    },
+    {
       "version": "3.1.5",
       "date": "2026-11-08",
       "notes": [
