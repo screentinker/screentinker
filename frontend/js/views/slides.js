@@ -9,7 +9,7 @@ import { snapMove, snapResize } from '../components/snap.js';
 import { isPrivateHost, urlHost } from '../components/private-host.js';
 import {
   resizeRect, boundsOf, alignRects, distributeRects, reorder, repairSlots,
-  copyElements, pasteElements, createHistory,
+  copyElements, pasteElements, duplicateSlide, createHistory,
 } from '../components/slide-arrange.js';
 
 /*
@@ -2072,6 +2072,7 @@ function renderStrip(container) {
       // Switching to a slide lands it SETTLED (no auto entrance) so elements are grabbable at once.
       state.si = +b.dataset.slide; state.ei = 0; state.sel = []; paintAll(container);
     });
+    b.addEventListener('contextmenu', (ev) => onStripContextMenu(ev, container, +b.dataset.slide));
     b.addEventListener('dblclick', (ev) => {
       ev.stopPropagation();
       const idx = +b.dataset.slide;
@@ -2090,6 +2091,55 @@ function renderStrip(container) {
     // A newly added slide lands settled too, not mid-entrance.
     state.si++; state.ei = 0; state.sel = []; touch(container);
   });
+}
+
+/*
+ * Whole-slide actions, shared by the filmstrip's menu and the Slide tab. Both only edit the unsaved
+ * document: nothing reaches a screen until Publish, so a duplicate (which starts unpublished, see
+ * duplicateSlide) is invisible to live screens until the author publishes the deck.
+ */
+const MAX_DECK_SLIDES = 100;                  // lib/slide-deck.js MAX_SLIDES: the server drops the rest
+function duplicateSlideAt(container, idx) {
+  const slides = state.deck.doc.slides;
+  if (!slides[idx]) return;
+  if (slides.length >= MAX_DECK_SLIDES) { showToast(t('slides.slide.too_many', { max: MAX_DECK_SLIDES }), 'error'); return; }
+  const at = duplicateSlide(slides, idx, t('slides.slide.copy_name', { name: slides[idx].name }));
+  // The copy lands selected and settled, like a newly added slide.
+  state.si = at; state.ei = 0; state.sel = []; touch(container);
+}
+function deleteSlideAt(container, idx) {
+  const slides = state.deck.doc.slides;
+  if (!slides[idx]) return;
+  if (slides.length === 1) { showToast(t('slides.slide.last_one'), 'error'); return; }
+  slides.splice(idx, 1);
+  if (state.si >= idx) state.si = Math.max(0, state.si - 1);
+  state.si = Math.min(state.si, slides.length - 1);
+  state.ei = 0; state.sel = []; touch(container);
+}
+
+function onStripContextMenu(ev, container, idx) {
+  ev.preventDefault();
+  closeContextMenu();
+  if (!state.deck.doc.slides[idx]) return;
+  const menu = document.createElement('div');
+  menu.className = 'sl-ctx';
+  menu.setAttribute('role', 'menu');
+  const last = state.deck.doc.slides.length === 1;
+  menu.innerHTML = `<button type="button" role="menuitem" data-slide-act="duplicate"><span>${esc(t('slides.slide.duplicate'))}</span></button>`
+    + `<button type="button" role="menuitem" data-slide-act="delete" ${last ? 'disabled' : ''}><span>${esc(t('slides.slide.delete'))}</span></button>`;
+  document.body.appendChild(menu);
+  const w = menu.offsetWidth; const h = menu.offsetHeight;
+  menu.style.left = `${Math.max(4, Math.min(ev.clientX, window.innerWidth - w - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(ev.clientY, window.innerHeight - h - 4))}px`;
+  menu.addEventListener('click', (c) => {
+    const b = c.target.closest('[data-slide-act]');
+    if (!b || b.disabled) return;
+    closeContextMenu();
+    if (b.dataset.slideAct === 'duplicate') duplicateSlideAt(container, idx);
+    else deleteSlideAt(container, idx);
+  });
+  const first = menu.querySelector('button:not([disabled])');
+  if (first) first.focus();
 }
 
 /* ============================================================ inspector */
@@ -2191,7 +2241,9 @@ function renderProps(container) {
              <p class="sl-note">${esc(t('slides.slide.dim_note'))}</p>` : ''}
            <p class="sl-note">${esc(t('slides.slide.colour_note'))}</p>
          </div>`
-      + `<div class="sl-group"><button class="btn btn-secondary btn-sm" id="delSlide">${esc(t('slides.slide.delete'))}</button></div>`;
+      + `<div class="sl-group" style="display:flex;gap:8px;flex-wrap:wrap">
+           <button class="btn btn-secondary btn-sm" id="dupSlide">${esc(t('slides.slide.duplicate'))}</button>
+           <button class="btn btn-secondary btn-sm" id="delSlide">${esc(t('slides.slide.delete'))}</button></div>`;
 
     host.querySelector('#sName').oninput = (e) => { s.name = e.target.value; touchValue(container); };
     host.querySelector('#sBg').oninput = (e) => { s.template.background = e.target.value; touchValue(container); };
@@ -2231,11 +2283,8 @@ function renderProps(container) {
     bindSlidePair('sVoVol', (v) => { s.template.audio.vo_volume = v; }, 2);
     bindSlidePair('sDwell', (v) => { s.dwell_sec = Math.round(v); }, 0);
     bindSlidePair('sDim', (v) => { s.template.background_dim = v; }, 2);
-    host.querySelector('#delSlide').onclick = () => {
-      if (state.deck.doc.slides.length === 1) { showToast(t('slides.slide.last_one'), 'error'); return; }
-      state.deck.doc.slides.splice(state.si, 1);
-      state.si = Math.max(0, state.si - 1); state.ei = 0; state.sel = []; touch(container);
-    };
+    host.querySelector('#dupSlide').onclick = () => duplicateSlideAt(container, state.si);
+    host.querySelector('#delSlide').onclick = () => deleteSlideAt(container, state.si);
     return;
   }
 

@@ -191,6 +191,32 @@ export function pasteElements(slide, clip, offset = 2, max = Infinity) {
 }
 
 /*
+ * A copy of slides[index], inserted right after it. Returns the copy's index, or -1 if there is no
+ * such slide.
+ *
+ * ⚠️ THE COPY IS A NEW, UNPUBLISHED SLIDE. Publish recognises a slide it already made a widget for
+ * by `widget_id`, so a copy that kept it would overwrite the original's widget on the next publish
+ * and the two could never be edited apart. The slide `id` is new for the same reason (it is also
+ * what undo uses to put widget ids back, and what translation keys strings by). Element ids are
+ * renewed too; slots are kept, because they only need to be unique within one slide and the copy's
+ * `fields` are keyed by them. Everything else (layout, words, style, motion, background, dwell,
+ * audio) is a deep copy, so editing one slide never changes the other.
+ */
+export function duplicateSlide(slides, index, name) {
+  const src = slides && slides[index];
+  if (!src) return -1;
+  const copy = JSON.parse(JSON.stringify(src));
+  copy.id = freshSlot(new Set(slides.map((s) => s && s.id)), 's');
+  copy.widget_id = null;
+  if (typeof name === 'string' && name) copy.name = name;
+  const els = (copy.template && Array.isArray(copy.template.elements)) ? copy.template.elements : [];
+  const ids = new Set(els.map((e) => e && e.id).filter((v) => v != null));
+  for (const e of els) if (e && e.id != null) { e.id = freshSlot(ids, 'el'); ids.add(e.id); }
+  slides.splice(index + 1, 0, copy);
+  return index + 1;
+}
+
+/*
  * Undo history of document snapshots (strings, so a snapshot can never be mutated after it is
  * taken). `base` is the state the editor is in now; every record() pushes the previous one.
  *

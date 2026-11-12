@@ -9143,6 +9143,9 @@ export default {
   'slides.slide.colour_note': "The colour shows while the photo loads, and stays if it never arrives.",
   'slides.slide.delete': "Delete this slide",
   'slides.slide.last_one': "A deck needs at least one slide",
+  'slides.slide.duplicate': "Duplicate slide",
+  'slides.slide.copy_name': "{name} (copy)",
+  'slides.slide.too_many': "A deck holds at most {max} slides",
   'slides.edit.add_hint': "Add an element from the toolbar.",
   // Reports (uptime by client, CSV export), content request place picker, alerts intro
   'report.export_failed': "Could not export: {error}",
