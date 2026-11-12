@@ -16,9 +16,36 @@ const { TRIAL_DAYS } = require('../lib/trial-days');
 // account is a no-op. Returns true when a row was flipped.
 // Prepared lazily: some test fixtures build a minimal users table without the trial columns and
 // require this module before any migration runs; a module-load prepare would throw there.
-let _expireTrialStmt;
-const EXPIRE_TRIAL_SQL = `
-  UPDATE users
+/*
+ * WHICH TABLE HOLDS THE BILLING STATE (lib/org-billing.js, app_settings.billing_source).
+ *
+ * 'users' while the person pays (today), 'organizations' once the organization does. Every
+ * statement below that changes or finds billing state runs against this table, and the id it is
+ * given is an id IN this table: a user id today, an organization id after the switch. The column
+ * names are the same on both, which is what lets one statement serve either.
+ */
+function billingSource() {
+  try { return require('../lib/app-settings').get('billing_source', 'user') === 'org' ? 'org' : 'user'; }
+  catch { return 'user'; }
+}
+const billingTable = () => (billingSource() === 'org' ? 'organizations' : 'users');
+const _stmts = new Map();
+/** A prepared statement for the active table; `sql` is a function of the table name. */
+function billStmt(key, sql) {
+  const t = billingTable();
+  const k = t + ':' + key;
+  if (!_stmts.has(k)) _stmts.set(k, db.prepare(sql(t)));
+  return _stmts.get(k);
+}
+/** The person behind an account id: the user themself, or the organization's owner. */
+function accountOwnerId(accountId) {
+  if (billingTable() !== 'organizations') return accountId;
+  try { const o = db.prepare('SELECT owner_user_id FROM organizations WHERE id = ?').get(accountId); return (o && o.owner_user_id) || null; }
+  catch { return null; }
+}
+
+const EXPIRE_TRIAL_SQL = (T) => `
+  UPDATE ${T}
      SET plan_id = 'free',
          trial_expired_at = trial_started + ${TRIAL_DAYS * 86400},
          trial_started = NULL
@@ -30,9 +57,8 @@ const EXPIRE_TRIAL_SQL = `
      AND plan_id != 'free'
 `;
 function expireTrial(userId) {
-  if (!_expireTrialStmt) _expireTrialStmt = db.prepare(EXPIRE_TRIAL_SQL);
-  const flipped = _expireTrialStmt.run(userId).changes === 1;
-  if (flipped) require('../lib/conversion-events').record(db, { userId, event: 'trial_expired' });
+  const flipped = billStmt('expireTrial', EXPIRE_TRIAL_SQL).run(userId).changes === 1;
+  if (flipped) require('../lib/conversion-events').record(db, { userId: accountOwnerId(userId), event: 'trial_expired' });
   return flipped;
 }
 
@@ -42,9 +68,8 @@ function expireTrial(userId) {
 // ⚠️ CAST(strftime(...) AS INTEGER): strftime returns TEXT, and in SQLite an INTEGER compares
 // LESS THAN any TEXT, so `trial_started + N <= strftime('%s','now')` is ALWAYS true and
 // `> strftime(...)` ALWAYS false. Compare against an integer or the predicate lies silently.
-let _expiredTrialIdsStmt;
-const EXPIRED_TRIAL_IDS_SQL = `
-  SELECT id FROM users
+const EXPIRED_TRIAL_IDS_SQL = (T) => `
+  SELECT id FROM ${T}
    WHERE trial_started IS NOT NULL
      AND trial_started + ${TRIAL_DAYS * 86400} <= CAST(strftime('%s','now') AS INTEGER)
      AND stripe_subscription_id IS NULL
@@ -52,8 +77,7 @@ const EXPIRED_TRIAL_IDS_SQL = `
      AND plan_id != 'free'
 `;
 function findExpiredTrialUserIds() {
-  if (!_expiredTrialIdsStmt) _expiredTrialIdsStmt = db.prepare(EXPIRED_TRIAL_IDS_SQL);
-  return _expiredTrialIdsStmt.all().map(r => r.id);
+  return billStmt('expiredTrialIds', EXPIRED_TRIAL_IDS_SQL).all().map(r => r.id);   // account ids (see billingTable)
 }
 
 /* ============================ dunning: a PAID subscription that stopped paying ============================
@@ -75,36 +99,30 @@ const GRACE_DAYS = Math.max(0, Number(process.env.BILLING_GRACE_DAYS) || 7);
 // Start the clock, once. `past_due_since IS NULL` makes a repeated failed invoice — Stripe retries
 // several times per episode — leave the ORIGINAL failure time alone, which is what the grace is
 // measured from. Returns true only for the first one.
-let _startGraceStmt;
 function startGrace(userId, atSec = Math.floor(Date.now() / 1000)) {
-  if (!_startGraceStmt) _startGraceStmt = db.prepare(`
-    UPDATE users SET past_due_since = ?, subscription_status = 'past_due'
-     WHERE id = ? AND past_due_since IS NULL`);
-  return _startGraceStmt.run(atSec, userId).changes === 1;
+  return billStmt('startGrace', (T) => `
+    UPDATE ${T} SET past_due_since = ?, subscription_status = 'past_due'
+     WHERE id = ? AND past_due_since IS NULL`).run(atSec, userId).changes === 1;
 }
 
 // A payment went through (or the subscription is active again): forget the episode entirely,
 // including the email stamps, so a future lapse months from now is announced rather than silent.
-let _clearGraceStmt;
 function clearGrace(userId) {
-  if (!_clearGraceStmt) _clearGraceStmt = db.prepare(`
-    UPDATE users
+  return billStmt('clearGrace', (T) => `
+    UPDATE ${T}
        SET past_due_since = NULL, payment_failed_email_sent_at = NULL,
            subscription_lapsed_email_sent_at = NULL, subscription_status = 'active'
-     WHERE id = ? AND past_due_since IS NOT NULL`);
-  return _clearGraceStmt.run(userId).changes === 1;
+     WHERE id = ? AND past_due_since IS NOT NULL`).run(userId).changes === 1;
 }
 
 // Ids of subscribers whose grace has run out and who are still on a paid plan. Same predicate as
 // downgradeLapsed; the sweep feeds these back through it one at a time.
-let _lapsedIdsStmt;
 function findLapsedSubscriberIds() {
-  if (!_lapsedIdsStmt) _lapsedIdsStmt = db.prepare(`
-    SELECT id FROM users
+  return billStmt('lapsedIds', (T) => `
+    SELECT id FROM ${T}
      WHERE past_due_since IS NOT NULL
        AND past_due_since + ${GRACE_DAYS * 86400} <= CAST(strftime('%s','now') AS INTEGER)
-       AND plan_id != 'free'`);
-  return _lapsedIdsStmt.all().map(r => r.id);
+       AND plan_id != 'free'`).all().map(r => r.id);
 }
 
 /*
@@ -113,16 +131,14 @@ function findLapsedSubscriberIds() {
  * still exists in Stripe. `customer.subscription.deleted` is the event that clears it, because
  * that is the one that means the subscription is really gone.
  */
-let _downgradeLapsedStmt;
 function downgradeLapsed(userId) {
-  if (!_downgradeLapsedStmt) _downgradeLapsedStmt = db.prepare(`
-    UPDATE users SET plan_id = 'free', subscription_status = 'unpaid'
+  return billStmt('downgradeLapsed', (T) => `
+    UPDATE ${T} SET plan_id = 'free', subscription_status = 'unpaid'
      WHERE id = ?
        AND past_due_since IS NOT NULL
        AND past_due_since + ${GRACE_DAYS * 86400} <= CAST(strftime('%s','now') AS INTEGER)
        AND plan_id != 'free'
-       AND plan_comped = 0`);
-  return _downgradeLapsedStmt.run(userId).changes === 1;
+       AND plan_comped = 0`).run(userId).changes === 1;
 }
 
 /*
@@ -145,8 +161,8 @@ function restorePlan(userId, planId) {
     console.warn(`[billing] refusing to restore unknown plan '${planId}' for user ${userId}`);
     return false;
   }
-  return db.prepare(`
-    UPDATE users
+  return billStmt('restorePlan', (T) => `
+    UPDATE ${T}
        SET plan_id = CASE WHEN plan_comped = 1 THEN plan_id ELSE ? END, subscription_status = 'active', past_due_since = NULL,
            payment_failed_email_sent_at = NULL, subscription_lapsed_email_sent_at = NULL
      WHERE id = ?`).run(planId, userId).changes === 1;
@@ -177,15 +193,32 @@ function planIdFromSubscription(sub) {
   return planIdFromPrice(sub) || (sub && sub.metadata && sub.metadata.plan_id) || null;
 }
 
-function getUserPlan(userId) {
-  const user = db.prepare(`
+/*
+ * The plan of a person (getUserPlan) or of an organization (getOrgPlan): the same rules read from
+ * either table. getUserPlan is what almost everything calls and is unchanged while the person pays.
+ *
+ * ⚠️ The lapsed-trial self-heal below WRITES, and only to the table that currently holds the
+ * billing state. Reading the OTHER table (a person's row once organizations pay: a copy) reports
+ * the lapse without writing, or the write would land nowhere and this would call itself for ever.
+ */
+function getUserPlan(userId) { return getPlanFrom('users', userId); }
+function getOrgPlan(orgId) { return getPlanFrom('organizations', orgId); }
+function getPlanFrom(table, userId) {
+  if (table !== 'users' && table !== 'organizations') return null;
+  let user;
+  try {
+    user = db.prepare(`
     SELECT u.*, p.name as plan_name, p.display_name as plan_display_name,
            p.max_devices, p.max_storage_mb, p.remote_control, p.remote_url,
            p.priority_support, p.price_monthly, p.price_yearly
-    FROM users u
+    FROM ${table} u
     JOIN plans p ON u.plan_id = p.id
     WHERE u.id = ?
   `).get(userId);
+  } catch (e) {
+    if (table === 'users') throw e;
+    return null;   // no organizations table (single-tenant): nothing to read
+  }
 
   // No user row (or no joinable plan) — return null so callers treat it as unrestricted
   // (checkDeviceAccess: `if (!plan) return { allowed: true }`). Previously the else branch
@@ -217,9 +250,20 @@ function getUserPlan(userId) {
     // being silently downgraded. Grandfathered users (trial_started IS NULL) never reach this
     // block at all.
     if (!user.trial_active && !user.stripe_subscription_id && user.plan_id === user.trial_plan && user.plan_name !== 'free') {
-      expireTrial(userId);
-      // Re-fetch with free plan
-      return getUserPlan(userId);
+      if (table === billingTable() && expireTrial(userId)) {
+        // Re-fetch with free plan
+        return getPlanFrom(table, userId);
+      }
+      if (table !== billingTable()) {
+        // A copy: answer as the downgrade will leave it, without writing.
+        const free = db.prepare("SELECT name, display_name, max_devices, max_storage_mb, remote_control, remote_url, priority_support, price_monthly, price_yearly FROM plans WHERE id = 'free'").get();
+        if (free) {
+          Object.assign(user, { plan_id: 'free', plan_name: free.name, plan_display_name: free.display_name,
+            max_devices: free.max_devices, max_storage_mb: free.max_storage_mb, remote_control: free.remote_control,
+            remote_url: free.remote_url, priority_support: free.priority_support, price_monthly: free.price_monthly,
+            price_yearly: free.price_yearly, trial_expired_at: user.trial_expired_at || user.trial_started + (TRIAL_DAYS * 86400) });
+        }
+      }
     }
   } else {
     user.trial_active = false;
@@ -238,6 +282,69 @@ function getUserStorageMB(userId) {
   return Math.ceil(result.total / (1024 * 1024));
 }
 
+/*
+ * WHOSE LIMITS APPLY (step 3 of moving payment to the organization, lib/org-billing.js).
+ *
+ * Until now every limit was the ACTING PERSON's: their plan, counted against the screens THEY
+ * paired and the files THEY uploaded. So an invited member brought their own allowance into
+ * someone else's workspace (a trial each, stacked), and a member on Free was held to two screens
+ * inside an organization that pays for a hundred.
+ *
+ * `app_settings.limits_scope` chooses:
+ *   absent / 'user'  exactly the behaviour above. Nothing below changes anything.
+ *   'org'            the limits are the ORGANIZATION's: the plan of the organization the workspace
+ *                    belongs to (read through its owner, which is where billing still lives),
+ *                    counted across every screen and file in that organization.
+ *
+ * A request or screen with no workspace, or a workspace with no organization (an older
+ * single-tenant database), has nothing to be scoped to and keeps the per-person rule in both modes.
+ * Never throws: on any doubt the answer is the per-person subject, which is today's behaviour.
+ */
+function limitsScope() {
+  // Once the organization pays, its limits are necessarily the organization's.
+  if (billingSource() === 'org') return 'org';
+  try { return require('../lib/app-settings').get('limits_scope', 'user') === 'org' ? 'org' : 'user'; }
+  catch { return 'user'; }
+}
+
+/** { scope: 'user', userId } or { scope: 'org', orgId, userId: <the organization's owner> }. */
+function limitSubject(userId, workspaceId) {
+  const personal = { scope: 'user', userId, orgId: null };
+  if (!workspaceId || limitsScope() !== 'org') return personal;
+  try {
+    const o = db.prepare(`SELECT o.id, o.owner_user_id FROM workspaces w JOIN organizations o ON o.id = w.organization_id
+                           WHERE w.id = ?`).get(workspaceId);
+    return (o && o.owner_user_id) ? { scope: 'org', userId: o.owner_user_id, orgId: o.id } : personal;
+  } catch { return personal; }
+}
+
+// Read through the owner while the person pays; from the organization itself once it does.
+const subjectPlan = (subject) => ((subject.scope === 'org' && subject.orgId && billingSource() === 'org')
+  ? getOrgPlan(subject.orgId) : getUserPlan(subject.userId));
+
+function subjectDeviceCount(subject) {
+  if (subject.scope !== 'org') return getUserDeviceCount(subject.userId);
+  return db.prepare(`SELECT COUNT(*) AS n FROM devices d JOIN workspaces w ON w.id = d.workspace_id
+                      WHERE w.organization_id = ?`).get(subject.orgId).n;
+}
+
+/** The screens counted together, oldest first: what "the first N are within the plan" is read against. */
+function subjectDeviceIds(subject) {
+  if (subject.scope !== 'org') {
+    return db.prepare('SELECT id FROM devices WHERE user_id = ? ORDER BY created_at ASC').all(subject.userId).map((r) => r.id);
+  }
+  return db.prepare(`SELECT d.id FROM devices d JOIN workspaces w ON w.id = d.workspace_id
+                      WHERE w.organization_id = ? ORDER BY d.created_at ASC, d.id ASC`).all(subject.orgId).map((r) => r.id);
+}
+
+function subjectStorageBytes(subject) {
+  if (subject.scope !== 'org') {
+    return Number(db.prepare('SELECT COALESCE(SUM(file_size), 0) AS total FROM content WHERE user_id = ?').get(subject.userId).total || 0);
+  }
+  return Number(db.prepare(`SELECT COALESCE(SUM(c.file_size), 0) AS total FROM content c JOIN workspaces w ON w.id = c.workspace_id
+                             WHERE w.organization_id = ?`).get(subject.orgId).total || 0);
+}
+
 /**
  * Bytes this user may still store, or null when the plan is unlimited.
  *
@@ -253,11 +360,12 @@ function getUserStorageMB(userId) {
  * Returns a possibly NEGATIVE number when someone is already over (a plan downgrade will do it),
  * so callers see the true shortfall rather than a floor of zero.
  */
-function storageRoomBytes(userId) {
-  const plan = getUserPlan(userId);
+function storageRoomBytes(userId, workspaceId) {
+  // workspaceId: where the bytes will land. Only matters when limits are per organization.
+  const subject = limitSubject(userId, workspaceId);
+  const plan = subjectPlan(subject);
   if (!plan || plan.max_storage_mb === -1) return null;
-  const used = db.prepare('SELECT COALESCE(SUM(file_size), 0) AS total FROM content WHERE user_id = ?').get(userId);
-  return (plan.max_storage_mb * 1024 * 1024) - Number(used.total || 0);
+  return (plan.max_storage_mb * 1024 * 1024) - subjectStorageBytes(subject);
 }
 
 /*
@@ -297,7 +405,8 @@ function noteLimitHit(req, code, extra) {
 
 // Check if user can add more devices
 function checkDeviceLimit(req, res, next) {
-  const plan = getUserPlan(req.user.id);
+  const subject = limitSubject(req.user.id, req.workspaceId);
+  const plan = subjectPlan(subject);
   if (!plan) {
     /*
      * A support session has no `users` row by design, so getUserPlan finds no plan and this
@@ -318,7 +427,7 @@ function checkDeviceLimit(req, res, next) {
   // -1 means unlimited
   if (plan.max_devices === -1) return next();
 
-  const deviceCount = getUserDeviceCount(req.user.id);
+  const deviceCount = subjectDeviceCount(subject);
   if (deviceCount >= plan.max_devices) {
     noteLimitHit(req, 'DEVICE_LIMIT', { limit: plan.max_devices, plan: plan.plan_name });
     return res.status(403).json({
@@ -335,7 +444,8 @@ function checkDeviceLimit(req, res, next) {
 
 // Check if user can upload more content
 function checkStorageLimit(req, res, next) {
-  const plan = getUserPlan(req.user.id);
+  const subject = limitSubject(req.user.id, req.workspaceId);
+  const plan = subjectPlan(subject);
   if (!plan) {
     /*
      * A support session has no `users` row by design, so getUserPlan finds no plan and this
@@ -356,7 +466,7 @@ function checkStorageLimit(req, res, next) {
   // -1 means unlimited
   if (plan.max_storage_mb === -1) return next();
 
-  const usedMB = getUserStorageMB(req.user.id);
+  const usedMB = Math.ceil(subjectStorageBytes(subject) / (1024 * 1024));
   if (usedMB >= plan.max_storage_mb) {
     noteLimitHit(req, 'STORAGE_LIMIT', { limit_mb: plan.max_storage_mb, plan: plan.plan_name });
     return res.status(403).json({
@@ -373,7 +483,7 @@ function checkStorageLimit(req, res, next) {
 
 // Check if user has remote control access
 function checkRemoteControl(req, res, next) {
-  const plan = getUserPlan(req.user.id);
+  const plan = subjectPlan(limitSubject(req.user.id, req.workspaceId));
   if (!plan || !plan.remote_control) {
     return res.status(403).json({
       error: 'Remote control requires Starter plan or above.',
@@ -386,7 +496,7 @@ function checkRemoteControl(req, res, next) {
 
 // Check remote URL feature access
 function checkRemoteUrl(req, res, next) {
-  const plan = getUserPlan(req.user.id);
+  const plan = subjectPlan(limitSubject(req.user.id, req.workspaceId));
   if (!plan || !plan.remote_url) {
     noteLimitHit(req, 'FEATURE_LOCKED', { feature: 'remote_url', plan: plan?.plan_name });
     return res.status(403).json({
@@ -446,6 +556,16 @@ module.exports = {
   noteLimitHit,
   getUserDeviceCount,
   getUserStorageMB,
+  billingSource,
+  billingTable,
+  accountOwnerId,
+  getOrgPlan,
+  limitsScope,
+  limitSubject,
+  subjectPlan,
+  subjectDeviceCount,
+  subjectDeviceIds,
+  subjectStorageBytes,
   checkDeviceLimit,
   checkStorageLimit,
   checkRemoteControl,

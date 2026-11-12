@@ -976,6 +976,16 @@ function fillInfoByPlaylist(workspaceId) {
 // Phase 2.2k: list scoped to caller's current workspace. No platform_admin
 // bypass - cross-workspace view comes from switch-workspace, matching the
 // precedent established across all other migrated routes.
+/*
+ * A playlist item's position, or null when the value is not one. Every player sorts by this
+ * column and "add to the end" computes MAX + 1 from it; SQLite keeps a non-numeric string in an
+ * INTEGER column as text, MAX() then returns the text, and the next add fails on NaN.
+ */
+function itemPosition(v) {
+  if (typeof v === 'string' && /^-?\d{1,9}$/.test(v.trim())) v = Number(v.trim());
+  return (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 1e9) ? Math.trunc(v) : null;
+}
+
 router.get('/', (req, res) => {
   if (!req.workspaceId) return res.json([]);
   const playlists = db.prepare(`
@@ -1114,7 +1124,7 @@ function addLayoutItem(req, res) {
   let id;
   try {
     db.transaction(() => {
-      const max = db.prepare('SELECT MAX(sort_order) AS m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
+      const max = db.prepare('SELECT MAX(CAST(sort_order AS INTEGER)) AS m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
       id = db.prepare('INSERT INTO playlist_items (playlist_id, layout_ref_id, sort_order, duration_sec) VALUES (?, ?, ?, ?)')
         .run(req.params.id, layout_ref_id, (max.m || 0) + 1, Math.floor(duration)).lastInsertRowid;
       camp.writeSources(db, { id, playlist_id: req.params.id, layout_ref_id }, req.body.zone_sources === undefined ? {} : req.body.zone_sources, req.playlist.workspace_id);
@@ -1246,7 +1256,9 @@ router.get('/:id/layout-zone-map', requirePlaylistRead, (req, res) => {
 // gated + workspace-scoped by requirePlaylistRead. The dashboard iframes /player
 // with ?preview=1&playlist=:id and renders this with the unmodified player renderer.
 const PREVIEW_ORIENTATIONS = new Set(['landscape', 'portrait', 'landscape-flipped', 'portrait-flipped']);
-router.get('/:id/preview-payload', requirePlaylistRead, (req, res) => {
+/** What the web player is handed to preview a playlist (also what a stream output shows). */
+function previewPayload(playlistRow, orientationIn) {
+  const req = { params: { id: playlistRow.id }, playlist: playlistRow, query: { orientation: orientationIn } };
   const { assemblePayload } = require('../ws/deviceSocket');
   // 3.0 campaigns: built once with the layout markers kept; the preview player (the web player, which
   // plays campaigns) gets the structure as a screen would, and `assignments` stays the fallback.
@@ -1273,7 +1285,10 @@ router.get('/:id/preview-payload', requirePlaylistRead, (req, res) => {
     const c = camp.payloadCampaign(db, campaignObj, { orientation }, (l) => l);
     if (c) out.campaign = c;
   }
-  res.json(out);
+  return out;
+}
+router.get('/:id/preview-payload', requirePlaylistRead, (req, res) => {
+  res.json(previewPayload(req.playlist, req.query.orientation));
 });
 
 // Update playlist
@@ -1885,8 +1900,12 @@ router.post('/:id/items', requirePlaylistWrite, async (req, res) => {
 
     // Auto-increment sort_order if not specified
     let order = sort_order;
+    if (order !== undefined && order !== null) {
+      order = itemPosition(order);
+      if (order === null) return res.status(400).json({ error: 'sort_order must be a whole number' });
+    }
     if (order === undefined || order === null) {
-      const max = db.prepare('SELECT MAX(sort_order) as max_order FROM playlist_items WHERE playlist_id = ?')
+      const max = db.prepare('SELECT MAX(CAST(sort_order AS INTEGER)) as max_order FROM playlist_items WHERE playlist_id = ?')
         .get(req.params.id);
       order = (max.max_order || 0) + 1;
     }
@@ -1980,7 +1999,11 @@ router.put('/:id/items/:itemId', requirePlaylistWrite, (req, res) => {
   const updates = [];
   const values = [];
 
-  if (sort_order !== undefined) { updates.push('sort_order = ?'); values.push(sort_order); }
+  if (sort_order !== undefined) {
+    const pos = itemPosition(sort_order);
+    if (pos === null) return res.status(400).json({ error: 'sort_order must be a whole number' });
+    updates.push('sort_order = ?'); values.push(pos);
+  }
   // #public-api: multi-zone placement (zone_id null clears it). Undefined = no change.
   if (zone_id !== undefined) {
     if (zone_id !== null) {
@@ -2170,7 +2193,7 @@ router.post('/:id/items/:itemId/duplicate', requirePlaylistWrite, (req, res) => 
   try { corpFillsLib().assertCanAdd(db, req.params.id, [item]); } catch (e) { if (corpGuard.send(res, e, req)) return; throw e; }
 
   const copy = db.transaction(() => {
-    const max = db.prepare('SELECT MAX(sort_order) as m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
+    const max = db.prepare('SELECT MAX(CAST(sort_order AS INTEGER)) as m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
     const order = (max.m || 0) + 1;
     // child_playlist_id rides along: without it, duplicating a nested row produced an item with
     // content_id, widget_id AND child_playlist_id all NULL — a ghost that renders as nothing. No
@@ -2249,7 +2272,7 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
       if (incoming.length > MAX_SELECTION) {
         return res.status(400).json({ error: `Too many items. The limit is ${MAX_SELECTION}.` });
       }
-      const max = db.prepare('SELECT MAX(sort_order) as m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
+      const max = db.prepare('SELECT MAX(CAST(sort_order AS INTEGER)) as m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
       let order = (max && max.m) || 0;
       const ins = db.prepare(`INSERT INTO playlist_items
         (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec, play_to_end)
@@ -2362,7 +2385,7 @@ router.post('/:id/items/selection', requirePlaylistWrite, (req, res) => {
       db.transaction(() => {
         for (const r of rows) {
           // Reuse the existing single-item duplicate (copies schedules too).
-          const max = db.prepare('SELECT MAX(sort_order) as m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
+          const max = db.prepare('SELECT MAX(CAST(sort_order AS INTEGER)) as m FROM playlist_items WHERE playlist_id = ?').get(req.params.id);
           const order = ((max && max.m) || 0) + 1;
           const result = db.prepare(`INSERT INTO playlist_items
             (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_from, play_until, muted, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec, play_to_end)
@@ -2608,7 +2631,7 @@ router.post('/:id/items/bulk', requirePlaylistWrite, async (req, res) => {
 
     let inserted = [];
     if (ready.length) {
-      const max = db.prepare('SELECT MAX(sort_order) as max_order FROM playlist_items WHERE playlist_id = ?')
+      const max = db.prepare('SELECT MAX(CAST(sort_order AS INTEGER)) as max_order FROM playlist_items WHERE playlist_id = ?')
         .get(req.params.id);
       let order = (max.max_order || 0) + 1;
       const zid = playlistLayout.zoneForNewItem(db, req.params.id, zone_id || null);
@@ -2728,3 +2751,4 @@ module.exports = router;
  */
 module.exports.publishPlaylist = publishPlaylist; // #73: shared with the agency auto-publish path
 module.exports.buildSnapshotItems = buildSnapshotItems;
+module.exports.previewPayload = previewPayload;

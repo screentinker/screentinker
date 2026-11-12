@@ -94,6 +94,28 @@ function apiTokenAuth(req, res, next) {
   next();
 }
 
+/*
+ * May this token READ things belonging to `workspaceId`? For the few routes that sit in front of
+ * the authenticated routers and do their own gate (the content file and thumbnail, which players
+ * and <img> tags also use). The same conditions apiTokenAuth and the tenancy layer apply: a live
+ * token on the read / write / full ladder, bound to that workspace, whose owner is still enabled,
+ * past any forced password change, and still a member there. Never throws; false on any doubt.
+ */
+function tokenReadsWorkspace(raw, workspaceId) {
+  try {
+    if (typeof raw !== 'string' || !raw.startsWith(TOKEN_PREFIX) || !workspaceId) return false;
+    const row = db.prepare('SELECT id, user_id, workspace_id, scope, revoked_at FROM api_tokens WHERE token_hash = ?').get(hashToken(raw));
+    if (!row || row.revoked_at || row.workspace_id !== workspaceId) return false;
+    if (!scopeAllows(row.scope, 'read')) return false;            // agency / billing tokens are off the ladder
+    const user = db.prepare('SELECT id, must_change_password FROM users WHERE id = ?').get(row.user_id);
+    if (!user || user.must_change_password || ownerDisabled(row.user_id)) return false;
+    const member = db.prepare('SELECT 1 FROM workspace_members WHERE workspace_id = ? AND user_id = ?').get(workspaceId, row.user_id);
+    if (!member) return false;
+    touchLastUsed(row.id);
+    return true;
+  } catch { return false; }
+}
+
 // Front door: token path for "Bearer st_...", else the existing JWT requireAuth
 // (unchanged). Used in place of requireAuth on the public routers only.
 function bearerAuth(req, res, next) {
@@ -170,6 +192,7 @@ function requireBillingRead(req, res, next) {
 }
 
 module.exports = {
+  tokenReadsWorkspace,
   bearerAuth, apiTokenAuth, tokenScopeGate, requireScope, agencyGate, requireBillingRead,
   hashToken, generateToken, displayPrefix, TOKEN_PREFIX,
 };

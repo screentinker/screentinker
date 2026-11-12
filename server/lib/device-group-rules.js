@@ -51,6 +51,9 @@ function normalizeRules(v) {
     if (!ops || !ops.includes(r.op)) return false;
     let value = r.value == null ? '' : String(r.value).trim().slice(0, MAX_VALUE);
     if (r.field === 'tag') {
+      // A rule names an existing tag exactly; a value with a space in it is not one (a typed TAG
+      // with a space is stored hyphenated, lib/content-tags.js, and that is what a rule must name).
+      if (/\s/.test(value)) return false;
       const t = normalizeTags([value]);
       if (!t || !t.length) return false;
       value = t[0];

@@ -100,7 +100,7 @@
         const isMine = mine.has(z.id);
         const wpx = Math.round(l.width * z.width_percent / 100);
         const hpx = Math.round(l.height * z.height_percent / 100);
-        return `<div style="position:absolute;left:${z.x_percent}%;top:${z.y_percent}%;width:${z.width_percent}%;height:${z.height_percent}%;`
+        return `<div style="position:absolute;left:${Number(z.x_percent) || 0}%;top:${Number(z.y_percent) || 0}%;width:${Number(z.width_percent) || 0}%;height:${Number(z.height_percent) || 0}%;`
           + `border:2px solid ${isMine ? 'var(--accent)' : 'var(--border)'};box-sizing:border-box;`
           + `background:${isMine ? 'rgba(79,140,255,.20)' : 'transparent'};display:flex;align-items:center;justify-content:center;`
           + `text-align:center;overflow:hidden;font-size:11px;color:${isMine ? '#fff' : 'var(--muted)'}">`

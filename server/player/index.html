@@ -578,6 +578,8 @@
     // ⚠️ Declared HERE, not beside bootViewer: the boot gate calls bootViewer from further up the
     // script than its body, and a `let` read before its line runs is a TDZ ReferenceError (1.9.32).
     let viewerRev = null;
+    let viewerTakeSeq = null;
+    let viewerGfxId = null;      // the graphic a stream feed has keyed on, if any
     let viewerTimer = null;
     let viewerEnded = false;
     let viewerLastAnchor = null;
@@ -3270,17 +3272,239 @@
 
     function bootViewer(v) {
       PREVIEW_MODE = true;
+      // A stream output's renderer (routes/stream-out.js): nobody will ever touch this page, and
+      // its browser is started with autoplay allowed, so sound is on from the first item. A live
+      // stream must never wait on a "click to unmute".
+      if (v && v.sound === true) userHasInteracted = true;
       config.serverUrl = window.location.origin;
       const setup = document.getElementById('setupScreen');
       if (setup) setup.style.display = 'none';
       viewerPoll(v, true);
     }
 
+    /*
+     * GUESTS OF A STREAM (viewer mode only, and only the server's own renderer is ever told of
+     * any). Each guest's browser offers a connection carrying their camera and microphone; this
+     * page answers it, keeps the picture in a tile, and shows and unmutes the tile while the
+     * operator has the guest on air. A guest who is not on air is connected but hidden and
+     * silent: that is the green room. Every few seconds a small still of each guest goes back
+     * to the server, which is what the operator's desk shows.
+     *
+     * The layer sits above the programme and under the transition cover and the graphics.
+     */
+    var guestConns = {};          // id -> { seq, pc, video, tile, label }
+    var guestThumbAt = 0;
+    function guestHave() { var out = []; for (var id in guestConns) out.push(id + ':' + guestConns[id].seq); return out.join(','); }
+    // A view link's requests carry no cookies; only the stream renderer's page (v.cookie) sends its
+    // own, which is how it proves its stream (routes/stream-out.js feedSecretOf).
+    function viewerCreds(v) { return v && v.cookie === true ? 'same-origin' : 'omit'; }
+    function guestPost(v, body) { try { fetch(v.payload_url + '/guest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: viewerCreds(v), body: JSON.stringify(body) }).catch(function () {}); } catch (e) {} }
+    function guestDrop(id) {
+      var c = guestConns[id]; if (!c) return;
+      delete guestConns[id];
+      if (window.__stAudio) { try { window.__stAudio.drop(id); } catch (e) {} }
+      try { c.pc.close(); } catch (e) {}
+      guestKeyStop(c);
+      try { c.video.srcObject = null; c.tile.remove(); } catch (e) {}
+    }
+    // CUT OUT (lib/mixer-guests.js): a guest whose picture arrives with the background painted green is drawn
+    // through a key that makes the green transparent, so only the person stands in the programme. The video
+    // keeps playing (it is the sound, and the key's source) but is not what is seen.
+    var GUEST_KEY_FS = 'precision mediump float; varying vec2 uv; uniform sampler2D t;' +
+      'void main(){ vec4 c = texture2D(t, uv); float m = max(c.r, c.b); float g = c.g - m;' +
+      // how green: nothing of the picture below .08, all of it gone above .28 (the edge in between is soft)
+      ' float a = 1.0 - smoothstep(0.08, 0.28, g);' +
+      // what green is left on the person's edge is taken down to the other colours, or the outline glows
+      ' c.g -= max(g, 0.0) * 0.85;' +
+      ' gl_FragColor = vec4(c.rgb * a, a); }';
+    function guestKeyStart(c) {
+      if (c.key) return;
+      var cv = document.createElement('canvas');
+      cv.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;display:block;';
+      var gl = null; try { gl = cv.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false }); } catch (e) {}
+      if (!gl) { guestKeyPlain(c, cv); return; }     // no graphics card context in this browser: the same key, worked out point by point
+      var sh = function (type, src) { var x = gl.createShader(type); gl.shaderSource(x, src); gl.compileShader(x); return x; };
+      var prog = gl.createProgram();
+      gl.attachShader(prog, sh(gl.VERTEX_SHADER, 'attribute vec2 p; varying vec2 uv; void main(){ uv = vec2(p.x * .5 + .5, .5 - p.y * .5); gl_Position = vec4(p, 0., 1.); }'));
+      gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, GUEST_KEY_FS));
+      gl.linkProgram(prog); gl.useProgram(prog);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+      var loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      var k = c.key = { cv: cv, on: true };
+      var draw = function () {
+        if (!k.on) return;
+        var v = c.video;
+        try {
+          if (v.videoWidth && v.readyState >= 2) {
+            if (cv.width !== v.videoWidth || cv.height !== v.videoHeight) { cv.width = v.videoWidth; cv.height = v.videoHeight; gl.viewport(0, 0, cv.width, cv.height); }
+            if (cv.style.objectFit !== v.style.objectFit) cv.style.objectFit = v.style.objectFit;
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, v);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          }
+        } catch (e) {}
+        // One drawing for each picture that arrives, where the browser can say when one has; else with the screen.
+        if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(draw); else requestAnimationFrame(draw);
+      };
+      c.tile.insertBefore(cv, c.label);
+      c.video.style.opacity = '0';
+      c.tile.style.background = 'transparent'; c.tile.style.boxShadow = 'none';
+      draw();
+    }
+    // The key without a graphics context: a smaller picture (the work is done here, on the processor), the same rule.
+    function guestKeyPlain(c, cv) {
+      var ctx = cv.getContext('2d', { willReadFrequently: true }); if (!ctx) return;
+      var k = c.key = { cv: cv, on: true };
+      var draw = function () {
+        if (!k.on) return;
+        var v = c.video;
+        try {
+          if (v.videoWidth && v.readyState >= 2) {
+            var sc = Math.min(1, 640 / Math.max(v.videoWidth, v.videoHeight)), w = Math.round(v.videoWidth * sc), h = Math.round(v.videoHeight * sc);
+            if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+            if (cv.style.objectFit !== v.style.objectFit) cv.style.objectFit = v.style.objectFit;
+            ctx.drawImage(v, 0, 0, w, h);
+            var img = ctx.getImageData(0, 0, w, h), d = img.data, n = d.length, i, m, g, a;
+            for (i = 0; i < n; i += 4) {
+              m = d[i] > d[i + 2] ? d[i] : d[i + 2]; g = d[i + 1] - m;
+              if (g <= 0) continue;
+              a = g <= 20 ? 1 : g >= 71 ? 0 : 1 - (g - 20) / 51;
+              d[i + 1] -= g * 0.85; d[i + 3] = a * 255;
+            }
+            ctx.putImageData(img, 0, 0);
+          }
+        } catch (e) {}
+        if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(draw); else requestAnimationFrame(draw);
+      };
+      c.tile.insertBefore(cv, c.label);
+      c.video.style.opacity = '0';
+      c.tile.style.background = 'transparent'; c.tile.style.boxShadow = 'none';
+      draw();
+    }
+    function guestKeyStop(c) {
+      if (!c.key) return;
+      c.key.on = false;
+      try { c.key.cv.remove(); } catch (e) {}
+      c.key = null;
+      c.video.style.opacity = '';
+      c.tile.style.background = '#000'; c.tile.style.boxShadow = '0 0 0 2px rgba(255,255,255,.85),0 6px 24px rgba(0,0,0,.5)';
+    }
+    function guestLayerEl() {
+      var el = document.getElementById('guestLayer');
+      if (!el) { el = document.createElement('div'); el.id = 'guestLayer'; el.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:8000;pointer-events:none;'; document.body.appendChild(el); }
+      return el;
+    }
+    function guestConnect(g, ice, v) {
+      guestDrop(g.id);
+      var tile = document.createElement('div');
+      tile.style.cssText = 'position:absolute;display:none;overflow:hidden;background:#000;box-shadow:0 0 0 2px rgba(255,255,255,.85),0 6px 24px rgba(0,0,0,.5);';
+      var video = newVideoElement();
+      video.autoplay = true; video.playsInline = true; video.muted = true; video.__stOverlay = true;
+      video.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+      // A phone held upright sends a tall picture: show all of it between black bars instead of cropping to the middle.
+      var fit = function () { video.style.objectFit = video.videoHeight > video.videoWidth ? 'contain' : 'cover'; };
+      video.addEventListener('loadedmetadata', fit); video.addEventListener('resize', fit);
+      var label = document.createElement('div');
+      // The name sits on the picture, centred along its bottom edge: the picture is centred in its box, so this is
+      // on the person whether they fill the box, stand upright between bars, or are cut out of their background.
+      label.style.cssText = "position:absolute;left:50%;bottom:3%;-webkit-transform:translateX(-50%);transform:translateX(-50%);max-width:90%;padding:.35em .8em;border-radius:.3em;background:rgba(11,12,14,.82);color:#fff;font:600 1.6vh/1.2 'Barlow','Helvetica Neue',Arial,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+      label.textContent = g.name || '';
+      tile.appendChild(video); tile.appendChild(label); guestLayerEl().appendChild(tile);
+      var pc = new RTCPeerConnection({ iceServers: ice || [], bundlePolicy: 'max-bundle' });
+      var c = guestConns[g.id] = { seq: g.seq, pc: pc, video: video, tile: tile, label: label, onAir: false };
+      var stream = new MediaStream();
+      video.srcObject = stream;
+      pc.ontrack = function (e) {
+        try { stream.addTrack(e.track); video.play().catch(function () {}); } catch (err) {}
+        // The server's renderer only (window.__stAudio, lib/stream-out.js): the guest's sound goes to the stream's
+        // console as a strip of its own, and the show comes back to them on this connection.
+        if (e.track && e.track.kind === 'audio' && window.__stAudio) {
+          try { if (e.transceiver) e.transceiver.direction = 'sendrecv'; window.__stAudio.guest(g.id, e.track, e.transceiver ? e.transceiver.sender : null); } catch (err) {}
+        }
+      };
+      pc.onconnectionstatechange = function () {
+        if (guestConns[g.id] !== c) return;
+        guestPost(v, { guest_id: g.id, state: pc.connectionState });
+        if (pc.connectionState === 'failed' || pc.connectionState === 'closed') guestDrop(g.id);   // the guest's page offers again
+      };
+      pc.setRemoteDescription({ type: 'offer', sdp: g.offer }).then(function () { return pc.createAnswer(); }).then(function (a) { return pc.setLocalDescription(a); }).then(function () {
+        // The answer is sent whole, with its candidates: wait for them, but not for ever.
+        return new Promise(function (resolve) {
+          if (pc.iceGatheringState === 'complete') return resolve();
+          var t = setTimeout(resolve, 3000);
+          pc.addEventListener('icegatheringstatechange', function () { if (pc.iceGatheringState === 'complete') { clearTimeout(t); resolve(); } });
+        });
+      }).then(function () {
+        if (guestConns[g.id] === c && pc.localDescription) guestPost(v, { guest_id: g.id, seq: g.seq, answer: pc.localDescription.sdp });
+      }).catch(function (e) { console.warn('[guests] answer failed', e && e.message); guestDrop(g.id); });
+    }
+    /** Where the on-air tiles go, as [left, top, width, height] in percent of the frame. */
+    function guestRects(layout, n) {
+      var out = [], i;
+      if (layout === 'grid') {
+        if (n === 1) return [[0, 0, 100, 100]];
+        if (n === 2) return [[0, 0, 50, 100], [50, 0, 50, 100]];
+        for (i = 0; i < n; i++) out.push([(i % 2) * 50 + (n === 3 && i === 2 ? 25 : 0), Math.floor(i / 2) * 50, 50, 50]);
+        return out;
+      }
+      if (layout === 'side') { for (i = 0; i < n; i++) out.push([60, i * (100 / n), 40, 100 / n]); return out; }
+      var h = Math.min(24, (94 - 2 * (n - 1)) / n);                                               // pip: a column up the right-hand side, four still fit the height
+      for (i = 0; i < n; i++) out.push([100 - 2 - h, 100 - 3 - (i + 1) * h - i * 2, h, h]);
+      return out;
+    }
+    function guestSync(gs, v) {
+      var id, list = (gs && gs.list) || [], seen = {}, i, g, c;
+      for (i = 0; i < list.length; i++) {
+        g = list[i]; seen[g.id] = true; c = guestConns[g.id];
+        if (g.offer && (!c || c.seq !== g.seq)) { guestConnect(g, gs.ice_servers, v); c = guestConns[g.id]; }
+        if (c) {
+          c.onAir = !!g.on_air; c.cut = !!g.cut; if (c.label.textContent !== (g.name || '')) c.label.textContent = g.name || '';
+          // This guest's own volume in the stream (the operator's fader for them).
+          var lv = typeof g.level === 'number' ? Math.max(0, Math.min(1, g.level)) : 1; if (c.video.volume !== lv) { try { c.video.volume = lv; } catch (e) {} }
+        }
+      }
+      for (id in guestConns) if (!seen[id]) guestDrop(id);
+      var air = []; for (i = 0; i < list.length; i++) if (guestConns[list[i].id] && guestConns[list[i].id].onAir) air.push(guestConns[list[i].id]);
+      var rects = guestRects(gs ? gs.layout : 'pip', air.length);
+      var layer = document.getElementById('guestLayer');
+      // Full screen is the guests instead of the programme, unless they are all cut out: then they stand in it.
+      var allCut = air.length > 0; for (i = 0; i < air.length; i++) if (!air[i].cut) allCut = false;
+      if (layer) layer.style.background = gs && gs.layout === 'grid' && air.length && !allCut ? '#000' : 'transparent';
+      // With the renderer's sound link up, a guest's sound is mixed on the server's console and never played here.
+      var linked = false; try { linked = !!(window.__stAudio && window.__stAudio.active()); } catch (e) {}
+      for (id in guestConns) {
+        c = guestConns[id]; i = air.indexOf(c);
+        if (i < 0) { c.tile.style.display = 'none'; if (!c.video.muted) c.video.muted = true; guestKeyStop(c); continue; }
+        if (c.tile.style.display === 'block' && c.video.muted !== linked) c.video.muted = linked;
+        if (c.cut) guestKeyStart(c); else guestKeyStop(c);
+        c.tile.style.left = rects[i][0] + '%'; c.tile.style.top = rects[i][1] + '%'; c.tile.style.width = rects[i][2] + '%'; c.tile.style.height = rects[i][3] + '%';
+        if (c.tile.style.display !== 'block') { c.tile.style.display = 'block'; c.video.muted = linked; c.video.play().catch(function () {}); }
+      }
+      // A still of each guest for the operator's desk, every two seconds.
+      if (Date.now() - guestThumbAt > 2000) {
+        guestThumbAt = Date.now();
+        for (id in guestConns) {
+          c = guestConns[id];
+          if (!c.video.videoWidth) continue;
+          try {
+            var cv = document.createElement('canvas'); cv.width = 192; cv.height = 108;
+            var ctx = cv.getContext('2d'), vw = c.video.videoWidth, vh = c.video.videoHeight, sc = vh > vw ? Math.min(192 / vw, 108 / vh) : Math.max(192 / vw, 108 / vh);
+            ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 192, 108);
+            ctx.drawImage(c.video, (192 - vw * sc) / 2, (108 - vh * sc) / 2, vw * sc, vh * sc);
+            guestPost(v, { guest_id: id, thumb: cv.toDataURL('image/jpeg', 0.55), state: c.pc.connectionState });
+          } catch (e) {}
+        }
+      }
+    }
     function viewerPoll(v, first) {
       if (viewerEnded) return;
-      const url = v.payload_url + (viewerRev ? ('?rev=' + encodeURIComponent(viewerRev)) : '');
+      const have = guestHave();
+      const url = v.payload_url + (viewerRev ? ('?rev=' + encodeURIComponent(viewerRev)) : '') + (have ? ((viewerRev ? '&' : '?') + 'have=' + encodeURIComponent(have)) : '');
       const sentAt = Date.now();
-      fetch(url, { cache: 'no-store', credentials: 'omit' }).then(function (res) {
+      fetch(url, { cache: 'no-store', credentials: viewerCreds(v) }).then(function (res) {
         if (res.status === 404 || res.status === 403 || res.status === 410) { viewerEnd(first); return null; }
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
@@ -3289,9 +3513,18 @@
         if (body.server_ms) ingestClockSample(body.server_ms, sentAt);
         if (body.payload) {
           viewerRev = body.rev;
+          // A stream output's feed names the transition of the take that changed it, once.
+          if (body.take && body.take.seq !== viewerTakeSeq) { viewerTakeSeq = body.take.seq; body.payload.take_fx = body.take; }
           handlePlaylistUpdate(body.payload);
           viewerLastAnchor = null;      // a new playlist: re-join wherever the screen is
         }
+        // A stream output's feed (routes/stream-out.js) also says which graphic is keyed over it.
+        if (Object.prototype.hasOwnProperty.call(body, 'gfx')) {
+          var gid = body.gfx && body.gfx.pip_id ? body.gfx.pip_id : null;
+          if (gid !== viewerGfxId) { viewerGfxId = gid; try { if (gid) pipShow(body.gfx); else pipClear(); } catch (e) {} }
+        }
+        // A stream output's guests (lib/mixer-guests.js): connect to whoever is in the green room, show whoever is on air.
+        try { guestSync(body.guests || null, v); } catch (e) { console.warn('[guests]', e && e.message); }
         viewerAlign(body.now_playing);
       }).catch(function (e) {
         // A network blip is not a revocation: keep showing what we have and try again.
@@ -3299,7 +3532,7 @@
       }).then(function () {
         if (viewerEnded) return;
         clearTimeout(viewerTimer);
-        viewerTimer = setTimeout(function () { viewerPoll(v, false); }, Math.max(2000, Number(v.poll_ms) || 4000));
+        viewerTimer = setTimeout(function () { viewerPoll(v, false); }, Math.max(v.fast === true ? 500 : 2000, Number(v.poll_ms) || 4000));
       });
     }
 
@@ -3452,6 +3685,26 @@
       } catch (e) { /* parent went away mid-preview */ }
     }
 
+    /*
+     * Switch what this preview shows without reloading the page (the vision mixer's Preview and
+     * Program monitors). Only ever a preview payload of this same server, fetched with the
+     * dashboard's own session like the first one was; optionally with the take's transition.
+     */
+    function previewLoad(d) {
+      const u = String((d && d.url) || '');
+      if (!/^\/api\/(playlists|devices)\/[A-Za-z0-9_-]{1,64}\/preview-payload(\?orientation=(landscape|portrait))?$/.test(u)) return;
+      let token = null; try { token = localStorage.getItem('token'); } catch (e) {}
+      fetch(u, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((p) => {
+          if (!p || !PREVIEW_MODE) return;
+          p.cut_now = true;
+          if (d.take_fx && typeof d.take_fx === 'object') p.take_fx = { type: d.take_fx.type, ms: d.take_fx.ms, color: d.take_fx.color };
+          handlePlaylistUpdate(p);
+        })
+        .catch(() => { /* the monitor keeps what it was showing */ });
+    }
+
     function installPreviewControlChannel() {
       window.addEventListener('message', (ev) => {
         if (!PREVIEW_MODE) return;                          // belt and braces: see previewNavigate
@@ -3461,6 +3714,7 @@
         if (d.action === 'next') previewNavigate(1);
         else if (d.action === 'prev') previewNavigate(-1);
         else if (d.action === 'sync') postPreviewState();   // parent (re)attached and wants the count
+        else if (d.action === 'load') previewLoad(d);        // the vision mixer's monitors: switch source in place
       });
     }
 
@@ -4352,6 +4606,7 @@
             sessionId: data.session_id,
             sharedBy: typeof data.shared_by === 'string' ? data.shared_by : '',
             guest: !!data.guest,
+            plain: data.plain === true,
             maxSeconds: data.max_seconds,
             iceServers: Array.isArray(data.ice_servers) ? data.ice_servers : [],
             labels: shareLabels(),
@@ -5311,7 +5566,10 @@
         if (p.opacity != null && isFinite(Number(p.opacity))) box.style.opacity = String(Math.max(0, Math.min(1, Number(p.opacity))));
         if (p.border_radius != null && isFinite(Number(p.border_radius))) box.style.borderRadius = pipPx(p.border_radius, 0);
         const pos = PIP_POS[p.position] || PIP_POS['top-right'];
-        Object.keys(pos).forEach((k) => { box.style[k] = pos[k]; });
+        Object.keys(pos).forEach((k) => { box.style[k] = (p.keyed === true && pos[k] === '4%') ? '0' : pos[k]; });
+        // keyed (the vision mixer's graphics): the page brings its own transparency, so no backing
+        // box and no shadow, and it sits flush to the edge of the picture.
+        if (p.keyed === true) { box.style.background = 'transparent'; box.style.boxShadow = 'none'; }
 
         const hasTitle = p.title != null && p.title !== '';
         if (hasTitle) {
@@ -6273,6 +6531,77 @@
     function bindWallResizeOnce() {}
 
     // ==================== Playlist ====================
+    /*
+     * TAKE TRANSITIONS (the vision mixer, routes/mixer.js). A take may ask for a transition:
+     *   fade   down to black, switch, up from black        flash  the same through white, quick
+     *   wipe   a bar of colour sweeps across; the switch happens while it covers the picture
+     * All three are a COVER drawn over the picture (under the graphics layer, so a keyed lower
+     * third stays up through it): the switch itself is still the ordinary update, applied once the
+     * cover hides the picture. That is what makes them work for any content, zones included.
+     *
+     * ⚠️ FAIL-OPEN. A transition is polish; the switch is the job. Any error, an unknown type, or
+     * a newer update arriving mid-transition, and the update is applied plainly. The cover removes
+     * itself on a timer of its own, so it can never be left over the screen.
+     */
+    let takeFx = null;   // { data, apply: timer, el }
+    function takeFxClear() {
+      if (!takeFx) return;
+      clearTimeout(takeFx.apply);
+      try { if (takeFx.el && takeFx.el.parentNode) takeFx.el.parentNode.removeChild(takeFx.el); } catch (e) {}
+      takeFx = null;
+    }
+    /** Starts the transition a take asked for. Returns true when it has taken charge of the update. */
+    function takeFxRun(data) {
+      const fx = data.take_fx;
+      delete data.take_fx;                       // once: a cached copy of this playlist must not replay it
+      try {
+        if (!fx || ['fade', 'flash', 'wipe'].indexOf(fx.type) < 0) return false;
+        const ms = Math.max(200, Math.min(3000, Number(fx.ms) || 600));
+        const half = Math.round(ms / 2);
+        const colour = fx.type === 'flash' ? '#ffffff' : fx.type === 'wipe' && /^#[0-9a-fA-F]{6}$/.test(fx.color || '') ? fx.color : '#000000';
+        const el = document.createElement('div');
+        el.id = 'takeFx';
+        el.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;z-index:8900;pointer-events:none;background:' + colour + ';'
+          + (fx.type === 'wipe' ? 'transform:translateX(-101%);transition:transform ' + half + 'ms cubic-bezier(.6,0,.4,1);'
+                                : 'opacity:0;transition:opacity ' + half + 'ms ease-in-out;');
+        document.body.appendChild(el);
+        const mine = takeFx = { data: data, el: el, apply: null };
+        void el.offsetWidth;                     // commit the start state so the first half animates
+        if (fx.type === 'wipe') el.style.transform = 'translateX(0)'; else el.style.opacity = '1';
+        mine.apply = setTimeout(function () {
+          if (takeFx !== mine) return;           // superseded: the newer update has been applied
+          takeFx = null;
+          try { handlePlaylistUpdate(data); } finally {
+            // The cover lifts when the new picture is THERE, not on a fixed beat: lifting onto an
+            // image or video that is still loading shows the gap the transition exists to hide.
+            // Bounded: after a second and a half it lifts on whatever there is.
+            const applied = Date.now();
+            const lift = function () {
+              try { if (fx.type === 'wipe') el.style.transform = 'translateX(101%)'; else el.style.opacity = '0'; } catch (e) {}
+              setTimeout(function () { try { if (el.parentNode) el.parentNode.removeChild(el); } catch (e) {} }, half + 150);
+            };
+            const wait = function () {
+              let pending = false;
+              try {
+                document.querySelectorAll('img, video').forEach(function (m) {
+                  if (m.closest && m.closest('#pipContainer')) return;
+                  if (m.tagName === 'IMG' ? !m.complete : m.readyState < 2) pending = true;
+                });
+              } catch (e) { pending = false; }
+              if (pending && Date.now() - applied < 1500) setTimeout(wait, 50); else lift();
+            };
+            setTimeout(wait, 60);
+          }
+        }, half + 20);
+        // Its own timer, whatever happened above: the cover can never be left over the screen.
+        setTimeout(function () { try { if (el.parentNode) el.parentNode.removeChild(el); } catch (e) {} }, ms + 2600);
+        return true;
+      } catch (e) {
+        takeFxClear();
+        return false;
+      }
+    }
+
     function handlePlaylistUpdate(data) {
       // #473: a playlist update mid-session would restart the item under someone filling in a form.
       // Parked (latest wins) and applied by kioskRelease(). A suspension is not parked.
@@ -6289,6 +6618,11 @@
         console.log('[Kiosk] playlist update parked until the interactive session ends');
         return;
       }
+      // A take with a transition (after the kiosk park: a parked take keeps its transition for
+      // later): the cover goes up first and this runs again underneath it. Anything else arriving
+      // while one is in progress supersedes it and is applied at once.
+      if (typeof takeFx !== 'undefined' && takeFx && takeFx.data !== data) takeFxClear();
+      if (data && data.take_fx && !data.suspended && typeof takeFxRun === 'function' && takeFxRun(data)) return;
       // Check if device is suspended (trial expired / over limit)
       if (data.suspended) {
         /*
@@ -6765,9 +7099,22 @@
       // An emergency alert raised or cleared cuts in now (see interruptChanged). On a wall the
       // follower already swaps at once (schedule-driven); this makes the leader do the same, so the
       // whole wall switches together instead of the leader holding out for up to 60 s.
+      // cut_now: the vision mixer's TAKE (routes/mixer.js). An operator pressed a key to put this
+      // on air; waiting out the current item is exactly what they did not ask for.
       const interruptNow = interruptChanged(oldPlaylist, playlist);
+      const cutNow = data.cut_now === true;
       if (interruptNow) console.log('Emergency alert raised/cleared — swapping now, not at the next advance');
-      if (isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow) {
+      /*
+       * The STAGE changed shape (a different layout, or none; a wall joined or left). The deferral
+       * waits for the fullscreen item's own advance, and a screen that was showing zones has no
+       * such advance: every zone runs its own timer and nothing ever calls nextItem. So leaving a
+       * multi-zone playlist for a fullscreen one with no item in common sat on the old zones until
+       * the 60 s safety net, and each further push re-armed it, while the dashboard showed the new
+       * playlist assigned. A changed stage is rebuilt now, exactly as the surviving-item branch
+       * above already does for the same change ("Layout or wall changed with the same items").
+       */
+      const stageChanged = layoutChanged || wallChanged;
+      if (isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow && !stageChanged && !cutNow) {
         deferredRotation = true;
         deferredSuccessorId = itemIdentity(playlist[nextIdx]);
         console.log('#157: current item removed but still live — deferring rotation-out');

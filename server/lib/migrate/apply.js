@@ -363,7 +363,7 @@ function importLayout({ job, l, mediaMap, userId, lossy, folderId }) {
 
 async function importMedia({ job, m, session, userId, folderId }) {
   const { storageRoomBytes } = require('../../middleware/subscription');
-  const room = userId ? storageRoomBytes(userId) : null;
+  const room = userId ? storageRoomBytes(userId, job && job.workspace_id) : null;
   if (room !== null && room <= 0) throw new StopImport('storage_limit', 'The storage allowance is used up.');
   const limit = room === null ? config.maxFileSize : Math.min(config.maxFileSize, Math.max(0, room));
   const declared = Number(m.size) || 0;

@@ -2087,7 +2087,7 @@ function renderTriggerConfig(device) {
 
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
           <span style="font-size:13px">${t('device.trigcfg.secret')}:</span>
-          <code id="trigSecretVal" style="font-size:12px;background:#0b0f1a;border:1px solid var(--border);
+          <code id="trigSecretVal" style="font-size:12px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);
                 border-radius:6px;padding:4px 8px">${secretSet ? esc(device.trigger_secret) : t('device.trigcfg.secret_unset')}</code>
           <button class="btn btn-secondary btn-sm" id="rotateTrigSecretBtn">
             ${secretSet ? t('device.trigcfg.rotate') : t('device.trigcfg.generate')}</button>
@@ -3620,13 +3620,22 @@ function setupRemote(device) {
 
   startBtn?.addEventListener('click', () => {
     console.log('Start Remote clicked for device:', device.id);
-    remoteActive = true;
-    startRemote(device.id);
-    requestScreenshot(device.id);
-    startBtn.style.display = 'none';
-    stopBtn.style.display = '';
-    overlay.style.display = 'none';
-    showToast(t('device.toast.remote_started'), 'info');
+    startBtn.disabled = true;
+    startRemote(device.id, (ack) => {
+      startBtn.disabled = false;
+      // Say what happened, like every other action on this page. An offline screen used to get
+      // "Remote session started" and a set of key buttons that went nowhere.
+      if (ack && !ack.delivered && ack.reason === 'offline') { showToast(t('device.toast.remote_offline'), 'warning'); return; }
+      if (ack && !ack.delivered && ack.reason === 'unsupported') { showToast(t('device.toast.remote_unsupported'), 'warning'); return; }
+      if (ack && !ack.delivered && ack.reason === 'forbidden') { showToast(t('device.toast.remote_forbidden'), 'warning'); return; }
+      // Confirmed, or no answer at all (a server from before the answer existed): as before.
+      remoteActive = true;
+      requestScreenshot(device.id);
+      startBtn.style.display = 'none';
+      stopBtn.style.display = '';
+      overlay.style.display = 'none';
+      showToast(t('device.toast.remote_started'), 'info');
+    });
   });
 
   stopBtn?.addEventListener('click', () => {

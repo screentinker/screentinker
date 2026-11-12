@@ -478,6 +478,9 @@ export const api = {
 
   // #109 PiP overlay: push/clear a floating overlay on a device or group. `id` may be a
   // device id OR a group id (the server resolves + expands). Needs full scope (no-op for JWT).
+  // The vision mixer (views/mixer.js) drives several APIs from one page: the desk, stream
+  // outputs, overlays, cameras and screen commands. One door, so every call gets the same errors.
+  desk: (path, opts) => request(path, opts),
   sendPip: (id, opts) => request('/pip', { method: 'POST', body: JSON.stringify({ device_id: id, ...opts }) }),
   clearPip: (id, pipId) => request('/pip/clear', { method: 'POST', body: JSON.stringify({ device_id: id, pip_id: pipId || undefined }) }),
 
@@ -1004,7 +1007,7 @@ export const api = {
   adminStaleAccounts: (days) => request(`/admin/cleanup/stale-accounts?days=${encodeURIComponent(days)}`),
   adminPurgeStale: (body) => request('/admin/cleanup/stale-accounts', { method: 'POST', body: JSON.stringify(body) }),
   adminWarnStale: (body) => request('/admin/cleanup/stale-accounts/warn', { method: 'POST', body: JSON.stringify(body) }),
-  adminDeleteOrg: (id) => request(`/admin/orgs/${id}`, { method: 'DELETE' }),
+  adminDeleteOrg: (id, opts = {}) => request(`/admin/orgs/${id}`, { method: 'DELETE', ...(opts.acknowledge_stripe ? { body: JSON.stringify({ acknowledge_stripe: true }) } : {}) }),
   // #talk: per-org talk flag + optional per-org ICE (STUN/TURN) override. data = { talk_enabled, ice_servers }.
   adminSetOrgTalk: (id, data) => request(`/admin/orgs/${id}/talk`, { method: 'PUT', body: JSON.stringify(data) }),
   adminDeleteWorkspace: (id) => request(`/admin/workspaces/${id}`, { method: 'DELETE' }),

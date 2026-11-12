@@ -77,6 +77,20 @@ function runMigration({ db: existingDb = null, dryRun = false, logger = console 
         subscription_ends       INTEGER,
         grace_period_ends       INTEGER,
         locked_at               INTEGER,
+        -- The rest of the billing state (server/lib/org-billing.js): a true copy of the owner's
+        -- while the person pays, the source of truth once the organization does. Declared here so
+        -- a fresh install has them from the start; an older table gains them at boot.
+        trial_started           INTEGER,
+        trial_plan              TEXT,
+        trial_expired_at        INTEGER,
+        trial_ending_email_sent_at        INTEGER,
+        trial_expired_email_sent_at       INTEGER,
+        renewal_at              INTEGER,
+        past_due_since          INTEGER,
+        payment_failed_email_sent_at      INTEGER,
+        subscription_lapsed_email_sent_at INTEGER,
+        plan_comped             INTEGER NOT NULL DEFAULT 0,
+        billing_follows_org     TEXT,
         default_brand_name      TEXT,
         default_logo_url        TEXT,
         default_primary_color   TEXT,

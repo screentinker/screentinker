@@ -9,7 +9,12 @@ let io = null;
 function startScheduler(socketIo) {
   io = socketIo;
   // Check schedules every 60 seconds
-  setInterval(evaluateSchedules, 60000);
+  // Backstop only: evaluateSchedules already contains a failure to the one screen it came from.
+  // The server exits on an uncaught exception by design, and this timer must never be the cause.
+  setInterval(() => {
+    try { evaluateSchedules(); }
+    catch (e) { console.error('[scheduler] tick failed, will run again in a minute:', (e && e.stack) || e); }
+  }, 60000);
   console.log('Scheduler service started');
 }
 
@@ -34,7 +39,43 @@ function evaluateSchedules(ioOverride, nowOverride, { skipReboots = false, devic
     onlineDevices = onlineDevices.filter((device) => wanted.has(device.id));
   }
 
+  const opts = { skipReboots, noPush, refreshOfflinePlan };
   for (const device of onlineDevices) {
+    /*
+     * ⚠️ ONE SCREEN PER TRY. A recurrence string and a time zone are stored as they arrive, and both
+     * are parsed in here. A throw used to leave this function, reach the timer, and take the whole
+     * server down once a minute for every tenant. Now it costs the one screen it came from this one
+     * tick: its scheduled columns are left as they were, so it keeps playing what it had (R9), and
+     * the walk goes on to the next screen.
+     */
+    try { evaluateDevice(device, now, deviceNs, opts); }
+    catch (e) { warnOnce(device.id, e); }
+  }
+}
+
+// One line per screen per distinct message, not one a minute for ever.
+const _warned = new Map();
+function warnOnce(deviceId, e) {
+  const msg = String((e && e.message) || e);
+  if (_warned.get(deviceId) === msg) return;
+  if (_warned.size > 5000) _warned.clear();
+  _warned.set(deviceId, msg);
+  console.warn(`[scheduler] skipped screen ${deviceId} this tick (it keeps what it was playing): ${msg}`);
+}
+
+/*
+ * A zone that Intl does not know (a typo in the override, or whatever a player chose to report)
+ * reads as "no zone": the server clock, exactly as for a screen that reports none. Losing the
+ * schedule altogether, or throwing, would both be worse than being an hour out.
+ */
+function localParts(now, tz) {
+  if (!tz) return _localParts(now, tz);
+  try { return _localParts(now, tz); }
+  catch (e) { if (e instanceof RangeError) return _localParts(now, null); throw e; }
+}
+
+function evaluateDevice(device, now, deviceNs, { skipReboots, noPush, refreshOfflinePlan }) {
+  {
     // #12 scheduled reboot — evaluated independently of playlist/layout overrides.
     if (!skipReboots) maybeRebootDevice(device, now, deviceNs);
 
@@ -178,7 +219,7 @@ function rebootDue(schedule, tz, now, lastDate) {
   const schedMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
   if (schedMin > 1439) return { due: false, today: null };
 
-  const L = _localParts(now, tz);
+  const L = localParts(now, tz);
   const p2 = (n) => (n < 10 ? '0' : '') + n;
   const today = `${L.y}-${p2(L.mo)}-${p2(L.day)}`;
   const inWindow = L.min >= schedMin && L.min < schedMin + REBOOT_WINDOW_MIN;
@@ -216,7 +257,7 @@ function localStamp(parts) {
 }
 
 function isScheduleActiveNow(schedule, now, tz) {
-  return isScheduleActiveAt(schedule, _localParts(now, tz));
+  return isScheduleActiveAt(schedule, localParts(now, tz));
 }
 
 /*
@@ -276,6 +317,9 @@ function parseSimpleRRule(rrule) {
   const dayMap = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
   for (const part of parts) {
     const [key, val] = part.split('=');
+    // A key with no value ("BYDAY", a stray ";") says nothing. It is skipped rather than read:
+    // this string is stored as the client sent it, and `val.split` on undefined took the tick down.
+    if (val === undefined) continue;   // an empty value ("BYDAY=") is still read: no days, so never active
     if (key === 'FREQ') rule.freq = val;
     if (key === 'BYDAY') rule.byDay = val.split(',').map(d => dayMap[d]).filter(d => d !== undefined);
     if (key === 'INTERVAL') rule.interval = parseInt(val);

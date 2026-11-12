@@ -128,8 +128,8 @@ async function sendPaymentReceipt(invoice, deps = {}) {
     // invoice raised outside a subscription.
     const subId = require('../lib/stripe-fields').subscriptionIdOf(invoice);  // moved in Stripe 2025-03+
     const custId = invoice.customer || null;
-    const user = (subId && db.prepare('SELECT id, email, name, plan_id FROM users WHERE stripe_subscription_id = ?').get(subId))
-      || (custId && db.prepare('SELECT id, email, name, plan_id FROM users WHERE stripe_customer_id = ?').get(custId))
+    const user = (subId && db.prepare('SELECT id, email, name, plan_id FROM billing_accounts WHERE stripe_subscription_id = ?').get(subId))
+      || (custId && db.prepare('SELECT id, email, name, plan_id FROM billing_accounts WHERE stripe_customer_id = ?').get(custId))
       || null;
 
     /*

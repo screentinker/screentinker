@@ -117,3 +117,40 @@ be kept as a separate file next to it. Record the licence below and add a `<name
   curl -sL https://unpkg.com/leaflet@1.9.4/dist/leaflet.css -o frontend/vendor/leaflet/leaflet.css
   curl -sL https://raw.githubusercontent.com/Leaflet/Leaflet/v1.9.4/LICENSE -o frontend/vendor/leaflet/leaflet.LICENSE
   ```
+
+## Barlow (`fonts/barlow/`)
+
+- **What:** the dashboard's typeface in the Control room and Light themes (css/variables.css).
+- **Version / licence:** from `@fontsource/barlow` 5.3.0, SIL Open Font License 1.1 (`OFL.txt` beside the files).
+- **Files:** `barlow-latin-{400,500,600,700}-normal.woff2`, `barlow-latin-ext-{400,500,600,700}-normal.woff2`.
+- **Why committed:** a self-hosted or offline instance must look the same; nothing is fetched from a font service.
+- **Regenerate / update:** download the `@fontsource/barlow` tarball from the npm registry and copy those eight files and its `LICENSE`.
+
+## tfjs/
+- **Library:** TensorFlow.js core and its WebGL backend: the maths (convolutions on the graphics
+  card) under a guest's "Remove my background" switch on `/guest/<token>`. Only these two files:
+  no model loaders, no converter. The network is run by our own `frontend/js/seg-net.js`.
+- **Version:** 4.22.0 (`@tensorflow/tfjs-core`, `@tensorflow/tfjs-backend-webgl`)
+- **Licence:** Apache-2.0, Copyright Google LLC. Full text in [`tfjs/tfjs.LICENSE`](tfjs/tfjs.LICENSE).
+  The bundles keep their own headers.
+- **Files:** `tf-core.es2017.min.js`, `tf-backend-webgl.es2017.min.js` (the `dist/` builds from the
+  npm tarballs, with the trailing sourcemap comment dropped). Neither uses `eval` or `new Function`,
+  so they run under the dashboard's `script-src 'self'`.
+- **Why committed:** offline instances and no build step. Loaded lazily, only when a guest turns
+  the switch on: nobody else pays for it.
+
+## segmenter/
+- **What:** the trained person-segmentation network behind the same switch: MediaPipe Selfie
+  Segmentation, in two shapes (`general` 256x256 for an upright picture, `landscape` 256x144).
+  Each is a `.json` (the list of the network's steps) and a `.bin` (its weights, half floats).
+- **Licence:** Apache-2.0, Copyright Google LLC. Notice and full text in
+  [`segmenter/segmenter.LICENSE`](segmenter/segmenter.LICENSE).
+- **Source:** `https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite`
+  and `.../selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite`.
+- **Regenerate / update:** `pip install tflite`, then
+  `python3 scripts/segmenter-convert.py selfie_segmenter.tflite frontend/vendor/segmenter/general`
+  (and the same for `landscape`). The converter only rewrites the container: the weights are
+  copied as they are. Our runner was checked against MediaPipe's own on the same picture: the
+  two masks differ by at most 0.00002.
+- **Why not MediaPipe's library:** its WebAssembly runtime is 6 to 15 MB. This is 0.45 MB of
+  model and 0.6 MB of maths.

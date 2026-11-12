@@ -583,7 +583,7 @@ function ownerOf(form) {
 function storageRoom(form) {
   const owner = ownerOf(form);
   if (!owner) return null;
-  try { return require('../middleware/subscription').storageRoomBytes(owner); } catch { return null; }
+  try { return require('../middleware/subscription').storageRoomBytes(owner, form && form.workspace_id); } catch { return null; }
 }
 
 const inflight = new Map();   // form id -> submissions between the quota check and their row

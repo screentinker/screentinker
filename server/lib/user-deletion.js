@@ -195,14 +195,52 @@ function afterCommit({ canva = [], socialPosts = false }, revokeCanva = revokeAt
  * losing the membership row did not take their access away. Call it AFTER the membership row is gone,
  * in the same transaction. Returns { canva_links, cloud_folders_paused, subscriptions }.
  */
+/*
+ * THE SCREENS AND FILES SOMEONE ADDED BELONG TO THE ORGANIZATION'S OWNER ONCE THEY ARE GONE.
+ *
+ * Limits are counted by the person a screen or a file is recorded under (devices.user_id,
+ * content.user_id). A member who left kept counting the screens they had paired in an organization
+ * against their own plan: when their trial ended those screens went dark, and nobody left in the
+ * organization could do anything about it. So they move to whoever owns it now, and count against
+ * that plan; if it is over its limit, the owner upgrades. The same on a hand-over, for what the
+ * previous owner added. Returns { devices, content, owner }.
+ */
+function handToOwner(db, { userId, orgId, workspaceIds = null }) {
+  const out = { devices: 0, content: 0, owner: null };
+  const org = orgId && db.prepare('SELECT owner_user_id FROM organizations WHERE id = ?').get(orgId);
+  if (!org || !org.owner_user_id || org.owner_user_id === userId) return out;
+  out.owner = org.owner_user_id;
+  const ws = workspaceIds || db.prepare('SELECT id FROM workspaces WHERE organization_id = ?').all(orgId).map((r) => r.id);
+  if (!ws.length) return out;
+  const ph = inClause(ws.length), have = tablesPresent(db);
+  for (const t of ['devices', 'content']) {
+    if (!have.has(t)) continue;
+    out[t] = db.prepare(`UPDATE ${t} SET user_id = ? WHERE user_id = ? AND workspace_id IN (${ph})`).run(org.owner_user_id, userId, ...ws).changes;
+  }
+  return out;
+}
+
+/** After a release that moved screens: the screens of everyone involved learn which plan they count against now. */
+function pushMovedScreens(io, released, userId) {
+  if (!io || !released || !released.devices_moved) return;
+  for (const id of new Set([...(released.owners || []), userId])) {
+    try { require('../services/trialExpiry').pushDowngradedUserScreens(io, id); } catch (e) { console.warn('[release] could not tell screens their plan:', e.message); }
+  }
+}
+
 function releaseWorkspaceMember(db, { userId, workspaceIds }) {
   const have = tablesPresent(db);
-  const out = { canva_links: 0, cloud_folders_paused: 0, subscriptions: 0 };
+  const out = { canva_links: 0, cloud_folders_paused: 0, subscriptions: 0, devices_moved: 0, content_moved: 0, owners: [] };
   for (const wsId of workspaceIds) {
     const ws = db.prepare('SELECT organization_id FROM workspaces WHERE id = ?').get(wsId);
     if (ws && have.has('organization_members')) {
       const om = db.prepare('SELECT role FROM organization_members WHERE organization_id = ? AND user_id = ?').get(ws.organization_id, userId);
       if (om && (om.role === 'org_owner' || om.role === 'org_admin')) continue;
+    }
+    if (ws && have.has('organizations')) {
+      const m = handToOwner(db, { userId, orgId: ws.organization_id, workspaceIds: [wsId] });
+      out.devices_moved += m.devices; out.content_moved += m.content;
+      if (m.owner && (m.devices || m.content) && !out.owners.includes(m.owner)) out.owners.push(m.owner);
     }
     if (have.has('canva_links')) out.canva_links += db.prepare('DELETE FROM canva_links WHERE workspace_id = ? AND user_id = ?').run(wsId, userId).changes;
     if (have.has('cloud_folders')) {
@@ -491,6 +529,7 @@ function deleteUserCascade(db, { targetId, actingAdminId, unlink, revokeCanva })
 }
 
 module.exports = {
+  handToOwner, pushMovedScreens,
   deleteUserCascade, OrgHasOtherMembersError, listOwnedOrgsWithSharing,
   deleteWorkspaceCascade, deleteOrgCascade,
   releaseWorkspaceMember, dropTokenSubscriptions,

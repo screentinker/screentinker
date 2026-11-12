@@ -8,6 +8,9 @@ services:
     # ...or build from source instead of pulling:
     # build: .
     restart: unless-stopped
+    # A small init as process 1: it collects the processes the server's helpers leave behind when they exit
+    # (a stream's renderer leaves a few each time it stops), which node itself does not.
+    init: true
     ports:
       - "3001:3001"
     environment:

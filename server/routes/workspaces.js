@@ -702,7 +702,11 @@ router.put('/:id/members/:userId', (req, res) => {
 // since their access comes from org_members anyway, and (b) removing the
 // last workspace_admin which would leave the workspace headless.
 router.delete('/:id/members/:userId', (req, res) => {
-  const ws = loadWorkspace(req, res, true);
+  // Leaving is the member's own call: anyone may remove THEMSELF (it used to answer "Admin access
+  // required"). Removing someone else is still an administrator's. The two guards below apply
+  // either way, worded for the person they are stopping.
+  const self = req.params.userId === req.user.id;
+  const ws = loadWorkspace(req, res, !self);
   if (!ws) return;
   const member = db.prepare('SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?')
     .get(ws.id, req.params.userId);
@@ -711,18 +715,27 @@ router.delete('/:id/members/:userId', (req, res) => {
     "SELECT 1 FROM organization_members WHERE organization_id = ? AND user_id = ? AND role = 'org_owner'"
   ).get(ws.organization_id, req.params.userId);
   if (orgOwner) {
+    if (self) return res.status(409).json({ error: 'You own this organization. Hand it to someone else first (Settings), then you can leave.', code: 'OWNER_MUST_HAND_OVER' });
     return res.status(403).json({ error: 'Cannot remove the organization owner' });
   }
   if (member.role === 'workspace_admin' && countWorkspaceAdmins(ws.id) <= 1) {
-    return res.status(409).json({ error: 'Cannot remove the last admin' });
+    const others = db.prepare('SELECT COUNT(*) AS c FROM workspace_members WHERE workspace_id = ? AND user_id != ?').get(ws.id, req.params.userId).c;
+    // The last person in a workspace leaves nobody without an administrator.
+    if (!(self && others === 0)) {
+      return res.status(409).json(self
+        ? { error: 'You are the only administrator here. Make someone else an administrator first.', code: 'LAST_WORKSPACE_ADMIN' }
+        : { error: 'Cannot remove the last admin' });
+    }
   }
   // What they set up here under their own name goes with the membership (Canva links, folder syncs,
   // REST-hook subscriptions) - lib/user-deletion.js releaseWorkspaceMember.
+  let released = null;
   db.transaction(() => {
     db.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?')
       .run(ws.id, req.params.userId);
-    releaseWorkspaceMember(db, { userId: req.params.userId, workspaceIds: [ws.id] });
+    released = releaseWorkspaceMember(db, { userId: req.params.userId, workspaceIds: [ws.id] });
   })();
+  require('../lib/user-deletion').pushMovedScreens(req.app.get('io'), released, req.params.userId);
   // Their open dashboards joined this workspace's socket room at connect; take them out of it.
   try { require('../ws/dashboardSocket').dropUserFromWorkspace(req.params.userId, ws.id); } catch (_) { /* best-effort: writes are re-checked live anyway */ }
   res.json({ success: true });

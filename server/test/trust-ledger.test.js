@@ -250,6 +250,7 @@ const ALLOWED = {
   'routes/widgets.js': 'browser',
   'lib/radar/widget.js': 'browser',   // the radar page's own fetch of RainViewer's frame index, run by the screen
   'lib/screen-share.js': 'inbound',
+  'lib/stream-out.js': 'inbound',        // the renderer's sound link: a WebSocket SERVER, loopback only, for its own renderer
   'lib/oidc.js': 'inbound',              // net.isIP only; its requests go through lib/ai-fetch guardedFetch
   'lib/forwarded-client-ip.js': 'inbound', // net.isIP only
   'lib/http-logging.js': 'inbound',        // net.isIP only

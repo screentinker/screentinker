@@ -1,4 +1,4 @@
-import { connectSocket } from './socket.js';
+import { connectSocket, on as onSocket } from './socket.js';
 import * as dashboard from './views/dashboard.js';
 import * as deviceDetail from './views/device-detail.js';
 import * as contentLibrary from './views/content-library.js';
@@ -17,6 +17,7 @@ import * as dataSources from './views/data-sources.js';
 import * as reviews from './views/reviews.js';
 import * as contentRequests from './views/requests.js';
 import * as videoWall from './views/video-wall.js';
+import * as mixer from './views/mixer.js';
 import * as reports from './views/reports.js';
 import * as audience from './views/audience.js';
 import * as servers from './views/servers.js';
@@ -715,6 +716,13 @@ function route() {
     else if (hash === '#/templates' && link.dataset.view === 'templates') link.classList.add('active');
     else if ((hash === '#/data-sources' || hash.startsWith('#/data-sources/')) && link.dataset.view === 'data-sources') link.classList.add('active');
     else if ((hash.startsWith('#/wall') || hash === '#/walls') && link.dataset.view === 'walls') link.classList.add('active');
+    else if (hash === '#/mixer' && link.dataset.view === 'mixer') link.classList.add('active');
+    // Broadcast view's own menu: the desk is home there, and each section is a page of it.
+    else if (link.dataset.view && link.dataset.view.startsWith('bc-')) {
+      const section = hash.startsWith('#/mixer/') ? hash.split('/')[2] : (hash === '#/mixer' || ((hash === '#/' || hash === '' || hash === '#') && document.documentElement.classList.contains('ui-broadcast')) ? 'desk'
+        : hash === '#/screens' ? 'screens' : (hash === '#/settings' || hash.startsWith('#/settings/')) ? 'settings' : null);
+      if (section && link.dataset.view === 'bc-' + section) link.classList.add('active');
+    }
     else if (hash === '#/site-caches' && link.dataset.view === 'site-caches') link.classList.add('active');
     else if (hash === '#/reports' && link.dataset.view === 'reports') link.classList.add('active');
     else if (hash === '#/audience' && link.dataset.view === 'audience') link.classList.add('active');
@@ -734,7 +742,21 @@ function route() {
   });
 
   // Route to view
-  if (hash === '#/' || hash === '#' || hash === '') {
+  if ((hash === '#/' || hash === '#' || hash === '') && document.documentElement.classList.contains('ui-broadcast')) {
+    // Broadcast view: the desk is home. Screens and Settings are at the foot of its menu.
+    currentView = mixer;
+    mixer.render(app);
+  } else if ((hash === '#/mixer' || hash.startsWith('#/mixer/')) && !document.documentElement.classList.contains('has-broadcast')) {
+    // The mixer is for self-hosted instances; anywhere else its address is just the home page.
+    currentView = dashboard;
+    dashboard.render(app);
+  } else if (hash === '#/mixer' || hash.startsWith('#/mixer/')) {
+    currentView = mixer;
+    mixer.render(app, hash.split('/')[2] || 'desk');
+  } else if (hash === '#/screens') {
+    currentView = dashboard;
+    dashboard.render(app);
+  } else if (hash === '#/' || hash === '#' || hash === '') {
     currentView = dashboard;
     dashboard.render(app);
   } else if (hash.startsWith('#/device/')) {
@@ -1249,6 +1271,9 @@ if (isAuthenticated()) {
 // Refresh the cached user on every route transition so plan/role changes
 // made by an admin propagate without requiring a re-login.
 window.addEventListener('hashchange', () => { if (isAuthenticated()) refreshCurrentUser(); });
+// A hand-over or a departure changed what this person may do in an organization (the server already
+// applies it on every request; only this page's copy of them is old): re-read it and redraw.
+onSocket('access-changed', () => { if (isAuthenticated()) refreshCurrentUser().then(() => { updateSidebarUser(); route(); }); });
 
 // Register PWA service worker
 if ('serviceWorker' in navigator) {

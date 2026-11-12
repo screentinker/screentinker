@@ -94,7 +94,7 @@ export async function openHistoryModal(type, id, { name = '', onChanged } = {}) 
         const zones = st.zones || [];
         body = `<div><strong>${esc(st.name || '')}</strong> ${st.width}×${st.height}</div>
           <div style="position:relative;width:100%;aspect-ratio:${st.width || 16}/${st.height || 9};background:#111;border-radius:8px;margin-top:8px;overflow:hidden">
-          ${zones.map((z) => `<div title="${esc(z.name)}" style="position:absolute;left:${z.x_percent}%;top:${z.y_percent}%;width:${z.width_percent}%;height:${z.height_percent}%;border:1px solid #34d399;background:${esc(z.background_color || '#000')}88;font-size:10px;color:#fff;padding:2px">${esc(z.name)}</div>`).join('')}</div>`;
+          ${zones.map((z) => `<div title="${esc(z.name)}" style="position:absolute;left:${Number(z.x_percent) || 0}%;top:${Number(z.y_percent) || 0}%;width:${Number(z.width_percent) || 0}%;height:${Number(z.height_percent) || 0}%;border:1px solid #34d399;background:${esc(z.background_color || '#000')}88;font-size:10px;color:#fff;padding:2px">${esc(z.name)}</div>`).join('')}</div>`;
       } else if (type === 'slide_deck') {
         const slides = (st.doc && st.doc.slides) || [];
         body = `<div><strong>${esc(st.name || '')}</strong> · ${slides.length} ${esc(t('history.slides'))}</div><ol style="margin:8px 0 0 18px;padding:0">${slides.map((sl) => `<li>${esc(sl.name || sl.id)}</li>`).join('')}</ol>`;

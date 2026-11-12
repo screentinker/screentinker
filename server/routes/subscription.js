@@ -20,10 +20,39 @@ router.get('/promotion', (req, res) => {
 });
 
 // Get current user's subscription info
-router.get('/me', requireAuth, (req, res) => {
-  const plan = getUserPlan(req.user.id);
-  const deviceCount = getUserDeviceCount(req.user.id);
-  const storageMB = getUserStorageMB(req.user.id);
+/*
+ * Whose plan this page is about. While limits are the person's (the default) it is the caller's
+ * own, as always. Once limits are the organization's (limits_scope / billing_source = 'org') it is
+ * the plan and usage of the organization the caller is working in, and `billing` says so and says
+ * what this caller may do about it: anyone in the organization may buy a plan, only its owner and
+ * organization admins may change or cancel one.
+ */
+const limits = require('../middleware/subscription');
+const { resolveTenancy } = require('../lib/tenancy');
+const tenancyWhenOrgScoped = (req, res, next) => (limits.limitsScope() === 'org' ? resolveTenancy(req, res, next) : next());
+function billingContext(req, subject) {
+  if (subject.scope !== 'org') return { scope: 'user', organization_id: null, organization_name: null, can_pay: true, can_manage: true };
+  let org = null, role = null;
+  try {
+    org = db.prepare('SELECT id, name, owner_user_id FROM organizations WHERE id = ?').get(subject.orgId);
+    const m = db.prepare('SELECT role FROM organization_members WHERE organization_id = ? AND user_id = ?').get(subject.orgId, req.user.id);
+    role = m && m.role;
+  } catch { /* */ }
+  const owner = org ? db.prepare('SELECT name, email FROM users WHERE id = ?').get(org.owner_user_id) : null;
+  return {
+    scope: 'org', organization_id: subject.orgId, organization_name: org ? org.name : null,
+    owner_name: owner ? (owner.name || owner.email) : null,
+    can_pay: true,
+    can_manage: !!org && (org.owner_user_id === req.user.id || role === 'org_owner' || role === 'org_admin'),
+  };
+}
+
+router.get('/me', requireAuth, tenancyWhenOrgScoped, (req, res) => {
+  const subject = limits.limitSubject(req.user.id, req.workspaceId);
+  const plan = limits.subjectPlan(subject);
+  const deviceCount = limits.subjectDeviceCount(subject);
+  const storageMB = Math.ceil(limits.subjectStorageBytes(subject) / (1024 * 1024));
+  const billing = billingContext(req, subject);
 
   /*
    * ⚠️ getUserPlan RETURNS NULL FOR A CALLER WITH NO `users` ROW, and this route used to
@@ -96,6 +125,7 @@ router.get('/me', requireAuth, (req, res) => {
       expired_at: plan.trial_expired_at ? new Date(plan.trial_expired_at * 1000).toISOString() : null,
     },
     self_hosted: config.selfHosted,
+    billing,
   });
 });
 
@@ -118,14 +148,32 @@ router.get('/funnel', requireAuth, requireSuperAdmin, (req, res) => {
 
 // Admin: assign plan to user
 router.post('/assign', requireAuth, requireSuperAdmin, (req, res) => {
-  const { user_id, plan_id, renewal_at } = req.body;
-  if (!user_id || !plan_id) return res.status(400).json({ error: 'user_id and plan_id required' });
+  const { plan_id, renewal_at, organization_id } = req.body;
+  let { user_id } = req.body;
+  /*
+   * Once the organization pays, a plan is assigned to an ORGANIZATION: name it with
+   * organization_id, or name a person and their oldest organization is the one meant (which is
+   * what assigning to that person did before the switch).
+   */
+  const orgPays = limits.billingSource() === 'org';
+  if (!plan_id || (!user_id && !(orgPays && organization_id))) {
+    return res.status(400).json({ error: orgPays ? 'organization_id (or user_id) and plan_id required' : 'user_id and plan_id required' });
+  }
 
   const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get(plan_id);
   if (!plan) return res.status(404).json({ error: 'Plan not found' });
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(user_id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  const BT = limits.billingTable();
+  if (orgPays) {
+    const org = organization_id
+      ? db.prepare('SELECT id FROM organizations WHERE id = ?').get(organization_id)
+      : db.prepare('SELECT id FROM organizations WHERE owner_user_id = ? ORDER BY created_at ASC, id ASC LIMIT 1').get(user_id);
+    if (!org) return res.status(404).json({ error: organization_id ? 'Organization not found' : 'That person owns no organization to assign a plan to' });
+    user_id = org.id;                     // from here on: the paying account's id
+  } else {
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(user_id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+  }
 
   /*
    * Optional renewal date for a manually-billed (comped/PO) account. Accepts an epoch-seconds number
@@ -155,7 +203,7 @@ router.post('/assign', requireAuth, requireSuperAdmin, (req, res) => {
    *     the lapse email. The email stamps go with it, as clearGrace does, so a genuine future
    *     lapse is still announced.
    */
-  db.prepare(`UPDATE users
+  db.prepare(`UPDATE ${BT}
                  SET plan_id = ?, plan_comped = ?, subscription_status = 'active', trial_started = NULL,
                      past_due_since = NULL, payment_failed_email_sent_at = NULL,
                      subscription_lapsed_email_sent_at = NULL, updated_at = strftime('%s','now')
@@ -163,7 +211,7 @@ router.post('/assign', requireAuth, requireSuperAdmin, (req, res) => {
     .run(plan_id, plan_id === 'free' ? 0 : 1, user_id);
 
   if (renewalAt !== undefined) {
-    db.prepare('UPDATE users SET renewal_at = ? WHERE id = ?').run(renewalAt, user_id);
+    db.prepare(`UPDATE ${BT} SET renewal_at = ? WHERE id = ?`).run(renewalAt, user_id);
     // Moving or clearing the date drops any milestones already sent so they re-arm for the new date.
     db.prepare('DELETE FROM renewal_reminders WHERE user_id = ?').run(user_id);
   }

@@ -44,6 +44,10 @@ export async function render(container) {
     const params = new URLSearchParams((window.location.hash.split('?')[1]) || '');
     const from = (params.get('from') || 'direct').slice(0, 40);
     const paying = !!subData.subscription?.stripe_subscription_id;
+    // Set when limits and payment are the organization's (GET /api/subscription/me `billing`).
+    // can_manage: its owner and organization admins; everyone in it may buy a plan.
+    const orgBilling = subData.billing && subData.billing.scope === 'org' ? subData.billing : null;
+    const mayManage = !orgBilling || orgBilling.can_manage;
     const freePlan = plans.find((p) => p.id === 'free' || p.name === 'free') || null;
     const fits = (p) => (p.max_devices === -1 || p.max_devices >= Math.max(1, subData.usage.devices))
       && (p.max_storage_mb === -1 || p.max_storage_mb > subData.usage.storage_mb);
@@ -61,6 +65,12 @@ export async function render(container) {
     content.innerHTML = `
       <div class="settings-section">
         <h3>${t('billing.current_plan')}</h3>
+        ${orgBilling ? `
+        <!-- The plan belongs to the organization, not to the person looking at it. -->
+        <p id="billingOrgNote" style="font-size:13px;color:var(--text-secondary);margin:0 0 12px">
+          ${esc(t('billing.org.belongs', { org: orgBilling.organization_name || '' }))}
+          ${orgBilling.can_manage ? '' : `<br>${esc(paying ? t('billing.org.ask_owner', { owner: orgBilling.owner_name || '' }) : t('billing.org.anyone_can_buy'))}`}
+        </p>` : ''}
         <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
           <div style="font-size:28px;font-weight:700;color:var(--accent)">${esc(subData.plan.display_name)}</div>
           ${subData.self_hosted ? `<span style="background:var(--success-dim);color:var(--success);padding:4px 10px;border-radius:12px;font-size:11px;font-weight:500">${t('billing.self_hosted')}</span>` : ''}
@@ -162,14 +172,14 @@ export async function render(container) {
                 ? `<div style="font-size:12px;margin-top:8px">${t('billing.yearly_sale', { was: p.price_yearly, now: cut(p.price_yearly) })}</div>`
                 : `<div style="font-size:11px;color:var(--text-muted);margin-top:8px">${t('billing.yearly_save', { price: p.price_yearly, pct: Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100) })}</div>`) : ''}
               ${saleFor(p, 'monthly') || saleFor(p, 'yearly') ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t(`billing.sale_dur_${promo.duration}`, { n: promo.duration_in_months })}</div>` : ''}
-              ${!subData.self_hosted && p.price_monthly > 0 && p.id !== subData.plan.id ? `
+              ${!subData.self_hosted && p.price_monthly > 0 && p.id !== subData.plan.id && (mayManage || !paying) ? `
                 <div style="margin-top:12px;display:flex;gap:6px">
                   <button class="btn btn-primary btn-sm" style="flex:1" onclick="window._checkout('${p.id}','monthly')">${t('billing.monthly')}</button>
                   ${p.price_yearly > 0 ? `<button class="btn btn-secondary btn-sm" style="flex:1" onclick="window._checkout('${p.id}','yearly')">${t('billing.yearly')}</button>` : ''}
                 </div>
               ` : ''}
               ${!subData.self_hosted && p.id === subData.plan.id && subData.subscription?.stripe_subscription_id ? `
-                <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:12px" onclick="window._manageSubscription()">${t('billing.manage_subscription')}</button>
+                ${mayManage ? `<button class="btn btn-secondary btn-sm" style="width:100%;margin-top:12px" onclick="window._manageSubscription()">${t('billing.manage_subscription')}</button>` : ''}
               ` : ''}
             </div>
           `).join('')}

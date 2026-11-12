@@ -68,6 +68,7 @@
           sessionId: data.session_id,
           sharedBy: typeof data.shared_by === 'string' ? data.shared_by : '',
           guest: !!data.guest,
+          plain: data.plain === true,
           maxSeconds: data.max_seconds,
           iceServers: Object.prototype.toString.call(data.ice_servers) === '[object Array]' ? data.ice_servers : [],
           labels: {},

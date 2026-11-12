@@ -93,7 +93,7 @@ router.post('/import', checkStorageLimit, wrap(async (req, res) => {
   }
   // The same two ceilings an upload meets: the instance's per-file limit, and what is left of the
   // plan's storage. checkStorageLimit above only refuses someone already at the limit.
-  const room = storageRoomBytes(req.user.id);
+  const room = storageRoomBytes(req.user.id, req.workspaceId);
   const maxBytes = room === null ? config.maxFileSize : Math.min(config.maxFileSize, Math.max(0, room));
   if (room !== null && room <= 0) return res.status(403).json({ error: 'This item would exceed your storage allowance.', code: 'STORAGE_LIMIT' });
 

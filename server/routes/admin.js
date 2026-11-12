@@ -132,13 +132,25 @@ router.post('/users', (req, res) => {
     // no SMTP configured that left them with a permanent "Please confirm your email address"
     // banner they could not clear, fixable only by editing the database by hand. An address chosen
     // by an administrator provisioning the account is as verified as this system can make it.
+    //
+    // ⚠️ email_proven = 0, though: verified is about the banner, and the administrator chose this
+    // account's password, so nothing here shows the mailbox's owner is the one signing in. Invites
+    // addressed to the email are not listed to the account until a mailed link has been used
+    // (routes/auth.js my-invites; lib/passwordReset.js and lib/emailVerify.js set it).
+  // The plan: what a signup on this instance starts on, minus any trial. Self-hosted signups start
+  // unrestricted (routes/auth.js signupPlan) unless the operator asked for the trial model; this
+  // wrote 'free' regardless, so a colleague ADDED on the operator's own server was held to two
+  // screens while one who signed up was not. Hosted, and the trial model, stay on 'free': an added
+  // user never gets a trial clock they did not ask for.
+  const cfg = require('../config');
+  const startPlan = (cfg.selfHosted && cfg.selfHostedSignupPlan === 'enterprise') ? 'enterprise' : 'free';
   const txn = db.transaction(() => {
     db.prepare(`
       INSERT INTO users (
         id, email, name, password_hash, auth_provider, role, plan_id,
-        must_change_password, email_verified, welcome_email_sent_at, activation_nudge_sent_at
-      ) VALUES (?, ?, ?, ?, 'local', 'user', 'free', ?, 1, strftime('%s','now'), strftime('%s','now'))
-    `).run(id, email, name || email.split('@')[0], passwordHash, mustChangePassword ? 1 : 0);
+        must_change_password, email_verified, email_proven, welcome_email_sent_at, activation_nudge_sent_at
+      ) VALUES (?, ?, ?, ?, 'local', 'user', ?, ?, 1, 0, strftime('%s','now'), strftime('%s','now'))
+    `).run(id, email, name || email.split('@')[0], passwordHash, startPlan, mustChangePassword ? 1 : 0);
 
     // Same membership footprint as an accepted invite: one workspace_members
     // row, invited_by = the admin who created them.
@@ -219,9 +231,67 @@ router.get('/orgs', requirePlatformAdmin, (req, res) => {
 // DELETE /api/admin/orgs/:id - cascade-delete an org and everything in it (#36).
 // Platform-admin only. The frontend requires a type-the-name confirmation; this
 // is irreversible. Uses the shared cascade helper so no tenant resource is orphaned.
-router.delete('/orgs/:id', requirePlatformAdmin, (req, res) => {
+/*
+ * WHAT STRIPE IS STILL CHARGING FOR AN ORGANIZATION ABOUT TO BE DELETED.
+ *
+ * Deleting an organization does not touch Stripe: a subscription it held keeps charging with nothing
+ * left here to track it. Two can exist (two members each checking out, a double click). So the
+ * platform admin is shown every live one first and goes and cancels or moves them in Stripe.
+ * Counted: the organization's own subscription and customer, and its owner's when the owner pays
+ * for nothing else (they own no other organization). With Stripe configured, each customer is asked
+ * for its live subscriptions too, so ones this server lost track of are found; without it (or when
+ * Stripe does not answer in time) the ones recorded here are listed.
+ */
+const LIVE_SUB = new Set(['active', 'trialing', 'past_due', 'unpaid', 'incomplete']);
+async function stripePaymentsOf(orgId) {
+  const cols = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+  const oc = cols('organizations'), uc = cols('users');
+  const pick = (have, list) => list.filter((c) => have.includes(c)).join(', ') || 'NULL AS none';
+  const org = db.prepare(`SELECT id, owner_user_id, ${pick(oc, ['stripe_customer_id', 'stripe_subscription_id'])} FROM organizations WHERE id = ?`).get(orgId) || {};
+  const known = [], customers = [];
+  const add = (holder, row) => {
+    if (!row) return;
+    if (row.stripe_subscription_id) known.push({ id: row.stripe_subscription_id, holder, customer: row.stripe_customer_id || null });
+    if (row.stripe_customer_id) customers.push({ id: row.stripe_customer_id, holder });
+  };
+  add('organization', org);
+  const ownsOther = org.owner_user_id && db.prepare('SELECT 1 FROM organizations WHERE owner_user_id = ? AND id != ?').get(org.owner_user_id, orgId);
+  if (org.owner_user_id && !ownsOther) add('owner', db.prepare(`SELECT ${pick(uc, ['stripe_customer_id', 'stripe_subscription_id'])} FROM users WHERE id = ?`).get(org.owner_user_id));
+  const found = new Map(known.map((k) => [k.id, { ...k, status: null }]));
+  let checked = false;
+  const stripe = require('../lib/stripe-client').get();
+  if (stripe && customers.length) {
+    try {
+      const ask = Promise.all([...new Map(customers.map((c) => [c.id, c])).values()].map(async (c) => {
+        const list = await stripe.subscriptions.list({ customer: c.id, status: 'all', limit: 20 });
+        for (const sub of (list && list.data) || []) {
+          if (!LIVE_SUB.has(sub.status)) { if (found.has(sub.id)) found.get(sub.id).status = sub.status; continue; }
+          found.set(sub.id, { id: sub.id, holder: (found.get(sub.id) || c).holder, customer: c.id, status: sub.status });
+        }
+      }));
+      await Promise.race([ask, new Promise((_, no) => setTimeout(() => no(new Error('Stripe did not answer in time')), 8000))]);
+      checked = true;
+    } catch (e) { console.warn(`[admin] could not ask Stripe about ${orgId}: ${e.message}`); }
+  }
+  // Asked Stripe: only the live ones. Not asked: everything recorded, status unknown.
+  const subscriptions = [...found.values()].filter((x) => !checked || LIVE_SUB.has(x.status));
+  return { subscriptions, stripe_checked: checked };
+}
+
+router.delete('/orgs/:id', requirePlatformAdmin, async (req, res) => {
   const org = db.prepare('SELECT id, name FROM organizations WHERE id = ?').get(req.params.id);
   if (!org) return res.status(404).json({ error: 'Organization not found' });
+  const ack = (req.body && req.body.acknowledge_stripe === true) || req.query.acknowledge_stripe === '1';
+  const pay = await stripePaymentsOf(org.id);
+  if (pay.subscriptions.length && !ack) {
+    const n = pay.subscriptions.length;
+    return res.status(409).json({
+      error: `${org.name} still has ${n} Stripe subscription${n === 1 ? '' : 's'}${n > 1 ? ' (more than one: a duplicate)' : ''}. Deleting it does not cancel ${n === 1 ? 'it' : 'them'}: cancel or move ${n === 1 ? 'it' : 'them'} in Stripe first.`,
+      code: 'STRIPE_PAYMENTS', ...pay,
+    });
+  }
+  // Re-read after the await: it may have gone meanwhile.
+  if (!db.prepare('SELECT 1 FROM organizations WHERE id = ?').get(org.id)) return res.status(404).json({ error: 'Organization not found' });
   try {
     // Also removes the org's uploaded files + .history copies once the rows are committed gone
     // (audit F23) - /uploads/content is public, so leaving them was not deleting the data.
@@ -229,8 +299,8 @@ router.delete('/orgs/:id', requirePlatformAdmin, (req, res) => {
   } catch (e) {
     return res.status(500).json({ error: 'Failed to delete organization' });
   }
-  logActivity(req.user.id, 'admin_delete_org', `org: ${org.name} (${org.id})`, null, getClientIp(req), null);
-  res.json({ deleted: true, id: org.id });
+  logActivity(req.user.id, 'admin_delete_org', `org: ${org.name} (${org.id})${pay.subscriptions.length ? `; Stripe subscriptions left for the admin to handle: ${pay.subscriptions.map((x) => x.id).join(', ')}` : ''}`, null, getClientIp(req), null);
+  res.json({ deleted: true, id: org.id, stripe_subscriptions_left: pay.subscriptions.map((x) => x.id) });
 });
 
 // PUT /api/admin/orgs/:id/talk - platform-admin toggle for the per-org #talk feature and an
@@ -344,14 +414,16 @@ router.put('/users/:id/workspace', requirePlatformAdmin, (req, res) => {
   // Move (drop the existing single membership) or assign (none to drop), then
   // add the chosen one at the default role. Guarded above to <=1 membership, so
   // the DELETE removes at most one row.
+  let released = null;
   const txn = db.transaction(() => {
     db.prepare('DELETE FROM workspace_members WHERE user_id = ?').run(target.id);
     db.prepare('INSERT INTO workspace_members (workspace_id, user_id, role, invited_by) VALUES (?, ?, ?, ?)')
       .run(ws.id, target.id, 'workspace_viewer', req.user.id);
     // A move leaves the old workspace: what they set up there under their own name goes with it.
-    releaseWorkspaceMember(db, { userId: target.id, workspaceIds: memberships.map(m => m.workspace_id).filter(id => id !== ws.id) });
+    released = releaseWorkspaceMember(db, { userId: target.id, workspaceIds: memberships.map(m => m.workspace_id).filter(id => id !== ws.id) });
   });
   txn();
+  require('../lib/user-deletion').pushMovedScreens(req.app.get('io'), released, target.id);
   // A move leaves the old workspace's socket room behind on any open dashboard; drop it.
   for (const m of memberships) if (m.workspace_id !== ws.id) try { require('../ws/dashboardSocket').dropUserFromWorkspace(target.id, m.workspace_id); } catch (_) { /* best-effort: writes are re-checked live anyway */ }
 
@@ -484,10 +556,12 @@ router.put('/users/:id/workspaces/:workspaceId', requirePlatformAdmin, (req, res
 router.delete('/users/:id/workspaces/:workspaceId', requirePlatformAdmin, (req, res) => {
   const member = db.prepare('SELECT 1 FROM workspace_members WHERE workspace_id = ? AND user_id = ?').get(req.params.workspaceId, req.params.id);
   if (!member) return res.status(404).json({ error: 'Membership not found' });
+  let released = null;
   db.transaction(() => {
     db.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?').run(req.params.workspaceId, req.params.id);
-    releaseWorkspaceMember(db, { userId: req.params.id, workspaceIds: [req.params.workspaceId] });
+    released = releaseWorkspaceMember(db, { userId: req.params.id, workspaceIds: [req.params.workspaceId] });
   })();
+  require('../lib/user-deletion').pushMovedScreens(req.app.get('io'), released, req.params.id);
   // Their open dashboards joined this workspace's socket room at connect; take them out of it.
   try { require('../ws/dashboardSocket').dropUserFromWorkspace(req.params.id, req.params.workspaceId); } catch (_) { /* best-effort: writes are re-checked live anyway */ }
   req.workspaceId = req.params.workspaceId;
@@ -738,6 +812,8 @@ router.get('/update-status', requirePlatformAdmin, (req, res) => {
 // to see it existed or who was on it. This returns EVERY plan plus how many accounts sit on each,
 // so a hidden tier is manageable rather than folklore.
 router.get('/plans', requirePlatformAdmin, (req, res) => {
+  let orgPays = false;
+  try { orgPays = require('../middleware/subscription').billingSource() === 'org'; } catch { /* */ }
   const plans = db.prepare(`
     SELECT p.*,
            (SELECT COUNT(*) FROM users u WHERE u.plan_id = p.id) AS user_count,
@@ -748,14 +824,15 @@ router.get('/plans', requirePlatformAdmin, (req, res) => {
             * actually pays. Counting it told an operator that all 477 accounts were on Pro while one
             * of them was paying for Home.
             */
+           /* ...until the organization itself pays (billing_source = 'org'), when its own row is the truth. */
            (SELECT COUNT(*) FROM organizations o
               JOIN users u3 ON u3.id = o.owner_user_id
-             WHERE u3.plan_id = p.id) AS org_count,
+             WHERE ${orgPays ? 'o.plan_id' : 'u3.plan_id'} = p.id) AS org_count,
            (SELECT COUNT(*) FROM devices d
               JOIN workspaces w ON w.id = d.workspace_id
               JOIN organizations o2 ON o2.id = w.organization_id
               JOIN users u2 ON u2.id = o2.owner_user_id
-             WHERE u2.plan_id = p.id) AS device_count
+             WHERE ${orgPays ? 'o2.plan_id' : 'u2.plan_id'} = p.id) AS device_count
       FROM plans p
      ORDER BY p.active DESC, p.sort_order ASC
   `).all();

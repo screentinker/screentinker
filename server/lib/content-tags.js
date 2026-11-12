@@ -22,7 +22,9 @@ function normalizeTags(v) {
   for (const raw of arr) {
     // Tags are shown as "#lobby", so people type the '#'. It is never part of the tag; without
     // this the whole tag failed TAG_RE and was dropped without a word.
-    const s = String(raw).trim().replace(/^#+/, '').toLowerCase().slice(0, MAX_TAG);
+    // A space inside a tag ("front desk") failed TAG_RE the same way: chip shown, save reported, tag
+    // gone. Spaces become hyphens, the label the person would have had to type.
+    const s = String(raw).trim().replace(/^#+/, '').trim().replace(/\s+/g, '-').toLowerCase().slice(0, MAX_TAG);
     if (!s || seen.has(s) || !TAG_RE.test(s)) continue;
     seen.add(s);
     out.push(s);

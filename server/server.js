@@ -127,6 +127,12 @@ try {
 } catch (e) {
   console.warn('[screen-share] signalling WS not attached:', e && e.message);
 }
+// Stream outputs: the sound link between this server and its own renderer (lib/stream-out.js). Loopback only.
+try {
+  require('./lib/stream-out').attachAudio(server);
+} catch (e) {
+  console.warn('[stream-out] sound link not attached:', e && e.message);
+}
 
 // Middleware
 const helmet = require('helmet');
@@ -208,6 +214,7 @@ app.use((req, res, next) => {
   if (req.path === '/' || req.path === '/landing.html') return exempt();
   if (req.path.startsWith('/player')) return exempt();
   if (req.path.startsWith('/view/')) return exempt(); // view-only display page: the web player (routes/view.js)
+  if (req.path.startsWith('/stream-render/')) return exempt(); // the web player, rendered by this server for a stream output
   if (req.path.startsWith('/listen/')) return exempt(); // visitor audio-guide page, inline JS like the player (routes/view.js)
   if (req.path === '/docs') return exempt(); // Redoc API reference needs a relaxed CSP
   // #flash: the ESP32 web-serial firmware installer (frontend/flash/) is René's esp-web-tools page,
@@ -737,7 +744,33 @@ app.use('/.well-known/acme-challenge', express.static(path.join(config.frontendD
 // .bin, vendored esp-web-tools) are served by express.static as ordinary files. CSP was already
 // relaxed for this path by the exempt middleware above.
 app.get(['/flash', '/flash/'], (req, res) => {
+  // The page refers to its module and manifests RELATIVELY, so it only works at a URL ending in a
+  // slash: at /flash the browser asks for /vendor/... and the install button never loads.
+  if (req.path === '/flash') return res.redirect(301, '/flash/' + (req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : ''));
   res.sendFile(path.join(config.frontendDir, 'flash', 'index.html'));
+});
+// Pages with no icon link of their own (the web player, /download, /flash, error pages) make the
+// browser ask for this; it was a 404 and a console error on every load. Same image the dashboard uses.
+app.get('/favicon.ico', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=2592000');
+  res.type('image/png').sendFile(path.join(config.frontendDir, 'assets', 'icon-192.png'), (err) => {
+    if (err && !res.headersSent) res.status(404).type('text/plain').send('not found');
+  });
+});
+// Broadcast graphics for the vision mixer (lib/mixer-gfx.js): lower thirds, crawls, bugs, title
+// cards. A player keys one over the screen as a web overlay, and a player has no session, so
+// these are public; they render only the escaped text they are handed and carry a policy with no
+// script at all. Frameable from any player (some are not same-origin with this server).
+app.get('/gfx/:kind', (req, res) => {
+  // The mixer's, so self-hosted only like the mixer (routes/mixer.js).
+  if (!config.selfHosted) return res.status(404).type('text/plain').send('not found');
+  const gfx = require('./lib/mixer-gfx');
+  const html = gfx.page(req.params.kind, req.query || {});
+  if (!html) return res.status(404).type('text/plain').send('not found');
+  res.removeHeader('X-Frame-Options');
+  res.setHeader('Content-Security-Policy', gfx.CSP);
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('html').send(html);
 });
 // Serve frontend static files
 // JS/CSS/HTML: no-cache (always revalidate, uses ETag/304)
@@ -1365,7 +1398,13 @@ app.get('/scripts/:name', (req, res) => {
   // Default to text/plain: a .sh or .bat is meant to be read in a browser before it is run, which
   // is the whole reason someone clicks one of these links rather than piping it to a shell.
   res.setHeader('Content-Type', SCRIPT_TYPES[ext] || 'text/plain; charset=utf-8');
-  res.sendFile(path.join(__dirname, '..', 'scripts', req.params.name));
+  // The deployment-supplied archives are absent on most instances. Without the callback an absent
+  // one went down the framework's error path, which prints the whole ENOENT object to the log for
+  // every request, from anyone (a provisioning player retries).
+  res.sendFile(path.join(__dirname, '..', 'scripts', req.params.name), (err) => {
+    if (!err || res.headersSent) return;
+    res.status(404).type('text/plain').send('not found');
+  });
 });
 
 // Serve socket.io client
@@ -1571,6 +1610,8 @@ app.use('/api/public/requests', rateLimit(60000, 1500), require('./routes/reques
 // token is folded out of the key), and a venue puts every visitor's phone behind one Wi-Fi NAT: at
 // the old shared 240/min, ~16 audio-guide phones at a 4s poll exhausted it for the whole venue.
 // 2400/min covers ~160 phones; the lite poll it serves is a token check plus a cached lookup.
+// Stream outputs (routes/stream-out.js): the page this server's own renderer opens, and its feed.
+app.use(require('./routes/stream-out').renderer({ sendPlayer }));
 app.get('/api/view/:kind/:key/payload', rateLimit(60000, 2400));
 app.get(['/view/:key', '/view/screen/:id', '/listen/:key', '/listen/screen/:id'], rateLimit(60000, 240));
 app.get(['/view/:key', '/view/screen/:id', '/api/view/:kind/:key/payload', '/listen/:key', '/listen/screen/:id'], require('./routes/view')({ sendPlayer }));
@@ -1635,6 +1676,8 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/organizations', rateLimit(60000, 60), require('./routes/org-sso'));
 // 3.0: Settings > User provisioning (SCIM). Same mount, same org-admin gate, same limiter (above).
 app.use('/api/organizations', require('./routes/org-scim'));
+// Handing an organization to another person in it (routes/org-ownership.js).
+app.use('/api/organizations', rateLimit(60000, 30), require('./routes/org-ownership'));
 /*
  * 3.0: SCIM 2.0 provisioning for an organization's identity provider (docs/scim.md). Bearer-token
  * only, no cookies, so there is no CSRF surface. The per-IP limit here is a coarse ceiling: Okta and
@@ -1820,6 +1863,10 @@ function requesterCanAccessContent(req, content) {
   try {
     const m = (req.headers.authorization || '').match(/^Bearer (.+)$/);
     if (!m) return false;
+    // An API token bound to this content's workspace (documented for scope `read`). It was
+    // handed to the session resolver below, which refused it, so an integration could not read
+    // back a file it had just uploaded until the item was put in a playlist.
+    if (m[1].startsWith('st_')) return require('./middleware/apiToken').tokenReadsWorkspace(m[1].trim(), content.workspace_id);
     // Same resolver as requireAuth: a pre-TOTP token, a deleted user or an outstanding
     // forced password change all throw here and fall through to false.
     const session = resolveSessionUser(m[1]);
@@ -3168,6 +3215,8 @@ ghcrCheck.startPolling(config.ghcrCheckIntervalHours, VERSION);
 // Graceful shutdown: stop the checkpointer worker (closes its own DB handle) + flush + close.
 let _shuttingDown = false;
 function gracefulShutdown(sig) {
+  // Running stream outputs own an ffmpeg and a browser each: take them down with the server.
+  try { require('./lib/stream-out').stopAll().catch(() => {}); } catch (_) { /* never loaded */ }
   if (_shuttingDown) return; _shuttingDown = true;
   console.log(`[shutdown] ${sig} — stopping WAL checkpointer + closing DB`);
   Promise.resolve(stopWalCheckpointer()).catch(() => {}).finally(() => {
@@ -3496,10 +3545,15 @@ app.post('/api/provision/pair', bearerAuth, resolveTenancy, requireTokenScope('f
 
   const updated = db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id);
   auditTokenCreate(req, 'device_paired_via_token', device.id, updated.name || pairedName);
+  // The broadcast reaches every dashboard in the workspace, read-only members included, so it gets
+  // the list-sanitised copy (as the web-player route above does). The caller's own response keeps
+  // the PIN: the person pairing has to be able to write it on the panel.
+  const updatedForBroadcast = require('./lib/device-sanitize').stripDeviceSecretsForList({ ...updated });
   require('./lib/device-sanitize').stripDeviceSecrets(updated); // never leak device_token to clients
+  require('./lib/device-sanitize').stripSecretsForTokens(updated, req.viaToken);
   // Phase 2.3: scope to the workspace the device was just claimed into.
   const { workspaceRoom, emitToWorkspace } = require('./lib/socket-rooms');
-  emitToWorkspace(dashboardNs, workspaceRoom(updated.workspace_id), 'dashboard:device-added', updated);
+  emitToWorkspace(dashboardNs, workspaceRoom(updated.workspace_id), 'dashboard:device-added', updatedForBroadcast);
   // 3.0 funnel (hosted only, once per account; lib/conversion-events.js).
   require('./lib/conversion-events').record(db, { userId: req.user.id, workspaceId: updated.workspace_id || null, event: 'first_pair', meta: { via: 'code' } });
 
@@ -3595,7 +3649,7 @@ app.get('/download/apk', (req, res) => {
   // the channel the same way, and both fall back to stable identically.
   const apk = apkCache.forChannel(req.query.channel === 'beta' ? 'beta' : 'stable', apkCache.get().version || VERSION);
   if (!apk.exists) {
-    return res.status(404).send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>APK Not Available</title><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}div{text-align:center;max-width:480px;padding:32px 24px}h1{color:#f87171;font-size:22px;margin:0 0 8px}p{line-height:1.6;color:#94a3b8;font-size:14px;margin:0 0 20px}code{background:#1e293b;padding:2px 6px;border-radius:4px;font-size:13px}a{color:#3b82f6;text-decoration:none}a:hover{text-decoration:underline}.btn{display:inline-block;background:#2563eb;color:#fff;padding:10px 20px;border-radius:6px;font-size:14px;font-weight:500;text-decoration:none;margin-bottom:24px}.btn:hover{background:#1d4ed8;text-decoration:none}.muted{font-size:12px;color:#64748b}</style></head><body><div><h1>APK Not Available</h1><p>The Android APK has not been compiled yet.</p><a class="btn" href="https://github.com/screentinker/screentinker/releases/latest" target="_blank" rel="noopener">&#128230; Download from GitHub Releases</a><p class="muted">Self-hosting? Mount a built APK at <code>/data/ScreenTinker.apk</code> to serve it from this instance. Or use the <a href="/player">web player</a> instead.</p></div></body></html>`);
+    return res.status(404).send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>APK Not Available</title><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}div{text-align:center;max-width:480px;padding:32px 24px}h1{color:#f87171;font-size:22px;margin:0 0 8px}p{line-height:1.6;color:#94a3b8;font-size:14px;margin:0 0 20px}code{background:#1e293b;padding:2px 6px;border-radius:4px;font-size:13px}a{color:#3b82f6;text-decoration:none}a:hover{text-decoration:underline}.btn{display:inline-block;background:#2563eb;color:#fff;padding:10px 20px;border-radius:6px;font-size:14px;font-weight:500;text-decoration:none;margin-bottom:24px}.btn:hover{background:#1d4ed8;text-decoration:none}.muted{font-size:12px;color:#64748b}</style></head><body><div><h1>APK Not Available</h1><p>This server does not hold an Android APK yet.</p><a class="btn" href="/download">See the players this server offers</a><p class="muted">Self-hosting? Mount a built APK at <code>/data/ScreenTinker.apk</code> to serve it from this instance. Or use the <a href="/player">web player</a> instead.</p></div></body></html>`);
   }
 
   const verdict = otaDownloadGuard.admit(otaDownloadState, getBand());
@@ -3919,6 +3973,11 @@ global.__localApiOrigin = `http://127.0.0.1:${config.port}`;
 
 if (hasSsl) {
   const loopbackApi = http.createServer(app);
+  // The stream renderer loads its page from here when TLS is on (lib/stream-out.js localBaseUrl), so
+  // the two sockets that page opens must be answered here too: its sound link, and the screen-share
+  // signalling that "show on screens" uses. Each claims only its own paths.
+  try { require('./lib/screen-share').attach(loopbackApi); } catch (e) { console.warn('[screen-share] not attached to the loopback API:', e && e.message); }
+  try { require('./lib/stream-out').attachAudio(loopbackApi); } catch (e) { console.warn('[stream-out] sound link not attached to the loopback API:', e && e.message); }
   loopbackApi.listen(0, '127.0.0.1', () => {
     global.__localApiOrigin = `http://127.0.0.1:${loopbackApi.address().port}`;
     console.log(`[mesh] internal loopback API on ${global.__localApiOrigin} (127.0.0.1 only)`);
@@ -3928,6 +3987,9 @@ if (hasSsl) {
     console.warn(`[mesh] internal loopback API not started: ${e && e.message}`);
   });
 }
+
+// LAST in the chain: a route that throws still answers an /api caller in JSON (lib/api-errors.js).
+app.use(require('./lib/api-errors').apiErrorHandler);
 
 server.listen(listenPort, '0.0.0.0', () => {
   console.log(`

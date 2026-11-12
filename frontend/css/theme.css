@@ -1,0 +1,736 @@
+/*
+ * The Control room design (and its Light variant): everything about it that is not a colour.
+ * Colours live in css/variables.css; this file is shape, type and the few pieces of structure the
+ * design is built around. Loaded after main.css and library.css, and scoped so the Classic theme
+ * is untouched: every rule below starts from `:root:not([data-theme="classic"])`.
+ *
+ * The idea, in one line: the room is dim and quiet so the screens are the brightest things in it.
+ *   - Chrome is flat graphite. No gradients, no bar on top of every card, no drop shadow under
+ *     every box. Depth comes from three steps of lightness.
+ *   - A screen thumbnail is drawn as a monitor: a dark bezel, and the light it throws on the desk.
+ *   - State is a tally light: a lit dot and a plain word, the same everywhere a screen is named.
+ *   - One typeface, Barlow, from the world of signage. Numbers are tabular so counts do not jitter.
+ *   - Labels are written in sentence case. Nothing shouts.
+ */
+
+/* ── Type ───────────────────────────────────────────────────────────────────────────────────── */
+:root:not([data-theme="classic"]) body,
+:root:not([data-theme="classic"]) button,
+:root:not([data-theme="classic"]) input,
+:root:not([data-theme="classic"]) select,
+:root:not([data-theme="classic"]) textarea {
+  font-family: var(--font-ui);
+}
+:root:not([data-theme="classic"]) body {
+  font-size: 14.5px;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+:root:not([data-theme="classic"]) h1,
+:root:not([data-theme="classic"]) h2,
+:root:not([data-theme="classic"]) h3,
+:root:not([data-theme="classic"]) h4 { font-weight: 600; letter-spacing: -0.005em; }
+
+/* Small labels were uppercase and letter-spaced all over. Sentence case, a touch heavier instead. */
+:root:not([data-theme="classic"]) .nav-group-toggle,
+:root:not([data-theme="classic"]) .info-card-label,
+:root:not([data-theme="classic"]) .member-badge,
+:root:not([data-theme="classic"]) .nav-new-pill,
+:root:not([data-theme="classic"]) .workspace-switcher-static::before {
+  text-transform: none;
+  letter-spacing: 0;
+}
+:root:not([data-theme="classic"]) .nav-group-toggle { font-size: 12.5px; font-weight: 600; color: var(--text-muted); }
+:root:not([data-theme="classic"]) .info-card-label { font-size: 12.5px; font-weight: 500; color: var(--text-secondary); }
+:root:not([data-theme="classic"]) .workspace-switcher-static::before { font-size: 11.5px; }
+
+/* ── The room: sidebar and page ─────────────────────────────────────────────────────────────── */
+:root:not([data-theme="classic"]) .sidebar { background: var(--bg-secondary); border-right-color: var(--border); }
+:root:not([data-theme="classic"]) .logo { color: var(--text-primary); font-weight: 700; font-size: 17px; letter-spacing: -0.01em; }
+:root:not([data-theme="classic"]) .logo svg { color: var(--accent); }
+
+:root:not([data-theme="classic"]) .nav-link {
+  position: relative; padding: 8px 12px; border-radius: var(--radius); font-weight: 500;
+}
+:root:not([data-theme="classic"]) .nav-link:hover { background: var(--bg-card); }
+/* Where you are: a lit bar at the edge, not a painted pill. */
+:root:not([data-theme="classic"]) .nav-link.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+:root:not([data-theme="classic"]) .nav-link.active::before {
+  content: ''; position: absolute; left: -8px; top: 6px; bottom: 6px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--accent);
+}
+:root:not([data-theme="classic"]) .nav-link.active svg { color: var(--accent); }
+:root:not([data-theme="classic"]) .nav-link.active .nav-new-pill { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent-hover); }
+
+:root:not([data-theme="classic"]) .page-header h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.015em; padding-bottom: 0; }
+:root:not([data-theme="classic"]) .page-header h1::after { content: none; }
+:root:not([data-theme="classic"]) .page-header .subtitle { color: var(--text-secondary); }
+
+/* ── Controls ───────────────────────────────────────────────────────────────────────────────── */
+:root:not([data-theme="classic"]) .btn { border-radius: var(--radius); font-weight: 600; }
+:root:not([data-theme="classic"]) .btn-primary {
+  background: var(--accent); color: var(--on-accent); box-shadow: none;
+}
+:root:not([data-theme="classic"]) .btn-primary:hover { background: var(--accent-hover); filter: none; }
+:root:not([data-theme="classic"]) .btn-secondary { background: var(--bg-card); border-color: var(--border-light); }
+:root:not([data-theme="classic"]) .btn-secondary:hover { background: var(--bg-card-hover); border-color: var(--text-muted); }
+:root:not([data-theme="classic"]) .btn:focus-visible,
+:root:not([data-theme="classic"]) .nav-link:focus-visible,
+:root:not([data-theme="classic"]) .tab:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+:root:not([data-theme="classic"]) .input:focus,
+:root:not([data-theme="classic"]) select.input:focus,
+:root:not([data-theme="classic"]) textarea.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+:root:not([data-theme="classic"]) .tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+:root:not([data-theme="classic"]) .members-tab.active,
+:root:not([data-theme="classic"]) .platform-tab.active { background: var(--accent); color: var(--on-accent); }
+
+/* ── Things on the desk: sections, summary cards, dialogs ───────────────────────────────────── */
+:root:not([data-theme="classic"]) .settings-section::before,
+:root:not([data-theme="classic"]) .info-card::before,
+:root:not([data-theme="classic"]) .modal::before { content: none; }
+:root:not([data-theme="classic"]) .settings-section:hover,
+:root:not([data-theme="classic"]) .info-card:hover { border-color: var(--border-light); }
+:root:not([data-theme="classic"]) .settings-section h3 { font-size: 16px; }
+:root:not([data-theme="classic"]) .info-card { background: var(--bg-card); border-color: var(--border); }
+:root:not([data-theme="classic"]) .info-card-value { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
+:root:not([data-theme="classic"]) .info-card-value.small { font-size: 14.5px; font-weight: 600; letter-spacing: 0; }
+:root:not([data-theme="classic"]) .empty-state svg { color: var(--text-muted); opacity: 0.9; }
+:root:not([data-theme="classic"]) .modal { box-shadow: var(--shadow); border-color: var(--border-light); }
+:root:not([data-theme="classic"]) .modal-overlay { background: rgba(4, 5, 7, 0.66); backdrop-filter: blur(3px); }
+:root[data-theme="light"] .modal-overlay { background: rgba(15, 23, 42, 0.38); }
+
+/* ── Tally lights: one way to say what state a screen is in ─────────────────────────────────── */
+:root:not([data-theme="classic"]) .device-status-badge {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 3px 10px 3px 8px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 600;
+  background: color-mix(in srgb, var(--bg-input) 86%, transparent);
+  color: var(--text-primary);
+  border: 1px solid var(--border-light);
+}
+:root:not([data-theme="classic"]) .device-status-badge::before {
+  content: ''; width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-muted);
+}
+:root:not([data-theme="classic"]) .device-status-badge.online,
+:root:not([data-theme="classic"]) .device-status-badge.healthy { background: color-mix(in srgb, var(--bg-input) 86%, transparent); color: var(--text-primary); }
+:root:not([data-theme="classic"]) .device-status-badge.online::before,
+:root:not([data-theme="classic"]) .device-status-badge.healthy::before { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent), 0 0 10px var(--success); }
+:root:not([data-theme="classic"]) .device-status-badge.degraded,
+:root:not([data-theme="classic"]) .device-status-badge.provisioning { background: color-mix(in srgb, var(--bg-input) 86%, transparent); color: var(--text-primary); }
+:root:not([data-theme="classic"]) .device-status-badge.degraded::before,
+:root:not([data-theme="classic"]) .device-status-badge.provisioning::before { background: var(--warning); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 22%, transparent); }
+:root:not([data-theme="classic"]) .device-status-badge.offline { background: color-mix(in srgb, var(--bg-input) 86%, transparent); color: var(--text-secondary); }
+:root:not([data-theme="classic"]) .device-status-badge.offline::before { background: var(--danger); }
+:root[data-theme="light"] .device-status-badge { background: #ffffff; }
+:root:not([data-theme="classic"]) .device-card-status.is-liveness .device-status-badge { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5); backdrop-filter: blur(6px); }
+
+/* ── The monitor: how a screen is drawn ─────────────────────────────────────────────────────── */
+:root:not([data-theme="classic"]) .device-card {
+  background: transparent; border: 0; border-radius: 0; overflow: visible;
+  transition: transform var(--transition);
+}
+:root:not([data-theme="classic"]) .device-card:hover { border: 0; box-shadow: none; transform: none; }
+:root:not([data-theme="classic"]) .device-card-preview {
+  background: var(--bezel);
+  border: 5px solid var(--bezel);
+  border-radius: 9px;
+  box-shadow: 0 0 0 1px var(--border-light), var(--screen-glow);
+  transition: box-shadow var(--transition), transform var(--transition);
+}
+:root:not([data-theme="classic"]) .device-card-preview img { border-radius: 3px; }
+:root:not([data-theme="classic"]) .device-card:hover .device-card-preview {
+  box-shadow: 0 0 0 1px var(--accent), 0 22px 44px -18px color-mix(in srgb, var(--accent) 55%, transparent);
+  transform: translateY(-2px);
+}
+:root:not([data-theme="classic"]) .device-card.selected { outline: 0; }
+:root:not([data-theme="classic"]) .device-card.selected .device-card-preview { box-shadow: 0 0 0 2px var(--accent), var(--screen-glow); }
+:root:not([data-theme="classic"]) .device-card-preview .no-preview { color: var(--text-muted); background: var(--bezel); }
+:root:not([data-theme="classic"]) .device-card-body { padding: 12px 4px 4px; }
+:root:not([data-theme="classic"]) .device-card-name { font-size: 16px; font-weight: 600; letter-spacing: -0.005em; }
+
+/* The one flourish: when the page arrives, each monitor comes on. Left to right, once. */
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-theme="classic"]) .device-card-preview img,
+  :root:not([data-theme="classic"]) .device-card-preview .display-frame {
+    animation: st-power-on 520ms cubic-bezier(.2, .7, .2, 1) backwards;   /* backwards only: a held end state would overrule the dimming of an offline screen */
+  }
+  :root:not([data-theme="classic"]) .device-card:nth-child(2) .device-card-preview img,
+  :root:not([data-theme="classic"]) .device-card:nth-child(2) .display-frame { animation-delay: 70ms; }
+  :root:not([data-theme="classic"]) .device-card:nth-child(3) .device-card-preview img,
+  :root:not([data-theme="classic"]) .device-card:nth-child(3) .display-frame { animation-delay: 140ms; }
+  :root:not([data-theme="classic"]) .device-card:nth-child(4) .device-card-preview img,
+  :root:not([data-theme="classic"]) .device-card:nth-child(4) .display-frame { animation-delay: 210ms; }
+  :root:not([data-theme="classic"]) .device-card:nth-child(n+5) .device-card-preview img,
+  :root:not([data-theme="classic"]) .device-card:nth-child(n+5) .display-frame { animation-delay: 280ms; }
+}
+@keyframes st-power-on {
+  0%   { opacity: 0; filter: brightness(2.2) saturate(0.2); transform: scaleY(0.02); }
+  45%  { opacity: 1; filter: brightness(1.6) saturate(0.6); transform: scaleY(1); }
+  100% { opacity: 1; transform: none; }
+}
+
+/* ── Settings > Appearance: the theme picker ────────────────────────────────────────────────── */
+.theme-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.theme-option {
+  display: grid; gap: 10px; padding: 10px; text-align: left; cursor: pointer;
+  background: var(--bg-card); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  font: inherit;
+}
+.theme-option:hover { border-color: var(--border-light); }
+.theme-option[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.theme-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.theme-swatch {
+  display: grid; grid-template-columns: 26% 1fr; height: 84px; border-radius: 6px; overflow: hidden;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+}
+.theme-swatch-side { display: grid; align-content: start; gap: 5px; padding: 8px 6px; }
+.theme-swatch-side i { display: block; height: 5px; border-radius: 3px; opacity: 0.55; }
+.theme-swatch-main { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 10px 8px; align-content: center; }
+.theme-swatch-main b { display: block; aspect-ratio: 16 / 9; border-radius: 3px; }
+.theme-option-name { font-weight: 600; font-size: 14px; }
+.theme-option-desc { font-size: 12.5px; color: var(--text-secondary); line-height: 1.35; }
+
+/* ── A screen that is off looks off ─────────────────────────────────────────────────────────── */
+:root:not([data-theme="classic"]) .device-card:has(.device-status-badge.offline) .device-card-preview img,
+:root:not([data-theme="classic"]) .device-card:has(.device-status-badge.offline) .device-card-preview .display-frame {
+  filter: grayscale(0.85) brightness(0.38) contrast(0.9);
+}
+:root:not([data-theme="classic"]) .device-card:has(.device-status-badge.offline) .device-card-preview { box-shadow: 0 0 0 1px var(--border); }
+:root:not([data-theme="classic"]) .device-card:has(.device-status-badge.offline) .device-card-name { color: var(--text-secondary); }
+
+/* ── The Screens summary: one quiet strip, not three boxes ──────────────────────────────────── */
+:root:not([data-theme="classic"]) #dashStats {
+  gap: 0 !important; padding: 2px 4px;
+  background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-lg);
+}
+:root:not([data-theme="classic"]) #dashStats .info-card {
+  display: flex; flex-direction: row-reverse; justify-content: flex-end; align-items: baseline; gap: 9px;
+  flex: 0 1 auto !important; min-width: 0 !important;
+  padding: 10px 22px 10px 16px; background: transparent; border: 0; border-radius: 0;
+}
+:root:not([data-theme="classic"]) #dashStats .info-card + .info-card { border-left: 1px solid var(--border); }
+:root:not([data-theme="classic"]) #dashStats .info-card-label { margin: 0; font-size: 14px; }
+:root:not([data-theme="classic"]) #dashStats .info-card-value { font-size: 22px; }
+
+/* ── Remaining small labels that shouted ────────────────────────────────────────────────────── */
+:root:not([data-theme="classic"]) .lib-nav-heading,
+:root:not([data-theme="classic"]) .lib-section-label,
+:root:not([data-theme="classic"]) .rl-table th,
+:root:not([data-theme="classic"]) table th {
+  text-transform: none; letter-spacing: 0; font-weight: 600; font-size: 12.5px;
+}
+
+/* ── Light: the few places a dark assumption was baked in ───────────────────────────────────── */
+:root[data-theme="light"] .sidebar { border-right-color: var(--border); }
+:root[data-theme="light"] .nav-link.active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+:root[data-theme="light"] .btn-secondary { background: #ffffff; }
+:root[data-theme="light"] .device-status-badge { color: var(--text-primary); }
+:root[data-theme="light"] .device-card-status.is-liveness .device-status-badge { box-shadow: 0 2px 8px rgba(15, 23, 42, 0.25); }
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+   CONTROL ROOM: a television production gallery, played straight.
+
+   Everything above (Graphite) still applies; this is what turns the desk into a vision mixer and
+   the Screens page into a multiviewer. The vocabulary is the gallery's own:
+
+     tally          a red border and lamp mean ONE thing: this source is on air. A healthy screen
+                    is on air. Amber is standby (reconnecting, pairing). No lamp is no signal.
+     UMD            the under-monitor display: each screen's name on a black strip beneath it, in
+                    capitals, as on a real monitor wall. Capitals here are the genre, not shouting.
+     keys           buttons and the menu are backlit switcher keys: dark until selected, amber when lit.
+     timecode       the clock under the logo counts frames.
+
+   The status words on the wall ("ON AIR", "STANDBY", "NO SIGNAL") are drawn by this stylesheet in
+   English, as gallery jargon; the translated state is still in the element for screen readers and
+   in every other theme.
+   ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+.gallery-clock { display: none; }
+:root[data-theme="control-room"] .gallery-clock {
+  display: block; margin-top: 12px; padding: 7px 10px 6px;
+  background: #000; border: 1px solid var(--border); border-radius: 3px;
+  box-shadow: inset 0 0 14px rgba(255, 42, 31, 0.18);
+  color: var(--tally); text-shadow: 0 0 10px rgba(255, 42, 31, 0.75);
+  font-size: 21px; font-weight: 700; letter-spacing: 0.06em; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The room */
+:root[data-theme="control-room"] body {
+  background:
+    radial-gradient(1200px 500px at 60% -10%, rgba(255, 178, 31, 0.05), transparent 70%),
+    var(--bg-primary);
+}
+:root[data-theme="control-room"] .sidebar {
+  background: linear-gradient(180deg, #181a1d, #111315);
+  border-right: 1px solid #000; box-shadow: inset -1px 0 0 var(--border);
+}
+:root[data-theme="control-room"] .logo { text-transform: uppercase; letter-spacing: 0.08em; font-size: 15px; }
+:root[data-theme="control-room"] .logo svg { color: var(--tally); filter: drop-shadow(0 0 6px rgba(255, 42, 31, 0.7)); }
+
+/* The connection lamp becomes the gallery's ON AIR sign. */
+:root[data-theme="control-room"] .connection-status {
+  justify-content: center; gap: 0; padding: 6px 8px; border-radius: 3px;
+  background: #1a0b0a; border: 1px solid #3a1512; font-size: 0;
+}
+:root[data-theme="control-room"] .connection-status .status-dot { display: none; }
+:root[data-theme="control-room"] .connection-status::after {
+  content: 'OFF AIR'; font-size: 12px; font-weight: 700; letter-spacing: 0.22em; color: #6b3530;
+}
+:root[data-theme="control-room"] .connection-status:has(.status-dot.online) {
+  background: var(--tally); border-color: #ff7a70;
+  box-shadow: 0 0 18px rgba(255, 42, 31, 0.65), inset 0 0 10px rgba(255, 255, 255, 0.25);
+}
+:root[data-theme="control-room"] .connection-status:has(.status-dot.online)::after { content: 'ON AIR'; color: #fff; text-shadow: 0 0 8px rgba(255, 255, 255, 0.8); }
+
+/* Engraved bus labels over each bank of keys */
+:root[data-theme="control-room"] .nav-group-toggle {
+  text-transform: uppercase; letter-spacing: 0.16em; font-size: 10.5px; font-weight: 700; color: var(--text-muted);
+  border-bottom: 1px solid var(--border); border-radius: 0; padding-bottom: 6px; margin-bottom: 6px;
+}
+
+/* Keys: the menu and every button */
+:root[data-theme="control-room"] .nav-link,
+:root[data-theme="control-room"] .btn {
+  background: linear-gradient(180deg, #2a2e32, #1b1e21);
+  border: 1px solid #000;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), inset 0 -2px 0 rgba(0, 0, 0, 0.45), 0 1px 0 rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.07em; font-weight: 700;
+  border-radius: var(--radius);
+}
+:root[data-theme="control-room"] .nav-link { font-size: 12.5px; padding: 9px 12px; margin-bottom: 4px; }
+:root[data-theme="control-room"] .btn { font-size: 12px; }
+:root[data-theme="control-room"] .nav-link:hover,
+:root[data-theme="control-room"] .btn:hover { background: linear-gradient(180deg, #33383d, #202428); color: var(--text-primary); filter: none; }
+:root[data-theme="control-room"] .btn:active,
+:root[data-theme="control-room"] .nav-link:active { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.7); transform: translateY(1px); }
+/* A lit key */
+:root[data-theme="control-room"] .nav-link.active,
+:root[data-theme="control-room"] .btn-primary,
+:root[data-theme="control-room"] .members-tab.active,
+:root[data-theme="control-room"] .platform-tab.active {
+  background: linear-gradient(180deg, #ffc955, #f0a000);
+  color: var(--on-accent); border-color: #7a5200;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), inset 0 -2px 0 rgba(120, 70, 0, 0.5), 0 0 16px rgba(255, 178, 31, 0.45);
+}
+:root[data-theme="control-room"] .nav-link.active::before { content: none; }
+:root[data-theme="control-room"] .nav-link.active svg { color: var(--on-accent); }
+:root[data-theme="control-room"] .btn-primary:hover { background: linear-gradient(180deg, #ffd676, #ffb21f); color: var(--on-accent); }
+/* The one red key on a desk is the one that takes things off air. */
+:root[data-theme="control-room"] .btn-danger {
+  background: linear-gradient(180deg, #5a1712, #33100d); color: #ffb3ad; border-color: #000;
+}
+:root[data-theme="control-room"] .btn-danger:hover { background: linear-gradient(180deg, #ff4a3d, #c92318); color: #fff; box-shadow: 0 0 16px rgba(255, 42, 31, 0.5); }
+:root[data-theme="control-room"] .btn-icon { background: none; border: 0; box-shadow: none; text-transform: none; }
+
+/* Page titles are source names on a router panel */
+:root[data-theme="control-room"] .page-header h1 {
+  text-transform: uppercase; letter-spacing: 0.06em; font-size: 24px; font-weight: 700;
+  padding-left: 14px; border-left: 4px solid var(--tally);
+}
+:root[data-theme="control-room"] .page-header .subtitle { padding-left: 18px; }
+
+/* Rack panels */
+:root[data-theme="control-room"] .settings-section,
+:root[data-theme="control-room"] .info-card,
+:root[data-theme="control-room"] .modal {
+  background:
+    radial-gradient(circle at 10px 10px, #3a3e42 0 2px, transparent 2.5px),
+    radial-gradient(circle at calc(100% - 10px) 10px, #3a3e42 0 2px, transparent 2.5px),
+    radial-gradient(circle at 10px calc(100% - 10px), #3a3e42 0 2px, transparent 2.5px),
+    radial-gradient(circle at calc(100% - 10px) calc(100% - 10px), #3a3e42 0 2px, transparent 2.5px),
+    linear-gradient(180deg, #1c1f22, #16181a);
+  border: 1px solid #000; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 0 1px var(--border);
+}
+:root[data-theme="control-room"] .settings-section h3 {
+  text-transform: uppercase; letter-spacing: 0.14em; font-size: 12.5px; font-weight: 700; color: var(--accent);
+}
+:root[data-theme="control-room"] .input,
+:root[data-theme="control-room"] select.input,
+:root[data-theme="control-room"] textarea.input { background: #000; border-color: var(--border); box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.8); }
+
+/* ── The multiviewer ────────────────────────────────────────────────────────────────────────── */
+/* Summary strip: three readouts */
+:root[data-theme="control-room"] #dashStats { background: #000; border-color: var(--border); border-radius: 3px; }
+:root[data-theme="control-room"] #dashStats .info-card { background: transparent; box-shadow: none; border: 0; }
+:root[data-theme="control-room"] #dashStats .info-card + .info-card { border-left: 1px solid var(--border); }
+:root[data-theme="control-room"] #dashStats .info-card-label { text-transform: uppercase; letter-spacing: 0.14em; font-size: 11px; font-weight: 700; color: var(--text-muted); }
+:root[data-theme="control-room"] #dashStats .info-card-value { font-size: 24px; text-shadow: 0 0 12px currentColor; }
+
+/* A monitor: black glass, a hairline frame, and the tally border when it is on air */
+:root[data-theme="control-room"] .device-card-preview {
+  border: 3px solid #000; border-radius: 2px;
+  box-shadow: 0 0 0 1px #33373b;
+}
+:root[data-theme="control-room"] .device-card-preview img { border-radius: 0; }
+/* scanlines and a little glass */
+:root[data-theme="control-room"] .device-card-preview::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 1;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), transparent 22%),
+    repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.10) 0 1px, transparent 1px 3px);
+}
+:root[data-theme="control-room"] .device-card-status { z-index: 2; }
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.online) .device-card-preview,
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.healthy) .device-card-preview {
+  box-shadow: 0 0 0 3px var(--tally), 0 0 26px rgba(255, 42, 31, 0.45), var(--screen-glow);
+}
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.degraded) .device-card-preview,
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.provisioning) .device-card-preview {
+  box-shadow: 0 0 0 3px var(--warning), 0 0 20px rgba(255, 178, 31, 0.35);
+}
+:root[data-theme="control-room"] .device-card:hover .device-card-preview { transform: none; }
+:root[data-theme="control-room"] .device-card:hover:has(.device-status-badge.offline) .device-card-preview { box-shadow: 0 0 0 1px var(--accent); }
+
+/* No signal */
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.offline) .device-card-preview img,
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.offline) .device-card-preview .display-frame { filter: grayscale(1) brightness(0.16); }
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.offline) .device-card-preview::before {
+  content: 'NO SIGNAL'; position: absolute; inset: 0; z-index: 1; display: grid; place-items: center;
+  color: #7d8288; font-size: 15px; font-weight: 700; letter-spacing: 0.3em;
+}
+
+/* The lamp in the corner of each monitor */
+:root[data-theme="control-room"] .device-status-badge {
+  font-size: 0; gap: 0; padding: 4px 9px; border-radius: 2px; border: 1px solid #000; background: #000;
+}
+:root[data-theme="control-room"] .device-status-badge::before { display: none; }
+:root[data-theme="control-room"] .device-status-badge::after { font-size: 10.5px; font-weight: 700; letter-spacing: 0.2em; content: 'NO SIGNAL'; color: #7d8288; }
+:root[data-theme="control-room"] .device-status-badge.online,
+:root[data-theme="control-room"] .device-status-badge.healthy { background: var(--tally); border-color: #ff7a70; box-shadow: 0 0 14px rgba(255, 42, 31, 0.7); }
+:root[data-theme="control-room"] .device-status-badge.online::after,
+:root[data-theme="control-room"] .device-status-badge.healthy::after { content: 'ON AIR'; color: #fff; }
+:root[data-theme="control-room"] .device-status-badge.degraded,
+:root[data-theme="control-room"] .device-status-badge.provisioning { background: var(--warning); border-color: #ffd98a; }
+:root[data-theme="control-room"] .device-status-badge.degraded::after,
+:root[data-theme="control-room"] .device-status-badge.provisioning::after { content: 'STANDBY'; color: #1a1200; }
+
+/* The UMD: the name on a black strip under the glass, with a tally block at its left edge */
+:root[data-theme="control-room"] .device-card-body { padding: 0; margin-top: 3px; background: #000; border: 1px solid #33373b; }
+:root[data-theme="control-room"] .device-card-name {
+  position: relative; margin: 0; padding: 7px 10px 6px 22px;
+  text-transform: uppercase; letter-spacing: 0.12em; font-size: 13px; font-weight: 700; color: #f2f1ec;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:root[data-theme="control-room"] .device-card-name::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 12px; background: #2a2d30;
+}
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.online) .device-card-name::before,
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.healthy) .device-card-name::before { background: var(--tally); box-shadow: 0 0 10px rgba(255, 42, 31, 0.8); }
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.degraded) .device-card-name::before,
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.provisioning) .device-card-name::before { background: var(--warning); }
+:root[data-theme="control-room"] .device-card:has(.device-status-badge.offline) .device-card-name { color: #7d8288; }
+:root[data-theme="control-room"] .device-card-meta { padding: 0 10px 7px 22px; color: var(--text-muted); }
+
+/* Theme picker stays readable as itself */
+:root[data-theme="control-room"] .theme-option { background: #16181a; border: 1px solid var(--border); box-shadow: none; text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-primary); }
+:root[data-theme="control-room"] .theme-option[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 16px rgba(255, 178, 31, 0.3); }
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="control-room"] .btn:active, :root[data-theme="control-room"] .nav-link:active { transform: none; }
+}
+
+/* Everything under the UMD lines up with it */
+:root[data-theme="control-room"] .device-card-body > *:not(.device-card-name) { padding-left: 22px; padding-right: 10px; }
+:root[data-theme="control-room"] .device-card-body > *:last-child { padding-bottom: 7px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+   THE VISION MIXER (js/views/mixer.js). A production desk: two monitors, a TAKE key between them,
+   and banks of keys underneath. Styled here for every theme from the tokens; the Control room
+   theme then makes the keys backlit like everything else it touches.
+   ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+.mx { display: grid; gap: 18px; }
+.mx-monitors { display: grid; grid-template-columns: 1fr auto 1fr; gap: 18px; align-items: center; }
+.mx-mon-label { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-secondary); }
+.mx-mon-label b { margin-left: auto; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
+.mx-lamp { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.mx-lamp-pvw { background: var(--success); box-shadow: 0 0 10px var(--success); }
+.mx-lamp-pgm { background: var(--tally, var(--danger)); box-shadow: 0 0 10px var(--tally, var(--danger)); }
+.mx-screen { position: relative; aspect-ratio: 16 / 9; background: #000; border: 4px solid #000; border-radius: 4px; overflow: hidden; }
+.mx-guest-layer { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 2; }
+.mx-guest-tile { position: absolute; overflow: hidden; background: #000; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85); }
+.mx-guest-tile img, .mx-guest-tile video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mx-guest-tile canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; }
+.mx-guest-tile.is-keyed { background: transparent; box-shadow: none; }
+.mx-guest-tile.is-keyed video { opacity: 0; }
+.mx-guest-tile.is-keyed canvas { display: block; }
+.mx-guest-tile span { position: absolute; left: 50%; bottom: 3%; transform: translateX(-50%); border-radius: 2px; max-width: 90%; padding: 1px 6px; background: rgba(11, 12, 14, 0.82); color: #fff; font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mx-gfx-layer { position: absolute; border: 0; background: transparent; pointer-events: none; z-index: 3; color-scheme: normal; }
+.mx-gfx-top-left { top: 0; left: 0; } .mx-gfx-top-right { top: 0; right: 0; } .mx-gfx-bottom-left { bottom: 0; left: 0; } .mx-gfx-bottom-right { bottom: 0; right: 0; }
+.mx-gfx-center { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+.mx-mon { position: relative; }
+.mx-mon-meter { position: absolute; right: 12px; bottom: 12px; width: 8px; height: 55%; max-height: 220px; background: rgba(0, 0, 0, 0.55); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 2px; overflow: hidden; display: none; align-items: flex-end; z-index: 4; pointer-events: none; }
+.mx-mon-meter.has-audio { display: flex; }
+.mx-mon-meter i { display: block; width: 100%; background: linear-gradient(0deg, var(--success) 0 70%, var(--warning) 70% 90%, var(--danger) 90%); background-size: 100% 220px; background-position: bottom; transition: height 0.1s linear; }
+.mx-pvw .mx-screen { box-shadow: 0 0 0 3px var(--success), 0 0 24px color-mix(in srgb, var(--success) 40%, transparent); }
+.mx-pgm .mx-screen { box-shadow: 0 0 0 3px var(--tally, var(--danger)), 0 0 24px color-mix(in srgb, var(--tally, var(--danger)) 45%, transparent); }
+.mx-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; pointer-events: none; }
+.mx-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; text-align: center; color: var(--text-muted); font-size: 14px; }
+.mx-take-col { display: grid; gap: 8px; justify-items: center; width: 132px; }
+.mx-take {
+  width: 124px; height: 124px; border-radius: 10px; font-size: 22px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+  background: var(--tally, var(--danger)); color: #fff; border: 1px solid rgba(0, 0, 0, 0.6);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.35), inset 0 -5px 0 rgba(0, 0, 0, 0.35), 0 0 28px color-mix(in srgb, var(--tally, var(--danger)) 55%, transparent);
+  cursor: pointer;
+}
+.mx-take:hover:not(:disabled) { filter: brightness(1.12); }
+.mx-take:active:not(:disabled) { transform: translateY(2px); box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.5); }
+.mx-take:disabled { background: var(--bg-card); color: var(--text-muted); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06); cursor: not-allowed; }
+.mx-take-hint { font-size: 12px; color: var(--text-secondary); text-align: center; }
+
+.mx-bank { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 14px 16px 16px; }
+.mx-bank h3 { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-size: 12.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-secondary); }
+.mx-bank-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.mx-keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.mx-key {
+  position: relative; display: grid; gap: 2px; align-content: center; min-height: 64px; padding: 9px 12px 9px 14px; text-align: left; cursor: pointer;
+  background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-light); border-radius: var(--radius);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 -3px 0 rgba(0, 0, 0, 0.25);
+  font: inherit;
+}
+.mx-key:hover { background: var(--bg-card-hover); }
+.mx-key:active { transform: translateY(1px); box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5); }
+.mx-key:focus-visible, .mx-take:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mx-key-name { font-weight: 700; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mx-key-sub { font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mx-key-n { position: absolute; top: 5px; right: 8px; font-size: 11px; font-weight: 700; color: var(--text-muted); }
+/* A source in Preview is lit green; the one on Program is lit red. As on a real desk. */
+.mx-src.is-pvw { background: color-mix(in srgb, var(--success) 82%, #000); color: #04140b; border-color: var(--success); box-shadow: 0 0 18px color-mix(in srgb, var(--success) 45%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.4); }
+.mx-src.is-pvw .mx-key-sub, .mx-src.is-pvw .mx-key-n { color: #0b3320; }
+.mx-src.is-pgm:not(.is-pvw) { background: color-mix(in srgb, var(--tally, var(--danger)) 80%, #000); color: #fff; border-color: var(--tally, var(--danger)); box-shadow: 0 0 18px color-mix(in srgb, var(--tally, var(--danger)) 45%, transparent); }
+.mx-src.is-pgm:not(.is-pvw) .mx-key-sub, .mx-src.is-pgm:not(.is-pvw) .mx-key-n { color: rgba(255, 255, 255, 0.8); }
+/* Outputs: a tally block down the left edge; selected ones are lit in the accent. */
+.mx-out { padding-left: 22px; }
+.mx-key-tally { position: absolute; left: 0; top: 0; bottom: 0; width: 10px; border-radius: var(--radius) 0 0 var(--radius); background: var(--border-light); }
+.mx-tally-air .mx-key-tally { background: var(--tally, var(--success)); box-shadow: 0 0 10px var(--tally, var(--success)); }
+.mx-tally-standby .mx-key-tally { background: var(--warning); }
+.mx-out.is-on { background: color-mix(in srgb, var(--accent) 88%, #000); color: var(--on-accent, #fff); border-color: var(--accent); box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 40%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.4); }
+.mx-out.is-on .mx-key-sub { color: inherit; opacity: 0.8; }
+.mx-tally-off { opacity: 0.6; }
+.mx-gfx-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; margin-bottom: 12px; }
+.mx-gfx-row label { display: grid; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+.mx-gfx-colour input { width: 56px; height: 38px; padding: 2px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); }
+.mx-gfx-clear { border-color: var(--danger); color: var(--danger); }
+.mx-note { margin: 12px 0 0; font-size: 12.5px; color: var(--text-secondary); }
+@media (max-width: 900px) {
+  .mx-monitors { grid-template-columns: 1fr; }
+  .mx-take-col { width: auto; grid-auto-flow: column; justify-content: center; align-items: center; }
+  .mx-take { width: 100%; max-width: 320px; height: 64px; }
+  .mx-gfx-row { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { .mx-key:active, .mx-take:active:not(:disabled) { transform: none; } }
+
+/* Control room: the mixer's keys are the same backlit keys as the rest of the desk */
+:root[data-theme="control-room"] .mx-key { text-transform: uppercase; letter-spacing: 0.06em; }
+/* An unlit key only: a lit one keeps the colour that says what it is doing. */
+:root[data-theme="control-room"] .mx-key:not(.is-pvw):not(.is-pgm):not(.is-on) { background: linear-gradient(180deg, #2a2e32, #1b1e21); border-color: #000; }
+/* TAKE is the one big red key on the desk, in this theme too (the .btn key styling would grey it). */
+:root[data-theme="control-room"] .mx-take:not(:disabled) {
+  background: linear-gradient(180deg, #ff5a4f, #d81e12); color: #fff; border-color: #6b0d07; font-size: 22px; letter-spacing: 0.14em;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.45), inset 0 -5px 0 rgba(90, 10, 5, 0.6), 0 0 34px rgba(255, 42, 31, 0.6);
+}
+:root[data-theme="control-room"] .mx-take:not(:disabled):hover { background: linear-gradient(180deg, #ff7a70, #ee2a1d); color: #fff; }
+:root[data-theme="control-room"] .mx-take:disabled { font-size: 22px; letter-spacing: 0.14em; color: #55585c; }
+:root[data-theme="control-room"] .mx-key-sub { text-transform: none; letter-spacing: 0; }
+:root[data-theme="control-room"] .mx-bank { background: linear-gradient(180deg, #1c1f22, #16181a); border-color: #000; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 0 1px var(--border); }
+:root[data-theme="control-room"] .mx-bank h3 { color: var(--accent); }
+
+/* The three-way view switch needs the room the two-way one had */
+.ui-mode-switch [data-ui-mode] { padding-left: 2px; padding-right: 2px; font-size: 11.5px; white-space: nowrap; }
+:root[data-theme="control-room"] .ui-mode-switch button[aria-checked="true"] { color: var(--on-accent); }
+
+/* Mixer: stream outputs */
+.mx-stream .mx-key-tally { background: var(--border-light); }
+.mx-stream.mx-tally-air .mx-key-tally { background: var(--tally, var(--danger)); box-shadow: 0 0 10px var(--tally, var(--danger)); }
+.mx-stream.mx-tally-standby .mx-key-tally { background: var(--warning); }
+.mx-stream { border-style: dashed; }
+.mx-stream-list { display: grid; gap: 8px; }
+.mx-stream-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: var(--radius); }
+.mx-stream-what { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.mx-stream-what span { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.mx-stream-what .mx-stream-err { color: var(--danger); }
+.mx-stream-state { font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-secondary); }
+.mx-lamp-idle { background: var(--border-light); }
+.mx-lamp-standby { background: var(--warning); box-shadow: 0 0 10px var(--warning); }
+.mx-lamp-air { background: var(--tally, var(--danger)); box-shadow: 0 0 10px var(--tally, var(--danger)); }
+.mx-golive { background: var(--tally, var(--danger)); color: #fff; border-color: transparent; font-weight: 700; }
+.mx-stream-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: end; margin-top: 12px; padding: 12px; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: var(--radius); }
+.mx-stream-form label { display: grid; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+.mx-stream-form label[hidden] { display: none; }
+.mx-stream-form .mx-rec-check, .mx-rec-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+.mx-rec { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: #fff; background: var(--danger); border-radius: 3px; padding: 2px 6px; }
+.mx-sub { margin: 16px 0 8px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.mx-stream-form-actions { display: flex; gap: 8px; }
+.mx-note-top { margin-top: 0; }
+.mx-licence { padding: 10px 12px; border: 1px solid var(--warning); border-radius: var(--radius); background: var(--warning-dim); color: var(--text-primary); }
+:root[data-theme="control-room"] .mx-golive { background: linear-gradient(180deg, #ff5a4f, #d81e12); color: #fff; }
+
+/* Mixer: scenes, cameras, audio */
+.mx-scene-wrap { position: relative; display: grid; }
+.mx-scene-del { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border: 0; border-radius: 50%; background: transparent; color: var(--text-muted); font-size: 16px; line-height: 1; cursor: pointer; }
+.mx-scene-del:hover, .mx-scene-del:focus-visible { background: var(--danger); color: #fff; outline: none; }
+.mx-scene.is-pvw { background: color-mix(in srgb, var(--success) 82%, #000); color: #04140b; border-color: var(--success); }
+.mx-scene.is-pvw .mx-key-sub { color: #0b3320; }
+.mx-check { display: flex !important; align-items: center; gap: 8px; color: var(--text-primary) !important; font-size: 13px !important; }
+.mx-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+.mx-cam-desk { display: grid; grid-template-columns: auto auto 1fr; gap: 18px; align-items: start; margin-top: 14px; }
+.mx-pad { display: grid; grid-template-columns: repeat(3, 52px); grid-auto-rows: 52px; gap: 6px; }
+.mx-pad-key { display: grid; place-items: center; min-height: 44px; padding: 0 10px; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-light); border-radius: var(--radius); font: inherit; font-size: 18px; font-weight: 700; cursor: pointer; touch-action: none; user-select: none; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 -3px 0 rgba(0, 0, 0, 0.25); }
+.mx-pad-key:active { background: var(--accent); color: var(--on-accent, #fff); transform: translateY(1px); }
+.mx-pad-key:focus-visible, .mx-mute:focus-visible, .mx-fader:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mx-pad-home { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+.mx-cam-side { display: grid; gap: 12px; }
+.mx-zoom { display: grid; gap: 6px; }
+.mx-zoom .mx-pad-key { font-size: 12.5px; }
+.mx-speed { display: grid; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+.mx-presets { display: flex; flex-wrap: wrap; gap: 6px; align-content: start; }
+.mx-presets-label { flex-basis: 100%; font-size: 12px; color: var(--text-secondary); }
+.mx-preset { min-height: 44px; }
+.mx-strips { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; }
+.mx-strip { flex: none; width: 96px; display: grid; justify-items: center; gap: 8px; padding: 10px 8px; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: var(--radius); grid-template-columns: 1fr; position: relative; }
+.mx-strip-stream { width: 150px; border-style: dashed; }
+.mx-strip-name { max-width: 100%; font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mx-fader { writing-mode: vertical-lr; direction: rtl; width: 28px; height: 130px; accent-color: var(--accent); }
+.mx-strip.is-muted .mx-fader { opacity: 0.45; }
+.mx-strip-val { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.mx-mute { min-width: 64px; min-height: 30px; background: var(--bg-input); color: var(--text-secondary); border: 1px solid var(--border-light); border-radius: var(--radius); font: inherit; font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
+.mx-mute.is-on { background: var(--tally, var(--danger)); color: #fff; border-color: transparent; }
+.mx-meter { position: absolute; left: 16px; top: 36px; width: 8px; height: 130px; background: var(--bg-input); border-radius: 2px; overflow: hidden; display: flex; align-items: flex-end; }
+.mx-meter i { display: block; width: 100%; background: linear-gradient(0deg, var(--success) 0 70%, var(--warning) 70% 90%, var(--danger) 90%); background-size: 100% 130px; background-position: bottom; transition: height 0.12s linear; }
+.mx-meters-on { margin-left: auto; }
+.mx-proc-sect { margin-top: 12px; }
+.mx-bands { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px 16px; align-items: start; }
+.mx-band { display: grid; gap: 8px; padding: 10px; background: var(--bg-input); border: 1px solid var(--border-light); border-radius: var(--radius); }
+.mx-proc-sect h5 { margin: 0 0 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.mx-proc-sect .mx-knob-check { grid-column: auto; }
+.mx-console-n { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; color: var(--text-secondary); }
+.mx-console-n input { width: 72px; }
+.mx-knob-name { grid-template-columns: 1fr; }
+.mx-strips { flex-wrap: wrap; }
+.mx-mic.is-on { background: var(--danger); border-color: var(--danger); color: #fff; }
+.mx-group-state { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--text-secondary); }
+.mx-bed { width: 100%; font-size: 12px; padding: 4px 6px; }
+@media (max-width: 1100px) { .mx-pair { grid-template-columns: 1fr; } .mx-cam-desk { grid-template-columns: auto 1fr; } .mx-presets { grid-column: 1 / -1; } }
+@media (prefers-reduced-motion: reduce) { .mx-meter i { transition: none; } .mx-pad-key:active { transform: none; } }
+/* The camera and audio panels share a row without either pushing the page wider. */
+.mx-pair { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+.mx-bank { min-width: 0; }
+.mx-cam-desk { grid-template-columns: auto minmax(0, 1fr); }
+.mx-presets { grid-column: 1 / -1; }
+@media (max-width: 1100px) { .mx-pair { grid-template-columns: minmax(0, 1fr); } }
+
+/* Mixer: the transition TAKE uses */
+.mx-take-col { width: 148px; }
+.mx-tx { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; width: 100%; }
+.mx-tx-key { min-height: 32px; background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border-light); border-radius: var(--radius); font: inherit; font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
+.mx-tx-key.is-on { background: var(--accent); color: var(--on-accent, #fff); border-color: var(--accent); }
+.mx-tx-key:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mx-tx-rate { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px; width: 100%; font-size: 12px; color: var(--text-secondary); }
+.mx-tx-rate.is-off { opacity: 0.45; }
+.mx-tx-rate select { padding: 4px 6px; font-size: 12px; }
+@media (max-width: 900px) { .mx-take-col { width: auto; grid-auto-flow: row; } .mx-tx { grid-template-columns: repeat(4, 1fr); max-width: 320px; } .mx-tx-rate { max-width: 320px; } }
+.mx-rest { display: grid; gap: 18px; }
+
+/* Mixer: the audio console. One group of strips per stream (programme, bed, line, master), one for screens. */
+.mx-pair { grid-template-columns: minmax(0, 1fr); }
+.mx-console { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+.mx-group { display: grid; gap: 10px; padding: 12px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius); min-width: 0; }
+.mx-group-name { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-primary); }
+.mx-group .mx-strips { overflow-x: auto; }
+.mx-group .mx-strip { width: 88px; border-style: solid; padding-left: 26px; }
+.mx-group .mx-meter { left: 10px; top: 34px; }
+.mx-strip-master { border-color: var(--accent) !important; }
+.mx-strip.is-off { opacity: 0.4; }
+.mx-group-src { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.mx-group-src label { display: grid; gap: 4px; font-size: 12px; color: var(--text-secondary); min-width: 0; }
+.mx-group .mx-strip { width: 96px; padding: 10px 8px; }
+.mx-group .mx-strip:has(.mx-meter) { padding-left: 24px; }
+.mx-group .mx-strip-name { font-size: 11.5px; }
+.mx-group .mx-mute { min-width: 0; width: 100%; }
+
+/* Broadcast view: the menu is the desk's sections, and each section is a page of the same desk.
+   The main Mixer page shows everything; a section page shows its own panels under the monitors. */
+.mx[data-section="audio"] .mx-rest > :not(.mx-audio):not(.mx-outputs),
+.mx[data-section="cameras"] .mx-rest > :not(.mx-pair),
+.mx[data-section="graphics"] .mx-rest > :not(.mx-gfx):not(.mx-outputs),
+.mx[data-section="streams"] .mx-rest > :not(.mx-streams):not(.mx-guests) { display: none; }
+.mx-guests:empty { display: none; }
+.mx-room { padding: 12px; margin-bottom: 10px; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: var(--radius); }
+.mx-room-keys { display: flex; gap: 6px; margin-left: 12px; }
+.mx-key-sm { padding: 4px 10px; font-size: 11px; min-height: 0; }
+.mx-room-link { margin-top: 10px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.mx-guest-list { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.mx-guest { width: 272px; }
+.mx-guest-pic { position: relative; aspect-ratio: 16 / 9; background: #000; border: 2px solid var(--border-light); border-radius: 3px; overflow: hidden; display: grid; place-items: center; font-size: 12px; color: var(--text-secondary); }
+.mx-guest.is-air .mx-guest-pic { border-color: var(--tally, var(--danger)); box-shadow: 0 0 14px color-mix(in srgb, var(--tally, var(--danger)) 45%, transparent); }
+.mx-guest-level { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; font-size: 11px; color: var(--text-secondary); }
+.mx-guest-level input { flex: 1; min-width: 0; accent-color: var(--accent, #f5a623); }
+.mx-guest-level output { width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
+.mx-guest-link { margin: 2px 0 6px; font-size: 11px; line-height: 1.35; color: var(--warning, #f5a623); }
+.mx-guest-badge { position: absolute; right: 6px; top: 6px; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-style: normal; font-weight: 600; color: #111; background: var(--warning, #f5a623); }
+.mx-room-off { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--warning, #f5a623); }
+.mx-guest-pic img, .mx-guest-pic video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+.mx-guest-pic b { position: absolute; left: 6px; top: 6px; padding: 2px 6px; border-radius: 2px; font-size: 10px; letter-spacing: 0.08em; color: #fff; background: var(--danger); }
+.mx-guest-name { margin: 6px 0; font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mx-guest-keys { display: flex; flex-wrap: wrap; gap: 6px; }
+.mx-guest-keys .btn { white-space: nowrap; }
+/* A section page keeps an eye on the pictures without giving them the whole screen. */
+.mx:not([data-section="desk"]) .mx-monitors { grid-template-columns: minmax(0, 320px) auto minmax(0, 320px); justify-content: start; }
+.mx:not([data-section="desk"]) .mx-take-col { display: none; }
+
+/* Mixer: a strip's processing panel, and the network feed fields */
+.mx-group .mx-strip { width: 92px; }
+.mx-proc-open { margin-top: -2px; }
+.mx-proc-open.is-shaped { border-color: var(--success); color: var(--success); }
+.mx-proc-open.is-open { background: var(--accent); color: var(--on-accent, #fff); border-color: var(--accent); }
+.mx-proc { padding: 12px; background: var(--bg-card); border: 1px solid var(--accent); border-radius: var(--radius); }
+.mx-proc-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; font-size: 12.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.mx-knobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 16px; align-items: end; }
+.mx-knob { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-size: 12px; color: var(--text-secondary); }
+.mx-knob input[type="range"] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+.mx-knob output { grid-row: 1; grid-column: 2; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.mx-noise { grid-template-columns: 1fr; }
+.mx-noise-keys { display: flex; gap: 6px; flex-wrap: wrap; }
+.mx-knob-check { display: flex; align-items: center; gap: 8px; grid-column: 1 / -1; color: var(--text-primary); }
+.mx-group-src { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.mx-live { color: var(--success); font-weight: 700; }
+.mx-limiting { margin-left: auto; font-size: 11px; letter-spacing: 0; text-transform: none; color: var(--warning); }
+
+/* Sound console: a guest's strip, the pads bank (views/mixer.js padsHtml). */
+.mx-strip-guest { border-color: var(--accent); }
+.mx-strip-tag { font-size: 10.5px; font-weight: 700; color: var(--text-secondary); }
+.mx-strip-guest:not(.is-off) .mx-strip-tag { color: var(--danger, #e5484d); }
+.mx-pads { margin-top: 12px; }
+.mx-pads-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; font-weight: 700; }
+.mx-spads { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.mx-spads.is-editing { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.mx-spad { position: relative; overflow: hidden; display: grid; gap: 2px; min-height: 64px; padding: 8px 10px; text-align: left; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-light); border-radius: var(--radius); cursor: pointer; font: inherit; }
+.mx-spad:hover:not(:disabled) { border-color: var(--accent); }
+.mx-spad:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mx-spad:disabled { opacity: .55; cursor: not-allowed; }
+.mx-spad.is-on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--bg-card)); }
+.mx-spad-n { font-size: 11px; font-weight: 700; color: var(--text-secondary); }
+.mx-spad-name { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mx-spad-loop { font-size: 10.5px; color: var(--text-secondary); }
+.mx-spad-bar { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); width: 0; }
+.mx-spad-edit { display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--border-light); border-radius: var(--radius); }
+@media (prefers-reduced-motion: no-preference) { .mx-spad-bar { transition: width .2s linear; } }
+.mx-group-name .mx-check { margin-left: auto; text-transform: none; letter-spacing: normal; font-size: 12px; font-weight: 600; color: var(--text-secondary); display: inline-flex; gap: 6px; align-items: center; }
+.mx-person-add { display: flex; gap: 8px; margin: 8px 0; }
+.mx-person-add .input { max-width: 220px; }
+.mx-people { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 6px; }
+.mx-people li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.mx-person-name { font-weight: 700; }
+.mx-person-state { color: var(--text-secondary); }

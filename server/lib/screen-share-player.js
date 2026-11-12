@@ -55,7 +55,7 @@
     return o;
   }
 
-  function buildTile(labels, sharedBy, guest) {
+  function buildTile(labels, sharedBy, guest, plain) {
     var t = document.createElement('div');
     t.className = 'st-share-tile';
     t.style.cssText = 'position:absolute;box-sizing:border-box;border:2px solid #000;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center';
@@ -77,6 +77,9 @@
     badge.style.cssText = 'position:absolute;left:1.2vw;bottom:1.2vw;padding:.45vw .9vw;border-radius:.5vw;background:rgba(15,23,42,.72);color:#fff;font:500 max(12px,1.05vw)/1.3 system-ui,sans-serif;max-width:80%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none';
     // textContent only: the name is whatever a guest typed.
     badge.textContent = fmt(labels.sharedBy || 'Shared by {name}', { name: sharedBy }) + (guest ? ' · ' + (labels.guest || 'guest') : '');
+    // A stream output's picture (not a person's screen) is the programme itself: nothing is written over it.
+    // (No words either: the dashboard's view of the screen draws the badge's text.)
+    if (plain) { badge.style.display = 'none'; badge.textContent = ''; wait.style.display = 'none'; }
     t.appendChild(v); t.appendChild(a); t.appendChild(wait); t.appendChild(badge);
     overlay().appendChild(t);
     return { tile: t, video: v, audio: a, wait: wait, badge: badge };
@@ -230,7 +233,7 @@
       if (!this.isSupported()) { onState('unsupported', null, opts.sessionId); return; }
       // Never more than MAX_TILES: the oldest makes room (the server never sends more; this is the backstop).
       while (order.length >= MAX_TILES) teardown(sessions[order[0]], 'replaced');
-      var ui = buildTile(labels, opts.sharedBy || '', !!opts.guest);
+      var ui = buildTile(labels, opts.sharedBy || '', !!opts.guest, opts.plain === true);
       var s = { id: opts.sessionId, tile: ui.tile, video: ui.video, audio: ui.audio, wait: ui.wait, badge: ui.badge, labels: labels, onState: onState, stopped: false, pending: [], startedAt: Date.now() };
       sessions[s.id] = s;
       order.push(s.id);

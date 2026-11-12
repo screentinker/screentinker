@@ -19,7 +19,7 @@ const { resourceAccess } = require('../lib/tenancy');
 // already rejects workspace_viewer — the same check requireFleetWrite performs in routes/triggers.js.
 const { requireScope } = require('../middleware/apiToken');
 const { ALLOWED_COMMANDS, LOCAL_API_COMMANDS, deliverCommand, validateCommand, requireCommandScope } = require('../lib/device-command');
-const { stripDeviceSecrets, stripDeviceSecretsForList, stripSecretsForTokens } = require('../lib/device-sanitize');
+const { stripDeviceSecrets, stripDeviceSecretsForList, stripSecretsForTokens, stripSecretsForReadOnly } = require('../lib/device-sanitize');
 const { layoutZones, orphanCountsByDevice } = require('../lib/zone-validate');
 const deviceSettings = require('../lib/device-settings'); // #150 delete+re-pair settings preservation
 const { normalizeTags, parseTags } = require('../lib/content-tags');
@@ -94,19 +94,22 @@ function pausedByPlan(devices) {
   let check;
   try { check = require('../ws/deviceSocket').checkDeviceAccess; } catch { return out; }
   if (typeof check !== 'function') return out; // socket layer not set up (tests, CLI)
-  const { getUserPlan, getUserDeviceCount } = require('../middleware/subscription');
+  const limits = require('../middleware/subscription');
   const owners = new Map();
   for (const d of devices) {
-    if (!d.user_id) continue;
-    if (!owners.has(d.user_id)) {
+    // Whoever this screen's limits belong to: the person who paired it, or its organization.
+    const subject = limits.limitSubject(d.user_id, d.workspace_id);
+    if (!subject.userId) continue;
+    const key = subject.scope + ':' + (subject.orgId || subject.userId);
+    if (!owners.has(key)) {
       let over = false;
       try {
-        const plan = getUserPlan(d.user_id);
-        over = !!plan && plan.max_devices !== -1 && getUserDeviceCount(d.user_id) > plan.max_devices;
+        const plan = limits.subjectPlan(subject);
+        over = !!plan && plan.max_devices !== -1 && limits.subjectDeviceCount(subject) > plan.max_devices;
       } catch { /* unknown: do not mark */ }
-      owners.set(d.user_id, over);
+      owners.set(key, over);
     }
-    if (!owners.get(d.user_id)) continue;
+    if (!owners.get(key)) continue;
     try {
       const a = check(d.id);
       if (a && a.allowed === false) out[d.id] = { reason: a.reason || 'device_limit' };
@@ -258,7 +261,7 @@ router.post('/move-workspace', (req, res) => {
       try {
         emitToWorkspace(io.of('/dashboard'), workspaceRoom(m.from_workspace_id), 'dashboard:device-removed', { device_id: m.device_id });
         const row = db.prepare('SELECT * FROM devices WHERE id = ?').get(m.device_id);
-        if (row) emitToWorkspace(io.of('/dashboard'), workspaceRoom(target.id), 'dashboard:device-added', stripDeviceSecrets(row));
+        if (row) emitToWorkspace(io.of('/dashboard'), workspaceRoom(target.id), 'dashboard:device-added', stripDeviceSecretsForList(row));
         const { buildPlaylistPayload } = require('../ws/deviceSocket');
         require('../lib/command-queue').queueOrEmitPlaylistUpdate(io.of('/device'), m.device_id, buildPlaylistPayload);
       } catch (e) { console.warn(`[move-workspace] notify failed for ${m.device_id}: ${e && e.message}`); }
@@ -327,6 +330,9 @@ router.get('/:id', (req, res) => {
   // SELECT d.* now carries trigger_secret. A read-scoped token must not be able to turn "list my
   // screens" into "inject content on any of them" — see lib/device-sanitize.js.
   stripSecretsForTokens(device, req.viaToken);
+  // And a read-only member, by the same reasoning: each credential is a way round the write checks
+  // that already refuse this role. Same test the write gates use (requireFleetWrite).
+  stripSecretsForReadOnly(device, !ctx.actingAs && ctx.workspaceRole === 'workspace_viewer');
 
   const telemetry = db.prepare(
     'SELECT * FROM device_telemetry WHERE device_id = ? ORDER BY reported_at DESC LIMIT 20'

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0b0c0e">
+  <meta name="robots" content="noindex">
+  <meta name="referrer" content="no-referrer">
+  <link rel="icon" href="/assets/icon-192.png">
+  <title>Join the broadcast</title>
+  <link rel="stylesheet" href="/css/variables.css">
+  <link rel="stylesheet" href="/css/reset.css">
+  <link rel="stylesheet" href="/css/main.css">
+  <style>
+    [hidden] { display: none !important; }
+    body { min-height: 100vh; margin: 0; display: flex; justify-content: center; padding: 4vh 16px 32px; background: #0b0c0e; color: #f2f3f5; }
+    .gs { width: 100%; max-width: 560px; }
+    .gs h1 { font-size: 22px; margin: 0 0 4px; }
+    .gs .lead { color: #a3a8b3; font-size: 14px; line-height: 1.5; margin: 0 0 16px; }
+    .gs-view { position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: 6px; overflow: hidden; border: 3px solid #23262d; }
+    .gs-view.is-air { border-color: #ff2a1f; box-shadow: 0 0 24px rgba(255, 42, 31, 0.45); }
+    .gs-view.is-back { border-color: #f5a623; }
+    .gs-view video { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .gs-view.is-mirror video { transform: scaleX(-1); }
+    .gs-tag { position: absolute; left: 10px; top: 10px; padding: 4px 10px; border-radius: 3px; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; background: rgba(11, 12, 14, 0.8); }
+    .gs-view.is-air .gs-tag { background: #ff2a1f; color: #fff; }
+    .gs-view.is-back .gs-tag { background: #f5a623; color: #111; }
+    .gs-talk { margin: 8px 0 0; padding: 8px 10px; border-radius: 4px; font-size: 13px; font-weight: 600; background: #17324a; color: #cfe6ff; }
+    .gs-cut { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 14px; font-weight: 600; cursor: pointer; }
+    .gs-cut span { font-weight: 400; color: #a3a8b3; }
+    .gs-cut input { width: 18px; height: 18px; }
+    .gs-show { display: grid; gap: 6px; margin-top: 14px; font-size: 13px; font-weight: 600; }
+    .gs-show input { width: 100%; }
+    .gs-cut-note { min-height: 1.2em; margin: 6px 0 0; font-size: 13px; color: #f5a623; }
+    .gs-turn { margin: 8px 0 0; font-size: 13px; color: #f5a623; }
+    .gs-view.is-wait { border-color: #5b6470; }
+    .gs-view.is-wait .gs-tag { background: #5b6470; color: #fff; }
+    .gs-level { height: 8px; margin-top: 8px; background: #1a1c21; border-radius: 4px; overflow: hidden; }
+    .gs-level i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #2ecc71 0 70%, #f5a623 70% 90%, #ff2a1f 90%); background-size: 560px 100%; transition: width 0.1s linear; }
+    .gs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+    .gs-grid label, .gs-name { display: grid; gap: 6px; font-size: 13px; font-weight: 600; }
+    .gs-name { margin-top: 14px; }
+    .gs-go { width: 100%; margin-top: 16px; font-size: 16px; padding: 12px 18px; justify-content: center; }
+    .gs-msg { min-height: 1.4em; margin-top: 14px; font-size: 14px; line-height: 1.5; color: #a3a8b3; }
+    .gs-msg.error { color: #ff6b61; }
+    .gs-keys { display: flex; gap: 8px; margin-top: 14px; }
+    .gs-keys .btn { flex: 1; justify-content: center; }
+    @media (max-width: 480px) { .gs-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main class="gs">
+    <div role="status" aria-live="polite">
+      <h1 id="gsTitle">Join the broadcast</h1>
+      <p class="lead" id="gsLead">Check your camera and microphone, then join. You will wait backstage until the studio puts you on air.</p>
+    </div>
+    <div class="gs-view is-mirror" id="gsView"><video id="gsVideo" autoplay muted playsinline></video><span class="gs-tag" id="gsTag">Camera check</span></div>
+    <p class="gs-talk" id="gsTalk" role="status" hidden>You are hearing the studio's talk line. It is not on air. Headphones keep it out of your microphone.</p>
+    <p class="gs-turn" id="gsTurn" hidden>Your picture is upright. Turn your phone sideways to fill the screen.</p>
+    <div class="gs-level" aria-hidden="true"><i id="gsLevel"></i></div>
+    <div id="gsSetup">
+      <label class="gs-name">Your name<input class="input" id="gsName" maxlength="40" autocomplete="name" placeholder="How you should be named on screen"></label>
+      <button type="button" class="btn btn-primary gs-go" id="gsJoin">Join</button>
+    </div>
+    <div class="gs-keys" id="gsLive" hidden>
+      <button type="button" class="btn btn-secondary" id="gsMute">Mute microphone</button>
+      <button type="button" class="btn btn-secondary" id="gsCamOff">Turn camera off</button>
+      <button type="button" class="btn btn-secondary" id="gsLeave">Leave</button>
+    </div>
+    <label class="gs-show" id="gsShowRow" hidden>The show in your ear (without your own voice)<input type="range" id="gsShowVol" min="0" max="100" value="70"><audio id="gsShow" autoplay></audio></label>
+    <div class="gs-grid">
+      <label>Camera<select class="input" id="gsCam"></select></label>
+      <label>Microphone<select class="input" id="gsMic"></select></label>
+    </div>
+    <label class="gs-cut"><input type="checkbox" id="gsCut"> Remove my background <span>(the studio shows only you)</span></label>
+    <p class="gs-cut-note" id="gsCutNote" role="status"></p>
+    <p class="gs-msg" id="gsMsg" role="status"></p>
+  </main>
+  <script type="module" src="/js/guest-page.js"></script>
+</body>
+</html>

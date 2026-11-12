@@ -837,3 +837,50 @@ CREATE TABLE IF NOT EXISTS device_diagnostic_logs (
 CREATE INDEX IF NOT EXISTS idx_device_diagnostic_logs_dev
     ON device_diagnostic_logs(device_id, uploaded_at DESC);
 
+
+-- Stream outputs (lib/stream-out.js, routes/stream-out.js): a program output of the vision mixer
+-- that goes to a streaming service instead of a screen. Self-hosted instances only. The stream key
+-- is stored encrypted (lib/secretbox.js) and never returned by the API; feed_secret is what the
+-- server's own renderer uses to fetch what this output is showing.
+CREATE TABLE IF NOT EXISTS stream_outputs (
+    id              TEXT PRIMARY KEY,
+    workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    url             TEXT,
+    key_enc         TEXT,
+    playlist_id     TEXT,
+    gfx_json        TEXT,
+    width           INTEGER NOT NULL DEFAULT 1280,
+    height          INTEGER NOT NULL DEFAULT 720,
+    fps             INTEGER NOT NULL DEFAULT 30,
+    bitrate_k       INTEGER NOT NULL DEFAULT 3500,
+    audio_content_id TEXT,                                   -- the audio bed (an uploaded audio item), or none
+    audio_level     REAL NOT NULL DEFAULT 1,
+    audio_muted     INTEGER NOT NULL DEFAULT 0,
+    audio_mix       TEXT,                                    -- JSON: the mixer's strips (lib/stream-audio.js cleanSettings)
+    record          INTEGER NOT NULL DEFAULT 0,              -- also write the stream to a file on this server
+    feed_secret     TEXT NOT NULL UNIQUE,
+    guest_invite    TEXT,                                    -- the open invite link's token (lib/mixer-guests.js), kept across restarts
+    guest_invite_until INTEGER,                              -- when that invite stops letting new guests in (ms)
+    resume_state    TEXT,                                    -- 'standby' while the operator has it running: brought back on standby after a restart
+    screens_json    TEXT,                                    -- the screens following this stream (ids), kept across restarts
+    screens_sound   INTEGER NOT NULL DEFAULT 0,              -- screens showing it get its sound too
+    guest_personal  TEXT,                                    -- JSON: its personal guest links [{ id, token, name, until }]
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_stream_outputs_ws ON stream_outputs(workspace_id);
+
+-- Scenes of the vision mixer (routes/mixer.js): a named look recalled with one key. A scene is a
+-- source (playlist), the graphic keyed over it (or none), and camera positions to recall.
+CREATE TABLE IF NOT EXISTS mixer_scenes (
+    id              TEXT PRIMARY KEY,
+    workspace_id    TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    playlist_id     TEXT,
+    gfx_json        TEXT,
+    ptz_json        TEXT,
+    sort_order      INTEGER NOT NULL DEFAULT 0,
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mixer_scenes_ws ON mixer_scenes(workspace_id);

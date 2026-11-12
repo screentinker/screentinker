@@ -271,14 +271,25 @@ module.exports = function setupDashboardSocket(io) {
     socket.remoteSessions = new Set();
 
     socket.on('dashboard:remote-start', (data, ack) => {
-      const { device_id } = data;
-      if (!canActOnDevice(socket, device_id, 'write')) return;
+      const { device_id } = data || {};
+      if (!canActOnDevice(socket, device_id, 'write')) {
+        // Answered, so the page does not take a refusal's silence for "started".
+        if (typeof ack === 'function') ack({ delivered: false, reason: 'forbidden' });
+        return;
+      }
       if (capabilityRefused(device_id, 'remote.stream', ack)) return;
       const room = deviceNs.adapter.rooms.get(device_id);
       console.log(`Remote start for ${device_id}, room has ${room?.size || 0} socket(s)`);
+      // Nobody in the room: say so. The page used to announce "Remote session started" without
+      // hearing anything back, and a session was recorded here for a screen that never got it.
+      if (!room || room.size === 0) {
+        if (typeof ack === 'function') ack({ delivered: false, reason: 'offline' });
+        return;
+      }
       socket.remoteSessions.add(device_id);
       deviceNs.to(device_id).emit('device:remote-start', {});
       console.log(`Remote session started for device ${device_id}`);
+      if (typeof ack === 'function') ack({ delivered: true });
     });
 
     // Deliberately NOT capability-gated, for the same reason set_debug isn't: stopping is the
@@ -585,5 +596,14 @@ module.exports.dropUserFromWorkspace = function dropUserFromWorkspace(userId, wo
     if (u && accessibleWorkspaceIds(userId, u.role).includes(workspaceId)) return;
     _dashboardNs.in(userRoom(userId)).socketsLeave(require('../lib/socket-rooms').workspaceRoom(workspaceId));
   } catch (_) { /* best-effort */ }
+};
+/*
+ * What this person may do in an organization changed (ownership handed over, they left). The server
+ * reads organization roles fresh on every request, so nothing is stale there and no new sign-in is
+ * needed; the open dashboard holds a copy of their role, though, and re-reads it on this.
+ */
+module.exports.tellAccessChanged = function tellAccessChanged(userId) {
+  if (!_dashboardNs || !userId) return;
+  try { _dashboardNs.to(userRoom(userId)).emit('dashboard:access-changed', {}); } catch (_) { /* best-effort */ }
 };
 module.exports.revalidateSocket = revalidateSocket;

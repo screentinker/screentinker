@@ -141,7 +141,7 @@ test('partition: the public token surface is exactly the reviewed set (snapshot 
   const EXPECTED_PUBLIC = [
     '/api/devices', '/api/content', '/api/folders', '/api/assignments', '/api/layouts',
     '/api/widgets', '/api/schedules', '/api/walls', '/api/reports', '/api/groups',
-    '/api/playlists', '/api/activity', '/api/kiosk', '/api/pip',
+    '/api/playlists', '/api/activity', '/api/kiosk', '/api/pip', '/api/mixer',
     // Trigger DEFINITIONS, added deliberately: an AV integrator provisioning a site configures these
     // from their own tooling, so the token door is the point. Writes carry the same requireScope
     // ('full') + role pairing as /api/pip, and reads are workspace-scoped like every sibling.

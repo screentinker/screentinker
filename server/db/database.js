@@ -1639,6 +1639,17 @@ const migrations = [
    * no way to express "this screen overrides its group", and no way to revert.
    */
   "ALTER TABLE devices ADD COLUMN playlist_source TEXT",
+  // The stream mixer's strips (programme, bed, line, master): lib/stream-audio.js.
+  "ALTER TABLE stream_outputs ADD COLUMN audio_mix TEXT",
+  "ALTER TABLE stream_outputs ADD COLUMN record INTEGER NOT NULL DEFAULT 0",
+  // A stream output's open guest invite, so a restart does not end it: lib/mixer-guests.js.
+  "ALTER TABLE stream_outputs ADD COLUMN guest_invite TEXT",
+  "ALTER TABLE stream_outputs ADD COLUMN guest_invite_until INTEGER",
+  // A stream the operator had running comes back on standby after a restart, with its screens: routes/stream-out.js.
+  "ALTER TABLE stream_outputs ADD COLUMN resume_state TEXT",
+  "ALTER TABLE stream_outputs ADD COLUMN screens_json TEXT",
+  "ALTER TABLE stream_outputs ADD COLUMN screens_sound INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE stream_outputs ADD COLUMN guest_personal TEXT",
 
   /*
    * What an ACTIVE SCHEDULE is currently imposing, kept apart from what the device is normally on.
@@ -2690,6 +2701,19 @@ const migrations = [
    * upgrade changes nobody.
    */
   'ALTER TABLE users ADD COLUMN disabled_at INTEGER',
+  /*
+   * "The owner of this address has proved it is theirs", kept apart from email_verified.
+   *
+   * email_verified answers "should this account see the confirm-your-email banner", and an account
+   * an administrator creates is marked verified so it does not carry a banner nobody can clear.
+   * But the administrator chose that account's password, so "verified" there says nothing about
+   * who holds the mailbox, and GET /api/auth/my-invites was treating it as if it did.
+   *
+   * DEFAULT 1: every existing account and every other way an account is made keeps exactly the
+   * behaviour it had. Only POST /api/admin/users writes 0, and a link mailed to the address
+   * (password reset, email verification) sets it back to 1.
+   */
+  'ALTER TABLE users ADD COLUMN email_proven INTEGER NOT NULL DEFAULT 1',
   // One row per organization that has turned provisioning on. default_* is optional access every
   // provisioned person gets, on top of whatever their groups map to.
   `CREATE TABLE IF NOT EXISTS org_scim_settings (
@@ -5641,6 +5665,25 @@ if (_bootUpgraded) {
     db.prepare("INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('last_upgraded_at', strftime('%s','now'), strftime('%s','now'))").run();
   } catch (e) { console.warn(`[boot] could not record the upgrade time: ${e.message}`); }
 }
+
+/*
+ * A workspace administrator's activity list filters on the workspace (routes/activity.js); without
+ * this index it walks the whole log by time looking for a quiet workspace's fifty rows.
+ *
+ * Here, guarded on the column, and NOT in the migrations array: activity_log.workspace_id is added
+ * by the multi-tenancy phase, which runs after that array on a fresh install, so the statement
+ * failed there on first boot and printed a `[migrate] FAILED` line (it healed on the second).
+ */
+try {
+  if (db.prepare('PRAGMA table_info(activity_log)').all().some((c) => c.name === 'workspace_id')) {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_activity_log_ws_time ON activity_log(workspace_id, created_at)');
+  }
+} catch (e) { console.error(`[migrate] could not create idx_activity_log_ws_time: ${e.message}`); }
+// Payment is moving from the person to the organization (lib/org-billing.js). Step 1: the
+// organization's copy of its owner's billing state is filled and kept in step by triggers. Nothing
+// reads it yet; `users` stays the source of truth. LAST, so every column it copies already exists.
+try { require('../lib/org-billing').install(db); }
+catch (e) { console.error(`[org-billing] mirror not installed: ${e.message}`); }
 
 // `playsMigrationTouched`: did THIS boot build a play_logs index or add a play_logs column?
 // Read once by services/heartbeat to arm the 2.0.1 player defer (lib/boot-defer.js). The loop

@@ -28,7 +28,7 @@ function consume(token) {
     .get(hashToken(token));
   if (!row) return null;
   if (!row.email_verify_expires || row.email_verify_expires < Math.floor(Date.now() / 1000)) return null;
-  db.prepare("UPDATE users SET email_verified = 1, email_verify_hash = NULL, email_verify_expires = NULL, updated_at = strftime('%s','now') WHERE id = ?")
+  db.prepare("UPDATE users SET email_verified = 1, email_proven = 1, email_verify_hash = NULL, email_verify_expires = NULL, updated_at = strftime('%s','now') WHERE id = ?")
     .run(row.id);
   return row.id;
 }

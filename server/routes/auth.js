@@ -1,5 +1,8 @@
 const express = require('express');
 const router = express.Router();
+// Anyone can call these, and every handler below lowercases, trims or hashes these fields: a
+// number or an object in one of them was an unhandled TypeError. Refused up front instead.
+router.use(require('../lib/api-errors').textFields(['email', 'password', 'current_password', 'name', 'token', 'mfa_token']));
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../db/database');
@@ -219,6 +222,9 @@ router.post('/register', (req, res) => {
   const createOrgForUser = isFirstUser
     || (createOrg !== undefined ? !!createOrg : config.autoCreateOrgOnSignup);
   const workspaceId = ensureDefaultOrgForUser(user, { allowCreate: createOrgForUser });
+  // The sign-in routes sit outside the request logger, so an account's own events are written
+  // here, one row each, never with a password, code or token in it.
+  logActivity(user.id, 'auth:registered', null, null, getClientIp(req), workspaceId || null);
 
   // Welcome + admin-notify emails (hosted instance only, idempotent, async).
   sendSignupEmails(user, req);
@@ -254,17 +260,25 @@ router.post('/register', (req, res) => {
  * - ui_mode / onboarded_at: per-account, server-side (a new browser keeps both).
  * Any failure degrades to the 2.x shape rather than failing /me.
  */
-function accountSummary(userId) {
+function accountSummary(userId, workspaceId) {
   const out = { self_hosted: config.selfHosted, ui_mode: 'advanced', onboarded_at: null,
     sponsor_prompt: false };
   try {
     const row = db.prepare('SELECT ui_mode, onboarded_at, subscription_status, created_at FROM users WHERE id = ?').get(userId);
     if (!row) return out; // support / recovery identities: full menu, no guide, no billing facts
-    out.ui_mode = row.ui_mode === 'simple' ? 'simple' : 'advanced';
+    // 'broadcast' is the full dashboard with the vision mixer as its home (views/mixer.js).
+    // Broadcast (the vision mixer and everything on it) exists on self-hosted instances only.
+    out.ui_mode = row.ui_mode === 'simple' ? 'simple' : (row.ui_mode === 'broadcast' && config.selfHosted ? 'broadcast' : 'advanced');
     out.onboarded_at = row.onboarded_at || null;
     out.sponsor_prompt = sponsorEligible(row.created_at);
     out.subscription_status = row.subscription_status || null;
-    const plan = require('../middleware/subscription').getUserPlan(userId);
+    // Whose plan the shell talks about: the person's own, or (limits per organization) the plan of
+    // the organization they are working in. A member with a trial of their own, working in an
+    // organization on a paid plan, was shown "Pro trial: 14 days left" over that organization.
+    const limits = require('../middleware/subscription');
+    const subject = limits.limitSubject(userId, workspaceId);
+    const plan = limits.subjectPlan(subject);
+    if (plan && subject.scope === 'org') out.subscription_status = plan.subscription_status || null;
     if (plan) {
       out.plan_name = plan.plan_display_name || plan.plan_name || null;
       out.plan_limits = { max_devices: plan.max_devices, max_storage_mb: plan.max_storage_mb };
@@ -539,7 +553,8 @@ function ensureVerificationEmail(user, req) {
 // The emailed link lands here (GET, unauthenticated — the user isn't logged in yet). We flip
 // the flag and redirect into the app with a flash flag, so there's no separate frontend route.
 router.get('/verify-email', (req, res) => {
-  const ok = emailVerify.consume(req.query.token);
+  const ok = emailVerify.consume(req.query.token);   // the user id, once; null for a used or unknown link
+  if (ok) logActivity(ok, 'auth:email_verified', null, null, getClientIp(req));
   return res.redirect(ok ? '/app#/login?verified=1' : '/app#/login?verify_error=1');
 });
 
@@ -785,6 +800,7 @@ router.post('/totp/enable', requireAuth, (req, res) => {
     .run(step, req.user.id);
   // 3.0: sessions that never passed the second factor end now; this one carries on with a new token.
   bumpTokenVersion(req.user.id);
+  logActivity(req.user.id, 'auth:totp_enabled', null, null, getClientIp(req));
   res.json({ enabled: true, recovery_codes: resetRecoveryCodes(req.user.id), token: generateToken(req.user, req.jwtWorkspaceId || null, { authTime: req.authTime }) }); // shown ONCE
 });
 
@@ -801,6 +817,7 @@ router.post('/totp/disable', requireAuth, (req, res) => {
     db.prepare('DELETE FROM totp_recovery_codes WHERE user_id = ?').run(req.user.id);
   })();
   bumpTokenVersion(req.user.id); // 3.0: see /totp/enable
+  logActivity(req.user.id, 'auth:totp_disabled', null, null, getClientIp(req));
   res.json({ enabled: false, token: generateToken(req.user, req.jwtWorkspaceId || null, { authTime: req.authTime }) });
 });
 
@@ -811,7 +828,9 @@ router.post('/totp/recovery-codes/regenerate', requireAuth, (req, res) => {
   const step = totp.verifyCode(req.body.code, totp.decryptSecret(u.totp_secret_enc), u.totp_last_step);
   if (!step) return res.status(400).json({ error: 'Invalid code' });
   db.prepare('UPDATE users SET totp_last_step = ? WHERE id = ?').run(step, req.user.id);
-  res.json({ recovery_codes: resetRecoveryCodes(req.user.id) });
+  const freshCodes = resetRecoveryCodes(req.user.id);
+  logActivity(req.user.id, 'auth:totp_recovery_codes_regenerated', null, null, getClientIp(req));
+  res.json({ recovery_codes: freshCodes });
 });
 
 // Second login step: exchange an mfa_pending token + a code (TOTP or recovery) for a
@@ -954,7 +973,7 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     // owner_plan_id: plans belong to the person who pays, the org owner. A workspace admin invited
     // into an Enterprise organization has a plan of their own (often free), so a check on their
     // plan alone hid Enterprise features such as white-label branding from them.
-    ? db.prepare(`SELECT o.id, o.name, COALESCE(o.widget_sandbox_isolation_disabled, 0) AS widget_sandbox_isolation_disabled, COALESCE(o.live_field_patch, 0) AS live_field_patch, COALESCE(o.pdf_max_edge, 1920) AS pdf_max_edge, u.plan_id AS owner_plan_id
+    ? db.prepare(`SELECT o.id, o.name, COALESCE(o.widget_sandbox_isolation_disabled, 0) AS widget_sandbox_isolation_disabled, COALESCE(o.live_field_patch, 0) AS live_field_patch, COALESCE(o.pdf_max_edge, 1920) AS pdf_max_edge, ${require('../middleware/subscription').billingSource() === 'org' ? 'o.plan_id' : 'u.plan_id'} AS owner_plan_id
         FROM organizations o LEFT JOIN users u ON u.id = o.owner_user_id WHERE o.id = ?`).get(req.organizationId)
     : null;
 
@@ -966,7 +985,7 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     hide_billing: config.hideBilling, // #116: client hides the Subscription nav + guards #/billing
     // 3.0: everything the app shell needs to pick a menu, a first-run route and a trial banner,
     // without a second request. See accountSummary().
-    ...accountSummary(req.user.id),
+    ...accountSummary(req.user.id, req.workspaceId),
     // #329: same idea as hide_billing above — a capability the client cannot infer without asking.
     // `enroll` decides whether the Servers nav appears (the honest "is this node part of a mesh in
     // any way?"); `hub` gates the aggregate reads (/mesh/orgs, /alerts, /uptime, /devices), which
@@ -1001,8 +1020,12 @@ router.get('/my-invites', requireAuth, (req, res) => {
   // An invite id is what accept-invite needs, and until now it was only ever in the emailed link. So
   // list them only to an account that has PROVED it owns the address: a self-hosted server issues a
   // session before verification, and anyone can register any address.
-  const me = db.prepare('SELECT email_verified FROM users WHERE id = ?').get(req.user.id);
+  const me = db.prepare('SELECT email_verified, email_proven FROM users WHERE id = ?').get(req.user.id);
   if (!me || me.email_verified === 0) return res.json({ invites, can_create_own: !!config.autoCreateOrgOnSignup, verify_required: !!me });
+  // An account an administrator created is verified (no banner) without its owner ever having
+  // shown they hold the address: the administrator set the password. The emailed invite link still
+  // works for the real owner; the list is simply not offered until a mailed link has been used.
+  if (me.email_proven === 0) return res.json({ invites, can_create_own: !!config.autoCreateOrgOnSignup, proof_required: true });
   try {
     invites = db.prepare(`SELECT i.id, i.role, i.expires_at, w.name AS workspace_name, o.name AS organization_name, u.email AS invited_by_email
                             FROM workspace_invites i JOIN workspaces w ON w.id = i.workspace_id
@@ -1052,7 +1075,7 @@ router.post('/switch-workspace', requireAuth, (req, res) => {
 router.put('/me', requireAuth, (req, res) => {
   const { name, password, current_password, email_alerts, ui_mode, onboarded } = req.body;
   // 3.0 preferences. Validated narrowly: anything else is ignored, not stored.
-  if (ui_mode === 'simple' || ui_mode === 'advanced') {
+  if (ui_mode === 'simple' || ui_mode === 'advanced' || (ui_mode === 'broadcast' && config.selfHosted)) {
     db.prepare("UPDATE users SET ui_mode = ?, updated_at = strftime('%s','now') WHERE id = ?").run(ui_mode, req.user.id);
   }
   if (onboarded === true) {
@@ -1088,6 +1111,7 @@ router.put('/me', requireAuth, (req, res) => {
     // `token` when present) so changing your password does not sign you out of the tab you did it in.
     bumpTokenVersion(req.user.id);
     freshToken = generateToken(req.user, req.jwtWorkspaceId || null, { authTime: req.authTime });
+    logActivity(req.user.id, 'auth:password_changed', null, null, getClientIp(req));
   }
   // ui_mode / onboarded_at are read back through GET /me (accountSummary), not here, so this keeps
   // the 2.x column list and works on any users table that has them.
@@ -1469,6 +1493,8 @@ router.post('/accept-invite/:inviteId', requireAuth, (req, res) => {
 
   // Stamp workspaceId so activityLogger captures tenant attribution.
   req.workspaceId = ws.id;
+  logActivity(req.user.id, 'workspace:invite_accepted',
+    `${ws.name} as ${existing ? existing.role + ' (already a member)' : invite.role}`, null, getClientIp(req), ws.id);
 
   res.json({
     workspace_id: ws.id,

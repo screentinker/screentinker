@@ -156,6 +156,8 @@ export function connectSocket() {
   });
 
   // Wall changed — dashboard refreshes wall cards + device-grouping layout
+  // This person's place in an organization changed (a hand-over, leaving): the page re-reads who they are.
+  dashboardSocket.on('dashboard:access-changed', () => emit('access-changed', {}));
   dashboardSocket.on('dashboard:wall-changed', () => {
     emit('wall-changed');
   });
@@ -230,9 +232,19 @@ export function watchDevice(deviceId) {
   if (dashboardSocket && dashboardSocket.connected) dashboardSocket.emit('dashboard:watch-device', { device_id: deviceId });
 }
 
-export function startRemote(deviceId) {
+// With a callback, the server's verdict comes back: { delivered: true } or { delivered: false,
+// reason: 'offline' | 'unsupported' }. 'no_ack' means nothing answered in time (a server from
+// before the answer existed, or a dropped socket).
+export function startRemote(deviceId, callback) {
   console.log('startRemote:', deviceId, 'socket connected:', dashboardSocket?.connected);
-  if (dashboardSocket) dashboardSocket.emit('dashboard:remote-start', { device_id: deviceId });
+  if (!dashboardSocket) { if (typeof callback === 'function') callback({ delivered: false, reason: 'no_ack' }); return; }
+  if (typeof callback === 'function') {
+    dashboardSocket.timeout(5000).emit('dashboard:remote-start', { device_id: deviceId }, (err, ack) => {
+      callback(err ? { delivered: false, reason: 'no_ack' } : (ack || { delivered: false, reason: 'no_ack' }));
+    });
+  } else {
+    dashboardSocket.emit('dashboard:remote-start', { device_id: deviceId });
+  }
 }
 
 export function stopRemote(deviceId) {

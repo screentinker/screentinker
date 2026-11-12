@@ -80,6 +80,67 @@ export async function mountDeleteAccountCard(el) {
     ${describeDeletion(info)}
     <button type="button" class="btn btn-danger btn-sm" data-delete-account ${info.blocked ? 'disabled' : ''}>${esc(t('account_delete.button'))}</button>`;
   el.querySelector('[data-delete-account]').addEventListener('click', () => openDeleteAccountDialog(info));
+  mountHandOver(el, info);
+}
+
+/*
+ * "Transfer ownership to another member" is what the blocked message tells the owner of a shared
+ * organization to do; this is where they do it (POST /api/organizations/:id/ownership). One row
+ * per shared organization they own: pick someone already in it, hand it over. Afterwards they are
+ * an organization admin there, and the card reloads to say what is still in the way, if anything.
+ */
+async function mountHandOver(el, info) {
+  const shared = (info.owned_organizations || []).filter((o) => o.shared);
+  if (!shared.length) return;
+  const token = () => localStorage.getItem('token');
+  const call = async (method, path, body) => {
+    const res = await fetch('/api' + path, { method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` }, body: body ? JSON.stringify(body) : undefined });
+    let data = null; try { data = await res.json(); } catch { /* */ }
+    return { status: res.status, data: data || {} };
+  };
+  const host = document.createElement('div');
+  host.className = 'org-handover';
+  host.style.cssText = 'margin-top:16px;padding-top:12px;border-top:1px solid var(--border)';
+  host.innerHTML = `<h4 style="font-size:13px;margin:0 0 8px">${esc(t('account_delete.handover.title'))}</h4>`;
+  el.appendChild(host);
+  for (const org of shared) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;font-size:13px';
+    row.innerHTML = `<span style="min-width:140px">${esc(org.name)}</span><span style="color:var(--text-muted)">${esc(t('common.loading'))}</span>`;
+    host.appendChild(row);
+    let own;
+    try { own = await call('GET', `/organizations/${encodeURIComponent(org.id)}/ownership`); } catch { own = { status: 0, data: {} }; }
+    if (!document.contains(row)) return;
+    const people = (own.data && own.data.candidates) || [];
+    if (own.status !== 200 || !people.length) {
+      row.lastElementChild.textContent = t('account_delete.handover.nobody');
+      continue;
+    }
+    row.innerHTML = `<span style="min-width:140px">${esc(org.name)}</span>
+      <select class="input" data-handover-to style="max-width:260px;padding:4px 8px;font-size:13px">
+        ${people.map((p) => `<option value="${esc(p.id)}">${esc(p.name ? `${p.name} (${p.email})` : p.email)}</option>`).join('')}
+      </select>
+      <button type="button" class="btn btn-secondary btn-sm" data-handover>${esc(t('account_delete.handover.button'))}</button>
+      <span data-handover-msg role="status" style="color:var(--text-muted)"></span>`;
+    const btn = row.querySelector('[data-handover]');
+    const msg = row.querySelector('[data-handover-msg]');
+    btn.addEventListener('click', async () => {
+      const sel = row.querySelector('[data-handover-to]');
+      const who = sel.options[sel.selectedIndex].textContent;
+      if (!confirm(t('account_delete.handover.confirm', { org: org.name, who }))) return;
+      btn.disabled = true; msg.textContent = '';
+      try {
+        let r = await call('POST', `/organizations/${encodeURIComponent(org.id)}/ownership`, { user_id: sel.value });
+        // While the person pays, the plan is the owner's: the server says what would change first.
+        if (r.status === 409 && r.data.code === 'PLAN_FOLLOWS_OWNER') {
+          if (!confirm(r.data.error + '\n\n' + t('account_delete.handover.confirm_plan'))) { btn.disabled = false; return; }
+          r = await call('POST', `/organizations/${encodeURIComponent(org.id)}/ownership`, { user_id: sel.value, acknowledge_plan_change: true });
+        }
+        if (r.status !== 200) { msg.textContent = r.data.error || t('account_delete.handover.failed'); btn.disabled = false; return; }
+        await mountDeleteAccountCard(el);   // reload: this organization is no longer in the way
+      } catch (err) { msg.textContent = err.message; btn.disabled = false; }
+    });
+  }
 }
 
 /** Leave to sign in again (single sign-on, or the login page), coming back to this route. */

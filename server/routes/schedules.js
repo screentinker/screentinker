@@ -210,6 +210,29 @@ function wallClockTimes(body, tz) {
   return { values };
 }
 
+/*
+ * A ONE-OFF's window, as the engine will read it. The form has two times and no end date, and an
+ * end earlier than the start means "through midnight" (a repeating schedule has always been read
+ * that way, and the calendar draws a one-off the same). But the engine compares a one-off as two
+ * full stamps, so both on one date with the end first is a window nothing is ever inside: saved,
+ * drawn as overnight, never run. Stored instead with the end on the following day, which every
+ * evaluator (server tick, preview, the players' offline plans) already understands.
+ * Returns { end } (the end to store, when it has to differ) or { error } or {}.
+ */
+const STAMP_RE = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}:\d{2})(.*)$/;
+function oneOffWindow(start, end, recurrence) {
+  if (recurrence) return {};
+  const s = STAMP_RE.exec(String(start || '').trim()), e = STAMP_RE.exec(String(end || '').trim());
+  if (!s || !e) return {};
+  const sDate = s.slice(1, 4).join('-'), eDate = e.slice(1, 4).join('-');
+  if (eDate < sDate) return { error: 'end_time is before start_time. A schedule has to end after it starts.' };
+  if (eDate > sDate || e[4] >= s[4]) return {};
+  const next = new Date(Date.UTC(Number(e[1]), Number(e[2]) - 1, Number(e[3]) + 1));
+  if (Number.isNaN(next.getTime())) return {};
+  const sep = String(end).trim().charAt(10);
+  return { end: next.toISOString().slice(0, 10) + sep + e[4] + e[5] };
+}
+
 // db/database.js migrateWallSchedules leaves a table it does not recognise alone.
 function wallSchedulesAvailable() {
   return db.prepare('PRAGMA table_info(schedules)').all().some((c) => c.name === 'wall_id');
@@ -418,7 +441,9 @@ router.post('/', (req, res) => {
   const wc = wallClockTimes(req.body, scheduleTz);
   if (wc.error) return res.status(400).json({ error: wc.error });
   const startTime = wc.values.start_time || start_time;
-  const endTime = wc.values.end_time || end_time;
+  const win = oneOffWindow(startTime, wc.values.end_time || end_time, recurrence);
+  if (win.error) return res.status(400).json({ error: win.error });
+  const endTime = win.end || wc.values.end_time || end_time;
 
   /*
    * ⚠️ CORPORATE: a screen head office's playlist plays on would never show this schedule — the
@@ -580,6 +605,17 @@ router.put('/:id', requireScheduleWrite, (req, res) => {
     Object.assign(req.body, wc.values);
   }
 
+  // Only when this edit changes the times or the repeat: an unrelated edit (a colour, a title) must
+  // not rewrite the times of a row saved before this rule and so start something that was not running.
+  if (req.body.start_time !== undefined || req.body.end_time !== undefined || req.body.recurrence !== undefined) {
+    const win = oneOffWindow(
+      req.body.start_time !== undefined ? req.body.start_time : schedule.start_time,
+      req.body.end_time !== undefined ? req.body.end_time : schedule.end_time,
+      req.body.recurrence !== undefined ? req.body.recurrence : schedule.recurrence);
+    if (win.error) return res.status(400).json({ error: win.error });
+    if (win.end) req.body.end_time = win.end;
+  }
+
   const fields = ['device_id', 'group_id', 'zone_id', 'content_id', 'widget_id', 'layout_id', 'playlist_id', 'title',
     'start_time', 'end_time', 'timezone', 'recurrence', 'recurrence_end', 'priority', 'enabled', 'color'];
   if (wallSchedulesAvailable()) fields.push('wall_id');
@@ -723,6 +759,7 @@ function parseRRule(rrule) {
 
   for (const part of parts) {
     const [key, val] = part.split('=');
+    if (val === undefined) continue;   // same rule as services/scheduler.js parseSimpleRRule: "BYDAY=" is still read (no days)
     switch (key) {
       case 'FREQ': rule.freq = val; break;
       case 'INTERVAL': rule.interval = parseInt(val); break;

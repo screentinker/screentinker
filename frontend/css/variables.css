@@ -1,4 +1,191 @@
+/*
+ * THEMES. The dashboard's whole look comes from the tokens below; a theme is one block of them,
+ * chosen by `data-theme` on <html> (js/theme-prime.js sets it before first paint, Settings >
+ * Appearance changes it).
+ *
+ *   (none) / graphite       the default. Neutral graphite that recedes so the SCREENS are the
+ *                           brightest thing on the page, one accent, state shown as a lit dot.
+ *   control-room            a television production gallery, played straight: a monitor wall with
+ *                           red tally and under-monitor labels, backlit switcher keys, a running
+ *                           timecode. Builds on Graphite.
+ *   light                   Graphite in daylight.
+ *   classic                 the 3.x look, kept exactly: slate surfaces, blue-to-violet gradients,
+ *                           the bar on top of every card.
+ *
+ * A white-label brand colour overwrites --accent / --accent-2 / --accent-3 on the root element
+ * (js/branding.js), in every theme.
+ *
+ * To add a theme: one `:root[data-theme="name"]` block here, one entry in js/lib/themes.js.
+ */
+
+/* Barlow, the type family drawn from highway and public signage (SIL OFL 1.1, vendor/fonts/barlow).
+   Bundled, never fetched: a self-hosted or offline instance looks the same. Scripts it does not
+   cover (Cyrillic, CJK, Devanagari) fall through to the system font behind it. */
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('/vendor/fonts/barlow/barlow-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 500; font-display: swap;
+  src: url('/vendor/fonts/barlow/barlow-latin-500-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 600; font-display: swap;
+  src: url('/vendor/fonts/barlow/barlow-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 700; font-display: swap;
+  src: url('/vendor/fonts/barlow/barlow-latin-700-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('/vendor/fonts/barlow/barlow-latin-ext-400-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 500; font-display: swap;
+  src: url('/vendor/fonts/barlow/barlow-latin-ext-500-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 600; font-display: swap;
+  src: url('/vendor/fonts/barlow/barlow-latin-ext-600-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 700; font-display: swap;
+  src: url('/vendor/fonts/barlow/barlow-latin-ext-700-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+
+/* ── Graphite (default) ─────────────────────────────────────────────────────────────────────── */
 :root {
+  color-scheme: dark;
+  --font-ui: 'Barlow', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+  /* Graphite, stepped by lightness. The room is dim so the monitors read. */
+  --bg-primary: #15171a;        /* the room */
+  --bg-secondary: #1b1e22;      /* the desk: sidebar, sections, dialogs */
+  --bg-card: #22262b;           /* things on the desk */
+  --bg-card-hover: #2a2f35;
+  --bg-input: #101214;          /* wells: fields, and the bezel around a screen */
+
+  --accent: #3b82f6;            /* the one brand colour */
+  --accent-hover: #5b9bff;
+  --accent-dim: #1f4fa3;
+  /* No second or third colour in this theme: both follow the accent, so nothing is a gradient. */
+  --accent-2: var(--accent);
+  --accent-3: var(--accent);
+  --grad-accent: var(--accent);
+  --grad-bar: none;
+
+  --text-primary: #eef0f2;
+  --text-secondary: #a6adb7;
+  --text-muted: #727a86;
+
+  /* Tally lights. */
+  --success: #3ddc84;
+  --success-dim: #123524;
+  --danger: #ff5a52;
+  --danger-dim: #3d1614;
+  --danger-text: #fca5a5;       /* words in red, on a dim red or on the desk */
+  --on-accent-dim: #ffffff;     /* words on --accent-dim */
+  --warning: #ffb224;
+  --warning-dim: #3a2a08;
+
+  --border: #2c3138;
+  --border-light: #3b424b;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.35);
+  --sidebar-width: 220px;
+  --transition: 0.16s ease;
+
+  /* What a screen thumbnail sits in, and the light it throws on the desk under it. */
+  --bezel: #07080a;
+  --screen-glow: 0 18px 40px -18px rgba(120, 170, 255, 0.35);
+  --on-accent: #ffffff;
+
+  /* Aliases for names some views use (drop indicators, the slide editor). */
+  --primary: var(--accent);
+  --surface: var(--bg-input);
+  --text: var(--text-primary);
+  --radius-md: var(--radius);
+}
+
+/* ── Control room: the production gallery ───────────────────────────────────────────────────── */
+:root[data-theme="control-room"] {
+  color-scheme: dark;
+  /* The gallery is blacked out; the desk is a matte console. */
+  --bg-primary: #0a0b0c;        /* the wall the monitors hang on */
+  --bg-secondary: #141618;      /* the desk */
+  --bg-card: #1c1f22;           /* a panel in the desk */
+  --bg-card-hover: #25292d;
+  --bg-input: #050606;
+
+  /* Backlit keys are amber. Red is reserved for one meaning only: this source is on air. */
+  --accent: #ffb21f;
+  --accent-hover: #ffc552;
+  --accent-dim: #5c3d00;
+  --accent-2: var(--accent);
+  --accent-3: var(--accent);
+  --grad-accent: var(--accent);
+  --grad-bar: none;
+  --on-accent: #1a1200;
+
+  --text-primary: #f2f1ec;
+  --text-secondary: #a9a79f;
+  --text-muted: #6f6d66;
+
+  --tally: #ff2a1f;             /* program: on air */
+  --success: #2fe07a;           /* preview: ready */
+  --success-dim: #0b3320;
+  --danger: #ff4a3d;
+  --danger-dim: #3f1310;
+  --danger-text: #fca5a5;
+  --on-accent-dim: #ffffff;
+  --warning: #ffb21f;
+  --warning-dim: #3d2a05;
+
+  --border: #2a2d30;
+  --border-light: #3d4145;
+  --radius: 4px;
+  --radius-lg: 6px;
+  --shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.6);
+  --bezel: #000000;
+  --screen-glow: 0 20px 44px -20px rgba(255, 60, 40, 0.35);
+}
+
+/* ── Light ──────────────────────────────────────────────────────────────────────────────────── */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-primary: #f3f4f6;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f1f3f5;
+  --bg-input: #f7f8fa;
+
+  --accent: #1f6feb;
+  --accent-hover: #1a5fd0;
+  --accent-dim: #cfe0fb;
+
+  --text-primary: #16191d;
+  --text-secondary: #4b5563;
+  --text-muted: #7b8490;
+
+  --success: #12833f;
+  --success-dim: #dcf5e6;
+  --danger: #c9302c;
+  --danger-dim: #fbe3e1;
+  --danger-text: #a3241a;
+  --on-accent-dim: #123d82;
+  --warning: #a35f00;
+  --warning-dim: #fdefd2;
+
+  --border: #dfe3e8;
+  --border-light: #c9cfd7;
+  --shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.10);
+
+  /* A screen is still a dark object in a bright room. */
+  --bezel: #111317;
+  --screen-glow: 0 14px 28px -16px rgba(15, 23, 42, 0.35);
+}
+
+/* ── Classic (the 3.x look, unchanged) ──────────────────────────────────────────────────────── */
+:root[data-theme="classic"] {
+  color-scheme: dark;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --bg-primary: #111827;
   --bg-secondary: #1f2937;
   --bg-card: #1e293b;
@@ -7,8 +194,7 @@
   --accent: #3b82f6;
   --accent-hover: #2563eb;
   --accent-dim: #1d4ed8;
-  /* The release palette (violet + green) that the gradients are built from. A white-label brand
-     colour overwrites all three accents (js/branding.js), so gradients fall back to that colour. */
+  /* The release palette (violet + green) that the gradients are built from. */
   --accent-2: #8b5cf6;
   --accent-3: #22c55e;
   --grad-accent: linear-gradient(135deg, var(--accent), var(--accent-2));
@@ -20,6 +206,8 @@
   --success-dim: #15803d;
   --danger: #ef4444;
   --danger-dim: #991b1b;
+  --danger-text: #fca5a5;
+  --on-accent-dim: #ffffff;
   --warning: #f59e0b;
   --warning-dim: #92400e;
   --border: #334155;
@@ -28,12 +216,7 @@
   --radius-lg: 12px;
   --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --sidebar-width: 220px;
   --transition: 0.2s ease;
-  /* Aliases for names some views use (drop indicators, the slide editor) that were never defined, so
-     their outlines and fields fell back to nothing. They follow the brand tokens above. */
-  --primary: var(--accent);
-  --surface: var(--bg-input);
-  --text: var(--text-primary);
-  --radius-md: var(--radius);
+  --bezel: #0f172a;
+  --screen-glow: none;
 }

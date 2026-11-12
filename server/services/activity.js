@@ -82,7 +82,7 @@ let auditDrops = 0;
 function auditDropCount() { return auditDrops; }
 
 function getActivity(options = {}) {
-  const { userId, deviceId, workspaceId, action, limit = 50, offset = 0 } = options;
+  const { userId, deviceId, workspaceId, alsoUserId, action, limit = 50, offset = 0 } = options;
   let sql = `SELECT al.*, u.name as user_name, u.email as user_email
     FROM activity_log al LEFT JOIN users u ON al.user_id = u.id WHERE 1=1`;
   const params = [];
@@ -97,7 +97,10 @@ function getActivity(options = {}) {
    * fetch everything and filter in the process, which is the shape that leaks the moment somebody
    * adds a count or a total.
    */
-  if (workspaceId) { sql += ' AND al.workspace_id = ?'; params.push(workspaceId); }
+  // alsoUserId: the workspace's rows plus that person's own (their rows that carry no workspace,
+  // or another one, stay visible to them as they always were).
+  if (workspaceId && alsoUserId) { sql += ' AND (al.workspace_id = ? OR al.user_id = ?)'; params.push(workspaceId, alsoUserId); }
+  else if (workspaceId) { sql += ' AND al.workspace_id = ?'; params.push(workspaceId); }
   if (action) { sql += ' AND al.action = ?'; params.push(action); }
 
   sql += ' ORDER BY al.created_at DESC LIMIT ? OFFSET ?';
@@ -153,7 +156,25 @@ function shouldAudit(req, res) {
   // A 5xx is OUR fault. Keep it whoever triggered it — that is the row worth having.
   if (res.statusCode >= 500) return true;
   // Everything else must belong to someone. An anonymous caller cannot write here.
-  return !!(req.user?.id || req.params?.deviceId || req.body?.device_id);
+  if (req.user?.id) return true;
+  return !!knownDeviceId(req);
+}
+
+/*
+ * ⚠️ "A KNOWN DEVICE" MEANS A ROW IN `devices`, NOT A VALUE IN THE REQUEST.
+ *
+ * This used to be `req.params.deviceId || req.body.device_id`: whatever the caller typed. So a
+ * refused anonymous request became an audit row as long as it named any device at all, real or
+ * invented, which is exactly the unlimited anonymous write the rule above forbids (and a
+ * non-string value went on to fail the insert, one [AUDIT-DROP] line per request).
+ *
+ * One primary-key lookup, and only for a finished mutation that carries no user.
+ */
+function knownDeviceId(req) {
+  const id = req.params?.deviceId || req.params?.id || req.body?.device_id;
+  if (typeof id !== 'string' || !id || id.length > 100) return null;
+  try { return db.prepare('SELECT 1 FROM devices WHERE id = ?').get(id) ? id : null; }
+  catch (_) { return null; }
 }
 
 /*
@@ -176,8 +197,12 @@ function activityLogger(req, res, next) {
       if (!shouldAudit(req, res)) return;
       const action = `${req.method} ${req.baseUrl || ''}${req.route?.path || req.path}`;
       const userId = req.user?.id;
-      const deviceId = req.params?.id || req.params?.deviceId || req.body?.device_id;
-      const details = summarizeAction(req);
+      // Only ever a string: the column is TEXT and a caller can send an object or an array here.
+      const rawDevice = req.params?.id || req.params?.deviceId || req.body?.device_id;
+      const deviceId = typeof rawDevice === 'string' ? rawDevice.slice(0, 100) : null;
+      // The summary is a convenience; the row is the record. A summary that cannot be built is left out.
+      let details = null;
+      try { details = summarizeAction(req); } catch { details = null; }
       logActivity(userId, action, details, deviceId, getClientIp(req), req.workspaceId || null, res.statusCode);
     } catch (e) {
       // A finish handler runs outside the request's error path: throwing here would be an
@@ -188,13 +213,24 @@ function activityLogger(req, res, next) {
   next();
 }
 
+// A request's own text, cut to a length worth reading in a log. Uncapped, one request could put
+// megabytes into a row.
+const SUMMARY_PART_MAX = 120;
+// Only text and numbers are quoted. String() THROWS on an object whose toString is not a function,
+// and a throw here lost the whole row: the action happened and was never logged.
+const brief = (v) => {
+  if (typeof v !== 'string' && typeof v !== 'number') return `[${Array.isArray(v) ? 'list' : typeof v}]`;
+  const s = String(v);
+  return s.length > SUMMARY_PART_MAX ? s.slice(0, SUMMARY_PART_MAX) + '...' : s;
+};
+
 function summarizeAction(req) {
   const parts = [];
-  if (req.body?.name) parts.push(`name: ${req.body.name}`);
-  if (req.body?.filename) parts.push(`file: ${req.body.filename}`);
+  if (req.body?.name) parts.push(`name: ${brief(req.body.name)}`);
+  if (req.body?.filename) parts.push(`file: ${brief(req.body.filename)}`);
   if (req.body?.pairing_code) parts.push('device paired');
-  if (req.body?.plan_id) parts.push(`plan: ${req.body.plan_id}`);
-  if (req.file?.originalname) parts.push(`uploaded: ${req.file.originalname}`);
+  if (req.body?.plan_id) parts.push(`plan: ${brief(req.body.plan_id)}`);
+  if (req.file?.originalname) parts.push(`uploaded: ${brief(req.file.originalname)}`);
   return parts.join(', ') || null;
 }
 

@@ -42,7 +42,13 @@
 const config = require('../config');
 const { db } = require('../db/database');
 const emailSvc = require('./email');
-const { TRIAL_DAYS, expireTrial, findExpiredTrialUserIds } = require('../middleware/subscription');
+const { TRIAL_DAYS, expireTrial, findExpiredTrialUserIds, billingTable } = require('../middleware/subscription');
+// Rows here are paying ACCOUNTS (billing_accounts): a person, or an organization with its owner as
+// the contact. `u.id` is the account id; `u.owner_user_id` is always a person.
+const SCREENS = `CASE WHEN u.organization_id IS NULL
+           THEN (SELECT COUNT(*) FROM devices d WHERE d.user_id = u.id)
+           ELSE (SELECT COUNT(*) FROM devices d JOIN workspaces w ON w.id = d.workspace_id WHERE w.organization_id = u.organization_id) END`;
+const LOCAL_OWNER = (alias) => require('../lib/replica-proxy').LOCAL_USERS_SQL(alias).split(`${alias}.id`).join(`${alias}.owner_user_id`);
 const { LOCAL_USERS_SQL } = require('../lib/replica-proxy');
 
 const SWEEP_HOUR_UTC = 14;     // 14:00 UTC daily: mid-morning US, afternoon EU — the emails land in a workday
@@ -181,8 +187,8 @@ const REACHABLE = "COALESCE(u.email_alerts, 1) = 1 AND (u.email_verified = 1 OR 
 // Trial still running, ENDING_SOON_DAYS or fewer left, not paid, still on the trial plan, not yet told.
 const ENDING_SOON_SQL = `
   SELECT u.id, u.email, u.name, u.trial_started + ${TRIAL_DAYS * 86400} AS trial_end,
-         (SELECT COUNT(*) FROM devices d WHERE d.user_id = u.id) AS screens
-    FROM users u
+         ${SCREENS} AS screens
+    FROM billing_accounts u
    WHERE u.trial_started IS NOT NULL
      AND u.trial_started + ${TRIAL_DAYS * 86400} > ${NOW}
      AND u.trial_started + ${TRIAL_DAYS * 86400} <= ${NOW} + ${ENDING_SOON_DAYS * 86400}
@@ -190,28 +196,43 @@ const ENDING_SOON_SQL = `
      AND u.plan_id = u.trial_plan
      AND u.trial_ending_email_sent_at IS NULL
      AND ${REACHABLE}
-     AND ${LOCAL_USERS_SQL('u')}`;
+     AND ${LOCAL_OWNER('u')}`;
 
 // Downgraded (by the sweep or the lazy path) within the window, still Free, not paid, not yet told.
 const EXPIRED_SQL = `
   SELECT u.id, u.email, u.name,
-         (SELECT COUNT(*) FROM devices d WHERE d.user_id = u.id) AS screens
-    FROM users u
+         ${SCREENS} AS screens
+    FROM billing_accounts u
    WHERE u.trial_expired_at IS NOT NULL
      AND u.trial_expired_at > ${NOW} - ?
      AND u.plan_id = 'free'
      AND u.stripe_subscription_id IS NULL
      AND u.trial_expired_email_sent_at IS NULL
      AND ${REACHABLE}
-     AND ${LOCAL_USERS_SQL('u')}`;
+     AND ${LOCAL_OWNER('u')}`;
 
 const USER_DEVICE_IDS_SQL = 'SELECT id FROM devices WHERE user_id = ?';
+const ORG_DEVICE_IDS_SQL = 'SELECT d.id FROM devices d JOIN workspaces w ON w.id = d.workspace_id WHERE w.organization_id = ?';
+const OWNED_ORG_DEVICE_IDS_SQL = `SELECT d.id FROM devices d JOIN workspaces w ON w.id = d.workspace_id
+  JOIN organizations o ON o.id = w.organization_id WHERE o.owner_user_id = ?`;
+/** Every screen whose limits just changed with this account: its own, or its organization's. */
+function accountDeviceIds(accountId) {
+  const limits = require('../middleware/subscription');
+  try {
+    if (billingTable() === 'organizations') return db.prepare(ORG_DEVICE_IDS_SQL).all(accountId);
+    const mine = db.prepare(USER_DEVICE_IDS_SQL).all(accountId);
+    if (limits.limitsScope() !== 'org') return mine;
+    const seen = new Set(mine.map((d) => d.id));
+    for (const d of db.prepare(OWNED_ORG_DEVICE_IDS_SQL).all(accountId)) if (!seen.has(d.id)) { seen.add(d.id); mine.push(d); }
+    return mine;
+  } catch { return db.prepare(USER_DEVICE_IDS_SQL).all(accountId); }
+}
 
 // After a send: stamp unless the transport was absent/dev-restricted (then a later, configured
 // run should still send). A transport ERROR is stamped — a bad address must not be retried nightly.
 function stampAfter(r, column, userId) {
   if (r && (r.reason === 'not_configured' || r.reason === 'dev_restricted')) return false;
-  db.prepare(`UPDATE users SET ${column} = strftime('%s','now') WHERE id = ?`).run(userId);
+  db.prepare(`UPDATE ${billingTable()} SET ${column} = strftime('%s','now') WHERE id = ?`).run(userId);
   return true;
 }
 
@@ -226,7 +247,7 @@ function pushDowngradedUserScreens(io, userId) {
     if (typeof buildPlaylistPayload !== 'function') return 0; // socket layer not set up (tests)
     const commandQueue = require('../lib/command-queue');
     const deviceNs = io.of('/device');
-    for (const d of db.prepare(USER_DEVICE_IDS_SQL).all(userId)) {
+    for (const d of accountDeviceIds(userId)) {
       commandQueue.queueOrEmitPlaylistUpdate(deviceNs, d.id, buildPlaylistPayload);
       pushed++;
     }

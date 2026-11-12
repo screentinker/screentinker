@@ -960,5 +960,5 @@ test('index.html: an interrupt change skips the #157 deferral and is never parke
   assert.match(body.slice(bypass, park), /kiosk\.hide\(\);[\s\S]*kioskDropHold\(\);/);
   // The deferral: gated on the interrupt set, compared old-vs-new.
   assert.match(body, /const interruptNow = interruptChanged\(oldPlaylist, playlist\);/);
-  assert.match(body, /if \(isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow\) \{\s*deferredRotation = true;/);
+  assert.match(body, /if \(isPlaying && !scheduleDriven && !outgoingNeverAdvances && !interruptNow[^)]*\) \{\s*deferredRotation = true;/);
 });

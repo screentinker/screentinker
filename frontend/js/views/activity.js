@@ -116,6 +116,8 @@ export async function render(container) {
         const timeStr = time.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
                         time.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
         const icon = getActionIcon(item.action);
+        // The request finished with a refusal or an error: word it as an attempt (see notCompleted).
+        const failed = notCompleted(item);
 
         return `
           <div style="display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);align-items:flex-start">
@@ -123,9 +125,10 @@ export async function render(container) {
             <div style="flex:1;min-width:0">
               <div style="font-size:13px">
                 <strong>${esc(item.user_name || item.user_email || t('activity.system'))}</strong>
-                <span style="color:var(--text-secondary)"> ${esc(formatAction(item.action))}</span>
+                <span style="color:var(--text-secondary)"> ${esc(formatAction(item.action, failed))}</span>
               </div>
-              ${item.details ? `<div style="font-size:12px;color:var(--text-muted);margin-top:2px">${esc(item.details)}</div>` : ''}
+              ${failed ? `<div style="font-size:12px;color:var(--warning,#d97706);margin-top:2px">${esc(t('activity.not_completed', { code: item.status_code }))}</div>` : ''}
+              ${item.details && !failed ? `<div style="font-size:12px;color:var(--text-muted);margin-top:2px">${esc(item.details)}</div>` : ''}
             </div>
             <div style="font-size:11px;color:var(--text-muted);white-space:nowrap;flex-shrink:0">${timeStr}</div>
           </div>
@@ -164,18 +167,30 @@ function getActionIcon(action) {
   return '&#128196;';
 }
 
+// <outcome>
+/*
+ * Every row carries the status its request finished with (activity_log.status_code). 400 and up
+ * means it was refused or failed, and the row must not read as a thing that happened: a widget
+ * save the server refused was listed as "created widget", a wrong pairing code as "device paired".
+ * Rows from before the status was recorded have none and read as they always did.
+ */
+function notCompleted(item) {
+  const code = Number(item && item.status_code);
+  return Number.isFinite(code) && code >= 400;
+}
+
 // Action verbs are user-visible; translate them through t() so they switch
 // languages with the rest of the UI. The mapping below preserves the original
 // verb-then-noun structure of the English version.
-function formatAction(action) {
+function formatAction(action, failed) {
   // Verbs
   let s = action
-    .replace('POST /api/', t('activity.verb_created') + ' ')
-    .replace('PUT /api/', t('activity.verb_updated') + ' ')
-    .replace('DELETE /api/', t('activity.verb_deleted') + ' ');
+    .replace('POST /api/', t(failed ? 'activity.verb_create_failed' : 'activity.verb_created') + ' ')
+    .replace('PUT /api/', t(failed ? 'activity.verb_update_failed' : 'activity.verb_updated') + ' ')
+    .replace('DELETE /api/', t(failed ? 'activity.verb_delete_failed' : 'activity.verb_deleted') + ' ');
   // Specific endpoints
   s = s
-    .replace('/provision/pair', t('activity.action_paired_device'))
+    .replace('/provision/pair', failed ? '/provision/pair' : t('activity.action_paired_device'))
     .replace('/content/remote', t('activity.action_added_remote_content'))
     .replace('/content', t('activity.noun_content'))
     .replace('/devices/:id', t('activity.noun_device'))
@@ -188,5 +203,6 @@ function formatAction(action) {
     .replace('alert:device_offline', t('activity.alert_device_offline'));
   return s;
 }
+// </outcome>
 
 export function cleanup() {}

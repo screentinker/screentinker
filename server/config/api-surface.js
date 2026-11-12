@@ -50,6 +50,8 @@ const PUBLIC_ROUTERS = [
   { path: '/api/activity',    mod: './routes/activity' },
   { path: '/api/kiosk',       mod: './routes/kiosk', renderBypass: true },
   { path: '/api/pip',         mod: './routes/pip' },
+  // The vision mixer: put a source on air on several screens at once (routes/mixer.js).
+  { path: '/api/mixer',       mod: './routes/mixer' },
   // Data Sources (iCal, APIs, etc.) for dynamic slide template interpolation
   { path: '/api/data-sources', mod: './routes/data-sources' },
   // Trigger DEFINITIONS. ⚠️ Public (token-reachable) on purpose — an integrator provisioning a site
@@ -90,6 +92,8 @@ const PUBLIC_ROUTERS = [
 ];
 
 const JWT_ONLY_ROUTERS = [
+  // Stream outputs of the vision mixer: holds stream keys and starts encoders, so session only.
+  { path: '/api/stream-out',  mod: './routes/stream-out',   tenancy: true },
   /*
    * Hosted AI images paid in org credits (docs/ai-credits.md). BEFORE /api/ai: Express walks mounts
    * in order, and listing it after would run /api/ai's auth + tenancy first for every hosted call.
