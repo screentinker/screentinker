@@ -84,7 +84,10 @@
   // ---------------------------------------------------------------- the player frame
   function playerUrl() {
     var path = supportsModernPlayer() ? '/player' : '/player/legacy';
-    return serverUrl + path + '?host=webos&v=' + encodeURIComponent(APP_VERSION_FALLBACK);
+    // autoplay_audio=1 (#627): an unattended signage panel has nobody to tap for sound, and the
+    // frame is mounted with allow="autoplay". The player still checks that sound really is allowed
+    // before using it; operator mutes, wall followers and the remote mute apply as everywhere.
+    return serverUrl + path + '?host=webos&autoplay_audio=1&v=' + encodeURIComponent(APP_VERSION_FALLBACK);
   }
 
   function supportsModernPlayer() {

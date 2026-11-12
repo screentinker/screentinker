@@ -9,6 +9,7 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 # The WebRTC host page lives in its own Qt-free module (a test builds it without PySide6); re-exported
 # here so existing imports keep working.
 from .rtc_page import rtc_page  # noqa: F401
+from ..logic import queue_chime as QC
 
 log = logging.getLogger("extras")
 
@@ -73,6 +74,79 @@ class SlideAudio:
         self.vo.stop()
         self.music.stop()
         self.music_id = None
+
+
+class QueueChimePlayer:
+    """Plays the "Now serving" chime (logic/queue_chime.py) once: PCM synthesised here, through a
+    QAudioSink on the default output, so nothing is downloaded, no file is written, and it never
+    loops. The engine has already decided that it may sound (engine.on_queue_chime); the volume is
+    baked into the samples, and the system mixer (the device volume) applies on top as it does to
+    every other item. Tests never construct this: it is the only thing that makes a noise."""
+
+    def __init__(self):
+        self._live = []            # (sink, buffer) until each has played out
+
+    def _format(self, device):
+        from PySide6.QtMultimedia import QAudioFormat
+        want = QAudioFormat()
+        want.setSampleRate(QC.SAMPLE_RATE)
+        want.setChannelCount(1)
+        want.setSampleFormat(QAudioFormat.SampleFormat.Int16)
+        if device.isFormatSupported(want):
+            return want
+        pref = device.preferredFormat()
+        alt = QAudioFormat()
+        alt.setSampleRate(pref.sampleRate() or QC.SAMPLE_RATE)
+        alt.setChannelCount(max(1, min(8, pref.channelCount() or 2)))
+        alt.setSampleFormat(QAudioFormat.SampleFormat.Int16)
+        return alt if device.isFormatSupported(alt) else None
+
+    def play(self, volume):
+        """True when the sound was started, False when there is no usable output."""
+        from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+        from PySide6.QtMultimedia import QAudio, QAudioSink, QMediaDevices
+        device = QMediaDevices.defaultAudioOutput()
+        if device.isNull():
+            return False
+        fmt = self._format(device)
+        if fmt is None:
+            return False
+        pcm = QC.pcm16(volume, fmt.sampleRate())
+        ch = fmt.channelCount()
+        if ch > 1:                 # the same mono samples on every channel
+            frames = [pcm[i:i + 2] for i in range(0, len(pcm), 2)]
+            pcm = b"".join(f * ch for f in frames)
+        buf = QBuffer()
+        buf.setData(QByteArray(pcm))
+        buf.open(QIODevice.OpenModeFlag.ReadOnly)
+        sink = QAudioSink(device, fmt)
+        entry = (sink, buf)
+        self._live.append(entry)
+        done = {"v": False}
+
+        def finish():
+            if done["v"]:
+                return
+            done["v"] = True
+            try:
+                sink.stop()
+                buf.close()
+            except RuntimeError:
+                pass
+            if entry in self._live:
+                self._live.remove(entry)
+            sink.deleteLater()
+
+        def on_state(state):
+            # Idle = the buffer ran out (played to the end); Stopped = an error. Never restarted.
+            if state in (QAudio.State.IdleState, QAudio.State.StoppedState):
+                QTimer.singleShot(0, finish)
+
+        sink.stateChanged.connect(on_state)
+        sink.start(buf)
+        ms = int(1000 * QC.total_samples(fmt.sampleRate()) / fmt.sampleRate())
+        QTimer.singleShot(ms + 1500, finish)   # the floor under a backend that never reports Idle
+        return sink.error() == QAudio.Error.NoError
 
 
 class TriggerOverlay:

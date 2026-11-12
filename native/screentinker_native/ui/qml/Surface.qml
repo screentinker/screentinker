@@ -32,8 +32,10 @@ Item {
         var f = frontSlot()
         if (item && f.item && f.isReady && (item.kind === "web" || item.kind === "youtube")
                 && f.item.kind === item.kind && f.item.source === item.source && !item.html && !f.item.html) {
-            // Same page already up: adopt the new token, keep the view.
+            // Same page already up: adopt the new token, keep the view. A widget's chime bridge is
+            // re-installed with the new mount's token (the page itself is not reloaded).
             f.item = item
+            f.installChime()
             current = item
             stage.slotEvent(surfaceId, item.token, "ready", "")
             stage.slotEvent(surfaceId, item.token, "shown", "reused")
@@ -112,6 +114,7 @@ Item {
         onEnded: stage.slotEvent(surface.surfaceId, item ? item.token : "", "ended", "")
         onYtLength: function(sec) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "yt_length", String(sec)) }
         onBundleSkip: function(detail) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "bundle_skip", detail) }
+        onQueueChime: function(detail) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "queue_chime", detail) }
         onFailed: function(msg) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "failed", msg) }
         onPosition: function(p, d) { if (front) stage.slotPosition(surface.surfaceId, item ? item.token : "", p, d) }
         onFisheyeTouch: function(detail) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "fisheye_touch", detail) }
@@ -127,6 +130,7 @@ Item {
         onEnded: stage.slotEvent(surface.surfaceId, item ? item.token : "", "ended", "")
         onYtLength: function(sec) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "yt_length", String(sec)) }
         onBundleSkip: function(detail) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "bundle_skip", detail) }
+        onQueueChime: function(detail) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "queue_chime", detail) }
         onFailed: function(msg) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "failed", msg) }
         onPosition: function(p, d) { if (front) stage.slotPosition(surface.surfaceId, item ? item.token : "", p, d) }
         onFisheyeTouch: function(detail) { stage.slotEvent(surface.surfaceId, item ? item.token : "", "fisheye_touch", detail) }

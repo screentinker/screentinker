@@ -105,6 +105,7 @@ def test_wall_follower_audio_is_muted_like_video(tmp_path):
 def _render(e, fe, it, surface):
     fe._new_token = types.MethodType(e.PlaybackEngine._new_token, fe)
     fe._attach_fisheye = lambda *a: None
+    fe._attach_chime = lambda *a: None
     fe.shaders = types.SimpleNamespace(resolve=lambda t: None)
     fe.item_dict = types.MethodType(e.PlaybackEngine.item_dict, fe)
     return e.PlaybackEngine.render(fe, it, surface=surface)

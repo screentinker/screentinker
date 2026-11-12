@@ -87,6 +87,10 @@ class MediaPlayerManager(
         }
     }
     private var bundleBridgeInstalled = false
+    // The "Now serving" chime bridge (QueueChimeBridge), installed once on the shared WebView.
+    private var chimeBridgeInstalled = false
+    /** The full-screen widget's own mute (its item's flag, or the live mute toggle). Set before showWidget. */
+    var widgetMuted = false
     private val tokenRandom = java.security.SecureRandom()
     private val bundleMount = BundleSkip.MountToken {
         val b = ByteArray(16); tokenRandom.nextBytes(b)
@@ -637,7 +641,8 @@ class MediaPlayerManager(
 
     // Fullscreen widget render (single-zone / "fullscreen" layouts). Reuses the
     // full-screen WebView; ZoneManager handles widgets in multi-zone layouts.
-    fun showWidget(url: String) {
+    fun showWidget(url: String, muted: Boolean = widgetMuted) {
+        widgetMuted = muted
         // A solo-widget playlist re-shows the SAME item every duration_sec, and a playlist refresh
         // re-issues the current item too. Re-navigating the WebView for a URL it already has is a
         // visible flash, and it destroys widget state - a half-typed directory search, scroll
@@ -663,6 +668,14 @@ class MediaPlayerManager(
 
         youtubeWebView?.apply {
             com.remotedisplay.player.util.WebViewSupport.configure(this, "Widget", webLoadState)
+            if (!chimeBridgeInstalled) {
+                // Asked at the moment of each call: only a widget render page on screen now, on a
+                // screen that may be heard (QueueChimeBridge: this WebView also shows YouTube and bundles).
+                addJavascriptInterface(QueueChimeBridge("full screen", {
+                    currentType == MediaType.WIDGET && QueueChime.isWidgetPage(currentWidgetUrl) && !widgetMuted && mayBeHeard()
+                }), QueueChime.BRIDGE)
+                chimeBridgeInstalled = true
+            }
             loadUrl(url)
         }
     }
@@ -1054,6 +1067,7 @@ class MediaPlayerManager(
             MediaType.VIDEO -> exoPlayer?.volume = if (muted) 0f else 1f
             MediaType.YOUTUBE -> setYoutubeMuted(muted)   // #129: was a no-op for YouTube
             MediaType.LIVE_INPUT -> liveInput?.setMuted(muted)
+            MediaType.WIDGET -> widgetMuted = muted   // the queue chime (QueueChimeBridge)
             else -> {}
         }
     }
@@ -1112,6 +1126,13 @@ class MediaPlayerManager(
      */
     private var talkMute = false
     private var talkPausedByUs = false
+    /**
+     * May anything on this screen make a sound right now, apart from each item's own mute: not a wall
+     * follower, no trigger alarm covering the screen, no talk/PA call. The queue chime asks this
+     * (in a zone too, through ZoneManager.mayBeHeard).
+     */
+    fun mayBeHeard(): Boolean = !(wallMute || triggerMute || talkMute)
+
     fun setTalkMute(mute: Boolean) {
         if (talkMute == mute) return
         talkMute = mute

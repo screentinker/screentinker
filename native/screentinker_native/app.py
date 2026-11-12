@@ -44,7 +44,7 @@ from .system.audience import AudienceController
 from .system.power_schedule import PowerSchedule
 from .system.status_display import LastProblem, StatusDisplay
 from .system.updater import Updater
-from .ui.extras import SlideAudio, TriggerOverlay, new_frame_key, rtc_page
+from .ui.extras import QueueChimePlayer, SlideAudio, TriggerOverlay, new_frame_key, rtc_page
 from .ui.kiosk import KioskSession
 from .ui.stage import Stage
 from .version import VERSION
@@ -98,6 +98,7 @@ class App:
         self.transitions_dir = self._find_transitions()
         self.engine = PlaybackEngine(self)
         self.slide_audio_player = SlideAudio(lambda: self.config.server_url)
+        self.queue_chime_player = None  # created on the first chime (ui/extras.QueueChimePlayer)
         self.triggers_ui = TriggerOverlay(self)
         self.power = PowerSchedule(self.config, self._apply_power_schedule, lambda st: None)
         self.loop = None
@@ -335,7 +336,8 @@ class App:
         elif event == "device:remote-key":
             self.on_ui(lambda: self._remote_key(str(d.get("keycode") or "")))
         elif event == "device:mute-changed":
-            self.on_ui(lambda: self.engine.set_muted_for(str(d.get("content_id") or ""), bool(d.get("muted"))))
+            self.on_ui(lambda: self.engine.set_muted_for(str(d.get("content_id") or ""), bool(d.get("muted")),
+                                                         str(d.get("widget_id") or "")))
         elif event == "device:pip-show":
             self.on_ui(lambda: self._pip_show(d))
         elif event == "device:pip-clear":
@@ -886,10 +888,33 @@ class App:
     def _apply_power_schedule(self, off):
         self.set_blank(off, reason="schedule")
 
+    def may_be_heard(self):
+        """May anything on this screen make a sound right now, apart from each item's own mute: the
+        screen is on, no talk/PA call, no screen share, no trigger alarm over the content."""
+        return not (self.blanked or self.talk_active or bool(self.share_id) or bool(self.stage.triggerVisible))
+
     def restore_mute(self):
-        muted = self.blanked or self.talk_active or bool(self.share_id) or bool(self.stage.triggerVisible)
+        muted = not self.may_be_heard()
         self.stage.set("muted", muted)
         self.slide_audio_player.set_master(1.0, muted)
+
+    def content_volume(self):
+        """The in-app gain every item plays at (stage.volume: 1.0 while the system mixer holds the
+        device volume, else the level set_volume could not give the mixer)."""
+        try:
+            v = float(self.stage.volume)
+        except (TypeError, ValueError):
+            return 1.0
+        return max(0.0, min(1.0, v)) if v == v else 1.0
+
+    def play_queue_chime(self, volume, where):
+        """The "Now serving" chime, already allowed by engine.on_queue_chime (ui/extras.QueueChimePlayer)."""
+        if self.queue_chime_player is None:
+            self.queue_chime_player = QueueChimePlayer()
+        if self.queue_chime_player.play(volume):
+            self.log_remote("info", "QueueChime", "chime (%s) at %d%%" % (where, round(volume * 100)))
+        else:
+            self.log_remote("warn", "QueueChime", "chime (%s) could not play: no usable audio output" % where)
 
     # ------------------------------------------------------------------ screenshots / remote
     def _capture(self):

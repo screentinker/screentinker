@@ -76,3 +76,67 @@ test('the inlined script is ES5 and parses on its own', () => {
   assert.doesNotMatch(js, /\b(const|let|class)\b|=>|`/);
   assert.doesNotThrow(() => new vm.Script(js));
 });
+
+/*
+ * Android mounts the widget as the WebView's top-level page, so there is no parent to postMessage:
+ * the page calls the STQueueChime bridge instead (android QueueChime.kt). In an iframe (the web
+ * player) it posts to the parent and never touches a bridge.
+ */
+function runWidget({ topLevel, bridge }) {
+  const html = renderQueueWidget({ widgetId: 'w1', origin: 'http://x', config: { queue_id: 'q', chime: true, chime_volume: 40 },
+    initial: { now_serving: 3, call_seq: 5, rev: '1.9', sound: true } });
+  const js = html.split('<script>')[1].split('</script>')[0];
+  const xhrs = [];
+  function XHR() { xhrs.push(this); }
+  XHR.prototype.open = function () {};
+  XHR.prototype.send = function () {};
+  const el = () => ({ textContent: '', className: '', offsetWidth: 0 });
+  const els = {};
+  const posted = [];
+  const win = { STQueueChime: bridge };
+  const parent = topLevel ? win : { postMessage: (m) => posted.push(m) };
+  win.parent = parent;
+  Object.assign(win, {
+    document: { getElementById: (id) => (els[id] = els[id] || el()) },
+    location: { search: '?device=d1', protocol: 'http:' },
+    XMLHttpRequest: XHR, setInterval: () => 0, JSON, Date, String, Number, Math, encodeURIComponent,
+  });
+  win.window = win;
+  vm.runInNewContext(js, win);
+  const answer = (resp) => { const x = xhrs[xhrs.length - 1]; x.readyState = 4; x.status = 200; x.responseText = JSON.stringify(resp); x.onreadystatechange(); };
+  return { answer, xhrs, posted, els };
+}
+
+test('on Android (top-level page) a called number reaches the STQueueChime bridge once', () => {
+  const calls = [];
+  const w = runWidget({ topLevel: true, bridge: { chime: (v) => calls.push(v) } });
+  w.answer({ rev: '1.10', now_serving: 4, call_seq: 6, sound: true, waiting: 1 });
+  assert.equal(w.els.num.textContent, '4');
+  assert.deepEqual(calls, ['0.4'], 'one chime, with the widget volume as a string');
+  assert.equal(w.posted.length, 0);
+});
+
+test('on Android the bridge is not called for the number the page was drawn with, or with sound off', () => {
+  const calls = [];
+  const w = runWidget({ topLevel: true, bridge: { chime: (v) => calls.push(v) } });
+  w.answer({ rev: '1.9', now_serving: 3, call_seq: 5, sound: true, waiting: 0 });
+  assert.equal(calls.length, 0, 'same call as drawn');
+  const w2 = runWidget({ topLevel: true, bridge: { chime: (v) => calls.push(v) } });
+  w2.answer({ rev: '1.10', now_serving: 4, call_seq: 6, sound: false, waiting: 0 });
+  assert.equal(calls.length, 0, 'staff switch off');
+});
+
+test('in an iframe (web player) the page posts to its parent and never calls a bridge', () => {
+  const calls = [];
+  const w = runWidget({ topLevel: false, bridge: { chime: (v) => calls.push(v) } });
+  w.answer({ rev: '1.10', now_serving: 4, call_seq: 6, sound: true, waiting: 0 });
+  assert.equal(calls.length, 0);
+  assert.equal(w.posted.length, 1);
+  assert.equal(w.posted[0].type, 'st-queue-chime');
+});
+
+test('a top-level page with no bridge (any other player) stays silent and does not throw', () => {
+  const w = runWidget({ topLevel: true, bridge: undefined });
+  assert.doesNotThrow(() => w.answer({ rev: '1.10', now_serving: 4, call_seq: 6, sound: true, waiting: 0 }));
+  assert.equal(w.els.num.textContent, '4');
+});

@@ -143,6 +143,9 @@ ${queueWidgetStep.toString()}
   function chime() {
     // Ask the player; it owns the sound (see lib/queue/widget.js). One message per called number.
     try { if (window.parent && window.parent !== window) window.parent.postMessage({ type: 'st-queue-chime', volume: CFG.volume, widget_id: CFG.widgetId }, '*'); } catch (e) { /* no player */ }
+    // The Android player mounts the widget as the WebView's top-level page (no parent to tell), so
+    // it exposes a bridge instead (QueueChime.kt). It applies the same rules as the web player.
+    try { if (window.parent === window && window.STQueueChime && typeof window.STQueueChime.chime === 'function') window.STQueueChime.chime(String(CFG.volume)); } catch (e) { /* no bridge */ }
   }
   if (CFG.preview) { view.number = 42; paint(view); return; }
   if (CFG.initial) {

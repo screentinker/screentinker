@@ -141,6 +141,64 @@ function stNewSkipGuard() {
 })();
 
 /*
+ * "Now serving" chime (server/lib/queue/widget.js). The queue widget only ASKS, with
+ * {type:'st-queue-chime', volume, widget_id}; the rules are window.StQueueChime (js/queue-chime.js),
+ * this is WHO may ask and WHAT decides silence. Every widget-render frame (full screen, zone, wall
+ * zone) is registered when it is mounted, with a function that answers "is this frame silent now?"
+ * from the same rule its path applies to video: a wall follower, a wall zone this panel does not
+ * voice, the operator's live mute (device:mute-changed, noted by app.js through stNoteLiveMute) and
+ * the item's own flag. A message counts only when its source is a registered frame's window, so not
+ * another frame, not one the widget embeds, and not a frame already taken off the screen (a removed
+ * iframe has no contentWindow). The widget id in the message is not trusted: the registration says
+ * which item the frame is. Same behaviour as the web player's playQueueChime (server/player/index.html).
+ * window.__stChimeMediaVolume (set by app.js) is the media volume the chime is scaled by.
+ */
+var stChimeFrames = [];
+var stChimeGate = (typeof StQueueChime !== 'undefined') ? new StQueueChime.Gate() : null;
+var stChimeCtx = null;
+var stLiveMute = {};   // widget_id -> the operator's last live mute toggle for it
+function stRegisterChimeFrame(f, silentFn) {
+  for (var i = stChimeFrames.length - 1; i >= 0; i--) { if (!stChimeFrames[i].f.contentWindow) stChimeFrames.splice(i, 1); }
+  stChimeFrames.push({ f: f, silent: silentFn });
+  if (stChimeFrames.length > 32) stChimeFrames.shift();
+}
+function stNoteLiveMute(data) {
+  if (data && data.widget_id) stLiveMute[String(data.widget_id)] = !!data.muted;
+}
+function stLiveMuteFor(item) {
+  var id = item && item.widget_id ? String(item.widget_id) : '';
+  return id && Object.prototype.hasOwnProperty.call(stLiveMute, id) ? stLiveMute[id] : null;
+}
+function stChimeMediaVolume() {
+  try { return typeof window.__stChimeMediaVolume === 'function' ? window.__stChimeMediaVolume() : null; } catch (e) { return null; }
+}
+function stQueueChime(reg, data) {
+  var d = StQueueChime.decide({
+    silent: reg.silent(), volume: data.volume, mediaVolume: stChimeMediaVolume(), now: Date.now(), gate: stChimeGate,
+  });
+  if (!d.play) return;
+  if (!stChimeCtx) {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    stChimeCtx = new AC();
+  }
+  StQueueChime.play(stChimeCtx, d.level);
+}
+(function () {
+  if (typeof window === 'undefined' || !window.addEventListener) return;
+  window.addEventListener('message', function (ev) {
+    if (typeof StQueueChime === 'undefined' || !ev || !ev.source || !StQueueChime.isChimeMessage(ev.data)) return;
+    for (var i = 0; i < stChimeFrames.length; i++) {
+      var r = stChimeFrames[i];
+      if (r.f.contentWindow && r.f.contentWindow === ev.source && r.f.isConnected !== false) {
+        try { stQueueChime(r, ev.data); } catch (e) { /* sound is optional; never disturb playback */ }
+        return;
+      }
+    }
+  });
+})();
+
+/*
  * A HOLD item (server/lib/hold-item.js): show nothing new for the item's duration.
  *   hold://blank   the screen / zone goes to its background
  *   hold://freeze  the outgoing picture stays up, paused
@@ -1652,6 +1710,15 @@ PlaylistPlayer.prototype.renderWidget = function (item, single) {
   setTimeout(reveal, 4000); // fallback: reveal even if a blocked widget never fires load
   f.src = src;
   this.stage.appendChild(f);
+  // "Now serving" chime: silent for a wall follower, under the operator's live mute or the item's
+  // own, and once this frame's item is no longer the one playing (the anti-flash swap above keeps
+  // the outgoing frame mounted for a moment; it must not chime for a screen that has moved on).
+  stRegisterChimeFrame(f, function () {
+    if (self.wallFollower) return true;
+    var cur = self.getCurrentItem();
+    if (!cur || cur !== item) return true;
+    return StQueueChime.silent({ follower: false, liveMuted: stLiveMuteFor(item), itemMuted: !!item.muted });
+  });
   if (!single) this.schedule(this.durationMs(item));
 };
 
@@ -2072,7 +2139,10 @@ ZoneRenderer.prototype.showItem = function (zone, list, index) {
         });
       }
     } else if (a.widget_type || (a.widget_id && !a.content_id)) {
-      zone.el.appendChild(zrFrame(this.getBase() + '/api/widgets/' + a.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '?d=') + '&rev=' + (a.widget_rev || 0) + (a.transparent_bg ? '&transparent=1' : '')));
+      var wf = zrFrame(this.getBase() + '/api/widgets/' + a.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '?d=') + '&rev=' + (a.widget_rev || 0) + (a.transparent_bg ? '&transparent=1' : ''));
+      zone.el.appendChild(wf);
+      // "Now serving" chime: the zone item's live mute, then its own flag (zones are never a wall).
+      stRegisterChimeFrame(wf, function () { return StQueueChime.silent({ follower: false, liveMuted: stLiveMuteFor(a), itemMuted: !!a.muted }); });
       if (multi) this.scheduleAdvance(zone, dur, advance);
     } else if (mime === BUNDLE_MIME) {
       // A zone bundle is the same server-flattened document as the fullscreen one, sandboxed for
@@ -2642,7 +2712,11 @@ WallZoneRenderer.prototype.element = function (zs, a, opts) {
   var fit = WallZoneRenderer.fit(a, zs.zone);
   if (stIsHold(a)) return null;   // never a URL: hold://… has no file
   if (a.widget_id && !a.content_id) {
-    return { el: zrFrame(this.getBase() + '/api/widgets/' + a.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '?d=') + '&rev=' + (a.widget_rev || 0) + (a.transparent_bg ? '&transparent=1' : '')), video: null };
+    var wzf = zrFrame(this.getBase() + '/api/widgets/' + a.widget_id + '/render' + (this.getDeviceId() ? '?device=' + encodeURIComponent(this.getDeviceId()) : '?d=') + '&rev=' + (a.widget_rev || 0) + (a.transparent_bg ? '&transparent=1' : ''));
+    // "Now serving" chime: the wall's audio rule (one panel voices each zone), then the live mute
+    // and the item's flag, exactly as WallZoneRenderer.muted decides for this zone's video.
+    stRegisterChimeFrame(wzf, function () { return StQueueChime.silent({ follower: !zs.audio, liveMuted: stLiveMuteFor(a), itemMuted: !!a.muted }); });
+    return { el: wzf, video: null };
   }
   if (mime === BUNDLE_MIME) {
     var bf = zrFrame(this.getBase() + '/api/content/' + a.content_id + '/bundle?rev=' + (a.content_rev || 0) + (a.transparent_bg ? '&transparent=1' : ''));

@@ -83,7 +83,26 @@ Screens follow the same sound rules as the rest of their content, so the chime d
 - the screen is muted (from the dashboard, or the playlist item is muted), or it is a follower in a video wall, or an emergency alert is playing;
 - the browser has not been allowed to play sound. On the **web player**, either click the screen once, or start it with `?autoplay_audio=1` on a kiosk browser that allows sound (see the web player notes).
 
-Today the chime is played by the **web player** (any browser or kiosk browser showing `/player`). The other players (Android, the native Pi and Windows player, Tizen, webOS, BrightSign, Roku) show the number but stay silent.
+Which players chime:
+
+- **Web player** (any browser or kiosk browser showing `/player`): needs a click once, or `?autoplay_audio=1` on a kiosk browser that allows sound.
+- **webOS and BrightSign**: they run the web player, and their apps start it with sound allowed.
+- **Android** (phones, tablets, Android TV, Fire TV): full screen, in a zone, or on a video wall. It plays as media, so the device's media volume (and the remote volume control) applies on top of the widget's own volume.
+- **Samsung Tizen**: full screen, in a zone, or on a video wall. No click needed; the volume set from the dashboard applies.
+- **Native Pi and Windows player**: full screen, in a zone, or on a video wall, through the system's default sound output (the device volume and the remote volume control apply). It also stays silent while the screen is turned off or during a screen share.
+- **Roku**: chimes too, from a sound built into the Roku app (see below).
+- **Samsung SSSP3**: does not show the Now serving widget yet.
+
+On a video wall only the screen that plays that zone's sound chimes, so the wall chimes once, not once per panel. Everywhere, the chime stays silent on a wall follower, when the playlist item showing the widget is muted (the live mute toggle applies straight away), and on Android and the native player during a trigger alarm or a talk/PA call. A burst of calls within 3 seconds is one chime.
+
+**On a Roku** the widget is a picture the server draws, so the widget cannot make the sound itself. Instead, while the widget is on screen, the Roku asks the server for the queue every 4 seconds (the same answer the widget reads) and plays the chime from a short sound file built into the Roku app. The rules are the same:
+
+- both switches above must be on, and the chime plays at the widget's volume (on top of the TV's own volume);
+- it plays only when a number is called while the widget is on screen. The number already showing when the widget comes on screen (after a restart, or when it comes round again in a playlist) never chimes, and neither does a call made while another item was showing;
+- at most one chime every 3 seconds, so a quick run of calls is one chime;
+- it stays silent when the playlist item is muted, while the screen is black for a power schedule or a screen-off command, on a follower in a video wall or sync group, and while the Roku waits for OK because Autoplay is off in its settings.
+
+The Roku asks for the queue only while a widget with its chime switched on is showing, and stops when it leaves the screen. The picture of the widget is refreshed exactly as before.
 
 ## Recent activity
 
@@ -110,5 +129,5 @@ The staff page and the dashboard show the last 20 things that happened in the qu
 - **The widget shows a number but a dot in the corner.** The screen cannot reach the server; it will catch up by itself when it can.
 - **"This staff link is not valid any more."** It was replaced or turned off. Copy the current one from the dashboard.
 - **"This queue link is not active."** The QR code was replaced (Settings → New QR code) or the queue deleted. Print the current code.
-- **No chime.** Check the widget's chime and volume, the queue's **Chime on the screens** switch, that the screen is not muted, and that the screen is a web player that has been clicked once or started with `?autoplay_audio=1`.
+- **No chime.** Check the widget's chime and volume, the queue's **Chime on the screens** switch, that the screen is not muted, and that the player is one that chimes (see [Sound](#sound)): a web player needs one click or `?autoplay_audio=1`, an Android player needs its media volume up, a native Pi or Windows player needs its system volume up and a sound output. On Android and on the native player the device log (live debug panel) says `QueueChime: chime refused` with the reason when a chime was asked for but not allowed; the native player also logs `could not play: no usable audio output` when the device has no sound output it can use.
 - **Numbers restarted at the wrong time.** Check the queue's timezone under Settings.

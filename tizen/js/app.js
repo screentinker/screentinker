@@ -513,6 +513,9 @@
     });
     // #129 real-time per-item mute — apply immediately if the toggled item is the one on screen now.
     socket.on('device:mute-changed', function (data) {
+      // The "Now serving" chime follows the same toggle, for whichever frame shows that widget (full
+      // screen or a zone), before the on-screen check below (player.js stNoteLiveMute).
+      try { if (typeof stNoteLiveMute === 'function') stNoteLiveMute(data); } catch (e) {}
       try {
         var item = player.getCurrentItem();
         var v = player.getCurrentVideo();
@@ -596,6 +599,10 @@
   // context), and remembers the level so items mounted LATER inherit it — media elements are
   // created per item, so a one-shot set would last only until the playlist advanced.
   var mediaVolume = null;   // 0..1, null = never set
+  var tvVolumeSet = false;  // the last level went to the TV's own volume (tvaudiocontrol)
+  // The "Now serving" chime's scale (player.js). When the TV's own volume took the level it already
+  // scales every sound the app makes, Web Audio included, so the chime is not attenuated twice.
+  window.__stChimeMediaVolume = function () { return tvVolumeSet ? null : mediaVolume; };
 
   /*
    * ⚠️ THE WIRE FORMAT IS `level`, AND IT IS A 0..1 FRACTION.
@@ -629,6 +636,7 @@
     if (tv) {
       try {
         tv.setVolume(Math.round(n));
+        tvVolumeSet = true;
         reportCmd('info', 'set_volume', 'TV volume set to ' + Math.round(n) + '% (tvaudiocontrol)');
         return;
       } catch (e) {
@@ -636,6 +644,7 @@
         reportCmd('warn', 'set_volume', 'tvaudiocontrol refused (' + (e && e.message ? e.message : e) + ') — using media volume');
       }
     }
+    tvVolumeSet = false;
     applyMediaVolume();
     reportCmd('info', 'set_volume', 'media volume set to ' + Math.round(n) + '%');
   }

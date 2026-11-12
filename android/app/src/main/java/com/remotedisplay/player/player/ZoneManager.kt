@@ -44,6 +44,8 @@ class ZoneManager(
     /** How often zone videos are checked for a stall (PlaybackStall needs 10 s of no progress to call it). */
     private val HEALTH_TICK_MS = 2_000L
     private val handler = Handler(Looper.getMainLooper())
+    /** Whether the screen may make a sound at all (MediaPlayerManager.mayBeHeard). Set by MainActivity. */
+    var mayBeHeard: () -> Boolean = { true }
     private val zoneViews = mutableMapOf<String, View>()
     private val zoneExoPlayers = mutableMapOf<String, ExoPlayer>()
     /*
@@ -398,6 +400,11 @@ class ZoneManager(
                     "&rev=" + wRev +
                     com.remotedisplay.player.util.WidgetUrls.transparentParam(a.optInt("transparent_bg", 0) == 1) +
                     com.remotedisplay.player.util.WidgetUrls.panelFragment(a.optString("widget_panel", ""))
+                // The "Now serving" chime (QueueChimeBridge): honoured only while this zone item is
+                // still the one mounted, is not muted, and the screen may be heard.
+                webView.addJavascriptInterface(QueueChimeBridge("zone '${zone.name}'", {
+                    zoneGeneration[zone.id] == gen && !isMuted && mayBeHeard()
+                }), QueueChime.BRIDGE)
                 webView.loadUrl(wUrl)
                 webView.layoutParams = params
                 addZoneView(zone, webView)

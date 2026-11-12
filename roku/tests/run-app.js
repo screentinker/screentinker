@@ -9,7 +9,11 @@
  * it with the deep link server=<local>, pairs the code it shows through the dashboard API, gives the
  * display an image, a short generated video, a clock widget and two generated audio files (a WAV
  * that must be played, an Ogg that must be skipped with a log line), and reads the player's "[st]" console
- * lines to check it showed each of them and reported plays.
+ * lines to check it showed each of them and reported plays. A "Now serving" queue widget with its
+ * chime on comes first: once its frame is on screen, staff press Next and the player must ask for
+ * exactly one chime, after the call and not before, and play it. That part needs a rendered frame,
+ * so it is checked only where the server has Chromium (CHROME_PATH; required with EXPECT_RASTER;
+ * allow --seconds 110, renders are slow).
  *
  * ⚠️ brs-node is a simulator. It runs the BrightScript and the SceneGraph node tree faithfully enough
  * to catch crashes, wrong field types and protocol mistakes; it does not decode video. The video item
@@ -103,7 +107,16 @@ function dropFirstRegisterProxy(target) {
     const clock = await srv.widget('clock', 'Lobby clock', { timezone: 'America/Chicago' });
     // a widget the Roku cannot draw itself: shown as a server-rendered frame
     const note = await srv.widget('text', 'Welcome note', { html: '<h1 style="color:#fff;font:700 96px sans-serif;text-align:center;margin-top:40vh">Welcome to the lobby</h1>' });
-    console.log(`content: image ${img.id}, video ${vid.id}, clock widget ${clock.id}`);
+    // "Now serving" with its chime on: the Roku polls the queue itself and chimes on a call
+    // (source/lib/queuechime.brs). Three customers take a number so staff can press Next.
+    const queue = await srv.api('/queues', { method: 'POST', body: JSON.stringify({ name: 'Pharmacy', timezone: 'America/Chicago' }) });
+    const qToken = String(queue.customer_path).split('/').pop();
+    for (let i = 0; i < 3; i++) {
+      await fetch(`${srv.base}/api/public/queue/c/${qToken}/ticket`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_id: `roku-test-${i}` }) });
+    }
+    const qw = await srv.widget('queue', 'Now serving', { queue_id: queue.id, chime: true, chime_volume: 60 });
+    const qKey = String(qw.id).replace(/[^A-Za-z0-9-]/g, '').slice(0, 48);
+    console.log(`content: image ${img.id}, video ${vid.id}, clock widget ${clock.id}, queue widget ${qw.id}`);
 
     const zip = packageApp(work);
     fixBrsNode(BRS_CLI);   // unique roUrlTransfer identities, as on a Roku (lib/brs-fixes.js)
@@ -113,6 +126,8 @@ function dropFirstRegisterProxy(target) {
     let deviceId = null;
     let pairing = false;
     let pressedAt = -1;
+    let calledAt = -1;      // index in `seen` when staff pressed Next on the queue
+    let calling = false;
     let buf = '';
     const onData = async (d) => {
       buf += d;
@@ -131,12 +146,22 @@ function dropFirstRegisterProxy(target) {
               .catch((e) => fail('ECP keypress: ' + e.message));
           }, 3000);
         }
+        // The queue widget's frame is on screen (and its first poll has primed it): staff press Next.
+        if (!calling && line.includes(`on screen tmp:/st/${qKey}`)) {
+          calling = true;
+          setTimeout(() => {
+            calledAt = seen.length;
+            srv.api(`/queues/${queue.id}/next`, { method: 'POST', body: '{}' })
+              .then((r) => console.log(`  test> staff pressed Next: now serving ${r && r.now_serving}`))
+              .catch((e) => fail('queue next: ' + e.message));
+          }, 1500);
+        }
         const m = line.match(/\[st\] pairing: code (\d{6})/);
         if (m && !pairing) {
           pairing = true;
           try {
-            deviceId = await srv.pairAndAssign(m[1], [{ content_id: img.id, duration_sec: 6 }, { content_id: vid.id }, { content_id: wav.id }, { content_id: ogg.id }, { widget_id: clock.id, duration_sec: 8 }, { widget_id: note.id, duration_sec: 8 }]);
-            console.log(`  test> paired ${deviceId}; assigned and published image, video, audio (wav + ogg), clock`);
+            deviceId = await srv.pairAndAssign(m[1], [{ widget_id: qw.id, duration_sec: 20 }, { content_id: img.id, duration_sec: 6 }, { content_id: vid.id }, { content_id: wav.id }, { content_id: ogg.id }, { widget_id: clock.id, duration_sec: 8 }, { widget_id: note.id, duration_sec: 8 }]);
+            console.log(`  test> paired ${deviceId}; assigned and published queue, image, video, audio (wav + ogg), clock, note`);
           } catch (e) { fail('pair/assign: ' + e.message); }
         }
       }
@@ -149,7 +174,7 @@ function dropFirstRegisterProxy(target) {
     if (proxy && !proxy.wasDropped()) fail('--drop-first-register: no device:register POST was ever seen to drop');
     if (proxy && !has(/session closed: post (timeout|rejected)/)) fail('--drop-first-register: the app never gave up on the dropped POST');
     if (!has(/\[st\] pairing: code \d{6}/)) fail('the app never showed a pairing code');
-    if (!has(/\[st\] payload: items=6/)) fail('the app never received the 6-item playlist');
+    if (!has(/\[st\] payload: items=7/)) fail('the app never received the 7-item playlist');
     if (!has(/\[st\] launch: complete/)) fail('the AppLaunchComplete beacon was never signalled');
     if (pressedAt < 0) fail('with Autoplay off the player never waited for OK');
     else {
@@ -170,7 +195,24 @@ function dropFirstRegisterProxy(target) {
     if (!has(/show raster Welcome note/)) fail('the text widget was never started');
     if (!has(/\[st\] play: play_start/)) fail('no play_start was reported');
     if (process.env.EXPECT_RASTER && !has(/on screen tmp:\/st\//)) fail('no server-rendered frame reached the screen');
-    if (process.env.EXPECT_TZ && !has(/payload: items=6 tz=America\/Chicago\/\d+/)) fail('the payload carried no tz_table');
+    if (process.env.EXPECT_TZ && !has(/payload: items=7 tz=America\/Chicago\/\d+/)) fail('the payload carried no tz_table');
+    // The queue chime. Only when the widget's frame reached the screen: with no Chromium (CI) the
+    // frame is a 501, the item is skipped, and there is nothing on screen to chime for.
+    if (!has(/show raster Now serving/)) fail('the queue widget was never started');
+    const queueOnScreen = has(new RegExp(`on screen tmp:/st/${qKey}`));
+    if (process.env.EXPECT_RASTER && !queueOnScreen) fail('the queue widget frame never reached the screen');
+    if (queueOnScreen) {
+      const asked = seen.findIndex((l) => /\[st\] .*queue called \d+, asking for the chime/.test(l));
+      if (calledAt < 0) fail('staff never pressed Next (the queue frame was on screen)');
+      else if (asked < 0) fail('a number was called while the queue widget was on screen, and no chime was asked for');
+      else if (asked < calledAt) fail('a chime was asked for before any number was called (never on load): ' + seen[asked]);
+      if (!has(/\[st\] queue: chime at volume 60/)) fail('MainScene never played the chime');
+      const asks = seen.filter((l) => /asking for the chime/.test(l)).length;
+      if (asks !== 1) fail(`one call asked for ${asks} chimes`);
+      console.log(`  test> queue chime: asked ${asks}x, played: ${has(/\[st\] queue: chime at volume 60/)}`);
+    } else {
+      console.log('  test> queue chime: not checked (the queue widget frame was not rendered here: no Chromium?)');
+    }
     const crashes = seen.filter((l) => /BRIGHTSCRIPT: ERROR|Runtime Error/i.test(l));
     if (crashes.length) { fail('BrightScript errors:'); for (const c of crashes.slice(0, 10)) console.log('   ' + c); }
     // A playlist push must not restart playback from item one (#234).

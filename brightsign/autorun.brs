@@ -163,6 +163,10 @@ Function PlayerUrl(cfg As Object, screen As Integer) As String
     url = url + "&sync_backend=" + cfg.sync_backend
     if cfg.device_id <> "" then url = url + "&device_id=" + cfg.device_id
     if screen > 1 then url = url + "&screen=" + Stri(screen).Trim()
+    ' autoplay_audio=1 (#627): nobody taps an unattended BrightSign for sound. The player still checks
+    ' that sound really is allowed before using it; operator mutes, wall followers and the remote
+    ' mute apply as everywhere. Without it every video and the queue chime played silent.
+    url = url + "&autoplay_audio=1"
     return url
 End Function
 

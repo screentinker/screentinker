@@ -46,6 +46,9 @@ function TST_RunCase(c as object) as string
     if k = "power" then return TST_Power(c)
     if k = "playorder" then return TST_PlayOrder(c)
     if k = "zonefill" then return TST_ZoneFill(c)
+    if k = "queuechime" then return TST_QueueChime(c)
+    if k = "queuechimecfg" then return TST_QueueChimeCfg(c)
+    if k = "queuechimefollower" then return TST_QueueChimeFollower(c)
     return "unknown case kind " + TST_S(k)
 end function
 
@@ -146,6 +149,51 @@ function TST_PlayOrder(c as object) as string
 end function
 
 ' #657: ST_ZoneFill (util.brs) — the fill behind a zone.
+' One screen through a run of queue polls, wired the way ZonePlayer (step, per mount) and
+' MainScene (gate, screen-wide) wire it.
+function TST_QueueChime(c as object) as string
+    cc = ST_QueueChimeConfig(c.config)
+    state = ST_QueueChimeNew()
+    muted = ST_IsTrue(c.muted)
+    lastMs& = -1&
+    bad = ""
+    if ST_QueueChimeVolume(cc.volume) <> c.volume then bad = "volume=" + TST_S(cc.volume) + " want " + TST_S(c.volume) + "; "
+    for i = 0 to c.steps.Count() - 1
+        s = c.steps[i]
+        if ST_IsTrue(s.remount) then
+            state = ST_QueueChimeNew()
+            muted = ST_IsTrue(c.muted)
+        end if
+        if s.mute <> invalid then muted = s.mute
+        ms& = TST_Long(s.ms)
+        out = ST_QueueChimeStep(state, s.resp, { chimeOn: cc.chime, volume: cc.volume, muted: muted })
+        played = false
+        if out.chime then
+            flags = { blank: ST_IsTrue(s.blank), follower: ST_IsTrue(s.follower), held: ST_IsTrue(s.held) }
+            if ST_QueueChimeGate(lastMs&, ms&, flags) then
+                played = true
+                lastMs& = ms&
+            end if
+        end if
+        if played <> c.expect[i] then bad = bad + "step " + i.ToStr() + " played=" + TST_S(played) + " want " + TST_S(c.expect[i]) + "; "
+    end for
+    return bad
+end function
+
+function TST_QueueChimeCfg(c as object) as string
+    got = ST_QueueChimeConfig(c.config)
+    bad = ""
+    if got.chime <> c.expect.chime then bad = bad + "chime=" + TST_S(got.chime) + " want " + TST_S(c.expect.chime) + "; "
+    if got.volume <> c.expect.volume then bad = bad + "volume=" + TST_S(got.volume) + " want " + TST_S(c.expect.volume) + "; "
+    return bad
+end function
+
+function TST_QueueChimeFollower(c as object) as string
+    got = ST_QueueChimeFollower(c.payload)
+    if got <> c.want then return "follower=" + TST_S(got) + " want " + TST_S(c.want)
+    return ""
+end function
+
 function TST_ZoneFill(c as object) as string
     got = ST_ZoneFill(c.layoutZone, c.background)
     if got <> c.want then return "got " + got + " want " + c.want
