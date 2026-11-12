@@ -337,6 +337,8 @@ class MainActivity : AppCompatActivity() {
         zoneManager = ZoneManager(this, rootView as FrameLayout) {
             playlistController.onVideoComplete()
         }
+        // The queue chime in a zone obeys the same screen-wide silence as everything else.
+        zoneManager?.mayBeHeard = { !::mediaPlayer.isInitialized || mediaPlayer.mayBeHeard() }
         campaignPlayer = CampaignPlayer(
             stage = rootView,
             zones = { zoneManager },
@@ -1718,8 +1720,13 @@ class MainActivity : AppCompatActivity() {
         // otherwise it's already persisted server-side and lands via the next playlist update.
         wsService?.onMuteChanged = { data ->
             val contentId = if (data.isNull("content_id")) "" else data.optString("content_id", "")
+            val widgetId = if (data.isNull("widget_id")) "" else data.optString("widget_id", "")
             val current = playlistController.currentContentId ?: ""
-            if (contentId.isNotEmpty() && contentId == current && ::mediaPlayer.isInitialized) {
+            // A widget item has no content_id; the server names it by widget_id (lib/mute-sync.js).
+            // Its mute silences the "Now serving" chime (QueueChimeBridge).
+            val isCurrent = if (contentId.isNotEmpty()) contentId == current
+                else widgetId.isNotEmpty() && widgetId == playlistController.currentItem?.widgetId
+            if (isCurrent && ::mediaPlayer.isInitialized) {
                 mediaPlayer.setVideoMuted(data.optBoolean("muted", false))
             }
         }
@@ -1819,7 +1826,7 @@ class MainActivity : AppCompatActivity() {
                 com.remotedisplay.player.util.WidgetUrls.transparentParam(item.transparentBg) +
                 com.remotedisplay.player.util.WidgetUrls.panelFragment(item.widgetPanel)
             Log.i("MainActivity", "Playing widget fullscreen: ${url.substringBefore('#')}")
-            mediaPlayer.showWidget(url)
+            mediaPlayer.showWidget(url, item.muted)
             wsService?.sendPlaybackState(item.contentId.ifEmpty { item.widgetId ?: "" }, 0f)
             return
         }
