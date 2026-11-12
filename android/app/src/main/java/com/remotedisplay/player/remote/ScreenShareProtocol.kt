@@ -174,8 +174,13 @@ object ScreenShareProtocol {
         return if (spot != null && spot in order) listOf(spot) else order.take(MAX_TILES)
     }
 
-    /** Whose sound plays: the server's choice when it names one of ours, else the newest session. */
-    fun audioId(order: List<String>, layout: Layout): String? {
+    /**
+     * Whose sound plays: the server's choice when it names one of ours, else the newest session.
+     * Nobody's while [suppressed] (#845: a trigger overlay is on screen); the layout is untouched, so
+     * the same presenter is heard again once it clears.
+     */
+    fun audioId(order: List<String>, layout: Layout, suppressed: Boolean = false): String? {
+        if (suppressed) return null
         val a = layout.audio
         return if (a != null && a in order) a else order.lastOrNull()
     }
@@ -185,6 +190,9 @@ object ScreenShareProtocol {
      * on screen. The server never sends a fifth; this is the backstop, as in the web receiver.
      */
     fun toReplace(order: List<String>): List<String> = order.take(maxOf(0, order.size - MAX_TILES + 1))
+
+    /** #845: the meeting-room code shows when there is one and no trigger overlay is on screen. */
+    fun codeShown(code: Code?, suppressed: Boolean): Boolean = code != null && !suppressed
 
     /** The frame round each tile: none for a lone tile (exactly as a single share always looked). */
     fun tileBorderPx(visible: Int): Int = if (visible > 1) TILE_BORDER_PX else 0

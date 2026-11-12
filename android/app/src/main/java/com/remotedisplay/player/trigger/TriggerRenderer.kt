@@ -19,4 +19,11 @@ interface TriggerRenderer {
     /** @return false if nothing could be rendered — the trigger did NOT fire. */
     fun show(trigger: TriggerResolve.Trigger): Boolean
     fun hide()
+
+    /**
+     * #845: the state machine has finished an operation (a verdict, a lease sweep, a stop). Whatever
+     * show/hide calls it made are all queued by now, so this is the one point where "is an overlay on
+     * screen" is settled; see TriggerPresence. Optional: a renderer that reports nothing ignores it.
+     */
+    fun settled() {}
 }

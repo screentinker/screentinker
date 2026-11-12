@@ -57,5 +57,5 @@ class ScreenShareSessions<R : Any> {
         if (stopId.isNullOrEmpty()) byId.values.toList() else listOfNotNull(byId[stopId])
 
     fun visibleIds(): List<String> = ScreenShareProtocol.visibleIds(order, layout)
-    fun audioId(): String? = ScreenShareProtocol.audioId(order, layout)
+    fun audioId(suppressed: Boolean = false): String? = ScreenShareProtocol.audioId(order, layout, suppressed)
 }

@@ -32,6 +32,11 @@ object ScreenShareBus {
         fun onLayout(layout: ScreenShareProtocol.Layout)
         /** The meeting-room code to show in the corner, or null to hide it. */
         fun onCode(code: ScreenShareProtocol.Code?)
+        /**
+         * #845: a trigger overlay is on screen (true) or the last one has gone (false). While true
+         * every tile and the code are hidden; the sessions stay connected underneath.
+         */
+        fun onSuppress(on: Boolean) {}
     }
 
     private class Session(val start: ScreenShareProtocol.Start) {
@@ -49,6 +54,7 @@ object ScreenShareBus {
             // Late attach: bring the new window up to date.
             if (value != null) main.post {
                 try {
+                    value.onSuppress(suppressed)   // first: a share painted below must start hidden
                     val snap = synchronized(lock) { sessions.values.map { Triple(it.start, it.track, it.egl) } }
                     for ((s, t, e) in snap) {
                         value.onShareStart(s)
@@ -64,6 +70,32 @@ object ScreenShareBus {
     val active: Boolean get() = synchronized(lock) { sessions.isNotEmpty() }
     @Volatile var layout: ScreenShareProtocol.Layout = ScreenShareProtocol.Layout.NONE; private set
     @Volatile var code: ScreenShareProtocol.Code? = null; private set
+
+    /*
+     * #845: an emergency / automation alert outranks a screen share. The server ends shares and drops
+     * the code for alerts it knows about; a trigger fired at this screen directly (local HTTP/UDP) is
+     * only known here, so TriggerOverlay reports it through [suppress]. Mirrors STScreenShare.suppress
+     * in server/lib/screen-share-player.js.
+     */
+    @Volatile var suppressed: Boolean = false; private set
+
+    /** The sound side (ScreenShareController, in the service): re-decide who is heard. */
+    @Volatile var onSuppressChanged: ((Boolean) -> Unit)? = null
+
+    /**
+     * Hide (true) or bring back (false) every share, the code and the share sound. Idempotent. Called
+     * on the main thread (TriggerOverlay); the window is told at once, in the same message that put
+     * the alert up, so the share is never drawn over it.
+     */
+    fun suppress(on: Boolean) {
+        if (suppressed == on) return
+        suppressed = on
+        val run = {
+            try { listener?.onSuppress(on) } catch (_: Throwable) {}
+            try { onSuppressChanged?.invoke(on) } catch (_: Throwable) {}
+        }
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) run() else main.post { run() }
+    }
 
     fun start(s: ScreenShareProtocol.Start) {
         synchronized(lock) { sessions[s.sessionId] = Session(s) }

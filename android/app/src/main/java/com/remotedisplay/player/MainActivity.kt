@@ -304,8 +304,12 @@ class MainActivity : AppCompatActivity() {
             setBaseAudioSuppressed = { on ->
                 try { if (::mediaPlayer.isInitialized) mediaPlayer.setTriggerMute(on) } catch (e: Throwable) { }
                 try { slideAudioPlayer?.setMuted(on) } catch (e: Throwable) { }
-            }
-        ) { level, message -> wsService?.sendLog("trigger", level, message) }
+            },
+            log = { level, message -> wsService?.sendLog("trigger", level, message) },
+            // #845: an alert outranks a screen share. While any trigger is on screen every share tile,
+            // the meeting-room code and the share sound give way; sessions stay connected.
+            onPresence = { on -> com.remotedisplay.player.remote.ScreenShareBus.suppress(on) }
+        )
         /*
          * ⚠️ The trigger stack is ASSEMBLED HERE, in the Activity, because the trigger overlay is a
          * View and cannot live anywhere else. The inbound control door (Goal B part 3) shares its

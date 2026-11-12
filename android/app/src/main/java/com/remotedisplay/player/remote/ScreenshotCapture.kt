@@ -63,6 +63,10 @@ class ScreenshotCapture {
             val textureViews = mutableListOf<TextureView>()
             findAllTextureViews(view, textureViews)
             for (tv in textureViews) {
+                // A share's frames are drawScreenShare's alone: it knows which tiles are on screen,
+                // and a share hidden under a trigger (#845) sits in an INVISIBLE container whose
+                // TextureViews are themselves still VISIBLE.
+                if (tv is ShareVideoView) continue
                 if (tv.isAvailable && tv.visibility == View.VISIBLE) {
                     val tvBitmap = tv.bitmap
                     if (tvBitmap != null) {

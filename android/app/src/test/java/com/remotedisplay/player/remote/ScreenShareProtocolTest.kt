@@ -200,6 +200,22 @@ class ScreenShareProtocolTest {
         assertNull(ScreenShareProtocol.audioId(emptyList(), layout(null, "a")))
     }
 
+    /** #845: a trigger on screen silences every share; the layout still says who comes back. */
+    @Test fun nobodyIsHeardWhileSuppressed() {
+        val order = listOf("a", "b", "c")
+        assertNull(ScreenShareProtocol.audioId(order, layout(null, "a"), suppressed = true))
+        assertNull(ScreenShareProtocol.audioId(order, layout(null, null), suppressed = true))
+        assertEquals("a", ScreenShareProtocol.audioId(order, layout(null, "a"), suppressed = false))
+    }
+
+    @Test fun theCodeIsHiddenWhileSuppressed() {
+        val c = ScreenShareProtocol.parseCode(JSONObject().put("code", "K7QM-3XHP").put("url", "https://signage.example.com/share"))
+        org.junit.Assert.assertNotNull(c)
+        org.junit.Assert.assertTrue(ScreenShareProtocol.codeShown(c, suppressed = false))
+        org.junit.Assert.assertFalse(ScreenShareProtocol.codeShown(c, suppressed = true))
+        org.junit.Assert.assertFalse(ScreenShareProtocol.codeShown(null, suppressed = false))
+    }
+
     @Test fun parsesTheLayoutEvent() {
         val l = ScreenShareProtocol.parseLayout(JSONObject().put("spotlight", "s_1").put("audio", "s-2").put("count", 3))
         assertEquals(ScreenShareProtocol.Layout("s_1", "s-2", 3), l)
