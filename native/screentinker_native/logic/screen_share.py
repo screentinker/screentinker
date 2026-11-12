@@ -65,3 +65,46 @@ def parse_code(d):
         except (ValueError, TypeError):
             qr = None
     return code, shown, qr
+
+
+class Suppression:
+    """#845: a trigger (an emergency / automation alert) outranks a screen share. While ANY trigger
+    overlay is on screen every share is hidden and silent; the sessions stay connected and come back
+    as they were when the last trigger clears. The server ends shares for alerts it knows about, but
+    a trigger fired at this screen directly (net/triggers.py) is only known here.
+
+    QML hides the share layers itself from stage.triggerVisible (TalkVideo.qml, ShareCode.qml), in the
+    same frame. This tells the WebRTC page, which owns the share's SOUND, through ST.shareSuppress.
+    It acts on the SETTLED state: a lease expiry with a held trigger runs hide() then show() back to
+    back, so every change is deferred to the next event-loop turn and only a value that differs from
+    the last one sent goes out. No audio blip, one page call per real change.
+
+        want()      the state right now (stage.triggerVisible)
+        send(on)    pushes it to the page
+        defer(fn)   runs fn on the next event-loop turn (QTimer.singleShot(0, fn) in the app)
+    """
+
+    def __init__(self, want, send, defer):
+        self._want, self._send, self._defer = want, send, defer
+        self.sent = False
+        self._pending = False
+
+    def wanted(self):
+        return bool(self._want())
+
+    def poke(self, *_):
+        if self._pending:
+            return
+        self._pending = True
+        self._defer(self._settle)
+
+    def _settle(self):
+        self._pending = False
+        on = self.wanted()
+        if on != self.sent:
+            self.sent = on
+            self._send(on)
+
+
+def suppress_js(on):
+    return "ST.shareSuppress(%s)" % ("true" if on else "false")

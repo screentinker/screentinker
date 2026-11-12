@@ -85,6 +85,17 @@ class ScreenShareSessionsTest {
         assertNull(s.audioId())
     }
 
+    /** #845: suppressed while a trigger is up, then the SAME presenter is heard again. */
+    @Test fun suppressionSilencesAllAndRestoresTheSamePresenter() {
+        val s = filled("a", "b", "c")
+        s.layout = ScreenShareProtocol.Layout(null, "a", 3)
+        assertNull(s.audioId(suppressed = true))
+        s.add("d", Rx("d"))                  // a share that starts under the alert starts silent
+        assertNull(s.audioId(suppressed = true))
+        assertEquals("a", s.audioId(suppressed = false))
+        assertEquals(listOf("a", "b", "c", "d"), s.visibleIds())   // the layout itself is untouched
+    }
+
     @Test fun aLayoutBeforeTheStartIsRememberedForIt() {
         val s = ScreenShareSessions<Rx>()
         s.layout = ScreenShareProtocol.Layout("b", "b", 2)

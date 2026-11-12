@@ -208,11 +208,20 @@ class TriggerManager(
         try { controller.onVerdict(v, source) } catch (e: Throwable) {
             log("warn", "trigger handling failed: ${e.message}")
         }
+        settled()
         return v
     }
 
-    fun sweep() = controller.sweep()
-    fun stop() { listeners?.stop(); listeners = null; controller.stop("shutting down") }
+    fun sweep() { try { controller.sweep() } finally { settled() } }
+    fun stop() { listeners?.stop(); listeners = null; try { controller.stop("shutting down") } finally { settled() } }
+
+    /*
+     * #845: every operation that can change what the overlay shows ends here, the Android twin of the
+     * web player's triggerSyncAudio. A supersede, a clear that restores a held trigger and a lease
+     * expiry each hide and show in one go; only after the whole operation is "is a trigger on screen"
+     * decided, so the screen share does not flash back between the two.
+     */
+    private fun settled() { try { overlay.settled() } catch (e: Throwable) { } }
 
     private fun bump(k: String) { rejected[k] = (rejected[k] ?: 0) + 1 }
 

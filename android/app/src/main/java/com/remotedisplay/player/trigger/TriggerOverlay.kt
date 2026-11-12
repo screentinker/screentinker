@@ -46,9 +46,16 @@ class TriggerOverlay(
     private val cache: ContentCache,
     /** Silence/restore the BASE playlist. See setBaseAudioSuppressed in the web player. */
     private val setBaseAudioSuppressed: (Boolean) -> Unit = {},
-    private val log: (level: String, message: String) -> Unit = { _, _ -> }
+    private val log: (level: String, message: String) -> Unit = { _, _ -> },
+    /**
+     * #845: true while ANY trigger overlay is on screen, false once the last one is gone (main thread,
+     * deduped, no false in the middle of a supersede). Wired to ScreenShareBus.suppress: an alert
+     * outranks a screen share.
+     */
+    onPresence: (Boolean) -> Unit = {}
 ) : TriggerRenderer {
     private val handler = Handler(Looper.getMainLooper())
+    private val presence = TriggerPresence(onPresence)
 
     /*
      * ⚠️ EVERY VIEW TOUCH GOES THROUGH HERE, because a trigger arrives on a NETWORK thread.
@@ -79,8 +86,6 @@ class TriggerOverlay(
      *   previous trigger both active and held — and clearing it fired it straight back.
      */
     override fun show(trigger: TriggerResolve.Trigger): Boolean {
-        hide()   // single slot, last-show-wins
-
         val all = ArrayList<JSONObject>()
         var youtube = 0
         var uncached = 0
@@ -99,6 +104,7 @@ class TriggerOverlay(
         if (all.isEmpty()) {
             // Loud, because this is the failure the whole pinning design exists to prevent.
             log("warn", "\"${trigger.name}\" fired but nothing is playable on this device")
+            hide()   // single slot, last-show-wins: whatever was up is gone either way
             return false
         }
 
@@ -107,6 +113,12 @@ class TriggerOverlay(
          * boolean synchronously to decide whether the fire counts. Only the view work is marshalled.
          */
         onMain {
+            /*
+             * Single slot, last-show-wins. The old box goes in the SAME main-thread message the new
+             * one arrives in (it used to be a separate post from the caller's thread), so a
+             * supersede never has a frame, or a base-audio blip, with neither on screen.
+             */
+            hideOnMain()
             val b = FrameLayout(context)
             b.setBackgroundColor(Color.BLACK)
             b.layoutParams = FrameLayout.LayoutParams(
@@ -116,6 +128,7 @@ class TriggerOverlay(
             box = b
             items = all
             index = 0
+            presence.shown()   // #845: the share gives way before this frame is drawn
 
             try {
                 setBaseAudioSuppressed(true)
@@ -126,13 +139,20 @@ class TriggerOverlay(
                 // silenced. A throw that escaped here would leave an opaque black rectangle over the
                 // playlist with nothing in it and no audio anywhere.
                 log("warn", "\"${trigger.name}\" failed to render: ${e.message}")
-                hide()
+                hide(); settled()
             }
         }
         return true
     }
 
     override fun hide() = onMain { hideOnMain() }
+
+    /*
+     * #845: posted, always, so it runs after every show/hide the finished operation queued (a
+     * trigger arrives on a network thread; its hide and show are posts of their own). Only here can
+     * the presence fall; see TriggerPresence.
+     */
+    override fun settled() { handler.post { presence.settle(box != null) } }
 
     private fun hideOnMain() {
         advance?.let { handler.removeCallbacks(it) }
@@ -193,7 +213,7 @@ class TriggerOverlay(
                     // zone branch with no error handler and no timer, and a single undecodable file
                     // left that region black for days while every other zone kept rotating.
                     log("warn", "trigger video failed (${error.errorCodeName}) — skipping")
-                    if (multi) next() else hide()
+                    if (multi) next() else { hide(); settled() }
                 }
             })
             p.prepare(); p.play()

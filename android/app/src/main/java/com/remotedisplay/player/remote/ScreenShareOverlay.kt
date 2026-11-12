@@ -66,6 +66,8 @@ class ScreenShareOverlay(private val activity: Activity, private val parent: Fra
     private var container: FrameLayout? = null
     private var codeView: LinearLayout? = null
     private var code: ScreenShareProtocol.Code? = null
+    /** #845: a trigger overlay is on screen. Tiles and code hidden, sessions untouched. */
+    private var suppressed = false
 
     private fun vw(pct: Float): Float = parent.width.takeIf { it > 0 }?.let { it * pct / 100f }
         ?: (activity.resources.displayMetrics.widthPixels * pct / 100f)
@@ -92,6 +94,8 @@ class ScreenShareOverlay(private val activity: Activity, private val parent: Fra
         translationZ = 10_000f            // above the PiP and trigger layers sharing pipLayout
         tag = TAG                         // ScreenshotCapture.drawScreenShare finds it by this
         isClickable = false
+        // #845: INVISIBLE, never removed (same reason as a spotlighted-away tile: the surfaces stay).
+        visibility = if (suppressed) View.INVISIBLE else View.VISIBLE
         addOnLayoutChangeListener(onResize)
         this@ScreenShareOverlay.parent.addView(this, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         bringToFront()
@@ -224,6 +228,21 @@ class ScreenShareOverlay(private val activity: Activity, private val parent: Fra
         t.wait.visibility = View.GONE
     }
 
+    // ------------------------------------------------------------------------------ #845
+    /*
+     * A trigger (emergency / automation alert) is on screen: it outranks every share. The container
+     * sits at translationZ 10_000 above the trigger layer, so it is made INVISIBLE (decoders and
+     * surfaces keep going, coming back is instant) and the code goes. ScreenshotCapture skips an
+     * invisible container, so the remote view shows the alert too. Sound: ScreenShareController.
+     */
+    override fun onSuppress(on: Boolean) {
+        if (suppressed == on) return
+        suppressed = on
+        container?.visibility = if (on) View.INVISIBLE else View.VISIBLE
+        if (!on) relayout()   // a resize while hidden was laid out, but be sure
+        paintCode()
+    }
+
     // ------------------------------------------------------------------------------ the code
     override fun onCode(code: ScreenShareProtocol.Code?) {
         this.code = code
@@ -232,7 +251,7 @@ class ScreenShareOverlay(private val activity: Activity, private val parent: Fra
 
     private fun paintCode() {
         val c = code
-        if (c == null) { codeView?.visibility = View.GONE; return }
+        if (c == null || !ScreenShareProtocol.codeShown(c, suppressed)) { codeView?.visibility = View.GONE; return }
         val view = codeView ?: buildCodeView().also { codeView = it }
         styleCode(view, compact = tiles.isNotEmpty())
         val img = view.getChildAt(0) as ImageView

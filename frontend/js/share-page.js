@@ -30,7 +30,7 @@ const KNOWN_REASONS = new Set([
   'stopped_by_sharer', 'stopped_by_owner', 'max_duration', 'connection_failed', 'screen_unreachable',
   'screen_offline', 'screen_left', 'screen_unsupported', 'signalling_closed', 'signalling_failed',
   'invalid_ticket', 'not_connected', 'disabled_by_admin', 'sharer_left',
-  'disabled', 'workspace_disabled', 'unsupported', 'offline', 'busy', 'invalid_code', 'removed',
+  'disabled', 'workspace_disabled', 'unsupported', 'offline', 'busy', 'emergency', 'invalid_code', 'removed',
 ]);
 const reasonText = (r) => t(KNOWN_REASONS.has(r) ? `screen_share.reason.${r}` : 'screen_share.reason.generic');
 

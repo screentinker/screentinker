@@ -8,10 +8,17 @@ import QtWebEngine
 //
 // The page is loaded only while a call or a live publish is active. It reports through its title:
 // "rtc:video" when an operator webcam track is playing (then this layer becomes visible and covers
-// the content, like Android's fullscreen webcam view), "rtc:idle" otherwise.
+// the content, like Android's fullscreen webcam view), "rtc:share" when only a screen share is,
+// "rtc:idle" otherwise.
+//
+// #845: a trigger (an emergency / automation alert) outranks a screen share. This layer sits above
+// the trigger overlay (Main.qml), so while one is up a share-only page is hidden here, in the same
+// frame the trigger appears; the page itself is told to silence the share (ST.shareSuppress, see
+// logic/screen_share.Suppression) and the session stays connected for when the trigger clears.
 Item {
     id: host
-    visible: page.item !== null && page.item.title === "rtc:video"
+    readonly property string pageState: page.item !== null ? page.item.title : ""
+    visible: pageState === "rtc:video" || (pageState === "rtc:share" && !stage.triggerVisible)
 
     Loader {
         id: page

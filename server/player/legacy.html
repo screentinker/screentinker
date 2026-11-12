@@ -4365,6 +4365,10 @@ function triggerSyncAudio() {
     setBaseAudioSuppressed(!!(triggerActive && triggerActive.coversBase) || talkDucking || sharing);
   } catch (e) {
   }
+  try {
+    if (window.STScreenShare && window.STScreenShare.suppress) window.STScreenShare.suppress(!!triggerActive);
+  } catch (e) {
+  }
 }
 let talkDucking = false;
 let shareDucking = false;

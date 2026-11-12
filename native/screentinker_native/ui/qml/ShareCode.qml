@@ -5,9 +5,10 @@ import QtQuick
 // address, the code. Hidden while a share is on screen (the share's own "Shared by" badge is drawn by
 // the WebRTC page, TalkVideo.qml). Drawn in QML rather than in that page because the page covers the
 // content and would swallow touches on an interactive screen for as long as a code is up.
+// #845: hidden while a trigger overlay is on screen (it draws above it), back when it clears.
 Item {
     id: root
-    visible: stage.shareCode !== "" && !stage.shareActive
+    visible: stage.shareCode !== "" && !stage.shareActive && !stage.triggerVisible
     readonly property real u: Math.max(width, 1) / 100          // 1vw
     readonly property real base: Math.max(12, u)
 

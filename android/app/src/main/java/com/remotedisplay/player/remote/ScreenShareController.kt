@@ -36,6 +36,10 @@ class ScreenShareController(
 
     val isActive: Boolean get() = !sessions.isEmpty
 
+    // #845: a trigger on screen silences every share; when it clears, the same presenter is heard
+    // again (applyAudio re-decides from the remembered layout). Called on the main thread.
+    init { ScreenShareBus.onSuppressChanged = { applyAudio() } }
+
     fun onStart(data: JSONObject?) = main.post {
         val start = ScreenShareProtocol.parseStart(data) ?: run { Log.w(tag, "start: bad payload"); return@post }
         val (url, id, token) = credentials() ?: run { Log.w(tag, "start: device not provisioned"); return@post }
@@ -73,9 +77,12 @@ class ScreenShareController(
         applyAudio()
     }
 
-    /** Only one presenter is ever heard: every other receiver's remote audio track is disabled. */
+    /**
+     * Only one presenter is ever heard: every other receiver's remote audio track is disabled. None
+     * at all while a trigger overlay is up (#845, ScreenShareBus.suppressed).
+     */
     private fun applyAudio() {
-        val sound = sessions.audioId()
+        val sound = sessions.audioId(ScreenShareBus.suppressed)
         for ((sid, r) in sessions.entries()) r.setAudioEnabled(sid == sound)
     }
 

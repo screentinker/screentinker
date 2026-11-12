@@ -300,6 +300,24 @@ test('⚠️ Activate now: the covered screen plays the alert, with no store tri
   assert.ok(build(DEV).assignments.every((a) => !('interrupt' in a)), 'ended: the flag is gone');
 });
 
+test('#845: Activate now outranks a screen share: the covered screen counts as alerted and its shares are told, both ways', () => {
+  const { e } = alarm();
+  const share = require('../lib/screen-share');
+  const told = [];
+  const orig = share.alertChanged;
+  share.alertChanged = (ids) => told.push([...ids]);
+  try {
+    assert.equal(share.alertLive(DEV), false);
+    live.activate(db, e, { userId: 'u-e', durationSec: 600 });
+    assert.equal(share.alertLive(DEV), true, 'the covered screen is under the alert');
+    assert.equal(share.alertLive(DEV_S2), false, 'a screen outside the scope is not');
+    assert.ok(told.length === 1 && told[0].includes(DEV), 'activating tells screen share which screens it took');
+    live.end(db, e.id, { reason: 'test' });
+    assert.equal(share.alertLive(DEV), false);
+    assert.ok(told.length === 2 && told[1].includes(DEV), 'ending it tells screen share too (codes come back)');
+  } finally { share.alertChanged = orig; live.end(db, e.id, { reason: 'test' }); }
+});
+
 test('an expired activation never shows, and the sweep ends it without a request', () => {
   const { e } = alarm();
   let now = Math.floor(Date.now() / 1000);
