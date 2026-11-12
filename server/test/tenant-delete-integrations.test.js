@@ -237,7 +237,8 @@ test('releaseWorkspaceMember: links deleted, folders paused, subscriptions dropp
     VALUES ('c-other', 'wsA2', 'member', 'org:orgA', 'D2', '[1]', 'png')`).run();
   db.prepare("DELETE FROM workspace_members WHERE workspace_id = 'wsA' AND user_id = 'member'").run();
   const out = releaseWorkspaceMember(db, { userId: 'member', workspaceIds: ['wsA'] });
-  assert.deepEqual(out, { canva_links: 1, cloud_folders_paused: 1, subscriptions: 2 });
+  // and the screen and file they added in wsA now count against the owner's plan (handToOwner)
+  assert.deepEqual(out, { canva_links: 1, cloud_folders_paused: 1, subscriptions: 2, devices_moved: 1, content_moved: 1, owners: ['owner'] });
   assert.equal(count('canva_links', 'workspace_id = $W', 'wsA'), 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM canva_links WHERE content_id = 'c-other'").get().n, 1);
   const f = db.prepare("SELECT user_id, enabled, last_error FROM cloud_folders WHERE id = 'cf-wsA'").get();
@@ -251,7 +252,7 @@ test('releaseWorkspaceMember: links deleted, folders paused, subscriptions dropp
 test('releaseWorkspaceMember leaves an org admin alone: they still reach the workspace', () => {
   db.prepare("UPDATE organization_members SET role = 'org_admin' WHERE organization_id = 'orgA' AND user_id = 'member'").run();
   const out = releaseWorkspaceMember(db, { userId: 'member', workspaceIds: ['wsA'] });
-  assert.deepEqual(out, { canva_links: 0, cloud_folders_paused: 0, subscriptions: 0 });
+  assert.deepEqual(out, { canva_links: 0, cloud_folders_paused: 0, subscriptions: 0, devices_moved: 0, content_moved: 0, owners: [] });
   assert.equal(count('automation_subscriptions', 'workspace_id = $W', 'wsA'), 2);
 });
 
