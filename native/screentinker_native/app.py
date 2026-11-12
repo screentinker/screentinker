@@ -100,6 +100,12 @@ class App:
         self.slide_audio_player = SlideAudio(lambda: self.config.server_url)
         self.queue_chime_player = None  # created on the first chime (ui/extras.QueueChimePlayer)
         self.triggers_ui = TriggerOverlay(self)
+        # #845: any trigger on screen hides and silences the screen share (logic/screen_share.py).
+        self.share_suppression = screen_share.Suppression(
+            lambda: bool(self.stage.triggerVisible),
+            lambda on: self.stage.rtcCommand.emit(screen_share.suppress_js(on)),
+            lambda fn: QTimer.singleShot(0, fn))
+        self.stage.triggerVisibleChanged.connect(self.share_suppression.poke)
         self.power = PowerSchedule(self.config, self._apply_power_schedule, lambda st: None)
         self.loop = None
         self.link = DeviceLink(self.config, self)
@@ -1108,7 +1114,10 @@ class App:
         self.stage.set("shareActive", True)
         self.restore_mute()
         delay = self._ensure_rtc()
-        self._rtc_js("ST.shareStart(%s)" % self._creds_json(opts), delay)
+        # #845: a share that starts under a trigger starts hidden and silent. Read when the call is
+        # made, not now: the page may still be loading (delay) and the trigger may change meanwhile.
+        QTimer.singleShot(delay, lambda: self.stage.rtcCommand.emit("ST.shareStart(%s)" % self._creds_json(
+            dict(opts, suppress=self.share_suppression.wanted()))))
 
     def _share_stop(self, d):
         stop_id = d.get("session_id") if isinstance(d.get("session_id"), str) else None

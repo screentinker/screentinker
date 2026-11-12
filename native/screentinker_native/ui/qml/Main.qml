@@ -116,7 +116,8 @@ Window {
     PipLayer { anchors.fill: parent }
 
     // The WebRTC layer (Talk's webcam, a 3.0 screen share) and the meeting-room code turn with the
-    // panel like the content does, so a portrait-mounted screen shows them upright.
+    // panel like the content does, so a portrait-mounted screen shows them upright. They draw above
+    // the trigger overlay, so each hides its share while stage.triggerVisible (#845).
     Item {
         readonly property bool swapped: stage.rotation === 90 || stage.rotation === 270
         width: swapped ? parent.height : parent.width

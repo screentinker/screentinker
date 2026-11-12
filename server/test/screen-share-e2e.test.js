@@ -456,9 +456,26 @@ test('the native player\'s RTC page receives a share: plays fullscreen with the 
   let st;
   try { st = await assertPlaying(page, 'native RTC page'); } catch (e) { throw new Error(e.message + ' — page log: ' + logs.join(' | ')); }
   assert.match(st.badge, /Olive Owner/);
-  // The QML layer is shown while the title says rtc:video (TalkVideo.qml).
-  await waitFor(() => page.evaluate(() => document.title === 'rtc:video'), 3000, 'title rtc:video');
+  // The QML layer is shown while the title says rtc:share (TalkVideo.qml), unless a trigger is up.
+  await waitFor(() => page.evaluate(() => document.title === 'rtc:share'), 3000, 'title rtc:share');
   assert.ok(logs.some((l) => l === `[rtc] share playing ${current} `), 'reports playing with its session id: ' + logs.join(' | '));
+
+  // #845: a trigger on the native screen hides and silences the share (ST.shareSuppress); the
+  // session stays connected and comes back when the trigger clears.
+  const shareView = () => page.evaluate(() => {
+    const o = document.getElementById('st-share-overlay');
+    const a = o && o.querySelector('audio');
+    return o ? { hidden: getComputedStyle(o).visibility === 'hidden', muted: !!(a && a.muted), live: !!document.querySelector('#st-share-overlay video').srcObject } : null;
+  });
+  await page.evaluate(() => window.ST.shareSuppress(true));
+  let sv = await shareView();
+  assert.deepEqual(sv, { hidden: true, muted: true, live: true });
+  assert.equal(await page.evaluate(() => window.ST.shareSuppressed()), true);
+  await page.evaluate(() => window.ST.shareSuppress(false));
+  sv = await shareView();
+  assert.equal(sv.hidden, false);
+  assert.equal(sv.live, true);
+  assert.equal(await page.evaluate(() => window.ST.shareSuppressed()), false);
 
   await fetch(`${BASE}/api/screen-share/devices/${NAT}`, { method: 'DELETE', headers: H });
   await waitFor(async () => (await videoState(page)) === null, 10000, 'the share leaves the native page');
