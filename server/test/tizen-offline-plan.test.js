@@ -67,7 +67,8 @@ function makeEl(id) {
   return {
     id, style: {}, value: '', textContent: '', className: '', innerHTML: '', children: [],
     classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c) },
-    addEventListener() {}, removeEventListener() {}, focus() {}, appendChild(c) { return c; },
+    _h: {}, addEventListener(t, f) { (this._h[t] = this._h[t] || []).push(f); }, removeEventListener() {},
+    click() { (this._h.click || []).forEach((f) => f({})); }, focus() {}, appendChild(c) { return c; },
     setAttribute() {}, getAttribute() { return null; }, querySelectorAll() { return []; },
   };
 }
@@ -214,6 +215,7 @@ async function withCommittedPlan(plan, opts) {
   const h = boot(Object.assign({ storage: PAIRED }, opts || {}));
   h.connect(livePayload(plan));
   await h.sweep();
+  assert.ok(h.store.get('st_offline_plan'), 'precondition: the plan was committed');
   return h;
 }
 
@@ -280,6 +282,9 @@ test('disconnected, the panel walks A, gap, B, gap at the plan boundaries', asyn
   h.advance(H);
   assert.deepEqual(h.last().ids, [], 'gap at 12:00');
   assert.deepEqual(h.shown.slice(before).map((s) => s.ids), [[], ['b'], []], 'one render per boundary, nothing between');
+  // The media sweep behind each offline render must not evict what a later interval needs.
+  await h.sweep();
+  for (const id of ['a', 'b', 'standby']) assert.ok(h.files[id], `${id} still cached after the offline renders`);
 });
 
 test('a gap plays the unscheduled base playlist when the server resolved one', async () => {
@@ -338,6 +343,15 @@ test('reconnecting, the live server payload wins over the plan', async () => {
   assert.deepEqual(h.last().ids, ['fresh'], 'the plan does not override a connected screen');
 });
 
+test('the offline driver never pulls the stage over the server prompt', async () => {
+  const h = await withCommittedPlan(abPlan());
+  h.disconnect();
+  h.sandbox.document.getElementById('setup').classList.remove('hidden');   // "Change server"
+  const before = h.shown.length;
+  h.advance(3 * H);
+  assert.equal(h.shown.length, before);
+});
+
 test('an explicit null plan (override, emergency, mandate) clears the stored plan', async () => {
   const h = await withCommittedPlan(abPlan());
   h.live(livePayload(null, { assignments: [item('emergency')] }));
@@ -357,8 +371,13 @@ test('a suspended screen is not handed back by the plan while offline', async ()
   assert.equal(h.shown.length, before);
 });
 
+// Seeded straight into storage, as a previous session would have left it, so the clear itself is
+// what is under test.
+const SEEDED = Object.assign({}, PAIRED, { st_offline_plan: JSON.stringify(abPlan()), st_payload_cache: JSON.stringify(livePayload()) });
+
 test('unpairing clears the plan', async () => {
-  const h = await withCommittedPlan(abPlan());
+  const h = boot({ storage: SEEDED });
+  h.connect();
   h.socket.handlers['device:unpaired']({ reason: 'deleted' });
   assert.equal(h.store.get('st_offline_plan'), undefined);
   const again = boot({ storage: Object.fromEntries(h.store), now: T0 + 2.5 * H });
@@ -366,8 +385,15 @@ test('unpairing clears the plan', async () => {
 });
 
 test('an auth revocation clears the plan', async () => {
-  const h = await withCommittedPlan(abPlan());
+  const h = boot({ storage: SEEDED });
+  h.connect();
   h.socket.handlers['device:auth-error']({ error: 'revoked' });
+  assert.equal(h.store.get('st_offline_plan'), undefined);
+});
+
+test('a factory reset clears the plan', () => {
+  const h = boot({ storage: SEEDED });
+  h.sandbox.__st.reset();
   assert.equal(h.store.get('st_offline_plan'), undefined);
 });
 

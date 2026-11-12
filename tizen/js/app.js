@@ -1102,6 +1102,8 @@
       try {
         if (!deviceId || !deviceToken) return;
         if (socket && socket.connected && authenticated) return;
+        // The operator is on the server prompt or a pairing code is up: never pull the stage over it.
+        if (!elSetup.classList.contains('hidden') || !elPairing.classList.contains('hidden')) return;
         var p = offlinePlan.tick(lastPayload);   // parsed only when an edge is crossed
         if (p) onPlaylist(p);
       } catch (e) { /* the screen keeps what it has */ }
