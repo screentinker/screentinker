@@ -76,6 +76,8 @@
   --success-dim: #123524;
   --danger: #ff5a52;
   --danger-dim: #3d1614;
+  --danger-text: #fca5a5;       /* words in red, on a dim red or on the desk */
+  --on-accent-dim: #ffffff;     /* words on --accent-dim */
   --warning: #ffb224;
   --warning-dim: #3a2a08;
 
@@ -129,6 +131,8 @@
   --success-dim: #0b3320;
   --danger: #ff4a3d;
   --danger-dim: #3f1310;
+  --danger-text: #fca5a5;
+  --on-accent-dim: #ffffff;
   --warning: #ffb21f;
   --warning-dim: #3d2a05;
 
@@ -163,6 +167,8 @@
   --success-dim: #dcf5e6;
   --danger: #c9302c;
   --danger-dim: #fbe3e1;
+  --danger-text: #a3241a;
+  --on-accent-dim: #123d82;
   --warning: #a35f00;
   --warning-dim: #fdefd2;
 
@@ -200,6 +206,8 @@
   --success-dim: #15803d;
   --danger: #ef4444;
   --danger-dim: #991b1b;
+  --danger-text: #fca5a5;
+  --on-accent-dim: #ffffff;
   --warning: #f59e0b;
   --warning-dim: #92400e;
   --border: #334155;

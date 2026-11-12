@@ -38,7 +38,7 @@ const block = (sel) => {
 const ids = [...themesJs.matchAll(/\{ id: '([a-z-]+)', attr: (null|'[a-z-]+')/g)].map((m) => ({ id: m[1], attr: m[2] === 'null' ? null : m[2].slice(1, -1) }));
 const PALETTE = ['--bg-primary', '--bg-secondary', '--bg-card', '--bg-card-hover', '--bg-input', '--accent', '--accent-hover', '--accent-dim',
   '--text-primary', '--text-secondary', '--text-muted', '--success', '--success-dim', '--danger', '--danger-dim', '--warning', '--warning-dim',
-  '--border', '--border-light', '--shadow', '--shadow-sm', '--bezel', '--screen-glow'];
+  '--border', '--border-light', '--shadow', '--shadow-sm', '--bezel', '--screen-glow', '--danger-text', '--on-accent-dim'];
 
 test('the picker and the stylesheet offer the same themes', () => {
   assert.deepEqual(ids.map((t) => t.id), ['graphite', 'control-room', 'light', 'classic']);
@@ -117,4 +117,24 @@ test('the typeface is bundled with its licence and fetched from nowhere else', (
 test('every theme has its name and description in English', () => {
   const en = read('js/i18n/en.js');
   for (const t of ids) for (const k of ['name', 'desc']) assert.ok(en.includes(`'appearance.theme.${t.id}.${k}':`), `${t.id}.${k}`);
+});
+
+// WCAG contrast of two #rrggbb colours.
+const contrast = (a, b) => {
+  const lum = (h) => { const c = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255).map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4)); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+  const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05);
+};
+
+test('red words and words on an accent pill are readable in every theme', () => {
+  for (const sel of [':root', ':root[data-theme="control-room"]', ':root[data-theme="light"]']) {
+    const b = block(sel);
+    assert.ok(contrast(b['--danger-text'], b['--danger-dim']) >= 4.5, `${sel}: danger text on danger-dim`);
+    assert.ok(contrast(b['--danger-text'], b['--bg-card']) >= 4.5, `${sel}: danger text on a card`);
+    assert.ok(contrast(b['--on-accent-dim'], b['--accent-dim']) >= 4.5, `${sel}: words on accent-dim`);
+  }
+  // Classic keeps the 3.x colours exactly, readable or not.
+  assert.equal(block(':root[data-theme="classic"]')['--danger-text'], '#fca5a5');
+  // The stylesheet names the token, never the dark themes' pink, so a light theme can change it.
+  const main = read('css/main.css');
+  assert.equal(/#fca5a5|#fecaca/i.test(main), false, 'main.css has no fixed light-red text');
 });

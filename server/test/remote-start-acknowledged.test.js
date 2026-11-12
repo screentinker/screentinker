@@ -71,6 +71,17 @@ test('a remote-start for a screen that is not connected is answered: not deliver
   } finally { s.close(); }
 });
 
+test('a remote-start the server refuses is answered too, so the page cannot take it for started', async () => {
+  const s = await dashboard();
+  try {
+    const ack = await ask(s, crypto.randomUUID());   // no screen of this account's
+    assert.ok(ack && !ack.timedOut, 'the server answers');
+    assert.deepEqual([ack.delivered, ack.reason], [false, 'forbidden']);
+  } finally { s.close(); }
+  const page = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'views', 'device-detail.js'), 'utf8');
+  assert.match(page, /ack\.reason === 'forbidden'\) \{ showToast\(t\('device\.toast\.remote_forbidden'\)/);
+});
+
 test('the server only records a session, and says delivered, when a screen is in the room', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'ws', 'dashboardSocket.js'), 'utf8');
   const h = src.slice(src.indexOf("socket.on('dashboard:remote-start'"), src.indexOf("socket.on('dashboard:remote-stop'"));

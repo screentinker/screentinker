@@ -719,7 +719,8 @@ function route() {
     else if (hash === '#/mixer' && link.dataset.view === 'mixer') link.classList.add('active');
     // Broadcast view's own menu: the desk is home there, and each section is a page of it.
     else if (link.dataset.view && link.dataset.view.startsWith('bc-')) {
-      const section = hash.startsWith('#/mixer/') ? hash.split('/')[2] : (hash === '#/mixer' || ((hash === '#/' || hash === '' || hash === '#') && document.documentElement.classList.contains('ui-broadcast')) ? 'desk' : null);
+      const section = hash.startsWith('#/mixer/') ? hash.split('/')[2] : (hash === '#/mixer' || ((hash === '#/' || hash === '' || hash === '#') && document.documentElement.classList.contains('ui-broadcast')) ? 'desk'
+        : hash === '#/screens' ? 'screens' : (hash === '#/settings' || hash.startsWith('#/settings/')) ? 'settings' : null);
       if (section && link.dataset.view === 'bc-' + section) link.classList.add('active');
     }
     else if (hash === '#/site-caches' && link.dataset.view === 'site-caches') link.classList.add('active');
@@ -742,7 +743,7 @@ function route() {
 
   // Route to view
   if ((hash === '#/' || hash === '#' || hash === '') && document.documentElement.classList.contains('ui-broadcast')) {
-    // Broadcast view: the desk is home. Screens is still in the menu.
+    // Broadcast view: the desk is home. Screens and Settings are at the foot of its menu.
     currentView = mixer;
     mixer.render(app);
   } else if ((hash === '#/mixer' || hash.startsWith('#/mixer/')) && !document.documentElement.classList.contains('has-broadcast')) {

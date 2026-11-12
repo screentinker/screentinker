@@ -3394,6 +3394,7 @@ export default {
   'device.toast.remote_started': 'Remote session started',
   'device.toast.remote_offline': 'Display is offline, so no remote session was started',
   'device.toast.remote_unsupported': 'This display\'s player does not support remote control',
+  'device.toast.remote_forbidden': 'You can view this screen but not control it.',
   'device.toast.command_queued': '{cmd} — device offline, will deliver on reconnect',
   'device.toast.command_undeliverable': '{cmd} — device offline and queue unavailable',
   'device.toast.command_no_ack': '{cmd} — no server response',

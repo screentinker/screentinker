@@ -271,8 +271,12 @@ module.exports = function setupDashboardSocket(io) {
     socket.remoteSessions = new Set();
 
     socket.on('dashboard:remote-start', (data, ack) => {
-      const { device_id } = data;
-      if (!canActOnDevice(socket, device_id, 'write')) return;
+      const { device_id } = data || {};
+      if (!canActOnDevice(socket, device_id, 'write')) {
+        // Answered, so the page does not take a refusal's silence for "started".
+        if (typeof ack === 'function') ack({ delivered: false, reason: 'forbidden' });
+        return;
+      }
       if (capabilityRefused(device_id, 'remote.stream', ack)) return;
       const room = deviceNs.adapter.rooms.get(device_id);
       console.log(`Remote start for ${device_id}, room has ${room?.size || 0} socket(s)`);

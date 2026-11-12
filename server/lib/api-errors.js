@@ -40,6 +40,8 @@ function apiErrorHandler(err, req, res, next) {
     return res.status(400).json({ error: msg });
   }
   if (isParameterShapeError(err)) {
+    // Usually the request's fault, but it can be a route binding its own bad value: keep a line, briefly.
+    try { console.warn(`[api] parameter refused by the database on ${req.method} ${url.split('?')[0]}: ${err.message}`); } catch { /* */ }
     return res.status(400).json({ error: 'A parameter has the wrong type or is out of range.' });
   }
   try { console.error(`[api] unhandled error on ${req.method} ${url.split('?')[0]}:`, err && err.stack ? err.stack : err); } catch { /* */ }
