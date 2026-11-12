@@ -29,6 +29,8 @@ sub init()
     m.failedThisRound = {}  ' item identity -> true, cleared when the round wraps
     m.running = false
     m.videoStarted = false  ' the current video reached "playing"
+    m.videoKind = ""        ' "video" | "stream" | "audio": what the Video node is playing
+    m.skipLogged = {}       ' item identity -> true once its "cannot play" skip has been logged
     m.failRounds = 0        ' consecutive rounds in which nothing could play
     m.holding = false       ' waiting on m.retry after such a round
     m.lastFailReason = ""
@@ -57,6 +59,10 @@ sub init()
     m.clockDate = m.top.findNode("clockDate")
     m.clockTick = m.top.findNode("clockTick")
     m.clockTick.observeField("fire", "onClockTick")
+    m.audioCard = m.top.findNode("audioCard")
+    m.audioCardBg = m.top.findNode("audioCardBg")
+    m.audioNote = m.top.findNode("audioNote")
+    m.audioTitle = m.top.findNode("audioTitle")
     m.queuePoll = m.top.findNode("queuePoll")
     m.queuePoll.observeField("fire", "onQueuePollFire")
     m.queueTask = invalid   ' created the first time a queue widget with its chime on is shown
@@ -66,9 +72,10 @@ end sub
 
 sub onWatchdogFire()
     if m.videoGen <> m.gen or m.current = invalid then return
-    ST_Log(m.top.id, "video watchdog: no end after " + Int(m.watchdog.duration).ToStr() + " s, moving on")
+    ST_Log(m.top.id, m.videoKind + " watchdog: no end after " + Int(m.watchdog.duration).ToStr() + " s, moving on")
+    noun = mediaNoun()
     stopVideo()
-    itemFailed("A video stopped responding.")
+    itemFailed(noun + " stopped responding.")
     playNext()
 end sub
 
@@ -129,6 +136,20 @@ sub applyGeometry()
     m.video.height = h
     m.noticeBg.width = w
     m.noticeBg.height = h
+    ' the "now playing" card: a note 28% of the height, the track name under it
+    m.audioCardBg.width = w
+    m.audioCardBg.height = h
+    nh = Int(h * 0.28)
+    nw = Int(nh * 0.9)
+    m.audioNote.width = nw
+    m.audioNote.height = nh
+    m.audioNote.translation = [Int((w - nw) / 2), Int(h * 0.30)]
+    tsize = Int(h * 0.045)
+    if tsize < 16 then tsize = 16
+    m.audioTitle.font = ST_ClockFont("pkg:/fonts/Inter-Bold.ttf", tsize)
+    m.audioTitle.width = Int(w * 0.8)
+    m.audioTitle.height = Int(tsize * 1.5)
+    m.audioTitle.translation = [Int(w * 0.1), Int(h * 0.30) + nh + Int(h * 0.04)]
     m.noticeText.translation = [Int(w * 0.1), 0]
     m.noticeText.width = Int(w * 0.8)
     m.noticeText.height = h
@@ -169,13 +190,27 @@ function eligibility() as object
     for each it in items
         ok = ST_IsAA(it)
         if ok then ok = not ST_IsOff(it.enabled)
-        if ok then ok = ST_ItemKind(it) <> "skip"
+        if ok then
+            ok = ST_ItemKind(it) <> "skip"
+            if not ok then logSkipOnce(it)
+        end if
         if ok then ok = not m.failedThisRound.DoesExist(ST_ItemIdentity(it))
         if ok then ok = ST_ItemScheduleActive(it, now, tz)
         allows.Push(ok)
     end for
     return allows
 end function
+
+' Say once per item why it never plays (an Ogg audio file, an RTSP camera...), instead of on every
+' eligibility pass (each advance and every 30 s recheck).
+sub logSkipOnce(it as object)
+    id = ST_ItemIdentity(it)
+    if m.skipLogged.DoesExist(id) then return
+    m.skipLogged[id] = true
+    why = "this Roku cannot play it"
+    if ST_IsOggAudio(it) then why = "Ogg/Opus audio is not supported by the Roku media player; upload MP3, M4A, WAV or FLAC instead"
+    ST_Log(m.top.id, "skipping " + ST_Str(it, "filename", ST_Str(it, "mime_type")) + " (" + ST_Str(it, "mime_type") + "): " + why)
+end sub
 
 function countTrue(arr as object) as integer
     n = 0
@@ -278,9 +313,19 @@ sub onRetryFire()
     if m.running then playNext()
 end sub
 
+' "A video" or "An audio file": the subject of a failure notice for what the Video node plays.
+function mediaNoun() as string
+    if m.videoKind = "audio" then return "An audio file"
+    return "A video"
+end function
+
 ' Roku's own wording ("unsupported video format", "Image height too high") turned into what to do.
 function videoFailReason(msg as string, detail as string) as string
     t = LCase(msg + " " + detail)
+    if m.videoKind = "audio" then
+        if Instr(1, t, "unsupported") > 0 then return "An audio file is in a format this Roku cannot play (" + msg + "). MP3, M4A (AAC), WAV and FLAC play."
+        return "An audio file could not be played (" + msg + ")."
+    end if
     if Instr(1, t, "height too high") > 0 or Instr(1, t, "width too high") > 0 then
         return "A video is larger than this Roku can play. Use a copy no bigger than 1920 x 1080 (a portrait video: 1080 pixels tall or less)."
     end if
@@ -326,10 +371,19 @@ sub playIndex(i as integer)
         else
             ' Roku decodes one video at a time; a secondary zone shows the item's thumbnail instead.
             loadIntoBack(ST_UrlJoin(ST_Str(m.top.config, "serverUrl"), "/api/content/" + ST_Str(item, "content_id") + "/thumbnail"), fitOf(item))
-            d = durationOf(item, 0)
-            if d <= 0 then d = Int(ST_Num(item, "content_duration", 10))
-            if d <= 0 then d = 10
-            armAdvance(d)
+            armAdvance(clipDwell(item))
+        end if
+    else if kind = "audio" then
+        if ST_IsTrue(cfgOf("canVideo")) then
+            ' The zone that owns the decoder (the one that would get a video's sound) plays it.
+            playVideo(item, kind)
+        else
+            ' Any other zone: what a web player zone does with a clip whose sound goes elsewhere,
+            ' no picture and no sound, for the length of the track.
+            stopVideo()
+            hidePosters()
+            markSuccess()
+            armAdvance(clipDwell(item))
         end if
     else
         playNext()
@@ -345,6 +399,22 @@ sub endCurrent(completed as boolean)
         end if
     end if
     m.current = invalid
+end sub
+
+' How long a zone that cannot decode a clip (a video's thumbnail, a silent audio slot) holds it:
+' the item's duration, else the file's own length, else 10 s.
+function clipDwell(item as object) as integer
+    d = durationOf(item, 0)
+    if d <= 0 then d = Int(ST_Num(item, "content_duration", 10))
+    if d <= 0 then d = 10
+    return d
+end function
+
+sub hidePosters()
+    for each p in m.posters
+        p.opacity = 0
+    end for
+    m.front = -1
 end sub
 
 function durationOf(item as object, dflt as integer) as integer
@@ -535,7 +605,7 @@ sub playVideo(item as object, kind as string)
     url = ST_MediaUrl(ST_Str(m.top.config, "serverUrl"), item)
     if url = "" then
         if m.current = invalid then return
-        itemFailed("A video has no address to play from.")
+        if kind = "audio" then itemFailed("An audio file has no address to play from.") else itemFailed("A video has no address to play from.")
         playNext()
         return
     end if
@@ -550,8 +620,14 @@ sub playVideo(item as object, kind as string)
     end if
     m.videoGen = m.gen
     m.videoStarted = false
+    m.videoKind = kind
     m.top.playingVideo = true
-    m.video.loop = (m.eligibleCount <= 1 and kind = "video")
+    ' A file, video or audio, loops when it is the only thing to play; a live stream never ends.
+    m.video.loop = (m.eligibleCount <= 1 and kind <> "stream")
+    if kind = "audio" then
+        ' Full screen: the "now playing" card, shown once the track starts (onVideoState).
+        m.audioTitle.text = ST_TrackTitle(item)
+    end if
     m.video.mute = ST_IsTrue(item.muted)
     m.video.content = c
     m.video.control = "play"
@@ -560,7 +636,7 @@ sub playVideo(item as object, kind as string)
     ' ⚠️ A WEDGED DECODER RAISES NO EVENT. Android's did exactly that (#297): no error, no end, the
     ' screen frozen on one frame forever. So a file video that has not finished by its known length
     ' plus 15 s is moved past, and one of unknown length gets 10 minutes.
-    if kind = "video" and not m.video.loop then
+    if (kind = "video" or kind = "audio") and not m.video.loop then
         known = Int(ST_Num(item, "content_duration", 0))
         if known > 0 then m.watchdog.duration = known + 15 else m.watchdog.duration = 600
         m.watchdog.control = "start"
@@ -573,6 +649,7 @@ sub stopVideo()
         m.video.control = "stop"
     end if
     m.video.visible = false
+    m.audioCard.visible = false
     m.videoGen = -1
     m.top.playingVideo = false
 end sub
@@ -581,25 +658,30 @@ sub onVideoState()
     if m.videoGen <> m.gen then return
     st = m.video.state
     if st = "playing" then
-        ST_Log(m.top.id, "video playing")
+        ST_Log(m.top.id, m.videoKind + " playing")
         m.videoStarted = true
         if m.current <> invalid then markSuccess()
-        m.video.visible = true
+        if m.videoKind = "audio" then
+            ' Audio has no picture: the Video node stays hidden. Full screen the card goes up; in a
+            ' layout zone the zone is left bare (its fill), as on the web player.
+            m.video.visible = false
+            m.audioCard.visible = not ST_IsTrue(cfgOf("layoutZone"))
+        else
+            m.video.visible = true
+        end if
         ' the frame underneath is no longer needed
-        for each p in m.posters
-            p.opacity = 0
-        end for
-        m.front = -1
+        hidePosters()
     else if st = "finished" then
         m.watchdog.control = "stop"
         ' ⚠️ "finished" WITHOUT EVER "playing" IS A FAILURE. After a decode error the Video node
         ' reported the NEXT video "finished" at once, so a playlist of undecodable videos looked like
         ' every other item played fine and the loop never stopped.
         if not m.videoStarted then
-            ST_Log(m.top.id, "video ended without playing")
+            ST_Log(m.top.id, m.videoKind + " ended without playing")
+            noun = mediaNoun()
             stopVideo()
             if m.current = invalid then return
-            itemFailed("A video could not be played on this Roku.")
+            itemFailed(noun + " could not be played on this Roku.")
             playNext()
         else if not m.video.loop then
             m.videoGen = -1
@@ -608,7 +690,7 @@ sub onVideoState()
     else if st = "error" then
         ' errorMsg alone ("unsupported video format") cannot tell a codec from a container from a bad
         ' URL. errorCode, errorStr and errorInfo can, without anyone opening the file.
-        m.top.status = "video error: " + m.video.errorMsg + " (code " + ST_NumToStr(m.video.errorCode) + ")"
+        m.top.status = m.videoKind + " error: " + m.video.errorMsg + " (code " + ST_NumToStr(m.video.errorCode) + ")"
         if m.video.errorStr <> invalid and m.video.errorStr <> "" then m.top.status = m.top.status + " " + m.video.errorStr
         info = m.video.errorInfo
         detail = ""
@@ -646,7 +728,7 @@ sub showIdle()
             stopVideo()
             loadIntoBack(ST_MediaUrl(ST_Str(m.top.config, "serverUrl"), dc), fitOf(dc))
             return
-        else if (kind = "video") and ST_IsTrue(cfgOf("canVideo")) then
+        else if (kind = "video" or kind = "audio") and ST_IsTrue(cfgOf("canVideo")) then
             m.eligibleCount = 1
             playVideo(dc, kind)
             return

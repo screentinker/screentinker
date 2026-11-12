@@ -455,6 +455,8 @@ sub buildStage(p as object)
     end if
 
     ' Roku decodes one video at a time. The largest zone gets it; smaller zones show thumbnails.
+    ' The same zone plays audio items, so only one zone is ever heard; the others hold an audio
+    ' item silently for its length.
     best = 0
     for i = 1 to zones.Count() - 1
         if zones[i].w * zones[i].h > zones[best].w * zones[best].h then best = i

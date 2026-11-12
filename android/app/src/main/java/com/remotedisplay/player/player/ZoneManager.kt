@@ -463,8 +463,10 @@ class ZoneManager(
                     armLiveDwell(zone, assignments, activeIdx, a, advance)
                 }
             }
-            // Video
-            mimeType.startsWith("video/") -> {
+            // Video, and an uploaded audio file (MediaKind): the same player, mute, error skip and
+            // advance on end. Audio has no picture, so its zone shows nothing (see below).
+            MediaKind.playsAsClip(mimeType) -> {
+                val isAudio = MediaKind.isAudio(mimeType)
                 val src = if (!remoteUrl.isNullOrEmpty()) remoteUrl
                           else if (contentId != null) renderCache?.getCachedFile(contentId)?.let { Uri.fromFile(it).toString() }
                                ?: "$renderServerUrl/uploads/content/$filepath"
@@ -526,11 +528,16 @@ class ZoneManager(
                     gl.onSurfaceReady = { surf -> if (surf != null && zoneExoPlayers[zone.id] === exoPlayer) exoPlayer.setVideoSurface(surf) }
                     addZoneView(zone, gl); zoneExoPlayers[zone.id] = exoPlayer
                     zoneFisheye[zone.id] = gl to fisheye
+                } else if (isAudio) {
+                    // No picture: an empty, transparent view holds the zone's place (a PlayerView
+                    // would paint its black shutter over whatever is beneath). Face NONE, so a
+                    // transition out of it cuts instead of capturing a surface that never drew.
+                    addZoneView(zone, View(context).apply { layoutParams = params }); zoneExoPlayers[zone.id] = exoPlayer
                 } else {
                     playerView.player = exoPlayer
                     addZoneView(zone, playerView); zoneExoPlayers[zone.id] = exoPlayer
                 }
-                zoneFaces[zone.id] = ZoneFace.VIDEO
+                zoneFaces[zone.id] = if (isAudio) ZoneFace.NONE else ZoneFace.VIDEO
                 watchZoneVideo(zone, exoPlayer, gen, multi, advance) { p -> setSource(p); p.prepare(); p.playWhenReady = true }
                 // DWELL for a live stream in a rotating zone: it never fires STATE_ENDED, so advance on
                 // the dwell timer (duration_sec > 0). A dwell-0 stream stays until it is no longer the

@@ -120,6 +120,20 @@ class Item:
     def is_bundle(self):
         return self.mime_type == BUNDLE_MIME
 
+    @property
+    def is_audio(self):
+        """An uploaded audio file (MP3, M4A, Ogg, WAV, FLAC). It plays through the same media path as
+        a clip and paints no picture. A widget is never audio (Item defaults its mime to video/mp4)."""
+        return self.mime_type.startswith("audio/") and not self.is_widget
+
+    @property
+    def is_clip(self):
+        """A file the media player plays to its end: video (not a YouTube embed) or audio. These
+        advance on "ended", follow the clip mute and fault rules, and loop on a wall follower."""
+        if self.is_widget:
+            return False
+        return self.is_audio or (self.mime_type.startswith("video/") and self.mime_type != "video/youtube")
+
     def sig(self):
         """STRUCTURAL signature (Android sig()): an edit to any of these re-renders; a duration-only
         or weight-only edit does not — those are patched in place so timing edits never restart."""

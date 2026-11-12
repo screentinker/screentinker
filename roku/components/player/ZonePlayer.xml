@@ -7,6 +7,8 @@
         config       { serverUrl, deviceId, deviceToken, tzTable, playbackOrder, fit, background,
                        layoutZone, width, height, canVideo, defaultContent }
                      layoutZone: a zone of a layout paints no fill (#657, ST_ZoneFill)
+                     canVideo: this zone owns the one decoder, so it plays video AND audio items;
+                     any other zone shows a video's thumbnail and sits silent through an audio item
         command      "start" | "stop" | "next" | "pause" | "resume"   (alwaysNotify)
         muteChange   { content_id, muted }                              (alwaysNotify)
   out:  playEvent    { event: play_start|play_end, item }                (alwaysNotify)
@@ -37,6 +39,14 @@
     <Poster id="posterA" opacity="0" />
     <Poster id="posterB" opacity="0" />
     <Video id="video" visible="false" enableUI="false" enableTrickPlay="false" />
+    <!-- Full screen, an audio item plays on this "now playing" card: a note and the track name.
+         The note is an image because neither Inter nor (reliably) the Roku system font has U+266A.
+         In a layout zone audio plays with no picture and the card stays hidden. -->
+    <Group id="audioCard" visible="false">
+      <Rectangle id="audioCardBg" color="0x111111FF" />
+      <Poster id="audioNote" uri="pkg:/images/music_note.png" loadDisplayMode="scaleToFit" opacity="0.85" />
+      <Label id="audioTitle" horizAlign="center" vertAlign="top" wrap="false" color="0xDDDDDDFF" />
+    </Group>
     <!-- A clock widget drawn natively, so its seconds tick (a server frame would stand still between
          refreshes). Only when the zone's offsets are known and the text is English; else a frame. -->
     <Group id="clock" visible="false">

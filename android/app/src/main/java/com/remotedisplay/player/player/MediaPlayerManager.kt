@@ -97,9 +97,18 @@ class MediaPlayerManager(
         b.joinToString("") { "%02x".format(it) }
     }
     private var exoPlayer: ExoPlayer? = null
+    /*
+     * An uploaded AUDIO item is on the player (MediaKind). It is still MediaType.VIDEO, deliberately:
+     * every rule that applies to a clip (live mute, wall/trigger/talk mute, the stall watchdog, the
+     * group/wall position sync, hold freeze, backgrounding) applies to it unchanged. What differs is
+     * the picture: the PlayerView is hidden and the ImageView shows the now-playing card. Cleared by
+     * every mount (the currentType setter), so only an audio mount leaves it set.
+     */
+    private var audioOnly = false
     private var currentType: MediaType = MediaType.NONE
         set(value) {
             field = value
+            audioOnly = false
             // Anything that is not the fisheye camera takes the screen back from its GL view.
             if (value != MediaType.VIDEO) hideFisheye()
         }
@@ -253,13 +262,15 @@ class MediaPlayerManager(
          * Coming from an IMAGE there is nothing to capture: the ImageView is already showing the
          * right pixels. Leaving it visible is both the correct still and free.
          */
-        if (currentType == MediaType.IMAGE && imageView.drawable != null) {
+        // Coming from an audio item the ImageView is showing its now-playing card, which is the
+        // right still for exactly the same reason.
+        if ((currentType == MediaType.IMAGE || audioOnly) && imageView.drawable != null) {
             coverGeneration = generation
             mainHandler.removeCallbacks(clearCoverTimeout)
             mainHandler.postDelayed(clearCoverTimeout, COVER_MAX_MS)
             return
         }
-        val frame = if (currentType == MediaType.VIDEO) captureCoverFrame() else null
+        val frame = if (currentType == MediaType.VIDEO && !audioOnly) captureCoverFrame() else null
         if (frame == null) {
             /*
              * ⚠️ NOTHING TO HOLD, SO GO BACK TO BLACK. With no still to cover it, leaving the
@@ -409,9 +420,11 @@ class MediaPlayerManager(
     private fun captureCurrentFrame(): Bitmap? = try {
         when (currentType) {
             MediaType.IMAGE -> (imageView.drawable as? BitmapDrawable)?.bitmap
-            MediaType.VIDEO -> (playerView.videoSurfaceView as? TextureView)?.let { tv ->
-                if (tv.isAvailable && tv.width > 0 && tv.height > 0) tv.bitmap else null
-            }
+            // An audio item shows its card in the ImageView; its hidden TextureView holds a stale frame.
+            MediaType.VIDEO -> if (audioOnly) (imageView.drawable as? BitmapDrawable)?.bitmap
+                else (playerView.videoSurfaceView as? TextureView)?.let { tv ->
+                    if (tv.isAvailable && tv.width > 0 && tv.height > 0) tv.bitmap else null
+                }
             else -> null
         }
     } catch (e: Throwable) { null }
@@ -757,9 +770,10 @@ class MediaPlayerManager(
         fisheyeGl?.let { it.visibility = android.view.View.GONE; it.view = null }
     }
 
-    fun playVideoFromUrl(url: String, muted: Boolean = false, tlsSelfSigned: Boolean = false, fisheye: Fisheye.View? = null) {
+    fun playVideoFromUrl(url: String, muted: Boolean = false, tlsSelfSigned: Boolean = false, fisheye: Fisheye.View? = null,
+                         audioCard: Bitmap? = null) {
         // Redacted: a camera URL can carry its password (rtsp://user:pass@cam).
-        Log.i("MediaPlayerManager", "Streaming video from URL: ${RtspUrl.redact(url)} (muted=$muted${if (fisheye != null) ", fisheye" else ""})")
+        Log.i("MediaPlayerManager", "Streaming ${if (audioCard != null) "audio" else "video"} from URL: ${RtspUrl.redact(url)} (muted=$muted${if (fisheye != null) ", fisheye" else ""})")
         mountGeneration++
         if (fisheye != null || fisheyePlayer) rebuildActivePlayer(fisheye)
         fisheyeView = fisheye
@@ -768,8 +782,10 @@ class MediaPlayerManager(
         currentType = MediaType.VIDEO
         currentWidgetUrl = null   // surface reused - a later widget show must reload
 
-        playerView.visibility = android.view.View.VISIBLE
-        imageView.visibility = android.view.View.GONE
+        if (audioCard != null) showAudioCard(audioCard) else {
+            playerView.visibility = android.view.View.VISIBLE
+            imageView.visibility = android.view.View.GONE
+        }
         youtubeWebView?.visibility = android.view.View.GONE
 
         exoPlayer?.apply {
@@ -847,6 +863,46 @@ class MediaPlayerManager(
         Log.i("MediaPlayerManager", "Preloaded next video: ${file.name}")
     }
 
+    /**
+     * An uploaded audio file (MediaKind), full screen: it plays on the clip player, so mute, the
+     * end/error callbacks, looping and the group/wall sync all behave as for a video, and the screen
+     * shows the now-playing card. A transition wipes into the card (it is a picture we already have).
+     */
+    fun playAudio(file: File, muted: Boolean = false, title: String, transition: TransitionSpec? = null) {
+        val card = audioCardFor(title)
+        if (card == null) { mountVideo(file, muted); return }
+        if (transition != null && transitionsActive()) {
+            val from = captureCurrentFrame()
+            if (runWipe(card, transition, from) { mountVideo(file, muted, card) }) return
+        }
+        mountVideo(file, muted, card)
+    }
+
+    /** A remote audio URL (MediaKind) full screen: streamed like a remote video, on the card. */
+    fun playAudioFromUrl(url: String, muted: Boolean = false, title: String) {
+        playVideoFromUrl(url, muted, audioCard = audioCardFor(title))
+    }
+
+    private fun audioCardFor(title: String): Bitmap? = try {
+        decodeBox().let { (w, h) -> AudioCard.render(w, h, title) }
+    } catch (e: Throwable) { Log.w("MediaPlayerManager", "audio card render failed: ${e.message}"); null }
+
+    /*
+     * Put the now-playing card up and take the video surface away. Call AFTER currentType is set (the
+     * setter clears audioOnly). Any #298 cover is abandoned: an audio file never renders a first
+     * frame, so onRenderedFirstFrame would never take it down and the outgoing still would sit there
+     * for COVER_MAX_MS instead of the card.
+     */
+    private fun showAudioCard(card: Bitmap) {
+        audioOnly = true
+        coverGeneration = -1L
+        mainHandler.removeCallbacks(clearCoverTimeout)
+        playerView.visibility = android.view.View.GONE
+        imageView.scaleType = ImageView.ScaleType.CENTER_CROP   // the card is drawn at the stage's aspect
+        try { imageView.setImageBitmap(card) } catch (e: Throwable) { Log.e("MediaPlayerManager", "audio card mount failed: ${e.message}") }
+        imageView.visibility = android.view.View.VISIBLE
+    }
+
     fun playVideo(file: File, muted: Boolean = false, transition: TransitionSpec? = null) {
         // image->video / video->video wipe: extract the incoming clip's first frame OFF the main thread,
         // wipe from the outgoing frame into it, then warm-mount the real video (which starts from frame 0,
@@ -868,10 +924,11 @@ class MediaPlayerManager(
         mountVideo(file, muted)
     }
 
-    private fun mountVideo(file: File, muted: Boolean = false) {
+    private fun mountVideo(file: File, muted: Boolean = false, audioCard: Bitmap? = null) {
         val myGeneration = ++mountGeneration
         // #298: grab the outgoing frame BEFORE currentType moves — captureCurrentFrame() reads it.
-        coverSwitchGap(myGeneration)
+        // Not for audio: it shows its card at once and never renders a frame to take a cover down.
+        if (audioCard == null) coverSwitchGap(myGeneration)
         stall.reset()             // a new item starts its own stall clock
         stopYoutubeIfPlaying()
         stopLiveInputIfPlaying()
@@ -879,9 +936,11 @@ class MediaPlayerManager(
         currentWidgetUrl = null   // surface reused - a later widget show must reload
 
         // Show player. The ImageView stays up as the freeze-frame if coverSwitchGap took it, and is
-        // hidden again by onRenderedFirstFrame.
-        playerView.visibility = android.view.View.VISIBLE
-        if (coverGeneration != myGeneration) imageView.visibility = android.view.View.GONE
+        // hidden again by onRenderedFirstFrame. Audio: the card instead, and no video surface.
+        if (audioCard != null) showAudioCard(audioCard) else {
+            playerView.visibility = android.view.View.VISIBLE
+            if (coverGeneration != myGeneration) imageView.visibility = android.view.View.GONE
+        }
         youtubeWebView?.visibility = android.view.View.GONE
 
         // Warm swap: if this exact file was preloaded, promote the parked player instead of a cold
@@ -918,7 +977,7 @@ class MediaPlayerManager(
         }
         if (fisheyePlayer) rebuildActivePlayer(null)
 
-        Log.i("MediaPlayerManager", "Playing video: ${file.absolutePath} (muted=$muted)")
+        Log.i("MediaPlayerManager", "Playing ${if (audioCard != null) "audio" else "video"}: ${file.absolutePath} (muted=$muted)")
         exoPlayer?.apply {
             volume = if (muted || wallMute || triggerMute) 0f else 1f
             setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))

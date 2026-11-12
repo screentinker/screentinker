@@ -216,8 +216,8 @@ class TriggerOverlay:
         self.app.stage.showItem.emit("trigger", d)
         dur = max(1, it.duration_sec or 10) * 1000
         if multi:
-            # video: `ended` advances; the timer is the floor under a clip that never reports it
-            self.timer.start(dur + 5000 if it.mime_type.startswith("video/") else dur)
+            # video or audio: `ended` advances; the timer is the floor under a clip that never reports it
+            self.timer.start(dur + 5000 if (it.mime_type.startswith("video/") or it.is_audio) else dur)
 
     def next(self):
         if self.items:

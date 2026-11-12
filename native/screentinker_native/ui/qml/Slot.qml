@@ -5,7 +5,7 @@ import QtWebEngine
 // One media slot. A Surface owns two and alternates between them so the NEXT item loads behind the
 // current one and is only revealed once it can draw — never a black gap between items.
 //
-// item: {token, kind: image|video|web|html|youtube, source, html, baseUrl, fit, muted, loop, live,
+// item: {token, kind: image|video|audio|web|html|youtube, source, html, baseUrl, fit, muted, loop, live,
 //        volume}
 // Emits ready() when there is a frame to show, ended() when a video finishes, failed(msg) on error.
 Item {
@@ -53,6 +53,7 @@ Item {
         if (!it) return
         if (it.kind === "image") loader.sourceComponent = imageComp
         else if (it.kind === "video") loader.sourceComponent = videoComp
+        else if (it.kind === "audio") loader.sourceComponent = audioComp
         else loader.sourceComponent = webComp
     }
     function unload() {
@@ -283,6 +284,90 @@ Item {
             Timer {
                 interval: 15000; running: !slot.isReady
                 onTriggered: if (!slot.isReady) slot.failed("video did not start within 15s")
+            }
+        }
+    }
+
+    /*
+     * An uploaded audio file: the same MediaPlayer, mute and end/error handling as a clip, with no
+     * VideoOutput. ⚠️ Audio never paints a frame, so nothing here waits on the video sink: it is
+     * ready once it is PLAYING (else it would sit hidden behind the previous item until the 15 s
+     * fault timer). item.card (full screen and the trigger overlay) draws a dark "now playing" card;
+     * a zone passes card false and the slot is see-through, sound only.
+     */
+    Component {
+        id: audioComp
+        Item {
+            id: audioRoot
+            anchors.fill: parent
+            function seekTo(ms) { endSent = false; player.position = Math.max(0, ms) }
+            function setRate(r) { player.playbackRate = r }
+            function pauseMedia(p) { if (p) player.pause(); else { endSent = false; player.play() } }
+            function setLoop(b) { wantLoop = b }
+            property bool wantLoop: false
+            property bool endSent: false
+            // A wall zone joining mid-FREEZE: there is no frame to freeze on, so stay silent and still.
+            readonly property bool frozenEnd: !!(slot.item && slot.item.frozenEnd)
+
+            Rectangle {
+                objectName: "audioCard"
+                anchors.fill: parent
+                visible: !!(slot.item && slot.item.card)
+                color: "#111111"
+                Column {
+                    anchors.centerIn: parent
+                    width: parent.width * 0.8
+                    spacing: Math.min(parent.width, parent.height) * 0.03
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: "\u266A"
+                        color: "#dddddd"
+                        opacity: 0.85
+                        font.pixelSize: Math.max(12, Math.min(audioRoot.width, audioRoot.height) * 0.14)
+                    }
+                    Text {
+                        objectName: "audioTitle"
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        elide: Text.ElideRight
+                        text: (slot.item && slot.item.title) ? slot.item.title : ""
+                        color: "#dddddd"
+                        font.weight: Font.DemiBold
+                        font.pixelSize: Math.max(10, Math.min(audioRoot.width, audioRoot.height) * 0.04)
+                    }
+                }
+            }
+            MediaPlayer {
+                id: player
+                source: slot.item ? slot.item.source : ""
+                loops: (slot.item && slot.item.loop) ? MediaPlayer.Infinite : 1
+                audioOutput: AudioOutput {
+                    volume: slot.volume
+                    muted: slot.forceMute || (slot.item ? !!slot.item.muted : false) || !slot.front
+                }
+                onPlaybackStateChanged: if (playbackState === MediaPlayer.PlayingState) slot.markReady()
+                onMediaStatusChanged: {
+                    if (mediaStatus === MediaPlayer.EndOfMedia && loops !== MediaPlayer.Infinite) {
+                        if (audioRoot.wantLoop) { player.position = 0; player.play() }
+                        else if (!audioRoot.endSent) { audioRoot.endSent = true; slot.ended() }
+                    }
+                    else if (mediaStatus === MediaPlayer.InvalidMedia) slot.failed("invalid media")
+                }
+                onErrorOccurred: function(error, errorString) { slot.failed(errorString || ("error " + error)) }
+                Component.onCompleted: {
+                    if (audioRoot.frozenEnd) slot.markReady()
+                    else play()
+                }
+            }
+            // Position for the sync engines and device:playback-state.
+            Timer {
+                interval: 250; repeat: true; running: player.playbackState === MediaPlayer.PlayingState
+                onTriggered: slot.position(player.position, player.duration)
+            }
+            // A decoder that wedges raises NO event (the #297 lesson): fault instead of holding.
+            Timer {
+                interval: 15000; running: !slot.isReady
+                onTriggered: if (!slot.isReady) slot.failed("audio did not start within 15s")
             }
         }
     }
