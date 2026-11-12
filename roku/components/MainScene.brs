@@ -25,6 +25,9 @@ sub init()
     ' Roku's autoplay policy (certification 4.8): with Autoplay switched off in the Roku's settings,
     ' nothing may start playing until the viewer asks. Asked once per launch, by pressing OK.
     m.awaitingStart = not ST_AutoPlayEnabled()
+    ' The "Now serving" chime: one sound for the whole screen, at most once per 3 s across zones.
+    m.queueChimeSound = m.top.findNode("queueChimeSound")
+    m.queueChimeAt = -1&
 
     m.cfg = {
         server: ST_RegRead("server_url"),
@@ -469,6 +472,7 @@ sub buildStage(p as object)
             canVideo: (i = best), defaultContent: p.default_content, zoneId: z.id
         }
         node.observeField("playEvent", "onPlayEvent")
+        node.observeField("queueChime", "onQueueChime")
         m.stage.appendChild(node)
         m.zones.Push(node)
     end for
@@ -547,6 +551,29 @@ sub onPlayEvent(ev as object)
     end if
     ST_Log("play", pe.event + " " + nm)
     emit("device:play-event", d)
+end sub
+
+' A zone's queue widget had a number called (ZonePlayer startQueueWatch, which already checked the
+' widget's chime switch, the staff "Chime on the screens" switch and the item's mute). Here the
+' screen-wide rules: silent while blacked out (power window, screen_off), on a wall or sync-group
+' follower, while suspended, pairing or waiting for OK with autoplay off; and one chime per 3 s.
+sub onQueueChime(ev as object)
+    req = ev.getData()
+    if not ST_IsAA(req) or m.queueChimeSound = invalid then return
+    now = ST_NowMs()
+    flags = {
+        blank: m.blackout.visible,
+        follower: ST_QueueChimeFollower(m.payload),
+        held: m.suspended or m.awaitingStart or m.pairing.visible
+    }
+    if not ST_QueueChimeGate(m.queueChimeAt, now, flags) then
+        ST_Log("queue", "chime not played (blackout, follower, held or within 3 s)")
+        return
+    end if
+    m.queueChimeAt = now
+    m.queueChimeSound.volume = ST_QueueChimeVolume(req.volume)
+    m.queueChimeSound.control = "play"
+    ST_Log("queue", "chime at volume " + m.queueChimeSound.volume.ToStr())
 end sub
 
 ' ---------------------------------------------------------------- power windows and screen off

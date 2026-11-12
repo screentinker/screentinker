@@ -1,7 +1,7 @@
 # Roku player — library tests
 
 The pure BrightScript libraries in `roku/source/lib/` (`tz.brs`, `schedule.brs`,
-`powerwindow.brs`, `playorder.brs`) are run in the BrightScript Simulation Engine (`brs-node`)
+`powerwindow.brs`, `playorder.brs`, `queuechime.brs`) are run in the BrightScript Simulation Engine (`brs-node`)
 against the same conformance vectors every other player answers to. Nothing here needs a Roku.
 
 ## Run
@@ -56,4 +56,4 @@ node and BrightScript, so index sequences can be compared exactly.
 
 Add vectors to `shared/*-vectors.json` (every player must agree with them), or a generated case in
 `run-vectors.js`. A case is `{ kind, file, id, …, expect }`; `test_main.brs` dispatches on `kind`
-(`localparts`, `schedule`, `power`, `playorder`).
+(`localparts`, `schedule`, `power`, `playorder`, `zonefill`, `queuechime`, `queuechimecfg`, `queuechimefollower`). The queue chime cases are checked against the widget page's own `queueWidgetStep` and `widgetConfig` (server/lib/queue/widget.js).

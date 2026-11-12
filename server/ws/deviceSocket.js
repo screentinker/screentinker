@@ -645,6 +645,11 @@ function refreshWidgetRevs(assignments, deviceId = null) {
       // payload carried the old settings. Live, like every other widget's content, so an edit needs
       // no re-publish. An edit saved as a draft (approval on) is in draft_config, not here.
       else if (a.widget_type === 'transition' && facts.widget_type === 'transition' && typeof facts.config === 'string') a.widget_config = facts.config;
+      // A "Now serving" widget on a Roku: the Roku shows a still of it, so it cannot run the page's
+      // chime and plays the chime itself, reading `chime` / `chime_volume` from widget_config
+      // (roku/source/lib/queuechime.brs). Live for the same reason: switching the chime on after
+      // publishing must reach the screen.
+      else if (facts.widget_type === 'queue' && typeof facts.config === 'string') a.widget_config = facts.config;
     } catch (_) { /* keep published */ }
   }
 }

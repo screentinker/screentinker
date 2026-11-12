@@ -90,10 +90,19 @@ Which players chime:
 - **Android** (phones, tablets, Android TV, Fire TV): full screen, in a zone, or on a video wall. It plays as media, so the device's media volume (and the remote volume control) applies on top of the widget's own volume.
 - **Samsung Tizen**: full screen, in a zone, or on a video wall. No click needed; the volume set from the dashboard applies.
 - **Native Pi and Windows player**: full screen, in a zone, or on a video wall, through the system's default sound output (the device volume and the remote volume control apply). It also stays silent while the screen is turned off or during a screen share.
-- **Roku**: shows the number but stays silent.
+- **Roku**: chimes too, from a sound built into the Roku app (see below).
 - **Samsung SSSP3**: does not show the Now serving widget yet.
 
 On a video wall only the screen that plays that zone's sound chimes, so the wall chimes once, not once per panel. Everywhere, the chime stays silent on a wall follower, when the playlist item showing the widget is muted (the live mute toggle applies straight away), and on Android and the native player during a trigger alarm or a talk/PA call. A burst of calls within 3 seconds is one chime.
+
+**On a Roku** the widget is a picture the server draws, so the widget cannot make the sound itself. Instead, while the widget is on screen, the Roku asks the server for the queue every 4 seconds (the same answer the widget reads) and plays the chime from a short sound file built into the Roku app. The rules are the same:
+
+- both switches above must be on, and the chime plays at the widget's volume (on top of the TV's own volume);
+- it plays only when a number is called while the widget is on screen. The number already showing when the widget comes on screen (after a restart, or when it comes round again in a playlist) never chimes, and neither does a call made while another item was showing;
+- at most one chime every 3 seconds, so a quick run of calls is one chime;
+- it stays silent when the playlist item is muted, while the screen is black for a power schedule or a screen-off command, on a follower in a video wall or sync group, and while the Roku waits for OK because Autoplay is off in its settings.
+
+The Roku asks for the queue only while a widget with its chime switched on is showing, and stops when it leaves the screen. The picture of the widget is refreshed exactly as before.
 
 ## Recent activity
 

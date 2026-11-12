@@ -30,9 +30,11 @@ const { spawnSync } = require('child_process');
 
 const ROKU = path.resolve(__dirname, '..');
 const REPO = path.resolve(ROKU, '..');
-const LIBS = ['tz.brs', 'schedule.brs', 'powerwindow.brs', 'playorder.brs', 'util.brs'];
+const LIBS = ['tz.brs', 'schedule.brs', 'powerwindow.brs', 'playorder.brs', 'util.brs', 'queuechime.brs'];
 
 const PlayOrder = require(path.join(REPO, 'tizen/js/play-order.js'));
+// The queue widget page's own poll step and config cleaning: the reference for the Roku chime.
+const QueueWidget = require(path.join(REPO, 'server/lib/queue/widget.js'));
 const PowerWindow = require(path.join(REPO, 'server/lib/power-window.js'));
 const ScheduleEval = require(path.join(REPO, 'server/lib/schedule-eval.js'));
 // The real payload builder's table, when this checkout has it (cross-checks buildTable below).
@@ -391,6 +393,167 @@ function zoneFillCases() {
   ];
 }
 
+/*
+ * The "Now serving" chime (source/lib/queuechime.brs). Each case is a run of poll answers through
+ * one screen: the BrightScript side feeds them to ST_QueueChimeStep (ZonePlayer) and
+ * ST_QueueChimeGate (MainScene) exactly as the player does; the expected chimes come from the
+ * widget page's own queueWidgetStep + widgetConfig (server/lib/queue/widget.js) plus the web
+ * player's playQueueChime rules (mute, volume above 0, one chime per 3 s).
+ *
+ * A step: { ms, resp (null = failed poll), remount?, mute?, blank?, follower?, held? }.
+ */
+const QC_FRESH = () => ({ number: 0, callSeq: undefined, rev: null, lastOk: 0, primed: false, sound: false });
+function queueChimeExpect(config, muted0, steps) {
+  const cfg = QueueWidget.widgetConfig(typeof config === 'string' ? JSON.parse(config) : config);
+  let view = QC_FRESH();
+  let muted = muted0;
+  let last = -1;
+  return steps.map((s) => {
+    if (s.remount) { view = QC_FRESH(); muted = muted0; }
+    if (typeof s.mute === 'boolean') muted = s.mute;
+    view = QueueWidget.queueWidgetStep(view, s.resp, s.ms, QueueWidget.STALE_MS);
+    const want = view.chime && cfg.chime && !muted && cfg.chime_volume > 0;
+    const open = !s.blank && !s.follower && !s.held && (last < 0 || s.ms - last >= 3000);
+    const played = !!(want && open);
+    if (played) last = s.ms;
+    return played;
+  });
+}
+
+function queueChimeCases() {
+  const file = 'queue-chime (vs server/lib/queue/widget.js)';
+  const out = [];
+  const T0 = 1_800_000_000_000;
+  const ans = (seq, n, sound = true, extra = {}) => Object.assign({ rev: `1.${seq}.${n}`, name: 'Q', now_serving: n, call_seq: seq, sound, waiting: 0 }, extra);
+  const at = (k) => T0 + k * 4000;
+  const add = (id, config, muted, steps, wantPlayed) => {
+    const expect = queueChimeExpect(config, muted, steps);
+    if (wantPlayed && JSON.stringify(wantPlayed) !== JSON.stringify(expect)) {
+      throw new Error(`queue-chime reference disagrees with the hand-written expectation for "${id}": ${JSON.stringify(expect)}`);
+    }
+    const cfg = QueueWidget.widgetConfig(typeof config === 'string' ? JSON.parse(config) : config);
+    out.push({ kind: 'queuechime', file, id, config, muted, steps, expect, volume: cfg.chime_volume });
+  };
+  const ON = { queue_id: 'q', chime: true, chime_volume: 60 };
+  const s = (k, resp, more = {}) => Object.assign({ ms: at(k), resp }, more);
+
+  add('first answer never chimes, a change does, repeats do not', ON, false,
+    [s(0, ans(5, 12)), s(1, ans(5, 12)), s(2, ans(6, 13)), s(3, { rev: '1.6.13', unchanged: true }), s(4, ans(6, 13))],
+    [false, false, true, false, false]);
+  add('Call number of the same number again still chimes (call_seq moved)', ON, false,
+    [s(0, ans(5, 12)), s(1, ans(6, 12))], [false, true]);
+  add('one chime per 3 s: a burst is one chime', ON, false,
+    [s(0, ans(1, 1)), s(1, ans(2, 2)), { ms: at(1) + 1000, resp: ans(3, 3) }, { ms: at(1) + 2999, resp: ans(4, 4) }, { ms: at(1) + 3000, resp: ans(5, 5) }],
+    [false, true, false, false, true]);
+  add('staff switched the sound off: no chime, back on: chimes', ON, false,
+    [s(0, ans(1, 1)), s(1, ans(2, 2, false)), s(2, ans(3, 3, true))], [false, false, true]);
+  add('the widget\'s own chime off: never', { queue_id: 'q', chime: false }, false,
+    [s(0, ans(1, 1)), s(1, ans(2, 2)), s(2, ans(3, 3))], [false, false, false]);
+  add('chime "true" (a string) is not on', { queue_id: 'q', chime: 'true' }, false,
+    [s(0, ans(1, 1)), s(1, ans(2, 2))], [false, false]);
+  add('a muted item never chimes; a live unmute lets the next call chime', ON, true,
+    [s(0, ans(1, 1)), s(1, ans(2, 2)), s(2, ans(2, 2), { mute: false }), s(3, ans(3, 3)), s(4, ans(4, 4), { mute: true })],
+    [false, false, false, true, false]);
+  add('volume 0: never', { queue_id: 'q', chime: true, chime_volume: 0 }, false,
+    [s(0, ans(1, 1)), s(1, ans(2, 2))], [false, false]);
+  add('start of day (number back to 0, call_seq unchanged): silent', ON, false,
+    [s(0, ans(9, 40)), s(1, Object.assign(ans(9, 0), { rev: '2.1' })), s(2, ans(10, 1))], [false, false, true]);
+  add('a call that leaves number 0 does not chime (nothing to announce)', ON, false,
+    [s(0, ans(1, 0)), s(1, ans(2, 0))], [false, false]);
+  add('failed polls change nothing; the next change chimes', ON, false,
+    [s(0, null), s(1, ans(3, 3)), s(2, null), s(3, { error: 'No queue' }), s(4, ans(4, 4))], [false, false, false, false, true]);
+  add('an unchanged answer first does not prime: the first real answer is still silent', ON, false,
+    [s(0, { rev: 'x', unchanged: true }), s(1, ans(3, 3)), s(2, ans(4, 4))], [false, false, true]);
+  add('a remount (the item comes round again) re-primes: a call made while away is silent', ON, false,
+    [s(0, ans(1, 1)), s(1, ans(2, 2)), s(5, ans(7, 7), { remount: true }), s(6, ans(8, 8))], [false, true, false, true]);
+  add('blackout, follower and held screens are silent and do not start the 3 s gap', ON, false,
+    [s(0, ans(1, 1)), s(1, ans(2, 2), { blank: true }), { ms: at(1) + 500, resp: ans(3, 3) }, s(3, ans(4, 4), { follower: true }), s(4, ans(5, 5), { held: true }), s(5, ans(6, 6))],
+    [false, false, true, false, false, true]);
+  add('call_seq as a string is not a call (the page: typeof !== number)', ON, false,
+    [s(0, ans(1, 1)), s(1, ans('2', 2))], [false, false]);
+  add('now_serving missing: the answer is a failed poll', ON, false,
+    [s(0, ans(1, 1)), s(1, { rev: 'r', call_seq: 2, sound: true })], [false, false]);
+  add('an earlier answer without call_seq, then one with it, chimes (undefined !== n)', ON, false,
+    [s(0, { rev: 'a', now_serving: 3, sound: true }), s(1, ans(4, 4))], [false, true]);
+  add('widget_config as the JSON string the payload carries', JSON.stringify({ queue_id: 'q', chime: true, chime_volume: 35 }), false,
+    [s(0, ans(1, 1)), s(1, ans(2, 2))], [false, true]);
+  add('a big call_seq (no integer overflow)', ON, false,
+    [s(0, ans(2147483646, 1)), s(1, ans(2147483647, 2)), s(2, ans(2147483648, 3)), s(3, ans(9007199254740000, 4))], [false, true, true, true]);
+  add('a fractional number is floored, as the page does', ON, false,
+    [s(0, ans(1, 2.7)), s(1, ans(2, 0.4))], [false, false]);
+
+  // fuzz against the reference
+  const r = mulberry32(4000);
+  for (let k = 0; k < 60; k++) {
+    let seq = Math.floor(r() * 50), n = Math.floor(r() * 30), sound = r() < 0.8, ms = T0;
+    const cfg = { queue_id: 'q', chime: r() < 0.85, chime_volume: r() < 0.1 ? 0 : Math.floor(r() * 101) };
+    const steps = [];
+    for (let i = 0; i < 30; i++) {
+      ms += r() < 0.2 ? Math.floor(r() * 3500) : 4000;
+      const x = r();
+      let resp;
+      if (x < 0.1) resp = null;
+      else if (x < 0.2) resp = { rev: 'u', unchanged: true };
+      else {
+        if (r() < 0.4) { seq += 1; n = r() < 0.1 ? 0 : n + 1; }
+        if (r() < 0.05) sound = !sound;
+        resp = ans(seq, n, sound);
+      }
+      const st = { ms, resp };
+      if (r() < 0.05) st.remount = true;
+      if (r() < 0.05) st.mute = r() < 0.5;
+      if (r() < 0.05) st.blank = true;
+      if (r() < 0.03) st.follower = true;
+      steps.push(st);
+    }
+    add(`fuzz #${k}`, cfg, r() < 0.1, steps, null);
+  }
+  // The fuzz must exercise both outcomes, or it checks nothing.
+  const fuzzPlayed = out.filter((c) => c.id.startsWith('fuzz')).reduce((n, c) => n + c.expect.filter(Boolean).length, 0);
+  if (fuzzPlayed < 50) throw new Error(`queue-chime fuzz produced only ${fuzzPlayed} chimes`);
+  console.log(`queue-chime: ${out.length} cases, ${fuzzPlayed} chimes expected in the fuzz`);
+  return out;
+}
+
+// The widget's config, cleaned on the Roku exactly as widgetConfig() cleans it on the server.
+function queueChimeConfigCases() {
+  const file = 'queue-chime config (vs widgetConfig)';
+  const configs = [
+    {}, { chime: true }, { chime: false }, { chime: 'true' }, { chime: 1 }, { chime: null },
+    { chime: true, chime_volume: 0 }, { chime: true, chime_volume: 100 }, { chime: true, chime_volume: 150 },
+    { chime: true, chime_volume: -5 }, { chime: true, chime_volume: 33.5 }, { chime: true, chime_volume: 33.4 },
+    { chime: true, chime_volume: '40' }, { chime: true, chime_volume: ' 41 ' }, { chime: true, chime_volume: '' },
+    { chime: true, chime_volume: 'loud' }, { chime: true, chime_volume: null }, { chime: true, chime_volume: true },
+    { chime: true, chime_volume: false }, { chime: true, chime_volume: '1e1' }, { chime: true, chime_volume: [] },
+    { chime: true, chime_volume: {} }, { chime: true, chime_volume: 99.5 }, { chime: true, chime_volume: [5] },
+    { chime: true, chime_volume: ['70'] }, { chime: true, chime_volume: [null] }, { chime: true, chime_volume: 0.4 },
+  ];
+  const out = configs.map((c, i) => {
+    const w = QueueWidget.widgetConfig(c);
+    return { kind: 'queuechimecfg', file, id: `#${i} ${JSON.stringify(c)}`, config: c, expect: { chime: w.chime, volume: w.chime_volume } };
+  });
+  // and as the JSON string the payload carries, and junk
+  out.push({ kind: 'queuechimecfg', file, id: 'JSON string', config: JSON.stringify({ chime: true, chime_volume: 25 }), expect: { chime: true, volume: 25 } });
+  out.push({ kind: 'queuechimecfg', file, id: 'no config', config: null, expect: { chime: false, volume: 60 } });
+  return out;
+}
+
+// A wall or sync-group follower is silent (the web player's isWallFollower()).
+function queueChimeFollowerCases() {
+  const file = 'queue-chime follower';
+  const c = (id, payload, want) => ({ kind: 'queuechimefollower', file, id, payload, want });
+  return [
+    c('no payload', null, false),
+    c('a solo screen', { assignments: [] }, false),
+    c('wall leader', { wall_config: { wall_id: 'w', is_leader: true } }, false),
+    c('wall follower', { wall_config: { wall_id: 'w', is_leader: false } }, true),
+    c('wall block without is_leader', { wall_config: { wall_id: 'w' } }, true),
+    c('wall_config null', { wall_config: null, group_sync: null }, false),
+    c('sync leader', { group_sync: { group_id: 'g', is_leader: true } }, false),
+    c('sync follower', { group_sync: { group_id: 'g', is_leader: false } }, true),
+  ];
+}
+
 function findBrsCli() {
   const cands = [
     process.env.BRS_CLI,
@@ -439,6 +602,9 @@ function main() {
     ...powerZoneCases(),
     ...playOrderCases(),
     ...zoneFillCases(),
+    ...queueChimeCases(),
+    ...queueChimeConfigCases(),
+    ...queueChimeFollowerCases(),
   ];
   runs.push({ label: `tz_table mode (brs-node TZ=${MAIN_RUN_TZ})`, cases: tableCases, tz: MAIN_RUN_TZ });
 

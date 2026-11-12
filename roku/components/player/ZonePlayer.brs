@@ -57,6 +57,11 @@ sub init()
     m.clockDate = m.top.findNode("clockDate")
     m.clockTick = m.top.findNode("clockTick")
     m.clockTick.observeField("fire", "onClockTick")
+    m.queuePoll = m.top.findNode("queuePoll")
+    m.queuePoll.observeField("fire", "onQueuePollFire")
+    m.queueTask = invalid   ' created the first time a queue widget with its chime on is shown
+    m.queue = invalid       ' the queue widget on screen now (see startQueueWatch)
+    m.queueSeq = 0
 end sub
 
 sub onWatchdogFire()
@@ -88,6 +93,7 @@ sub onCommand()
     else if c = "pause" then
         m.advance.control = "stop"
         m.refresh.control = "stop"
+        stopQueueWatch()
         stopVideo()
     else if c = "resume" then
         if m.running then playNext()
@@ -99,6 +105,10 @@ sub onMuteChange()
     if m.current = invalid or not ST_IsAA(ch) then return
     if ST_Str(ch, "content_id") <> "" and ST_Str(ch, "content_id") = ST_Str(m.current, "content_id") then
         m.video.mute = ST_IsTrue(ch.muted)
+    end if
+    ' The same live toggle on a queue widget item silences (or allows) its chime.
+    if m.queue <> invalid and ST_Str(ch, "content_id") = "" and ST_Str(ch, "widget_id") <> "" and ST_Str(ch, "widget_id") = m.queue.widgetId then
+        m.queue.muted = ST_IsTrue(ch.muted)
     end if
 end sub
 
@@ -126,6 +136,7 @@ end sub
 
 sub stopAll()
     stopNativeClock()
+    stopQueueWatch()
     endHold()
     m.running = false
     m.gen = m.gen + 1
@@ -284,6 +295,7 @@ sub playIndex(i as integer)
     item = items[i]
     endCurrent(true)
     stopNativeClock()
+    stopQueueWatch()
     m.gen = m.gen + 1
     m.idx = i
     m.current = item
@@ -306,6 +318,7 @@ sub playIndex(i as integer)
     else if kind = "raster" then
         stopVideo()
         requestRaster(item)
+        startQueueWatch(item)
         armAdvance(durationOf(item, 15))
     else if kind = "video" or kind = "stream" then
         if ST_IsTrue(cfgOf("canVideo")) then
@@ -621,6 +634,7 @@ end sub
 sub showIdle()
     endCurrent(true)
     stopNativeClock()
+    stopQueueWatch()
     m.gen = m.gen + 1
     m.idx = -1
     m.advance.control = "stop"
@@ -764,5 +778,80 @@ sub layoutClock()
             m.clockTime.translation = [(m.w - tb.width) / 2, y]
             m.clockDate.translation = [(m.w - db.width) / 2, y + tb.height + gap]
         end if
+    end if
+end sub
+
+' ---------------------------------------------------------------- "Now serving" chime
+
+' A queue widget is a server-rendered still here, so its page's chime never runs. Instead, while the
+' item is on screen, its queue is polled every 4 s (the page's POLL_MS) and a called number asks
+' MainScene for a chime (queueChime). The rules are in source/lib/queuechime.brs; MainScene adds the
+' screen-wide ones (blackout, follower, one chime per 3 s) and plays the sound.
+' Nothing is polled when the widget's own chime is off. The frame is fetched exactly as before: the
+' poll never touches the raster.
+sub startQueueWatch(item as object)
+    if ST_Str(item, "widget_type") <> "queue" then return
+    wid = ST_Str(item, "widget_id")
+    if wid = "" then return
+    cc = ST_QueueChimeConfig(item.widget_config)
+    if not cc.chime then
+        ST_Log(m.top.id, "queue widget, chime off: not polling")
+        return
+    end if
+    ST_Log(m.top.id, "queue widget, chime on (volume " + cc.volume.ToStr() + "): polling every " + ST_QueueChimePollSec().ToStr() + " s")
+    if m.queueTask = invalid then
+        m.queueTask = CreateObject("roSGNode", "QueueTask")
+        m.queueTask.observeField("result", "onQueueResult")
+        m.queueTask.control = "run"
+    end if
+    ' A fresh state per mount: its first answer primes it and never chimes.
+    m.queue = { gen: m.gen, widgetId: wid, cfg: cc, state: ST_QueueChimeNew(), muted: ST_IsTrue(item.muted), inFlight: false, seq: -1, sentMs: 0& }
+    pollQueue()
+    m.queuePoll.duration = ST_QueueChimePollSec()
+    m.queuePoll.control = "start"
+end sub
+
+sub stopQueueWatch()
+    if m.queuePoll <> invalid then m.queuePoll.control = "stop"
+    m.queue = invalid
+end sub
+
+sub onQueuePollFire()
+    if m.queue = invalid or m.queue.gen <> m.gen then
+        stopQueueWatch()
+        return
+    end if
+    pollQueue()
+end sub
+
+sub pollQueue()
+    q = m.queue
+    if q = invalid then return
+    ' One poll at a time. The task gives up after 8 s, so an answer that has not come in 12 s never
+    ' will: ask again (a late answer carries an old seq and is ignored).
+    if q.inFlight and ST_NowMs() - q.sentMs < 12000 then return
+    cfg = m.top.config
+    url = ST_UrlJoin(ST_Str(cfg, "serverUrl"), "/api/widgets/" + ST_UrlEncode(q.widgetId) + "/queue.json")
+    url = url + "?device=" + ST_UrlEncode(ST_Str(cfg, "deviceId"))
+    if q.state.rev <> "" then url = url + "&rev=" + ST_UrlEncode(q.state.rev)
+    ' A unique URL per poll, as the page does, so no cache on the way answers with an old number.
+    url = url + "&t=" + ST_NowMs().ToStr()
+    m.queueSeq = m.queueSeq + 1
+    q.seq = m.queueSeq
+    q.inFlight = true
+    q.sentMs = ST_NowMs()
+    m.queueTask.request = { url: url, seq: q.seq }
+end sub
+
+sub onQueueResult()
+    r = m.queueTask.result
+    q = m.queue
+    if not ST_IsAA(r) or q = invalid or r.seq <> q.seq then return
+    q.inFlight = false
+    if q.gen <> m.gen then return
+    out = ST_QueueChimeStep(q.state, r.json, { chimeOn: q.cfg.chime, volume: q.cfg.volume, muted: q.muted })
+    if out.chime then
+        ST_Log(m.top.id, "queue called " + q.state.number.ToStr() + ", asking for the chime")
+        m.top.queueChime = { widget_id: q.widgetId, volume: q.cfg.volume }
     end if
 end sub

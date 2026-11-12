@@ -12,6 +12,8 @@
   out:  playEvent    { event: play_start|play_end, item }                (alwaysNotify)
         playingVideo boolean — true while this zone's Video node is decoding
         status       short text for the debug overlay
+        queueChime   { widget_id, volume 0..100 }: a queue widget on screen had a number called and
+                     wants the chime (source/lib/queuechime.brs); MainScene decides and plays it  (alwaysNotify)
 -->
 <component name="ZonePlayer" extends="Group">
   <interface>
@@ -22,11 +24,13 @@
     <field id="playEvent" type="assocarray" alwaysNotify="true" />
     <field id="playingVideo" type="boolean" value="false" />
     <field id="status" type="string" />
+    <field id="queueChime" type="assocarray" alwaysNotify="true" />
   </interface>
   <script type="text/brightscript" uri="pkg:/source/lib/util.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/tz.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/schedule.brs" />
   <script type="text/brightscript" uri="pkg:/source/lib/playorder.brs" />
+  <script type="text/brightscript" uri="pkg:/source/lib/queuechime.brs" />
   <script type="text/brightscript" uri="ZonePlayer.brs" />
   <children>
     <Rectangle id="bg" color="0x000000FF" />
@@ -49,6 +53,8 @@
     <Timer id="recheck" repeat="true" duration="30" />
     <Timer id="refresh" repeat="false" />
     <Timer id="watchdog" repeat="false" />
+    <!-- "Now serving": polls the queue of a queue widget on screen, for its chime (4 s, the page's POLL_MS). -->
+    <Timer id="queuePoll" repeat="true" duration="4" />
     <!-- After a round in which nothing could play: wait before trying again (30 s, doubling to 5 min). -->
     <Timer id="retry" repeat="false" />
     <!-- Said on screen when nothing in the playlist can play, instead of a black screen. -->

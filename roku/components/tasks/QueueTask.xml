@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Polls a "Now serving" widget's queue (GET /api/widgets/<id>/queue.json) for the chime
+  (source/lib/queuechime.brs). Its own Task, not RasterTask: a raster request can take up to 40 s
+  (a cold Chromium render), and a poll queued behind it would hear about a call far too late.
+
+  The endpoint is public (the widget page polls it from a sandboxed frame with no credentials), so
+  no token is sent: it answers only what the screen already shows.
+
+  in:   request  { url, seq }
+  out:  result   { seq, ok, status, json }   json = the parsed answer, invalid on any failure
+-->
+<component name="QueueTask" extends="Task">
+  <interface>
+    <field id="request" type="assocarray" alwaysNotify="true" />
+    <field id="result" type="assocarray" alwaysNotify="true" />
+  </interface>
+  <script type="text/brightscript" uri="pkg:/source/lib/util.brs" />
+  <script type="text/brightscript" uri="QueueTask.brs" />
+</component>
