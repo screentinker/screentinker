@@ -20,7 +20,7 @@
 import { t } from './i18n.js';
 import {
   ScreenShareSender, MultiShareSender, pickScreen, pickCamera, shareUnsupportedReason, cameraUnsupportedReason,
-  isMobileBrowser, isAndroid, stopStream, managerAppLink, soundMissing,
+  isMobileBrowser, isAndroid, stopStream, managerAppLink, soundMissing, noSoundKey,
 } from './lib/screen-share-client.js';
 
 const $ = (id) => document.getElementById(id);
@@ -244,7 +244,7 @@ async function join(kind) {
     });
   }
   sender.start();
-  if (noSound) say(t('screen_share.no_sound'));
+  if (noSound) say(t(noSoundKey(stream)));
 }
 
 $('shareJoin').addEventListener('submit', (e) => { e.preventDefault(); if (!screenWhy) join('screen'); });

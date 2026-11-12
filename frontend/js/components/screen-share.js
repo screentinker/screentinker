@@ -14,7 +14,7 @@ import { api } from '../api.js';
 import { t } from '../i18n.js';
 import { esc } from '../utils.js';
 import { showToast } from './toast.js';
-import { ScreenShareSender, MultiShareSender, pickScreen, shareUnsupportedReason, stopStream, soundMissing } from '../lib/screen-share-client.js';
+import { ScreenShareSender, MultiShareSender, pickScreen, shareUnsupportedReason, stopStream, soundMissing, noSoundKey, screenSoundPossible } from '../lib/screen-share-client.js';
 
 // { deviceIds, deviceName, state, sender, shareId, live, screens } — screens > 1 for a multi share.
 let active = null;
@@ -88,7 +88,7 @@ export async function startScreenShare(device, { audio = false, also = [] } = {}
     if (!(e && e.name === 'NotAllowedError')) showToast(t('screen_share.pick_failed'), 'error');
     return false;   // cancelling the picker is not an error
   }
-  if (soundMissing(stream, audio)) showToast(t('screen_share.no_sound'), 'info', 9000);
+  if (soundMissing(stream, audio)) showToast(t(noSoundKey(stream)), 'info', 12000);
   let start;
   try {
     start = await api.startScreenShare(device.id, { audio: !!audio && stream.getAudioTracks().length > 0 });
@@ -139,7 +139,7 @@ export async function startScreenShareTo({ deviceIds = [], groupId = null, label
     if (!(e && e.name === 'NotAllowedError')) showToast(t('screen_share.pick_failed'), 'error');
     return false;
   }
-  if (soundMissing(stream, audio)) showToast(t('screen_share.no_sound'), 'info', 9000);
+  if (soundMissing(stream, audio)) showToast(t(noSoundKey(stream)), 'info', 12000);
   let start;
   try {
     start = await api.startScreenShareMulti({
@@ -388,7 +388,7 @@ export function renderScreenShareCard(host, device, opts = {}) {
         ${canStart ? `
           <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
             <button type="button" class="btn btn-primary btn-sm" data-share-start ${status.reason === 'offline' ? 'disabled' : ''}>&#128421;&#65039; ${esc(t('screen_share.start'))}</button>
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" data-share-audio> ${esc(t('screen_share.include_audio'))}</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" data-share-audio> ${esc(t('screen_share.include_audio'))}</label>${screenSoundPossible() ? '' : `<span style="font-size:12px;color:var(--text-muted)">${esc(t('screen_share.sound_not_here'))}</span>`}
           </div>
           ${(status.max_targets || 1) > 1 ? `
           <details data-share-also-box style="margin-top:10px" ${alsoOpen ? 'open' : ''}>
