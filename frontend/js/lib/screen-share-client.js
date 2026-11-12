@@ -106,6 +106,34 @@ export function soundMissing(stream, wanted) {
   try { return !!wanted && !!stream && stream.getAudioTracks().length === 0; } catch (_) { return false; }
 }
 
+/*
+ * Can this browser share sound from a screen at all? Firefox and Safari never hand getDisplayMedia a
+ * sound track, whatever is ticked; Chromium browsers (Chrome, Edge, and Chrome on ChromeOS) can.
+ */
+export function screenSoundPossible(ua) {
+  const u = String(ua === undefined ? ((typeof navigator !== 'undefined' && navigator.userAgent) || '') : ua);
+  if (/Firefox\/|FxiOS\//.test(u)) return false;
+  if (/Safari\//.test(u) && !/Chrome\/|Chromium\/|CriOS\/|Edg\//.test(u)) return false;
+  return true;
+}
+
+/*
+ * WHY there is no sound, as the i18n key of a message that says what to do about it. The browser
+ * reports what was picked (displaySurface): a window never carries sound, a tab does unless the
+ * picker's "Also share tab audio" was switched off, the entire screen only on Windows and ChromeOS
+ * with "Also share system audio" on. A shared screen with no sound "sometimes" was nearly always the
+ * picker, and a message that does not say which choice it was left people guessing.
+ */
+export function noSoundKey(stream, ua) {
+  if (!screenSoundPossible(ua)) return 'screen_share.no_sound_browser';
+  let surface = null;
+  try { const v = stream && stream.getVideoTracks()[0]; surface = (v && v.getSettings && v.getSettings().displaySurface) || null; } catch (_) { surface = null; }
+  if (surface === 'window') return 'screen_share.no_sound_window';
+  if (surface === 'browser') return 'screen_share.no_sound_tab';
+  if (surface === 'monitor') return 'screen_share.no_sound_screen';
+  return 'screen_share.no_sound';
+}
+
 export function stopStream(stream) {
   try { stream && stream.getTracks().forEach((tr) => tr.stop()); } catch (_) { /* already stopped */ }
 }

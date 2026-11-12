@@ -8551,7 +8551,12 @@ export default {
   'screen_share.admin.label': 'People at once',
   'screen_share.admin.saved': 'Saved. It applies to the next person who joins.',
   'screen_share.simple.app_lead': 'The app asks your phone for permission to share its screen, then shows it there. Stop it from the notification.',
-  'screen_share.no_sound': 'No sound is being shared. Chrome and Edge share sound from a browser tab (pick a tab and keep “Also share tab audio” ticked), or from the entire screen on Windows. Firefox and Safari can\'t share sound.',
+  'screen_share.no_sound': 'No sound is being shared. Chrome and Edge share sound from a browser tab (pick a tab and keep “Also share tab audio” ticked), or from the entire screen on Windows and ChromeOS. Firefox and Safari can\'t share sound.',
+  'screen_share.no_sound_tab': 'No sound is being shared: “Also share tab audio” was switched off in the browser\'s picker. Stop, share again, and leave it on.',
+  'screen_share.no_sound_window': 'No sound is being shared: a window can\'t carry sound. To share sound, share a browser tab instead, or the entire screen on Windows or ChromeOS.',
+  'screen_share.no_sound_screen': 'No sound is being shared from the entire screen. On Windows and ChromeOS, turn on “Also share system audio” in the picker; a Mac can\'t share its screen\'s sound. Sharing a browser tab always can.',
+  'screen_share.no_sound_browser': 'No sound is being shared: this browser can\'t share sound from a screen (Firefox and Safari never do). Use Chrome or Edge to share with sound.',
+  'screen_share.sound_not_here': 'This browser can\'t share sound from a screen. Chrome and Edge can.',
   // Embedded panels: diagnostic logs, firmware updates, ambient sensors (#638)
   'device.info.humidity_value': '{n}% RH',
   'device.embedded.logs_title': 'Diagnostic Logs',
