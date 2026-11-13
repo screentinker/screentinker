@@ -4,6 +4,7 @@ import { esc, canWrite, readOnlyNote } from '../utils.js';
 import { t } from '../i18n.js';
 import { isPrivateHost } from '../components/private-host.js';
 import { renderLog } from '../lib/queue-log.js';
+import { openModal } from '../components/corporate-ui.js';
 
 /*
  * "Now serving" queues (server: routes/queues.js, lib/queue/service.js, docs/now-serving-queue.md).
@@ -36,6 +37,7 @@ function card(q) {
           <input class="input" data-f="callNum" type="number" min="1" style="width:110px" placeholder="${esc(t('queue.staff.call_ph'))}">
           <button class="btn btn-secondary" data-act="call">${esc(t('queue.staff.call'))}</button>
           <button class="btn btn-secondary" data-act="reset">${esc(t('queue.staff.start_day'))}</button>
+          <button class="btn btn-secondary" data-act="show">${esc(t('queue.show.button'))}</button>
         </div>
         <label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:14px"><input type="checkbox" data-act="sound"> ${esc(t('queue.dash.sound'))}</label>
         <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${esc(t('queue.dash.sound_hint'))}</div>` : ''}
@@ -129,6 +131,74 @@ async function printQr(q) {
   setTimeout(() => { try { w.focus(); w.print(); } catch { /* the person can print from the tab */ } }, 300);
 }
 
+const widgetQueueId = (w) => {
+  let c = w && w.config;
+  if (typeof c === 'string') { try { c = JSON.parse(c); } catch { c = null; } }
+  return c && c.queue_id != null ? String(c.queue_id) : null;
+};
+
+/** The workspace's Now serving widget for this queue, made on the spot if there is none yet. */
+async function queueWidget(q) {
+  const all = await api.get('/widgets');
+  const found = (Array.isArray(all) ? all : []).find((w) => w.widget_type === 'queue' && w.workspace_id && widgetQueueId(w) === String(q.id));
+  if (found) return { widget: found, created: false };
+  const widget = await api.post('/widgets', { widget_type: 'queue', name: t('queue.show.widget_name', { name: q.name }), config: { queue_id: q.id } });
+  return { widget, created: true };
+}
+
+/** "Show on a screen": the queue's widget, added to a playlist the person picks. */
+async function showOnScreen(q) {
+  const m = openModal({
+    title: t('queue.show.title', { name: q.name }),
+    body: `<p data-f="state" style="margin:0 0 12px">${esc(t('queue.show.loading'))}</p>
+      <div data-f="pick" style="display:none">
+        <label style="font-size:13px;display:block;margin-bottom:6px">${esc(t('queue.show.pick'))}</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <select class="input" data-f="pl" style="flex:1;min-width:180px"></select>
+          <button class="btn btn-primary btn-sm" data-f="add" disabled>${esc(t('templates.add_to_playlist'))}</button>
+        </div>
+        <div data-f="msg" style="font-size:13px;margin-top:8px;min-height:18px"></div>
+        <p style="font-size:12px;color:var(--text-muted);margin:12px 0 0">${esc(t('queue.show.hint'))}</p>
+      </div>`,
+    footer: `<a class="btn btn-secondary" href="#/widgets" data-f="widgets">${esc(t('queue.show.edit_widget'))}</a>
+      <button class="btn btn-primary" type="button" data-corp-close-done>${esc(t('common.done'))}</button>`,
+  });
+  m.q('[data-corp-close-done]').addEventListener('click', m.close);
+  m.q('[data-f="widgets"]').addEventListener('click', m.close);
+  const state = m.q('[data-f="state"]');
+  let widget;
+  try {
+    const r = await queueWidget(q);
+    widget = r.widget;
+    state.textContent = t(r.created ? 'queue.show.created' : 'queue.show.found', { name: widget.name });
+  } catch (e) { state.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; return; }
+  let pls = [];
+  try { pls = await api.getPlaylists(); } catch { pls = []; }
+  pls = Array.isArray(pls) ? pls : [];
+  const sel = m.q('[data-f="pl"]');
+  const add = m.q('[data-f="add"]');
+  const msg = m.q('[data-f="msg"]');
+  m.q('[data-f="pick"]').style.display = '';
+  if (!pls.length) {
+    sel.innerHTML = `<option value="">${esc(t('templates.no_playlists'))}</option>`;
+    sel.disabled = true;
+    msg.innerHTML = `${esc(t('queue.show.no_playlists'))} <a href="#/playlists">${esc(t('nav.playlists'))}</a>`;
+    msg.querySelector('a').addEventListener('click', m.close);
+    return;
+  }
+  sel.innerHTML = `<option value="">${esc(t('templates.choose_playlist'))}</option>${pls.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}`;
+  sel.addEventListener('change', () => { add.disabled = !sel.value; msg.textContent = ''; });
+  add.addEventListener('click', async () => {
+    add.disabled = true;
+    try {
+      await api.addPlaylistItem(sel.value, { widget_id: widget.id });
+      const pl = pls.find((p) => String(p.id) === sel.value);
+      msg.innerHTML = `${esc(t('templates.added_to_playlist_draft', { name: pl ? pl.name : '' }))} <a href="#/playlists/${encodeURIComponent(sel.value)}">${esc(t('templates.open_playlist'))}</a>`;
+      msg.querySelector('a').addEventListener('click', m.close);
+    } catch (e) { add.disabled = false; msg.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
+  });
+}
+
 async function copy(text) {
   try { await navigator.clipboard.writeText(text); showToast(t('queue.dash.copied'), 'success'); }
   catch { window.prompt(t('queue.dash.copy'), text); }
@@ -156,6 +226,7 @@ function wire(app, el, q0) {
       }
       case 'reset': if (confirm(t('queue.staff.start_day_confirm'))) return run(() => api.post(`/queues/${id}/reset`)); return;
       case 'print': return printQr(q);
+      case 'show': return showOnScreen(q);
       case 'copy-customer': return copy(abs(q.customer_path));
       case 'copy-staff': return q.staff_path && copy(abs(q.staff_path));
       case 'open-staff': if (q.staff_path) window.open(abs(q.staff_path), '_blank', 'noopener,noreferrer'); return;
