@@ -12,7 +12,9 @@
  * first had already moved on, the step index ran past the end and the last step could never finish.
  *
  * Here "Use sample" is slowed down (its upload is held back) and "Show the same as" is pressed while it
- * is still running, so both finish on the upload step's behalf.
+ * is still running. Only one way of filling the screen runs at a time, so the second press is ignored:
+ * the guide lands on its last step exactly once, and what the last step says is playing is what the
+ * screen really has (a late sample used to replace the "Show the same as" choice behind its back).
  *
  * Skips cleanly when there is no Chrome or no puppeteer-core, like the other browser suites.
  */
@@ -22,7 +24,7 @@ const assert = require('node:assert/strict');
 const path = require('path');
 const { SKIP, sleep, waitFor, startServer, launch } = require('./helpers/web-player-e2e');
 
-let srv, browser, page;
+let srv, browser, page, lobbyId;
 const errors = [];
 
 before(async () => {
@@ -33,6 +35,7 @@ before(async () => {
   const pl = await srv.api('POST', '/playlists', { name: 'Lobby' });
   await srv.api('POST', `/playlists/${pl.id}/items`, { content_id: item.id, duration_sec: 10 });
   await srv.api('POST', `/playlists/${pl.id}/publish`, {});
+  lobbyId = pl.id;
 
   browser = await launch();
   page = await browser.newPage();
@@ -85,10 +88,19 @@ test('two content actions on the upload step still end on a last step that finis
   const stepErrors = errors.filter((m) => /reading '(icon|action)'/.test(m));
   assert.deepEqual(stepErrors, [], 'no step ran past the end');
 
-  // The last step is showing, and its button finishes the guide.
-  assert.ok(await waitFor(() => page.evaluate(() => !!document.getElementById('nextBtn')), 5000), 'a step is showing');
-  const before = await heading();
-  assert.ok(before.length > 0, `the last step is drawn (heading "${before}")`);
+  // The last step is showing (not clamped onto it from further along), and its button finishes the guide.
+  assert.ok(await waitFor(() => page.evaluate(() => !!document.getElementById('onboardPlaylistPick')), 5000), 'the last step is showing');
+  const lastHeading = await heading();
+  assert.ok(lastHeading.length > 0, `the last step is drawn (heading "${lastHeading}")`);
+
+  // The sample was pressed first, so it is what went on the screen, and the last step says so.
+  const devices = await srv.api('GET', '/devices');
+  const screen = (Array.isArray(devices) ? devices : devices.devices || []).find((d) => d.playlist_id);
+  assert.ok(screen, 'the new screen has a playlist');
+  assert.notEqual(screen.playlist_id, lobbyId, 'the ignored "Show the same as" press did not reach the screen');
+  const shown = await page.evaluate(() => document.getElementById('onboardPlaylistPick').value);
+  assert.equal(shown, screen.playlist_id, 'the last step preselects what the screen is really playing');
+
   await click('#nextBtn');
   const done = await waitFor(() => page.evaluate(() => !location.hash.startsWith('#/onboarding')), 15000);
   assert.ok(done, '"Go to Dashboard" leaves the guide');

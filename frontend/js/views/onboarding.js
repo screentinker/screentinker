@@ -237,6 +237,18 @@ export function render(container, { mode = 'first' } = {}) {
   }
   // Never index past either end, whatever got us here: the last step must always be able to finish.
   const clampStep = (n) => { currentStep = Math.max(0, Math.min(currentStep, n - 1)); };
+  /*
+   * ONE way of filling the screen at a time. A second one pressed while the first is still working is
+   * ignored: otherwise both write to the screen, and the one that finishes last silently replaces the
+   * choice the guide just confirmed (a late "Use sample" overwrote "Show the same as").
+   */
+  let filling = false;
+  async function fillOnce(work) {
+    if (filling) return;
+    filling = true;
+    const from = currentStep;
+    try { await work(from); } finally { filling = false; }
+  }
   let pairedDeviceId = null;
   let assignedPlaylistId = null;   // whatever the upload step put on this device, if anything
   let createdPlayerUrl = null;     // #313: set once a no-storage display has been created here
@@ -394,14 +406,14 @@ export function render(container, { mode = 'first' } = {}) {
       const area = document.getElementById('onboardUploadArea');
       const input = document.getElementById('onboardFileInput');
       area?.addEventListener('click', () => input.click());
-      input?.addEventListener('change', () => { const picked = [...(input.files || [])]; input.value = ''; uploadFiles(picked); });
+      input?.addEventListener('change', () => { const picked = [...(input.files || [])]; input.value = ''; fillOnce((from) => uploadFiles(picked, from)); });
       // Dropping a handful of photos straight from the desktop works too.
       area?.addEventListener('dragover', (e) => { e.preventDefault(); area.style.borderColor = 'var(--accent)'; });
       area?.addEventListener('dragleave', () => { area.style.borderColor = ''; });
-      area?.addEventListener('drop', (e) => { e.preventDefault(); area.style.borderColor = ''; uploadFiles([...(e.dataTransfer?.files || [])]); });
-      document.getElementById('onboardUseSample')?.addEventListener('click', useSample);
+      area?.addEventListener('drop', (e) => { e.preventDefault(); area.style.borderColor = ''; const dropped = [...(e.dataTransfer?.files || [])]; fillOnce((from) => uploadFiles(dropped, from)); });
+      document.getElementById('onboardUseSample')?.addEventListener('click', () => fillOnce(useSample));
       // Free stock photos land in the library like an upload; then the same assign-and-publish.
-      mountStockPicker(document.getElementById('onboardStock'), { collapsed: true, onAdded: (rows) => placeItems(rows) });
+      mountStockPicker(document.getElementById('onboardStock'), { collapsed: true, onAdded: (rows) => fillOnce((from) => placeItems(rows, from)) });
       document.getElementById('onboardMakeSign')?.addEventListener('click', makeSign);
       populateSameAs();
     }
@@ -600,7 +612,7 @@ export function render(container, { mode = 'first' } = {}) {
 
   // 3.0: the sample is fetched from this server and uploaded like any other file, so it lands in the
   // library as ordinary content the user owns, edits and deletes — nothing is special-cased server-side.
-  async function useSample() {
+  async function useSample(from) {
     const btn = document.getElementById('onboardUseSample');
     if (btn) btn.disabled = true;
     try {
@@ -608,7 +620,8 @@ export function render(container, { mode = 'first' } = {}) {
       if (!res.ok) throw new Error(String(res.status));
       const blob = await res.blob();
       api.trackEvent('sample_content_used', {});
-      uploadFiles([new File([blob], 'Welcome screen.jpg', { type: blob.type || 'image/jpeg' })]);
+      // Awaited, so the screen counts as being filled until the sample is actually on it.
+      await uploadFiles([new File([blob], 'Welcome screen.jpg', { type: blob.type || 'image/jpeg' })], from);
     } catch {
       showToast(t('onboarding.toast.sample_failed'), 'error');
       if (btn) btn.disabled = false;
@@ -640,7 +653,7 @@ export function render(container, { mode = 'first' } = {}) {
    * a refusal, and the upgrade prompt on a storage limit) — then adds each item to the screen's
    * playlist and publishes ONCE at the end, so the screen restarts once, not per photo.
    */
-  async function uploadFiles(files) {
+  async function uploadFiles(files, from) {
     files = (files || []).filter(Boolean);
     if (!files.length) return;
 
@@ -666,15 +679,17 @@ export function render(container, { mode = 'first' } = {}) {
       return fail(err.planPromptShown ? '' : (err.message || t('onboarding.toast.upload_failed')));
     }
     if (bar) bar.style.width = '100%';
-    return placeItems(Array.isArray(uploaded) ? uploaded : [uploaded]);
+    return placeItems(Array.isArray(uploaded) ? uploaded : [uploaded], from);
   }
 
   /*
    * Put library items (just uploaded, or just added from free stock photos) on the screen in the
    * order given, and publish ONCE at the end, so the screen restarts once, not per photo.
    */
-  async function placeItems(items) {
-    const from = currentStep;
+  async function placeItems(items, from) {
+    // The guide moved on while this was uploading (Next, Back): it stays in the library, and the
+    // screen keeps whatever the guide now says is on it.
+    if (currentStep !== from) return;
     const progress = document.getElementById('onboardUploadProgress');
     const text = document.getElementById('onboardUploadText');
     const area = document.getElementById('onboardUploadArea');
@@ -731,11 +746,10 @@ export function render(container, { mode = 'first' } = {}) {
       select.appendChild(opt);
     }
     block.style.display = 'block';
-    document.getElementById('onboardSameAsBtn').addEventListener('click', async (e) => {
+    document.getElementById('onboardSameAsBtn').addEventListener('click', (e) => fillOnce(async (from) => {
       const status = document.getElementById('onboardSameAsStatus');
       const pick = select.value;
       if (!pick) return;
-      const from = currentStep;
       e.target.disabled = true;
       try {
         await api.assignPlaylistToDevice(pick, pairedDeviceId);
@@ -750,7 +764,7 @@ export function render(container, { mode = 'first' } = {}) {
         if (status) status.textContent = err.message || t('onboarding.toast.assign_failed');
         e.target.disabled = false;
       }
-    });
+    }));
   }
 
   if (!addMode) api.trackEvent('onboarding_started', {});
