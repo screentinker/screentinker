@@ -224,6 +224,19 @@ export function render(container, { mode = 'first' } = {}) {
   // 'add': Simple view's Add screen — the first-run guide for screen two, three... (#/add-screen).
   const addMode = mode === 'add';
   let currentStep = 0;
+  /*
+   * Work that finishes later (an upload or "Use sample", a stock photo, "Show the same as another
+   * screen") advances the guide only if it is still on the step it started from. Each of them used to
+   * do a bare currentStep++ when it finished, so two that overlapped advanced twice, past the last
+   * step, where renderStep and "Go to Dashboard" threw and the guide could never be finished.
+   */
+  function advanceFrom(stepIndex) {
+    if (currentStep !== stepIndex) return;
+    currentStep++;
+    renderStep();
+  }
+  // Never index past either end, whatever got us here: the last step must always be able to finish.
+  const clampStep = (n) => { currentStep = Math.max(0, Math.min(currentStep, n - 1)); };
   let pairedDeviceId = null;
   let assignedPlaylistId = null;   // whatever the upload step put on this device, if anything
   let createdPlayerUrl = null;     // #313: set once a no-storage display has been created here
@@ -279,6 +292,7 @@ export function render(container, { mode = 'first' } = {}) {
   function renderStep() {
     cleanupMigrate();
     const STEPS = getSteps(addMode);
+    clampStep(STEPS.length);
     const step = STEPS[currentStep];
     const isFirst = currentStep === 0;
     const isLast = currentStep === STEPS.length - 1;
@@ -465,6 +479,8 @@ export function render(container, { mode = 'first' } = {}) {
 
   async function handleNext() {
     const STEPS = getSteps(addMode);
+    clampStep(STEPS.length);
+    const from = currentStep;
     const step = STEPS[currentStep];
 
     if (step.action === 'pair') {
@@ -492,15 +508,14 @@ export function render(container, { mode = 'first' } = {}) {
            * player is not in front of them. The URL rides along and is shown on the last step,
            * where it is the thing they leave with, and it is on the display's own page for good.
            */
-          currentStep++;
-          renderStep();
+          advanceFrom(from);
         } catch (err) {
           // At the screen limit the upgrade prompt says it (plan-nudges.js); the step stays quiet.
           if (status) status.textContent = err.planPromptShown ? '' : (err.message || t('onboarding.toast.pair_failed'));
         }
         return;
       }
-      if (noStorage && createdPlayerUrl) { currentStep++; renderStep(); return; }
+      if (noStorage && createdPlayerUrl) { advanceFrom(from); return; }
 
       if (!code || code.length !== 6) {
         if (status) status.textContent = t('onboarding.toast.invalid_code');
@@ -527,8 +542,7 @@ export function render(container, { mode = 'first' } = {}) {
       }
       pairedDeviceId = data.id;
       showToast(t('onboarding.toast.paired'), 'success');
-      currentStep++;
-      renderStep();
+      advanceFrom(from);
       return;
     }
 
@@ -581,8 +595,7 @@ export function render(container, { mode = 'first' } = {}) {
       return;
     }
 
-    currentStep++;
-    renderStep();
+    advanceFrom(from);
   }
 
   // 3.0: the sample is fetched from this server and uploaded like any other file, so it lands in the
@@ -661,6 +674,7 @@ export function render(container, { mode = 'first' } = {}) {
    * order given, and publish ONCE at the end, so the screen restarts once, not per photo.
    */
   async function placeItems(items) {
+    const from = currentStep;
     const progress = document.getElementById('onboardUploadProgress');
     const text = document.getElementById('onboardUploadText');
     const area = document.getElementById('onboardUploadArea');
@@ -692,8 +706,7 @@ export function render(container, { mode = 'first' } = {}) {
     showToast(published.review ? t('onboarding.toast.sent_for_review')
       : items.length > 1 ? t('onboarding.toast.content_assigned_n', { n: items.length }) : t('onboarding.toast.content_assigned'), 'success');
     if (assignedPlaylistId && !published.review) api.trackEvent('first_publish', { from: 'onboarding', items: items.length });
-    currentStep++;
-    renderStep();
+    advanceFrom(from);
   }
 
   /*
@@ -722,6 +735,7 @@ export function render(container, { mode = 'first' } = {}) {
       const status = document.getElementById('onboardSameAsStatus');
       const pick = select.value;
       if (!pick) return;
+      const from = currentStep;
       e.target.disabled = true;
       try {
         await api.assignPlaylistToDevice(pick, pairedDeviceId);
@@ -731,8 +745,7 @@ export function render(container, { mode = 'first' } = {}) {
         }
         assignedPlaylistId = pick;
         showToast(t('onboarding.toast.playlist_assigned'), 'success');
-        currentStep++;
-        renderStep();
+        advanceFrom(from);
       } catch (err) {
         if (status) status.textContent = err.message || t('onboarding.toast.assign_failed');
         e.target.disabled = false;
