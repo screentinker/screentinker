@@ -777,22 +777,31 @@ Use this in local dev when running against a fresh production database clone to 
 
 ### Production Deployment
 
-For production, put the app behind a reverse proxy (nginx, Caddy, etc.) with SSL:
+For production, put the app behind a reverse proxy (nginx, Caddy, etc.) with SSL. Run these from the root of
+your clone (tested on a clean Ubuntu 24.04):
 
 ```bash
-# Create a dedicated user
-sudo useradd -r -s /bin/false screentinker
+# Node.js 22.14+ must be the SYSTEM node, at /usr/bin/node: that is the one systemd runs.
+# Ubuntu 24.04 and Debian 12 ship Node 18 in apt, and a Node installed with nvm is not on
+# systemd's path, so install Node 22 from NodeSource (ffmpeg is for video thumbnails +
+# durations, see Requirements):
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs ffmpeg
+/usr/bin/node -v    # must print v22.14 or newer (Node 26 works too: use setup_26.x)
 
-# Copy the app
+# Create a dedicated user
+sudo useradd -r -U -s /bin/false screentinker    # -U: also create its group (not every distro does by default)
+
+# Copy the app and install its dependencies, THEN hand it to the service user.
+# (Running npm as yourself after the chown fails with EACCES: you can no longer write there.)
 sudo cp -r . /opt/screentinker
+cd /opt/screentinker/server
+sudo npm ci --omit=dev
 sudo chown -R screentinker:screentinker /opt/screentinker
 
-# Install dependencies (ffmpeg is for video thumbnails + durations — see Requirements)
-sudo apt-get install -y ffmpeg
-cd /opt/screentinker/server && npm install --production
-
-# Create a systemd service
-sudo cat > /etc/systemd/system/screentinker.service << 'EOF'
+# Create a systemd service. Use `sudo tee`: with `sudo cat > file` the redirect is done by
+# your own shell, not by sudo, and fails with "Permission denied".
+sudo tee /etc/systemd/system/screentinker.service > /dev/null << 'EOF'
 [Unit]
 Description=ScreenTinker
 After=network.target
@@ -829,8 +838,14 @@ Environment=SELF_HOSTED=true
 WantedBy=multi-user.target
 EOF
 
+sudo systemctl daemon-reload
 sudo systemctl enable --now screentinker
+journalctl -u screentinker -f    # the startup banner, or the reason it stopped
 ```
+
+Then open `http://<server>:3001` (or your proxy's address) and register: with `SELF_HOSTED=true` the first account
+is the admin. If you update the code later, repeat the `npm ci --omit=dev` and `chown` lines, then
+`sudo systemctl restart screentinker`.
 
 #### Nginx Example
 
