@@ -225,6 +225,7 @@ class WebSocketService : Service() {
             onApply = { off -> applyScheduledPower(off) },
             onStateChanged = { state -> setDisplayPowerState(state) }
         ).also {
+            it.holdDarkUntilOnline()   // Not dark before the socket is up, or Wi-Fi may not come back
             it.restore()     // applies the current window immediately — no waiting for an edge
             it.start()
         }
@@ -252,6 +253,7 @@ class WebSocketService : Service() {
                 override fun onLost(network: Network) {
                     // Only meaningful mid-gap; if we're still connected this is a transient handoff.
                     if (disconnectedAtMs != 0L) linkLostDuringGap = true
+                    handler.post { try { powerSchedule?.onNetworkLost() } catch (e: Throwable) { Log.w("WebSocketService", "power on lost: ${e.message}") } }   // A boot-time drop in the dark strands the panel
                 }
                 override fun onAvailable(network: Network) {
                     // #170: fresh connectivity (boot Wi-Fi coming up, reconnect after a drop). Clear
@@ -409,7 +411,7 @@ class WebSocketService : Service() {
                      * only acts on CHANGE would leave that drift in place until the next edge,
                      * which for an overnight window is hours away.
                      */
-                    try { powerSchedule?.applyNow(force = true) }
+                    try { powerSchedule?.releaseDarkHold(); powerSchedule?.applyNow(force = true) }
                     catch (e: Throwable) { Log.w("WebSocketService", "power re-apply on connect: ${e.message}") }
                 }
 
