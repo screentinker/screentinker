@@ -3267,17 +3267,23 @@
        * during an alarm should unlock the ALARM's audio, not be swallowed because the base is
        * silenced. So the base stays muted and the overlay is allowed through.
        */
+      /*
+       * ⚠️ UNLOCKING IS NOT UN-MUTING. This used to set `muted = false` on every <video> on the page,
+       * so a gesture (or ?autoplay_audio=1's own tap, which fires after the cached playlist has
+       * already started) gave sound to items the operator had MUTED: a muted zone item, or a muted
+       * full-screen clip, played out loud until something next re-resolved it. Found by
+       * web-player-zone-mute-e2e flaking on CI ("still muted after a reload (got false)").
+       *
+       * The overlay (an alarm) is still simply unmuted: its sound is the point. Everything else is
+       * re-resolved by applyMute(), which now sees the gesture, so unmuted items gain sound and
+       * muted ones stay silent, zone by zone.
+       */
       document.querySelectorAll('video').forEach(v => {
-        if (baseAudioSuppressed && !isOverlayMedia(v)) return;
-        v.muted = false;
+        if (isOverlayMedia(v)) v.muted = false;
       });
-      // Unmute the active YouTube embed (iframe — querySelectorAll('video') misses it)
-      try {
-        if (activeYtPlayer && typeof activeYtPlayer.unMute === 'function' && !baseAudioSuppressed) {
-          activeYtPlayer.unMute();
-          activeYtPlayer.setVolume(100);
-        }
-      } catch (e) { console.warn('YT unmute failed:', e); }
+      // applyMute() also handles the YouTube embed (an iframe that querySelectorAll('video') misses),
+      // un-muting it at the configured volume only when its item is not muted.
+      try { applyMute(); } catch (e) { console.warn('re-resolving mute after the unlock failed:', e); }
     }
 
     document.getElementById('connectBtn').onclick = connectBtnFunc;

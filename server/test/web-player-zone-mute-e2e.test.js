@@ -101,7 +101,30 @@ describe('web player mute in a layout', { skip: SKIP }, () => {
       await mute(musicItem, true);
       assert.ok(await waitFor(async () => (await musicMuted()) === true, 10000));
       await page.reload({ waitUntil: 'domcontentloaded' });
-      assert.ok(await waitFor(async () => (await musicMuted()) === true, 30000), `still muted after a reload (got ${await musicMuted()})`);
+      /*
+       * Flaked once on CI (node:sqlite job): the zone stayed UNMUTED for the whole 30 s after a
+       * reload, which 24 local runs under load (both drivers) never reproduced. Not retried away,
+       * since that could hide a real mute bug on screens: on failure this says what the page held,
+       * so the next one can be diagnosed. (The port race fixed in helpers/free-port.js is one
+       * candidate: a reload that reached ANOTHER suite's server would load a different playlist.)
+       */
+      const why = () => player(page, `(() => {
+        const zv = [...document.querySelectorAll('#playerContainer > .zone video')].map((e) => ({ src: (e.currentSrc || e.src).split('/').pop(), muted: e.muted, quiet: !!e.__stZoneQuiet, itemMuted: e.__stZoneItem ? e.__stZoneItem.muted : null }));
+        let cached = null; try { cached = (JSON.parse(localStorage.getItem(typeof PLAYLIST_CACHE_KEY === 'string' ? PLAYLIST_CACHE_KEY : 'rd_playlist_cache') || 'null') || []).map((i) => ({ f: i.filepath, muted: i.muted })); } catch (e) { cached = String(e); }
+        return JSON.stringify({ location: location.host, zones: zv, cached, connected: typeof socket !== 'undefined' && !!socket && socket.connected });
+      })()`);
+      // STRICT: not "muted eventually" but never audible. unlockAudio() (autoplay_audio=1's own tap,
+      // and any first touch) used to un-mute every element, so the muted zone played with sound
+      // until something re-resolved it; how long depended on timing, hence the flake.
+      const heard = [];
+      for (const end = Date.now() + 6000; Date.now() < end;) {
+        const m = await musicMuted();
+        if (m === false) heard.push(Date.now());
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.deepEqual(heard, [], `the muted zone was audible after the reload at ${heard.length} samples: ${await why()}`);
+      const ok = await waitFor(async () => (await musicMuted()) === true, 30000);
+      assert.ok(ok, `still muted after a reload (got ${await musicMuted()}): ${await why()}; page log tail: ${page.logs.slice(-15).join(' | ')}`);
       assert.deepEqual(page.errors, [], 'the player never threw');
     } finally { await ctx.close(); }
   });
