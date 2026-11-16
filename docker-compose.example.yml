@@ -90,7 +90,7 @@ services:
 #       - st-updater:/updater                                 # writes status the app shows
 
 # Locked out of the admin account? Reset it with:
-#   docker exec -it screentinker node scripts/reset-admin.js
+#   docker compose exec screentinker node ../scripts/reset-admin.js   (the container works in /app/server)
 
 volumes:
   st-data:

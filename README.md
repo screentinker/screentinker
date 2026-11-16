@@ -187,6 +187,8 @@ a kiosk and it has not been certified on hardware; see [docs/vega-player.md](doc
 
 ### Quick Start
 
+**Docker** is the simplest way to run it: see [Running ScreenTinker with Docker](docs/docker.md) for compose, HTTPS, the Android APK, backups and upgrades. From source:
+
 ```bash
 git clone https://github.com/screentinker/screentinker.git
 cd screentinker/server
