@@ -225,7 +225,7 @@ main += '\nfunction nativeGaplessAdvance() { var old = playlist[currentIndex]; i
  * HTML because the plane is always-on-top; do not ship another unclipped native
  * PiP.
  */
-replaceOnce('    div.appendChild(video);\n    try {\n      const p = video.play();', '    div.appendChild(video);\n    if (window.__STNative && window.__STNative.ready) stLegacyVideoFit(video, itemFit(a, zone));\n    try {\n      const p = video.play();');
+replaceOnce('    host.appendChild(video);\n    try {\n      const p = video.play();', '    host.appendChild(video);\n    if (window.__STNative && window.__STNative.ready) stLegacyVideoFit(video, itemFit(a, zone));\n    try {\n      const p = video.play();');
 // legacy.html now owns offlinePlayOpen and queueOfflinePlay.  Do not prepend the
 // old native copy: duplicate lexical declarations make the generated renderer
 // unparseable and bypass the upstream queue's acknowledgement safeguards.
