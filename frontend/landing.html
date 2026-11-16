@@ -1406,23 +1406,41 @@
       const perScreen = (p) => (p.max_devices > 1 && p.price_yearly > 0)
         ? (p.price_yearly / p.max_devices / 12).toFixed(2)
         : null;
+      /*
+       * During a sale the card's headline is the sale price but the per-screen figure is the regular
+       * annual one, so "$1/mo" for 2 screens next to "$4.13 per screen" read as broken math. A sale that
+       * lasts for the whole subscription on the annual price really does change the per-screen cost, so
+       * use it; a first-month/first-year sale does not, so say the figure is the price after the sale.
+       */
+      const saleForeverOnYearly = (p) => !!sale && sale.duration === 'forever'
+        && (sale.cycles === 'both' || sale.cycles === 'yearly')
+        && (!sale.plan_ids || !sale.plan_ids.length || sale.plan_ids.includes(p.id));
+      const perScreenLine = (p, onSale) => {
+        const ps = perScreen(p);
+        if (!ps) return '';
+        if (saleForeverOnYearly(p)) {
+          return `<div class="per-screen"><strong>$${(cut(p.price_yearly) / p.max_devices / 12).toFixed(2)}</strong> per screen / month at ${p.max_devices} screens, billed annually</div>`;
+        }
+        return `<div class="per-screen"><strong>$${ps}</strong> per screen / month at ${p.max_devices} screens, billed annually${onSale ? ', after the sale' : ''}</div>`;
+      };
 
       const money = (n) => '$' + Number(n).toLocaleString('en-US', Number(n) % 1 ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : {});
+      // Sale prices always carry cents ("$1.00", not "$1"), so a row of cut prices lines up.
+      const saleMoney = (n) => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
       function planCard(p) {
-        const ps = perScreen(p);
         const annual = p.price_yearly > 0;
         const save = annual ? Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100) : 0;
         let headline, second;
         const onSale = saleCovers(p);
         if (p.price_monthly > 0 && cycle === 'annual' && annual) {
           headline = onSale
-            ? `<span class="was">${money(p.price_yearly)}</span>${money(cut(p.price_yearly))}<span>/year</span>`
+            ? `<span class="was">${money(p.price_yearly)}</span>${saleMoney(cut(p.price_yearly))}<span>/year</span>`
             : `${money(p.price_yearly)}<span>/year</span>`;
           second = `${money(p.price_monthly)}/month billed monthly`;
         } else if (p.price_monthly > 0) {
           headline = onSale
-            ? `<span class="was">${money(p.price_monthly)}</span>${money(cut(p.price_monthly))}<span>/mo</span>`
+            ? `<span class="was">${money(p.price_monthly)}</span>${saleMoney(cut(p.price_monthly))}<span>/mo</span>`
             : `${money(p.price_monthly)}<span>/mo</span>`;
           second = annual ? `or ${money(p.price_yearly)}/year (save ${save}%)` : '&nbsp;';
         } else {
@@ -1436,7 +1454,7 @@
           <div class="price">${headline}</div>
           <div class="yearly">${second}</div>
           ${onSale ? `<div class="sale-note">${saleNote()}</div>` : ''}
-          ${ps ? `<div class="per-screen"><strong>$${ps}</strong> per screen / month at ${p.max_devices} screens</div>` : ''}
+          ${perScreenLine(p, onSale)}
           <ul>
             <li>${p.max_devices === -1 ? 'Unlimited' : p.max_devices} device${p.max_devices !== 1 ? 's' : ''}</li>
             <li>${p.max_storage_mb === -1 ? 'Unlimited' : p.max_storage_mb >= 1024 ? (p.max_storage_mb / 1024) + ' GB' : p.max_storage_mb + ' MB'} storage</li>
