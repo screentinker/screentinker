@@ -290,6 +290,7 @@ export default {
   'power.unsupported': 'Some screens here cannot blank their own display, and will ignore this schedule. You can still save it.',
   'power.pending_device': 'This screen\u2019s player cannot blank its display on a schedule yet. You can still set one: it starts working as soon as the screen updates its player (2.1.6 or later on Android).',
   'power.pending_device_version': 'This screen\u2019s player ({version}) cannot blank its display on a schedule yet. You can still set one: it starts working as soon as the screen updates its player (2.1.6 or later on Android).',
+  'power.needs_permission': 'This screen\u2019s player ({version}) supports power schedules, but Android only lets an app switch the display off once it has permission, and this screen has not given it yet. On the screen, open Android Settings \u2192 Accessibility and turn on RemoteDisplay (making the app the device owner or a device admin also works). You can set the schedule now: it starts working once the screen next checks in with that permission.',
   'power.inherited_from_group': 'This screen is following its group’s schedule. Saving here overrides it for this screen only.',
   'power.state.on': 'Screen on',
   'power.state.scheduled_off': 'Scheduled off',
