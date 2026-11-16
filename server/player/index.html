@@ -213,6 +213,9 @@
     .zone video { width: 100%; height: 100%; object-fit: cover; }
     .zone img { width: 100%; height: 100%; object-fit: cover; }
     .zone iframe { width: 100%; height: 100%; border: none; }
+    /* #851: an item crossfading into a zone is built in a layer over the outgoing one. */
+    .zone > .zone-layer { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
+    .zone > .zone-layer > iframe { position: absolute; top: 0; left: 0; display: block; }
 
     /* Video wall mode.
        wall-stage maps the wall's player_rect into this device's viewport
@@ -9374,6 +9377,15 @@
       div.__stShownAt = Date.now();
       // #790: a buffered revision swap still loading belongs to what this zone showed before.
       if (div.__stWidgetSwap) { clearTimeout(div.__stWidgetSwap.timer); div.__stWidgetSwap = null; }
+      // #851: a crossfade layer still waiting for its content belongs to an item the zone has left.
+      // It was never visible (opacity 0), so drop it now: otherwise its reveal timer fades the
+      // skipped item in later, over a freeze HOLD or the next item, and its video plays meanwhile.
+      div.querySelectorAll('.zone-layer').forEach((l) => {
+        if (l.__stRevealed || l.parentNode !== div) return;
+        l.__stCancelled = true;
+        l.querySelectorAll('video').forEach(v => { try { destroyHls(v); v.onended = null; v.onerror = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} });
+        try { l.remove(); } catch (e) { /* gone */ }
+      });
       div.__stIdx = null; div.__stItem = null;   // set again below once an item is chosen
       // #74/#75: skip items whose schedule excludes them now; idle the zone if none.
       const activeIdx = zoneNextActive(items, index, zone.id);
@@ -9400,9 +9412,82 @@
         if (multi) timers[zone.id] = setTimeout(advance, Math.max(1, Number(a.duration_sec) || 10) * 1000);
         return;
       }
-      // Tear down any prior media in this zone before swapping.
-      div.querySelectorAll('video').forEach(v => { try { destroyHls(v); v.onended = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} });
-      div.innerHTML = '';
+      /*
+       * #851: an item with a Transition widget behind it crossfades in a zone too. The server
+       * already resolves transitions per zone (lib/transition-config.js) and sends `transition` on
+       * zone items; this function used to clear the zone and mount the next item, so adding a small
+       * clock zone to a layout turned the content zone's crossfade into a hard cut (and a blank
+       * frame while slow content loaded).
+       *
+       * The new item is built in a layer ON TOP of what the zone shows, revealed when its content
+       * has loaded (or after 2.5 s), faded in over durationMs, and only then is the old content torn
+       * down. Every effect is a plain crossfade here (the GL effects are fullscreen only). No
+       * transition, YouTube, HLS and the trigger overlay keep the hard cut below. Literals only:
+       * this function is extracted + eval'd in isolation by tests.
+       */
+      const zt = a.transition;
+      const fadeMs = (zt && Array.isArray(zt.effects) && zt.effects.length && !div.__stOverlay
+        && a.mime_type !== 'video/youtube' && a.mime_type !== 'video/hls' && div.children && div.children.length > 0)
+        ? Math.max(150, Math.min(3000, Number(zt.durationMs) || 800)) : 0;
+      let host = div;
+      if (fadeMs) {
+        const prior = Array.prototype.slice.call(div.children);
+        // The outgoing media stays on screen through the fade, but must not move the zone on, and
+        // its sound stops now: two soundtracks for up to 3 s is worse than a cut.
+        div.querySelectorAll('video').forEach(v => { try { v.onended = null; v.onerror = null; v.muted = true; } catch (e) {} });
+        const layer = document.createElement('div');
+        layer.className = 'zone-layer';
+        layer.style.opacity = '0';
+        layer.style.transition = `opacity ${fadeMs}ms ease`;
+        div.appendChild(layer);
+        host = layer;
+        let revealed = false;
+        const reveal = () => {
+          if (revealed) return;
+          revealed = true;
+          if (layer.__stCancelled || layer.parentNode !== div) return;   // the zone moved on, or a hard cut cleared it
+          const go = () => {
+            if (layer.__stCancelled || layer.parentNode !== div) return;
+            layer.__stRevealed = true;
+            layer.style.opacity = '1';
+            // A transparent item would show the old content through it at full strength, then drop
+            // it in one frame at the end. Fade the old content out under it instead.
+            if (a.transparent_bg) prior.forEach((c) => { try { if (c.style) { c.style.transition = `opacity ${fadeMs}ms ease`; c.style.opacity = '0'; } } catch (e) {} });
+            setTimeout(() => {
+              if (layer.parentNode !== div) return;
+              prior.forEach((c) => {
+                if (c.parentNode !== div) return;
+                try {
+                  const vids = c.tagName === 'VIDEO' ? [c] : Array.prototype.slice.call(c.querySelectorAll ? c.querySelectorAll('video') : []);
+                  vids.forEach(v => { try { destroyHls(v); v.onended = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} });
+                  c.remove();
+                } catch (e) { /* already gone */ }
+              });
+            }, fadeMs + 50);
+          };
+          // Two frames: the layer must be painted at opacity 0 before the change, or nothing fades.
+          if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(go));
+          else setTimeout(go, 16);
+        };
+        // load/loadeddata/error don't bubble, but they do reach an ancestor's capture listener.
+        // An iframe inserted before its src/srcdoc is set (a bundle, while its document is fetched)
+        // fires `load` for about:blank first: that is not the content.
+        const onLoad = (e) => {
+          const t = e && e.target;
+          if (t && t.tagName === 'IFRAME' && !t.getAttribute('src') && !t.hasAttribute('srcdoc')) return;
+          reveal();
+        };
+        try {
+          layer.addEventListener('load', onLoad, true);
+          layer.addEventListener('loadeddata', reveal, true);
+          layer.addEventListener('error', reveal, true);
+        } catch (e) { /* reveal on the timer */ }
+        setTimeout(reveal, 2500);
+      } else {
+        // Tear down any prior media in this zone before swapping.
+        div.querySelectorAll('video').forEach(v => { try { destroyHls(v); v.onended = null; v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} });
+        div.innerHTML = '';
+      }
 
       const isYoutube = a.mime_type === 'video/youtube';
       const isHls = a.mime_type === 'video/hls';   // literal: showZoneItem is extracted + eval'd in isolation by a test
@@ -9431,7 +9516,7 @@
           div.__stBundleReg = registerBundleFrame(iframe,
             (reg, reason) => zoneBundleSkip(reg, { zone, div, items, index, item: a, advance }, reason));
         }
-        div.appendChild(iframe);
+        host.appendChild(iframe);
         fetch(bundleUrl, { credentials: 'omit' })
           .then((r) => (r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status))))
           .then((html) => { if (iframe.isConnected !== false) iframe.srcdoc = html; })   // no isConnected on Chrome 53
@@ -9443,8 +9528,8 @@
         // Sandbox into a unique origin so widget scripts can't read window.parent
         // state (localStorage / JWT). allow-scripts keeps inline widget code running.
         iframe.setAttribute('sandbox', widgetSandboxAttr(a));
-        div.appendChild(iframe);
-        if (PREVIEW_MODE && a.widget_type === 'webpage') addWebpageNote(div); // #104
+        host.appendChild(iframe);
+        if (PREVIEW_MODE && a.widget_type === 'webpage') addWebpageNote(host); // #104
         if (multi) timers[zone.id] = setTimeout(advance, dur);
       } else if (isYoutube) {
         // #624: play to end moves the ZONE on when the video ends (the embed's safety net covers a
@@ -9466,7 +9551,7 @@
         video.playsInline = true;
         video.loop = false;   // a live stream has no end
         video.style.cssText = `width:100%;height:100%;object-fit:${itemFit(a, zone)}`;
-        div.appendChild(video);
+        host.appendChild(video);
         attachHlsTo(video, src, { onFatal: () => { if (multi) { if (timers[zone.id]) clearTimeout(timers[zone.id]); timers[zone.id] = setTimeout(advance, 3000); } } });
         if (multi) {
           const dwell = Number(a.duration_sec) || 0;
@@ -9516,7 +9601,7 @@
           video.onerror = advance;
           timers[zone.id] = setTimeout(advance, dur + 5000);
         }
-        div.appendChild(video);
+        host.appendChild(video);
         /*
          * ⚠️ AUTOPLAY IS NOT ENOUGH, and this branch had nothing else. The fullscreen path has
          * had a play()-with-muted-retry and a 2s kick for years; the zone path relied on the
@@ -9539,7 +9624,7 @@
         const img = document.createElement('img');
         img.src = src;
         img.style.cssText = `width:100%;height:100%;object-fit:${itemFit(a, zone)}`;
-        div.appendChild(img);
+        host.appendChild(img);
         if (multi) timers[zone.id] = setTimeout(advance, dur);
       }
     }
@@ -10185,7 +10270,11 @@
         const dy = ((r.top - cr.top) / cr.height) * H;
         const dw = (r.width / cr.width) * W;
         const dh = (r.height / cr.height) * H;
-        const el = zd.querySelector('video, img, iframe');
+        // #851: mid-crossfade a zone holds the old item and a layer over it. Draw the newest element
+        // that is on screen: a layer still waiting for its content (opacity 0) is not.
+        const el = Array.prototype.slice.call(zd.querySelectorAll('video, img, iframe'))
+          .filter((x) => { const l = x.closest ? x.closest('.zone-layer') : null; return !l || l.__stRevealed; })
+          .pop() || null;
         let drawn = false;
         if (el && el.tagName === 'IMG' && el.complete && el.naturalWidth > 0 && isMediaReadable(el)) {
           try { drawMediaFit(ctx, el, el.naturalWidth, el.naturalHeight, dx, dy, dw, dh, getComputedStyle(el).objectFit); drawn = true; } catch (e) {}

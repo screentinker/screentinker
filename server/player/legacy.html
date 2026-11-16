@@ -213,6 +213,9 @@
     .zone video { width: 100%; height: 100%; object-fit: cover; }
     .zone img { width: 100%; height: 100%; object-fit: cover; }
     .zone iframe { width: 100%; height: 100%; border: none; }
+    /* #851: an item crossfading into a zone is built in a layer over the outgoing one. */
+    .zone > .zone-layer { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
+    .zone > .zone-layer > iframe { position: absolute; top: 0; left: 0; display: block; }
 
     /* Video wall mode.
        wall-stage maps the wall's player_rect into this device's viewport
@@ -7906,6 +7909,25 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     clearTimeout(div.__stWidgetSwap.timer);
     div.__stWidgetSwap = null;
   }
+  div.querySelectorAll(".zone-layer").forEach((l) => {
+    if (l.__stRevealed || l.parentNode !== div) return;
+    l.__stCancelled = true;
+    l.querySelectorAll("video").forEach((v) => {
+      try {
+        destroyHls(v);
+        v.onended = null;
+        v.onerror = null;
+        v.pause();
+        v.removeAttribute("src");
+        v.load();
+      } catch (e) {
+      }
+    });
+    try {
+      l.remove();
+    } catch (e) {
+    }
+  });
   div.__stIdx = null;
   div.__stItem = null;
   const activeIdx = zoneNextActive(items, index, zone.id);
@@ -7952,17 +7974,93 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     if (multi) timers[zone.id] = setTimeout(advance, Math.max(1, Number(a.duration_sec) || 10) * 1e3);
     return;
   }
-  div.querySelectorAll("video").forEach((v) => {
+  const zt = a.transition;
+  const fadeMs = zt && Array.isArray(zt.effects) && zt.effects.length && !div.__stOverlay && a.mime_type !== "video/youtube" && a.mime_type !== "video/hls" && div.children && div.children.length > 0 ? Math.max(150, Math.min(3e3, Number(zt.durationMs) || 800)) : 0;
+  let host = div;
+  if (fadeMs) {
+    const prior = Array.prototype.slice.call(div.children);
+    div.querySelectorAll("video").forEach((v) => {
+      try {
+        v.onended = null;
+        v.onerror = null;
+        v.muted = true;
+      } catch (e) {
+      }
+    });
+    const layer = document.createElement("div");
+    layer.className = "zone-layer";
+    layer.style.opacity = "0";
+    layer.style.transition = "opacity ".concat(fadeMs, "ms ease");
+    div.appendChild(layer);
+    host = layer;
+    let revealed = false;
+    const reveal = () => {
+      if (revealed) return;
+      revealed = true;
+      if (layer.__stCancelled || layer.parentNode !== div) return;
+      const go = () => {
+        if (layer.__stCancelled || layer.parentNode !== div) return;
+        layer.__stRevealed = true;
+        layer.style.opacity = "1";
+        if (a.transparent_bg) prior.forEach((c) => {
+          try {
+            if (c.style) {
+              c.style.transition = "opacity ".concat(fadeMs, "ms ease");
+              c.style.opacity = "0";
+            }
+          } catch (e) {
+          }
+        });
+        setTimeout(() => {
+          if (layer.parentNode !== div) return;
+          prior.forEach((c) => {
+            if (c.parentNode !== div) return;
+            try {
+              const vids = c.tagName === "VIDEO" ? [c] : Array.prototype.slice.call(c.querySelectorAll ? c.querySelectorAll("video") : []);
+              vids.forEach((v) => {
+                try {
+                  destroyHls(v);
+                  v.onended = null;
+                  v.pause();
+                  v.removeAttribute("src");
+                  v.load();
+                } catch (e) {
+                }
+              });
+              c.remove();
+            } catch (e) {
+            }
+          });
+        }, fadeMs + 50);
+      };
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => requestAnimationFrame(go));
+      else setTimeout(go, 16);
+    };
+    const onLoad = (e) => {
+      const t = e && e.target;
+      if (t && t.tagName === "IFRAME" && !t.getAttribute("src") && !t.hasAttribute("srcdoc")) return;
+      reveal();
+    };
     try {
-      destroyHls(v);
-      v.onended = null;
-      v.pause();
-      v.removeAttribute("src");
-      v.load();
+      layer.addEventListener("load", onLoad, true);
+      layer.addEventListener("loadeddata", reveal, true);
+      layer.addEventListener("error", reveal, true);
     } catch (e) {
     }
-  });
-  div.innerHTML = "";
+    setTimeout(reveal, 2500);
+  } else {
+    div.querySelectorAll("video").forEach((v) => {
+      try {
+        destroyHls(v);
+        v.onended = null;
+        v.pause();
+        v.removeAttribute("src");
+        v.load();
+      } catch (e) {
+      }
+    });
+    div.innerHTML = "";
+  }
   const isYoutube = a.mime_type === "video/youtube";
   const isHls = a.mime_type === "video/hls";
   const isVideo = !isYoutube && !isHls && (((_a = a.mime_type) == null ? void 0 : _a.startsWith("video/")) || ((_b = a.mime_type) == null ? void 0 : _b.startsWith("audio/")));
@@ -7979,7 +8077,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
         (reg, reason) => zoneBundleSkip(reg, { zone, div, items, index, item: a, advance }, reason)
       );
     }
-    div.appendChild(iframe);
+    host.appendChild(iframe);
     fetch(bundleUrl, { credentials: "omit" }).then((r) => r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status))).then((html) => {
       if (iframe.isConnected !== false) iframe.srcdoc = html;
     }).catch(() => {
@@ -7990,8 +8088,8 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     const iframe = document.createElement("iframe");
     iframe.src = "".concat(config.serverUrl, "/api/widgets/").concat(a.widget_id, "/render?device=").concat(encodeURIComponent(config.deviceId || ""), "&rev=").concat(a.widget_rev || 0).concat(a.transparent_bg ? "&transparent=1" : "").concat(a.widget_panel ? "#panel=" + encodeURIComponent(a.widget_panel) : "");
     iframe.setAttribute("sandbox", widgetSandboxAttr(a));
-    div.appendChild(iframe);
-    if (PREVIEW_MODE && a.widget_type === "webpage") addWebpageNote(div);
+    host.appendChild(iframe);
+    if (PREVIEW_MODE && a.widget_type === "webpage") addWebpageNote(host);
     if (multi) timers[zone.id] = setTimeout(advance, dur);
   } else if (isYoutube) {
     const toEnd = !!a.play_to_end && multi;
@@ -8005,7 +8103,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     video.playsInline = true;
     video.loop = false;
     video.style.cssText = "width:100%;height:100%;object-fit:".concat(itemFit(a, zone));
-    div.appendChild(video);
+    host.appendChild(video);
     attachHlsTo(video, src, { onFatal: () => {
       if (multi) {
         if (timers[zone.id]) clearTimeout(timers[zone.id]);
@@ -8041,7 +8139,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
       video.onerror = advance;
       timers[zone.id] = setTimeout(advance, dur + 5e3);
     }
-    div.appendChild(video);
+    host.appendChild(video);
     try {
       const p = video.play();
       if (p && typeof p.then === "function") {
@@ -8070,7 +8168,7 @@ function showZoneItem(zone, div, items, index, timers = zoneTimers) {
     const img = document.createElement("img");
     img.src = src;
     img.style.cssText = "width:100%;height:100%;object-fit:".concat(itemFit(a, zone));
-    div.appendChild(img);
+    host.appendChild(img);
     if (multi) timers[zone.id] = setTimeout(advance, dur);
   }
 }
@@ -8778,7 +8876,10 @@ function drawZoneComposite(ctx, container, cr, W, H) {
     const dy = (r.top - cr.top) / cr.height * H;
     const dw = r.width / cr.width * W;
     const dh = r.height / cr.height * H;
-    const el = zd.querySelector("video, img, iframe");
+    const el = Array.prototype.slice.call(zd.querySelectorAll("video, img, iframe")).filter((x) => {
+      const l = x.closest ? x.closest(".zone-layer") : null;
+      return !l || l.__stRevealed;
+    }).pop() || null;
     let drawn = false;
     if (el && el.tagName === "IMG" && el.complete && el.naturalWidth > 0 && isMediaReadable(el)) {
       try {
