@@ -5,6 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVICE_FILE="$SCRIPT_DIR/remotedisplay.service"
 WORKDIR="$(cd "$SCRIPT_DIR/../server" && pwd)"
 RUN_USER="${SUDO_USER:-$(id -un)}"
+# screentinker.service, the name the README, scripts/upgrade.sh and the instance updater expect.
+# This script used to create remotedisplay.service: a machine that already has that unit keeps it
+# (re-running updates it in place rather than starting a second server on the same port).
+if [ -z "${SERVICE_NAME:-}" ]; then
+  SERVICE_NAME=screentinker
+  if ! systemctl cat screentinker >/dev/null 2>&1 && systemctl cat remotedisplay >/dev/null 2>&1; then
+    SERVICE_NAME=remotedisplay
+  fi
+fi
 
 # The unit runs the Node found here, by absolute path, so it must already meet the server's floor.
 NODE_BIN="$(command -v node || true)"
@@ -21,15 +30,15 @@ if [ -n "$FLOOR" ] && [ "$(printf '%s\n%s\n' "$FLOOR" "$HAVE" | sort -V | head -
 fi
 
 echo "Installing ScreenTinker service (user $RUN_USER, $WORKDIR, Node $HAVE at $NODE_BIN)..."
-sed -e "s|@USER@|$RUN_USER|" -e "s|@WORKDIR@|$WORKDIR|" -e "s|@NODE@|$NODE_BIN|" "$SERVICE_FILE" \
-  | sudo tee /etc/systemd/system/remotedisplay.service >/dev/null
+sed -e "s|@USER@|$RUN_USER|" -e "s|@WORKDIR@|$WORKDIR|" -e "s|@NODE@|$NODE_BIN|" -e "s|@NAME@|$SERVICE_NAME|" "$SERVICE_FILE" \
+  | sudo tee "/etc/systemd/system/$SERVICE_NAME.service" >/dev/null
 sudo systemctl daemon-reload
-sudo systemctl enable remotedisplay
-sudo systemctl start remotedisplay
+sudo systemctl enable "$SERVICE_NAME"
+sudo systemctl start "$SERVICE_NAME"
 echo "Done! Service status:"
-sudo systemctl status remotedisplay --no-pager
+sudo systemctl status "$SERVICE_NAME" --no-pager
 echo ""
 echo "Commands:"
-echo "  sudo systemctl status remotedisplay"
-echo "  sudo systemctl restart remotedisplay"
-echo "  sudo journalctl -u remotedisplay -f"
+echo "  sudo systemctl status $SERVICE_NAME"
+echo "  sudo systemctl restart $SERVICE_NAME"
+echo "  sudo journalctl -u $SERVICE_NAME -f"

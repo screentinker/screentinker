@@ -34,3 +34,26 @@ test('git_as_owner runs git as the directory owner, never adds a safe.directory 
 test('runuser is checked before it is first needed', () => {
   assert.ok(SRC.indexOf('command -v runuser') < SRC.indexOf('APP_DIR="$(git_as_owner'));
 });
+
+/*
+ * The service name. The README makes screentinker.service; scripts/install-service.sh made
+ * remotedisplay.service, so install-systemd.sh and upgrade.sh (default screentinker) could not find
+ * an install made with it. New installs are screentinker; an existing remotedisplay unit is kept
+ * and found. Reported by the same self-hoster.
+ */
+const read = (rel) => fs.readFileSync(path.join(__dirname, '..', '..', rel), 'utf8');
+test('install-service.sh creates screentinker.service, and keeps an existing remotedisplay unit', () => {
+  const s = read('scripts/install-service.sh');
+  assert.match(s, /SERVICE_NAME=screentinker\n/);
+  assert.match(s, /systemctl cat remotedisplay[^\n]*\n\s*SERVICE_NAME=remotedisplay/);
+  assert.match(s, /sudo tee "\/etc\/systemd\/system\/\$SERVICE_NAME\.service"/);
+  assert.doesNotMatch(s.replace(/^\s*#.*$/gm, ''), /systemctl (enable|start|status) remotedisplay/);
+  assert.match(read('scripts/remotedisplay.service'), /SyslogIdentifier=@NAME@/);
+});
+for (const rel of ['scripts/updater/install-systemd.sh', 'scripts/upgrade.sh']) {
+  test(`${rel} finds screentinker.service, else remotedisplay.service, when SERVICE_NAME is unset`, () => {
+    const s = read(rel);
+    assert.doesNotMatch(s, /SERVICE_NAME="\$\{SERVICE_NAME:-screentinker\}"/, 'no fixed default');
+    assert.match(s, /if \[ -z "\$\{SERVICE_NAME:-\}" \]; then\n\s*SERVICE_NAME=screentinker\n[\s\S]{0,200}systemctl cat remotedisplay[\s\S]{0,60}SERVICE_NAME=remotedisplay/);
+  });
+}

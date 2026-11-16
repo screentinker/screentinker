@@ -2,7 +2,7 @@
 # Install the instance updater on a git + systemd ScreenTinker (the prod / studiolab shape), so
 # Platform → System → "Update Now" can upgrade this server. Run as root from the checkout:
 #
-#   sudo scripts/updater/install-systemd.sh                 # service "screentinker"
+#   sudo scripts/updater/install-systemd.sh                 # screentinker.service, else remotedisplay.service
 #   sudo SERVICE_NAME=remotedisplay scripts/updater/install-systemd.sh
 #
 # Everything is read from the RUNNING service's unit (User, WorkingDirectory, ExecStart's node,
@@ -25,7 +25,15 @@
 set -euo pipefail
 
 [ "$(id -u)" = 0 ] || { echo "Run as root (sudo)." >&2; exit 1; }
-SERVICE_NAME="${SERVICE_NAME:-screentinker}"
+# The unit's name: the README's install makes screentinker.service, while scripts/install-service.sh
+# made remotedisplay.service before this change. Unset, use whichever of the two exists (screentinker first).
+if [ -z "${SERVICE_NAME:-}" ]; then
+  SERVICE_NAME=screentinker
+  if command -v systemctl >/dev/null 2>&1 && ! systemctl cat screentinker >/dev/null 2>&1 \
+      && systemctl cat remotedisplay >/dev/null 2>&1; then
+    SERVICE_NAME=remotedisplay
+  fi
+fi
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 systemctl cat "$SERVICE_NAME" >/dev/null 2>&1 || { echo "No systemd unit '$SERVICE_NAME'. Set SERVICE_NAME=." >&2; exit 1; }

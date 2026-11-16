@@ -48,7 +48,15 @@ else
   cd "$(dirname "$0")/.."
 fi
 APP_DIR="$(pwd)"
-SERVICE_NAME="${SERVICE_NAME:-screentinker}"
+# The unit's name: the README's install makes screentinker.service, while scripts/install-service.sh
+# made remotedisplay.service before this change. Unset, use whichever of the two exists (screentinker first).
+if [ -z "${SERVICE_NAME:-}" ]; then
+  SERVICE_NAME=screentinker
+  if command -v systemctl >/dev/null 2>&1 && ! systemctl cat screentinker >/dev/null 2>&1 \
+      && systemctl cat remotedisplay >/dev/null 2>&1; then
+    SERVICE_NAME=remotedisplay
+  fi
+fi
 # ⚠️ THE DATABASE IS NOT ALWAYS IN THE CHECKOUT. An install with DATA_DIR elsewhere (studiolab:
 # /var/lib/screentinker, set in an EnvironmentFile) left this pointing at a file that does not
 # exist, so the backup step said "fresh install" and the upgrade ran with no way back. Ask the
