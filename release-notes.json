@@ -14,6 +14,16 @@
   ],
   "releases": [
     {
+      "version": "3.2.2",
+      "date": "2026-11-16",
+      "notes": [
+        "Fixed: items you muted could play with sound on web player screens after a reload, or after the first touch on a touchscreen. Muted items now stay silent.",
+        "Self-hosted Linux servers (not Docker): Update now could fail while installing and again while rolling back. Fixed. If you already installed the updater, the release notes have a one-time step.",
+        "The updater installer and the install scripts now work when the app folder belongs to the service user, and agree on one service name.",
+        "New guides for running ScreenTinker in Docker, including the extra image needed for Broadcast streaming."
+      ]
+    },
+    {
       "version": "3.2.1",
       "date": "2026-11-16",
       "notes": [

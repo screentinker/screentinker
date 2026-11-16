@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.2.2
 
 ### ⚠️ Upgrade note: git + systemd installs using Update now
 
@@ -8,13 +8,26 @@ On 3.2.1 and earlier, the instance updater ran `npm ci` as the service user with
 from `passwd`. The README created that user with `useradd -r`, which records `/home/screentinker`
 but never creates it, so `npm ci` failed part-way through (`TAR_ENTRY_ERROR ENOENT`) and the
 automatic rollback, which runs the same step, failed too, leaving the server unable to start. The
-database was never touched. **The updater runs an installed copy**, so after upgrading to this
-release by hand once, re-run `sudo scripts/updater/install-systemd.sh` to install the fixed one.
-Until then, `mkdir -p /home/screentinker && chown screentinker:screentinker /home/screentinker`
-avoids it. Docker installs are not affected.
+database was never touched. Docker installs are not affected.
+
+**The updater runs an installed copy**, so pressing Update now to get 3.2.2 still runs the old,
+broken one. On a git + systemd install with the updater, first give the service user a home (once,
+as root), then upgrade, then refresh the installed updater:
+
+```bash
+mkdir -p /home/screentinker && chown screentinker:screentinker /home/screentinker
+# Update now (or scripts/upgrade.sh v3.2.2), then:
+sudo scripts/updater/install-systemd.sh
+```
 
 ### Fixed
 
+- **Muted items could play with sound on the web player** (#861). Unlocking audio (the
+  `?autoplay_audio=1` start-up, or the first touch on a touchscreen) set `muted = false` on every
+  video on the page, so an item the operator had muted (a layout zone item, or a full-screen clip)
+  played out loud until something re-applied mute. After a reload on an `autoplay_audio=1` screen
+  this happened every time. Unlocking now re-applies each item's own mute; an alarm overlay is still
+  un-muted. Found by a CI test that had looked flaky; the test now fails on any audible moment.
 - **Update now could not install on a git + systemd server, and its rollback failed the same way**
   (#860). The updater now gives `npm ci` a home the service user can write: its own if writable,
   otherwise a private one under `/var/cache/screentinker-updater`. The README creates the user with
@@ -26,6 +39,13 @@ avoids it. Docker installs are not affected.
   while the README, `upgrade.sh` and the updater expect `screentinker.service`. New installs get
   `screentinker.service`; a machine that already has `remotedisplay.service` keeps it, and
   `install-systemd.sh` and `upgrade.sh` find either.
+
+### Tests
+
+- **No more cross-suite port collisions** (#861). The test port helper handed out ports from the
+  kernel's ephemeral range, which a parallel suite's server could then take for its own internal
+  listener, so one suite's requests reached another suite's server (three CI "flakes" in one day).
+  Ports now come from below that range and are checked bindable.
 
 ### Docs
 
