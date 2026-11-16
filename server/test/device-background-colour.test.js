@@ -105,7 +105,7 @@ test('#336: the device query that feeds the payload actually selects background_
   const mem = new Database(':memory:');
   mem.exec(`
     CREATE TABLE devices (
-      id TEXT PRIMARY KEY, orientation TEXT, background_color TEXT, wall_id TEXT, timezone TEXT,
+      id TEXT PRIMARY KEY, orientation TEXT, background_color TEXT, native_video INTEGER NOT NULL DEFAULT 0, wall_id TEXT, timezone TEXT,
       reported_timezone TEXT, triggers_accept_http INTEGER, triggers_accept_udp INTEGER,
       trigger_secret TEXT, trigger_http_port INTEGER, trigger_udp_port INTEGER,
       trigger_multicast_group TEXT, trigger_clear_all_token TEXT,
@@ -141,7 +141,7 @@ test('the device query selects workspace_id (data-source play_when + custom shad
   const mem = new Database(':memory:');
   mem.exec(`
     CREATE TABLE devices (
-      id TEXT PRIMARY KEY, orientation TEXT, background_color TEXT, wall_id TEXT, timezone TEXT,
+      id TEXT PRIMARY KEY, orientation TEXT, background_color TEXT, native_video INTEGER NOT NULL DEFAULT 0, wall_id TEXT, timezone TEXT,
       reported_timezone TEXT, triggers_accept_http INTEGER, triggers_accept_udp INTEGER,
       trigger_secret TEXT, trigger_http_port INTEGER, trigger_udp_port INTEGER,
       trigger_multicast_group TEXT, trigger_clear_all_token TEXT,
@@ -170,7 +170,7 @@ test('the device query selects latitude and longitude (weather and area conditio
   const mem = new Database(':memory:');
   mem.exec(`
     CREATE TABLE devices (
-      id TEXT PRIMARY KEY, orientation TEXT, background_color TEXT, wall_id TEXT, timezone TEXT,
+      id TEXT PRIMARY KEY, orientation TEXT, background_color TEXT, native_video INTEGER NOT NULL DEFAULT 0, wall_id TEXT, timezone TEXT,
       reported_timezone TEXT, triggers_accept_http INTEGER, triggers_accept_udp INTEGER,
       trigger_secret TEXT, trigger_http_port INTEGER, trigger_udp_port INTEGER,
       trigger_multicast_group TEXT, trigger_clear_all_token TEXT,

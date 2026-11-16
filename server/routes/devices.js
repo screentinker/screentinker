@@ -775,7 +775,7 @@ router.put('/:id', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
 
-  const { name, notes, timezone, orientation, background_color, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule, live_video_enabled, tags, screen_profile, ignore_battery } = req.body;
+  const { name, notes, timezone, orientation, background_color, default_content_id, layout_id, ota_enabled, ota_beta, reboot_schedule, live_video_enabled, tags, screen_profile, ignore_battery, native_video } = req.body;
   // Where the screen is (lib/local-conditions.js). Both coordinates or neither; both null clears.
   let locUpdate = null;
   if (req.body.latitude !== undefined || req.body.longitude !== undefined || req.body.location_label !== undefined) {
@@ -860,6 +860,11 @@ router.put('/:id', (req, res) => {
   // version. The honest mains boards are already handled by the player's EXTRA_PRESENT check.
   if (ignore_battery !== undefined) {
     updates.push('ignore_battery = ?'); values.push(ignore_battery ? 1 : 0);
+  }
+  // Android "native 4K video": full-screen video on the hardware plane (NativeVideoPlane.kt). It
+  // travels in the playlist payload, so it is pushed below like orientation.
+  if (native_video !== undefined) {
+    updates.push('native_video = ?'); values.push(native_video ? 1 : 0);
   }
   // #12 scheduled reboot: device-local "HH:MM" (null/'' clears -> off). Reset the
   // once-per-day guard on any change so a newly-set time can still fire later today.
@@ -1001,7 +1006,7 @@ router.put('/:id', (req, res) => {
      * one until it next reconnected. Push now (or queue for an offline screen). The group push
      * above already sent this screen a fresh payload when dynOps is set.
      */
-    const payloadFields = [orientation, timezone, background_color, default_content_id, layout_id];
+    const payloadFields = [orientation, timezone, background_color, default_content_id, layout_id, native_video];
     if (!dynOps.length && payloadFields.some((v) => v !== undefined)) {
       groupRules.pushTo(req.app.get('io'), [req.params.id]);
     }

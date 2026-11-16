@@ -106,6 +106,7 @@ class MainActivity : AppCompatActivity() {
     private var triggerSweep: Runnable? = null
 
     private lateinit var playerView: PlayerView
+    private lateinit var nativePlayerView: PlayerView   // NativeVideoPlane: the SurfaceView twin
     private lateinit var imageView: ImageView
     private lateinit var statusOverlay: View
     private lateinit var statusText: TextView
@@ -247,6 +248,8 @@ class MainActivity : AppCompatActivity() {
         touchInjector = TouchInjector()
 
         playerView = findViewById(R.id.playerView)
+        nativePlayerView = findViewById(R.id.nativePlayerView)
+        nativePlayerView.useController = false
         imageView = findViewById(R.id.imageView)
         statusOverlay = findViewById(R.id.statusOverlay)
         statusText = findViewById(R.id.statusText)
@@ -455,7 +458,8 @@ class MainActivity : AppCompatActivity() {
         // Setup media player
         mediaPlayer = MediaPlayerManager(
             context = this,
-            playerView = playerView,
+            texturePlayerView = playerView,
+            nativePlayerView = nativePlayerView,
             imageView = imageView,
             youtubeWebView = youtubeWebView,
             onVideoComplete = { playlistController.onVideoComplete() },
@@ -888,7 +892,8 @@ class MainActivity : AppCompatActivity() {
         if (!sel.valid) return
         val key = intervalKey(sel.interval)
         if (key == offlinePlanAppliedKey) return // already showing this interval's state
-        val payload = sel.state?.optJSONObject("payload")
+        // Tagged on a copy, so the stored plan is untouched: see OFFLINE_STATE_TAG.
+        val payload = sel.state?.optJSONObject("payload")?.let { p -> try { JSONObject(p.toString()).put(OFFLINE_STATE_TAG, true) } catch (_: Throwable) { p } }
         if (payload != null) {
             val cb = wsService?.onPlaylistUpdate ?: return // service not bound yet; retry next tick
             offlinePlanAppliedKey = key
@@ -1264,6 +1269,11 @@ class MainActivity : AppCompatActivity() {
             }
             applyOrientation(data.optString("orientation", "landscape"))
             applyBackground(data)
+            // NativeVideoPlane: the display's "native 4K video" setting. The server sends
+            // `native_video: true` only when it is on, so a live payload without it means off. An
+            // offline-schedule state (deviceSocket offlineStatePayload) is a subset of the payload
+            // that never carries it, so it is tagged in driveOfflinePlan and leaves the setting alone.
+            if (!data.optBoolean(OFFLINE_STATE_TAG, false) && ::mediaPlayer.isInitialized) mediaPlayer.setNativeVideo(data.optBoolean("native_video", false))
 
             // Check for multi-zone layout
             val layoutObj = if (data.isNull("layout")) null else data.optJSONObject("layout")
@@ -2039,6 +2049,7 @@ class MainActivity : AppCompatActivity() {
         if (::mediaPlayer.isInitialized) mediaPlayer.stop()
         playlistController.stop()
         playerView.visibility = View.GONE
+        nativePlayerView.visibility = View.GONE
         imageView.visibility = View.GONE
         val zm = zoneManager ?: return
         when (step) {
@@ -2062,6 +2073,7 @@ class MainActivity : AppCompatActivity() {
         if (::mediaPlayer.isInitialized) mediaPlayer.stop()
         playlistController.stop()
         playerView.visibility = View.GONE
+        nativePlayerView.visibility = View.GONE
         imageView.visibility = View.GONE
         zoneManager?.setupZones(layoutZones, layoutId)
         zoneManager?.renderAssignments(assignments, config.serverUrl, contentCache, config.deviceId)
@@ -2094,6 +2106,7 @@ class MainActivity : AppCompatActivity() {
             if (::mediaPlayer.isInitialized) mediaPlayer.stop()
             playlistController.stop()
             playerView.visibility = View.GONE
+            nativePlayerView.visibility = View.GONE
             imageView.visibility = View.GONE
         }
         val key = WallZones.configKey(cfg.wallId, cfg.isLeader, cfg.rotation, cfg.screen, cfg.player, true, audio)
@@ -2752,6 +2765,9 @@ class MainActivity : AppCompatActivity() {
         // The routine refresh lands every ~60s with an unchanged playlist; a sweep then has nothing
         // new to decide, so it runs on a real change or at most this often.
         const val CACHE_SWEEP_EVERY_MS = 30L * 60 * 1000
+        // Marks a payload replayed from the offline plan (driveOfflinePlan). Those are a subset of
+        // the live payload, so a field they never carry (native_video) must not be read as "off".
+        const val OFFLINE_STATE_TAG = "__st_offline_state"
     }
 }
 

@@ -820,7 +820,7 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
    * query.
    */
   const device = db.prepare(`SELECT r.playlist_id AS playlist_id, r.source AS playlist_source,
-      r.layout_id AS layout_id, d.orientation, d.background_color, d.wall_id, d.timezone, d.reported_timezone,
+      r.layout_id AS layout_id, d.orientation, d.background_color, d.native_video, d.wall_id, d.timezone, d.reported_timezone,
       d.triggers_accept_http, d.triggers_accept_udp, d.trigger_secret, d.trigger_http_port,
       d.trigger_udp_port, d.trigger_multicast_group, d.trigger_clear_all_token,
       d.local_api_enabled, d.local_api_secret,
@@ -1294,7 +1294,7 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
   if (bgPlaylistId && require('../lib/corporate/schema-probe').hasColumn(db, 'playlists', 'published_background_color')) {
     playlistBg = (db.prepare('SELECT published_background_color FROM playlists WHERE id = ?').get(bgPlaylistId) || {}).published_background_color || null;
   }
-  const assembled = assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: playlistBg || device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints: deviceEndpoints });
+  const assembled = assemblePayload({ assignments, layout, orientation: device?.orientation || 'landscape', background_color: playlistBg || device?.background_color || null, workspace_id: device?.workspace_id || null, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints: deviceEndpoints, native_video: !!(device && device.native_video) });
   /*
    * A last-playlist cache is not offline scheduling: it cannot select a
    * playlist that has not become active yet, and it inevitably resurrects
@@ -1576,7 +1576,7 @@ function perOriginShaderSources(items, deviceWs) {
   return Object.keys(out).length ? out : null;
 }
 
-function assemblePayload({ assignments, layout, orientation, background_color, workspace_id, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints }) {
+function assemblePayload({ assignments, layout, orientation, background_color, workspace_id, wall_config, group_sync, timezone, triggers, trigger_config, local_api, playback_order, default_content, power_schedule, endpoints, native_video }) {
   let a = Array.isArray(assignments) ? assignments : [];
   /*
    * ⚠️ PER-ORIGIN, for corporate payloads. An item tagged __origin_ws (head office's content on a
@@ -1608,6 +1608,11 @@ function assemblePayload({ assignments, layout, orientation, background_color, w
     assignments: a,
     layout: layout || null,
     orientation: orientation || 'landscape',
+    // Android: full-screen video on the hardware plane (NativeVideoPlane.kt). Top-level like
+    // orientation so toggling it never restarts playback; other players ignore it. Sent ONLY when
+    // on: a screen that never opted in gets a byte-identical payload to the previous release
+    // (playlist-layout / device-simulate-equivalence pin that), and the player reads absent as off.
+    ...(native_video ? { native_video: true } : {}),
     // #325: null means "the player's own default", so a screen that has never been given one keeps
     // the black it has always had. Sent top-level like orientation, not per item.
     background_color: background_color || null,
