@@ -184,6 +184,9 @@ a kiosk and it has not been certified on hardware; see [docs/vega-player.md](doc
   play fine but show no thumbnail in the content library. The Docker image includes it.
   The server logs a `[MEDIA]` line at startup telling you whether it was found, and
   backfills missing thumbnails automatically once ffmpeg appears after a restart.
+- **Chromium, Xvfb and PulseAudio** (optional) — only for Broadcast view's stream out and recording.
+  The Docker image does not include them; see [Broadcast streaming in Docker](docs/broadcast-docker.md)
+  for the small "-av" image that adds them, or install them on the host for a systemd install.
 
 ### Quick Start
 
