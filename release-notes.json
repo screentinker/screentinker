@@ -14,6 +14,17 @@
   ],
   "releases": [
     {
+      "version": "3.2.1",
+      "date": "2026-11-16",
+      "notes": [
+        "Android screens can play full-screen video at true 4K on boxes whose menus run at 1080p, such as Chromecast with Google TV. Turn on Native 4K video in the screen's settings. Videos shown this way start without a transition and look black in screenshots.",
+        "Transitions now crossfade between items inside layout zones on web player screens, instead of cutting.",
+        "Each queue has a Show on a screen button that adds its Now serving widget to a playlist in one step.",
+        "Android screens that restart during their scheduled off hours now get back online before going dark, instead of staying offline until morning.",
+        "When an Android screen cannot follow a power schedule, the dashboard now says it needs the Accessibility permission rather than asking you to update it. The getting-started guide also no longer gets stuck on its last step."
+      ]
+    },
+    {
       "version": "3.2.0",
       "date": "2026-11-12",
       "notes": [

@@ -1,5 +1,61 @@
 # Changelog
 
+## 3.2.1
+
+### Added
+
+- **Native 4K video on Android, opt-in per display** (#855). Most Android TV boxes draw their UI at
+  1080p while the HDMI output is 4K (a Chromecast with Google TV shows `3840x2160 (UI 1920x1080)`),
+  and the player's TextureView is drawn into that UI layer, so a 4K clip was scaled to 1080p and back
+  up. The new **Native 4K video (hardware video plane)** setting plays full-screen video on a
+  SurfaceView, composed by the display hardware at the output resolution. It applies only when no
+  view transform is in play: rotated screens, video walls, pre-rotated clips, fisheye and audio
+  items keep the TextureView, as do layout zones. On the plane a clip hard-cuts in and out and shows
+  black in screenshots and remote view. `devices.native_video` (default 0); the payload carries
+  `native_video: true` only when it is on, so other screens get the same payload as 3.2.0. Not yet
+  verified on hardware at the time of release.
+
+- **Show on a screen, from the queue card** (#849). One button finds the queue's Now serving widget
+  (or creates it) and adds it to a playlist you pick, as a draft, with links to the playlist and to
+  edit the widget.
+
+### Fixed
+
+- **Transitions inside layout zones on the web player** (#853, issue #851). A Transition widget in a
+  zone was resolved by the server but ignored by the player, so adding a small clock zone turned the
+  content zone's crossfade into a hard cut, with a blank frame while slow content loaded. The next
+  item is now built in a layer over the outgoing one, revealed once loaded (2.5 s cap), faded in over
+  the transition's duration, and the old content removed after. Every effect plays as a plain
+  crossfade in a zone. No transition, YouTube, HLS, HOLD and the trigger overlay keep the hard cut.
+  The Android, Tizen and native players still hard-cut in zones.
+
+- **An Android panel rebooted inside a scheduled-off window stayed offline until morning** (#850).
+  The schedule blanked the screen seconds after boot, before Wi-Fi had associated, and with the
+  screen off Android barely scans; field panels sat offline for hours every night. A scheduled off
+  now waits for the server connection (at most 3 min) and for the boot to settle (2 min of uptime),
+  and a network drop in the first 10 min relights the panel until it reconnects.
+
+- **The power schedule told a current Android player to update** (#856). A 3.2.0 player showed
+  "cannot blank its display on a schedule yet ... updates its player (2.1.6 or later)". The Android
+  player declares power schedules only as device owner, device admin or with its accessibility
+  service on, so an Android player at 2.1.6 or later now gets a note naming the missing permission
+  and where to grant it (Settings, Accessibility, RemoteDisplay).
+
+- **The getting-started guide could run past its last step** (#854). Overlapping async steps (for
+  example Use sample still uploading while Show the same as was pressed) advanced it twice, after
+  which Go to Dashboard did nothing. Async work now advances only from the step it started on, the
+  step index is clamped, and one way of filling the screen runs at a time.
+
+- **README: the Production Deployment steps work on a clean server** (#852): Node 22 from
+  NodeSource, `npm ci --omit=dev` before the `chown`, `sudo tee` for the unit file, and
+  `daemon-reload`.
+
+### Credits
+
+- @visimpres-glitch authored 1 of the 7 commits in this release: the Android scheduled-off reboot
+  fix (#850), measured on their customers' panels.
+- @arminfauland reported #851 with the root cause and the design #853 follows.
+
 ## 3.2.0
 
 ### Added
