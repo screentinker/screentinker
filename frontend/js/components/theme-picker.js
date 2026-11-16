@@ -1,11 +1,12 @@
 /*
  * Settings > Appearance: choose how the dashboard looks. Each option is a small drawing of the
  * theme in its own colours and a line saying what it is; choosing one applies it at once
- * (js/lib/themes.js). It is a per-browser choice, like the language.
+ * (js/lib/themes.js). Signed in, it is saved on the account too (js/lib/account-prefs.js), like the language.
  */
 import { t } from '../i18n.js';
 import { esc } from '../utils.js';
 import { THEMES, currentTheme, setTheme } from '../lib/themes.js';
+import { saveAccountPref } from '../lib/account-prefs.js';
 
 export function mountThemePicker(el) {
   if (!el) return;
@@ -28,7 +29,7 @@ export function mountThemePicker(el) {
           </span>
         </button>`).join('')}
     </div>`;
-    el.querySelectorAll('[data-theme-id]').forEach((b) => b.addEventListener('click', () => { setTheme(b.dataset.themeId); draw(); }));
+    el.querySelectorAll('[data-theme-id]').forEach((b) => b.addEventListener('click', () => { saveAccountPref('theme', setTheme(b.dataset.themeId)); draw(); }));
   };
   draw();
 }

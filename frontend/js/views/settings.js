@@ -1,4 +1,5 @@
 import { api } from '../api.js';
+import { saveAccountPref } from '../lib/account-prefs.js';
 import { SPONSOR_URL } from '../components/plan-nudges.js';
 import { mountCanvaSettings } from '../components/canva-settings.js';
 import * as whatsNew from '../components/whats-new.js';
@@ -716,6 +717,7 @@ export async function render(container) {
     // setLanguage dispatches hashchange so the router re-renders the current
     // view (including this settings page) with new strings — no refresh needed.
     setLanguage(e.target.value);
+    saveAccountPref('language', getLanguage());
   });
 
   // API Tokens — available to every user (manages their own, workspace-scoped).

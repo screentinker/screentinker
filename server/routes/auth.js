@@ -266,6 +266,10 @@ function accountSummary(userId, workspaceId) {
   try {
     const row = db.prepare('SELECT ui_mode, onboarded_at, subscription_status, created_at FROM users WHERE id = ?').get(userId);
     if (!row) return out; // support / recovery identities: full menu, no guide, no billing facts
+    // Language and theme, read separately so an install still missing the columns keeps working.
+    try {
+      Object.assign(out, require('../lib/account-prefs').readPrefs(db.prepare('SELECT language, theme FROM users WHERE id = ?').get(userId)));
+    } catch (_) { /* columns absent: the browser's own choice stands */ }
     // 'broadcast' is the full dashboard with the vision mixer as its home (views/mixer.js).
     // Broadcast (the vision mixer and everything on it) exists on self-hosted instances only.
     out.ui_mode = row.ui_mode === 'simple' ? 'simple' : (row.ui_mode === 'broadcast' && config.selfHosted ? 'broadcast' : 'advanced');
@@ -1080,6 +1084,15 @@ router.put('/me', requireAuth, (req, res) => {
   }
   if (onboarded === true) {
     db.prepare("UPDATE users SET onboarded_at = COALESCE(onboarded_at, strftime('%s','now')) WHERE id = ?").run(req.user.id);
+  }
+  // Dashboard language and theme follow the account (lib/account-prefs.js). Unknown values are
+  // ignored; null or '' clears the choice so the browser's own one stands again.
+  {
+    const prefs = require('../lib/account-prefs');
+    const lang = prefs.pickLanguage(req.body.language);
+    const theme = prefs.pickTheme(req.body.theme);
+    if (lang.set) db.prepare("UPDATE users SET language = ?, updated_at = strftime('%s','now') WHERE id = ?").run(lang.value, req.user.id);
+    if (theme.set) db.prepare("UPDATE users SET theme = ?, updated_at = strftime('%s','now') WHERE id = ?").run(theme.value, req.user.id);
   }
   let freshToken = null;
   if (name) {

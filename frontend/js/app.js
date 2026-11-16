@@ -1,4 +1,5 @@
 import { connectSocket, on as onSocket } from './socket.js';
+import { applyAccountPrefs } from './lib/account-prefs.js';
 import * as dashboard from './views/dashboard.js';
 import * as deviceDetail from './views/device-detail.js';
 import * as contentLibrary from './views/content-library.js';
@@ -359,6 +360,8 @@ async function refreshCurrentUser() {
     if (!res.ok) return;
     const fresh = await res.json();
     localStorage.setItem('user', JSON.stringify(fresh));
+    // Language and theme saved on the account follow the person to this browser (lib/account-prefs.js).
+    applyAccountPrefs(fresh);
     // Re-render the workspace switcher on every /me refresh - cheap, and keeps
     // the dropdown in sync if a workspace was added/removed in another tab.
     //
