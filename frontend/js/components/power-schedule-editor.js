@@ -92,10 +92,14 @@ export function renderPowerScheduleEditor(schedule, ctx = {}) {
    * Android 15 screen that was simply still on a 2.1.5 beta. The note says what will happen, and when.
    */
   const unsupported = ctx.supported === false;
+  // An Android player already new enough is missing a permission, not an update (see
+  // powerNeedsPermission in views/device-detail.js): say which, and where to grant it.
   const warn = unsupported
-    ? `<div class="power-warning" role="note">${esc(ctx.playerVersion
-      ? t('power.pending_device_version', { version: ctx.playerVersion })
-      : t('power.pending_device'))}</div>` : '';
+    ? `<div class="power-warning" role="note">${esc(ctx.needsPermission
+      ? t('power.needs_permission', { version: ctx.playerVersion || '' })
+      : ctx.playerVersion
+        ? t('power.pending_device_version', { version: ctx.playerVersion })
+        : t('power.pending_device'))}</div>` : '';
 
   const inherited = ctx.inherited
     ? `<div class="power-hint">${esc(t('power.inherited_from_group'))}</div>` : '';

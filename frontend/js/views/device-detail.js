@@ -6,7 +6,7 @@ import { TalkClient } from '../lib/talk-client.js';
 import { renderScreenShareCard, startScreenShare } from '../components/screen-share.js';   // 3.0 screen share
 import { showToast } from '../components/toast.js';
 import { openContentPicker } from '../components/content-picker.js';
-import { esc, livenessBadge, hydrateAuthImages, screenshotUrl } from '../utils.js';
+import { esc, livenessBadge, hydrateAuthImages, screenshotUrl, compareVersions } from '../utils.js';
 import { t, tn } from '../i18n.js';
 import { showDeviceOwnerQRModal } from '../components/device-owner-qr-modal.js';
 import { frameDeviceOutput, displayAspectRatio } from '../lib/device-frame.js';
@@ -61,6 +61,7 @@ async function wirePowerSchedule(device) {
       host.innerHTML = renderPowerScheduleEditor(current || { windows: [], enabled: true }, {
         supported,
         playerVersion: device.app_version || null,
+        needsPermission: powerNeedsPermission(device),
         inherited,
         groupSchedules,
         state: res.state,
@@ -73,7 +74,7 @@ async function wirePowerSchedule(device) {
   }
 
   function redraw(windows, enabled) {
-    host.innerHTML = renderPowerScheduleEditor({ ...(current || {}), windows, enabled }, { supported, inherited, groupSchedules, playerVersion: device.app_version || null });
+    host.innerHTML = renderPowerScheduleEditor({ ...(current || {}), windows, enabled }, { supported, inherited, groupSchedules, playerVersion: device.app_version || null, needsPermission: powerNeedsPermission(device) });
     bind();
   }
 
@@ -560,6 +561,19 @@ function captureModeNotice(device) {
 // exactly backwards. Second, even where capture already works it is the accessibility path;
 // MediaProjection is the better one (WebSocketService tries it FIRST), so offering the upgrade to
 // a panel that has the weaker path is a feature, not redundancy.
+/*
+ * An Android player new enough to have power schedules (2.1.6+) that still does not declare them is
+ * missing a PERMISSION, not an update: PlayerCapabilities.kt declares display.power_schedule only
+ * when the app is device owner, a device admin, or has its accessibility service on, because it
+ * cannot switch the display off otherwise. "Update your player (2.1.6 or later)" shown to a 3.2.0
+ * player read as a contradiction (reported from a Chromecast with Google TV, a plain install).
+ */
+function powerNeedsPermission(device) {
+  if (!isAndroidDevice(device)) return false;
+  const c = compareVersions(device.app_version, '2.1.6');
+  return c !== null && c >= 0;
+}
+
 function isAndroidDevice(device) {
   if (!device) return false;
   const platform = String(device.platform || '').toLowerCase();

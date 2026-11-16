@@ -56,3 +56,44 @@ test('the device page passes the player version', () => {
   const page = fs.readFileSync(path.join(ROOT, 'frontend', 'js', 'views', 'device-detail.js'), 'utf8');
   assert.equal((page.match(/playerVersion: device\.app_version \|\| null/g) || []).length, 2, 'both renders (load and redraw)');
 });
+
+/*
+ * Reported from a Chromecast with Google TV on player 3.2.0: "cannot blank its display on a schedule
+ * yet ... updates its player (2.1.6 or later on Android)" read as a contradiction, because 3.2.0 IS
+ * later. The Android player declares display.power_schedule only with device owner, device admin or
+ * its accessibility service (PlayerCapabilities.kt), so a new enough player is missing a permission.
+ */
+test('a new enough Android player is told it needs a permission, not an update', () => {
+  const html = render({ windows: [], enabled: true }, { supported: false, playerVersion: '3.2.0', needsPermission: true });
+  assert.match(html, /power\.needs_permission:\{&quot;version&quot;:&quot;3\.2\.0&quot;\}/);
+  assert.doesNotMatch(html, /power\.pending_device/, 'never "update to 2.1.6" for a 3.2.0 player');
+  for (const id of ['powerAddWindow', 'powerSave', 'powerEnabled']) assert.match(html, new RegExp(`id="${id}"`), `${id} is there`);
+});
+
+test('the device page decides "permission, not update" from the platform and version', () => {
+  const page = fs.readFileSync(path.join(ROOT, 'frontend', 'js', 'views', 'device-detail.js'), 'utf8');
+  assert.equal((page.match(/needsPermission: powerNeedsPermission\(device\)/g) || []).length, 2, 'both renders (load and redraw)');
+  const fn = page.match(/function powerNeedsPermission\(device\) \{[\s\S]*?\n\}/);
+  assert.ok(fn, 'powerNeedsPermission found');
+  const utils = fs.readFileSync(path.join(ROOT, 'frontend', 'js', 'utils.js'), 'utf8');
+  const cmp = utils.match(/export function compareVersions\(a, b\) \{[\s\S]*?\n\}/)[0].replace(/^export /, '');
+  const decide = (device, android) => vm.runInNewContext(
+    `${cmp}\nfunction isAndroidDevice() { return ${android}; }\n${fn[0]}\npowerNeedsPermission(device)`, { device });
+  assert.equal(decide({ app_version: '3.2.0' }, true), true, '3.2.0 on Android: a permission');
+  assert.equal(decide({ app_version: '2.1.6' }, true), true, 'the first version that has schedules');
+  assert.equal(decide({ app_version: '2.1.5-beta1' }, true), false, 'older: still an update');
+  assert.equal(decide({ app_version: '2.1.6-beta1' }, true), false, 'a beta sorts below its release');
+  assert.equal(decide({ app_version: null }, true), false, 'unknown version: the generic note');
+  assert.equal(decide({ app_version: '3.2.0' }, false), false, 'not Android: the existing wording');
+});
+
+test('the permission note names where to grant it, under the name the device shows', () => {
+  const en = fs.readFileSync(path.join(ROOT, 'frontend', 'js', 'i18n', 'en.js'), 'utf8');
+  const line = en.match(/'power\.needs_permission': '([^\n]*)',\n/);
+  assert.ok(line, 'the key exists');
+  assert.match(line[1], /Accessibility/);
+  // The app is called RemoteDisplay on the device (android app_name), not ScreenTinker.
+  const strings = fs.readFileSync(path.join(ROOT, 'android', 'app', 'src', 'main', 'res', 'values', 'strings.xml'), 'utf8');
+  const appName = strings.match(/<string name="app_name">([^<]+)<\/string>/)[1];
+  assert.ok(line[1].includes(appName), `names the service as ${appName}`);
+});
