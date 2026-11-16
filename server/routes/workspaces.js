@@ -282,11 +282,41 @@ router.put('/:id/security-settings', (req, res) => {
   db.prepare(
     "UPDATE organizations SET widget_sandbox_isolation_disabled = ?, updated_at = strftime('%s','now') WHERE id = ?"
   ).run(next, ws.organization_id);
+
+  /*
+   * The setting changes two things a screen already holds: the sandbox the player frames each widget
+   * in (widget_allow_same_origin in the payload) and the sandbox baked into a webpage widget's render
+   * page, which a player caches for a year under ?rev=<updated_at>. Without a rev bump and a push,
+   * turning isolation off changed nothing on screen (a page that needs its own origin, e.g. one
+   * that reads localStorage, stayed white) until each widget happened to be edited.
+   */
+  let bumped = 0;
+  if (!current || Number(current.v || 0) !== next) {
+    try {
+      const ids = db.prepare('SELECT id FROM widgets WHERE workspace_id IN (SELECT id FROM workspaces WHERE organization_id = ?)')
+        .all(ws.organization_id).map((r) => r.id);
+      if (ids.length) {
+        bumped = db.prepare(
+          "UPDATE widgets SET updated_at = strftime('%s','now') WHERE workspace_id IN (SELECT id FROM workspaces WHERE organization_id = ?)"
+        ).run(ws.organization_id).changes || 0;
+        const io = req.app.get('io');
+        if (io) {
+          const { devicesPlayingWidget } = require('../lib/devices-playing');
+          const { buildPlaylistPayload } = require('../ws/deviceSocket');
+          const commandQueue = require('../lib/command-queue');
+          const devices = new Set();
+          for (const id of ids) for (const d of devicesPlayingWidget(id)) devices.add(d);
+          for (const d of devices) commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), d, buildPlaylistPayload);
+        }
+      }
+    } catch (e) { console.warn(`[widget-sandbox] refresh after toggle failed: ${e && e.message}`); }
+  }
+
   req.workspaceId = ws.id; // stamp tenant for activityLogger row
   logActivity(
     req.user.id,
     'org_widget_sandbox_isolation_setting_changed',
-    `organization_id=${ws.organization_id} widgetSandboxIsolationDisabled=${next}`,
+    `organization_id=${ws.organization_id} widgetSandboxIsolationDisabled=${next} widgetsBumped=${bumped}`,
     null,
     getClientIp(req),
     ws.id
@@ -296,6 +326,7 @@ router.put('/:id/security-settings', (req, res) => {
     organization_id: ws.organization_id,
     widgetSandboxIsolationDisabled: !!next,
     changed: !!current && Number(current.v || 0) !== next,
+    widgetsBumped: bumped,
   });
 });
 
