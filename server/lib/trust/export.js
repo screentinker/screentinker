@@ -330,7 +330,7 @@ async function writeOrgExport(archive, db, job) {
 /* ───────────── personal export ───────────── */
 
 const USER_COLUMNS = ['id', 'email', 'name', 'auth_provider', 'avatar_url', 'role', 'plan_id', 'totp_enabled', 'email_alerts',
-  'email_verified', 'ui_mode', 'created_at', 'updated_at', 'last_login', 'onboarded_at', 'disabled_at'];
+  'email_verified', 'ui_mode', 'language', 'theme', 'created_at', 'updated_at', 'last_login', 'onboarded_at', 'disabled_at'];
 
 function selectOwn(db, table, sql, args, columns = null) {
   if (!tableExists(db, table)) return [];

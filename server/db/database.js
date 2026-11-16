@@ -2520,6 +2520,12 @@ const migrations = [
   "ALTER TABLE users ADD COLUMN ui_mode TEXT NOT NULL DEFAULT 'simple'",
   "ALTER TABLE users ADD COLUMN onboarded_at INTEGER",
   /*
+   * Per-account dashboard language and theme (lib/account-prefs.js). NULL = not chosen: the browser's
+   * own choice stands, as before these existed. No default, so nobody's current setting changes.
+   */
+  "ALTER TABLE users ADD COLUMN language TEXT",
+  "ALTER TABLE users ADD COLUMN theme TEXT",
+  /*
    * Trial-to-paid funnel (lib/conversion-events.js). Hosted only: nothing is written when
    * SELF_HOSTED is set. No foreign keys, like the other log tables; user deletion removes a
    * user's rows (lib/user-deletion.js).

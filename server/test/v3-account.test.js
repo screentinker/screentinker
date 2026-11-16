@@ -103,6 +103,33 @@ test('GET /me carries the account summary; PUT /me stores ui_mode and onboarded 
   assert.equal((await call('GET', '/me', { token: tok })).body.ui_mode, 'advanced', 'unknown values are ignored');
 });
 
+test('PUT /me stores language and theme on the account; GET /me reads them back', async () => {
+  const u = makeUser();
+  const tok = generateToken(u, null);
+  let me = (await call('GET', '/me', { token: tok })).body;
+  assert.equal(me.language, null, 'nothing chosen yet: the browser decides');
+  assert.equal(me.theme, null);
+
+  await call('PUT', '/me', { token: tok, body: { language: 'da', theme: 'light' } });
+  me = (await call('GET', '/me', { token: tok })).body;
+  assert.equal(me.language, 'da');
+  assert.equal(me.theme, 'light');
+
+  await call('PUT', '/me', { token: tok, body: { language: 'klingon', theme: '<script>' } });
+  me = (await call('GET', '/me', { token: tok })).body;
+  assert.equal(me.language, 'da', 'unknown values are ignored');
+  assert.equal(me.theme, 'light');
+
+  await call('PUT', '/me', { token: tok, body: { name: 'Renamed' } });
+  me = (await call('GET', '/me', { token: tok })).body;
+  assert.equal(me.language, 'da', 'an unrelated update leaves the choice alone');
+
+  await call('PUT', '/me', { token: tok, body: { language: null, theme: '' } });
+  me = (await call('GET', '/me', { token: tok })).body;
+  assert.equal(me.language, null, 'null clears it');
+  assert.equal(me.theme, null, 'empty clears it');
+});
+
 test('self-hosted: a later signup is enterprise with no trial clock', async () => {
   makeUser(); // not the first account
   const email = 'later' + crypto.randomBytes(4).toString('hex') + '@x.local';
