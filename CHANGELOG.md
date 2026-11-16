@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+### ⚠️ Upgrade note: git + systemd installs using Update now
+
+On 3.2.1 and earlier, the instance updater ran `npm ci` as the service user with the home directory
+from `passwd`. The README created that user with `useradd -r`, which records `/home/screentinker`
+but never creates it, so `npm ci` failed part-way through (`TAR_ENTRY_ERROR ENOENT`) and the
+automatic rollback, which runs the same step, failed too, leaving the server unable to start. The
+database was never touched. **The updater runs an installed copy**, so after upgrading to this
+release by hand once, re-run `sudo scripts/updater/install-systemd.sh` to install the fixed one.
+Until then, `mkdir -p /home/screentinker && chown screentinker:screentinker /home/screentinker`
+avoids it. Docker installs are not affected.
+
+### Fixed
+
+- **Update now could not install on a git + systemd server, and its rollback failed the same way**
+  (#860). The updater now gives `npm ci` a home the service user can write: its own if writable,
+  otherwise a private one under `/var/cache/screentinker-updater`. The README creates the user with
+  `useradd -r -m`, so new installs get a home from the start.
+- **`scripts/updater/install-systemd.sh` called a valid checkout "not inside a ScreenTinker git
+  checkout"** (#857). It ran `git rev-parse` as root in a checkout owned by the service user, which
+  git 2.35.2+ refuses ("dubious ownership"); it now asks git as the checkout's owner.
+- **One systemd service name** (#857). `scripts/install-service.sh` created `remotedisplay.service`
+  while the README, `upgrade.sh` and the updater expect `screentinker.service`. New installs get
+  `screentinker.service`; a machine that already has `remotedisplay.service` keeps it, and
+  `install-systemd.sh` and `upgrade.sh` find either.
+
+### Docs
+
+- **Running ScreenTinker with Docker** (`docs/docker.md`, #859), and the admin-reset command in
+  `docker-compose.example.yml` corrected to `node ../scripts/reset-admin.js`.
+- **Broadcast streaming in Docker** (`docs/broadcast-docker.md`, #858): the "-av" image that adds
+  Chromium, Xvfb and PulseAudio for stream out and recording.
+
+### Credits
+
+- Omniflux (on Discord) reported the updater, installer and service-name problems and tested the
+  installer fix on their own server.
+
 ## 3.2.1
 
 ### Added

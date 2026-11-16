@@ -154,10 +154,26 @@ wait_for_version() {
 
 # ---------- git mode ----------
 
+# ⚠️ npm NEEDS A HOME IT CAN WRITE. The documented install makes the service user with
+# `useradd -r`, which records /home/<user> in passwd but does not create it. npm ci run with that
+# HOME has nowhere for its cache and fails part-way through unpacking ("TAR_ENTRY_ERROR ENOENT ...
+# node_modules/...", exit 243), leaving node_modules half-installed. The rollback runs the same npm
+# ci, so it failed too and left the server unable to start (reported by a self-hoster on 3.2.1).
+# Use the passwd home only when the user can write it; otherwise a private one the updater owns.
+owner_home() {
+  _home="$(getent passwd "$APP_USER" | cut -d: -f6)"
+  if [ -n "$_home" ] && [ -d "$_home" ] && runuser -u "$APP_USER" -- test -w "$_home" 2>/dev/null; then
+    printf '%s' "$_home"; return 0
+  fi
+  _home="${UPDATER_OWNER_HOME:-/var/cache/screentinker-updater/home-$APP_USER}"
+  install -d -m 700 -o "$APP_USER" -g "$(id -gn "$APP_USER")" "$_home" 2>/dev/null || { printf '%s' /tmp; return 0; }
+  printf '%s' "$_home"
+}
+
 as_owner() {
   if [ "$(id -u)" = 0 ] && [ -n "$APP_USER" ] && [ "$APP_USER" != root ]; then
-    _home="$(getent passwd "$APP_USER" | cut -d: -f6)"
-    runuser -u "$APP_USER" -- env PATH="$PATH" HOME="${_home:-/tmp}" "$@"
+    [ -n "${OWNER_HOME:-}" ] || OWNER_HOME="$(owner_home)"
+    runuser -u "$APP_USER" -- env PATH="$PATH" HOME="$OWNER_HOME" "$@"
   else
     "$@"
   fi
