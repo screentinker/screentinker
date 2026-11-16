@@ -2710,7 +2710,8 @@ html.nav-pending .main-wrapper { margin-left: 0 !important; }
 .funnel-row { display: grid; grid-template-columns: minmax(140px, 200px) 1fr auto; gap: 10px; align-items: center; font-size: 12px; }
 .funnel-label { color: var(--text-secondary); }
 .funnel-bar { height: 8px; background: var(--bg-input); border-radius: 4px; overflow: hidden; }
-.funnel-bar > span { display: block; height: 100%; background: var(--grad-bar); }
+/* The fill is data, not decoration: --grad-bar is "none" in the themes that drop the accent stripe, so fall back to the accent colour. */
+.funnel-bar > span { display: block; height: 100%; background-color: var(--accent); background-image: var(--grad-bar); }
 .funnel-n { color: var(--text-primary); font-variant-numeric: tabular-nums; min-width: 64px; text-align: right; }
 
 /* Phone: the fixed menu button sits top-left over the banner row. */
