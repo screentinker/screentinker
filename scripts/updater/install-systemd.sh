@@ -2,7 +2,7 @@
 # Install the instance updater on a git + systemd ScreenTinker (the prod / studiolab shape), so
 # Platform → System → "Update Now" can upgrade this server. Run as root from the checkout:
 #
-#   sudo scripts/updater/install-systemd.sh                 # service "screentinker"
+#   sudo scripts/updater/install-systemd.sh                 # screentinker.service, else remotedisplay.service
 #   sudo SERVICE_NAME=remotedisplay scripts/updater/install-systemd.sh
 #
 # Everything is read from the RUNNING service's unit (User, WorkingDirectory, ExecStart's node,
@@ -25,7 +25,15 @@
 set -euo pipefail
 
 [ "$(id -u)" = 0 ] || { echo "Run as root (sudo)." >&2; exit 1; }
-SERVICE_NAME="${SERVICE_NAME:-screentinker}"
+# The unit's name: the README's install makes screentinker.service, while scripts/install-service.sh
+# made remotedisplay.service before this change. Unset, use whichever of the two exists (screentinker first).
+if [ -z "${SERVICE_NAME:-}" ]; then
+  SERVICE_NAME=screentinker
+  if command -v systemctl >/dev/null 2>&1 && ! systemctl cat screentinker >/dev/null 2>&1 \
+      && systemctl cat remotedisplay >/dev/null 2>&1; then
+    SERVICE_NAME=remotedisplay
+  fi
+fi
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 systemctl cat "$SERVICE_NAME" >/dev/null 2>&1 || { echo "No systemd unit '$SERVICE_NAME'. Set SERVICE_NAME=." >&2; exit 1; }
@@ -34,8 +42,28 @@ prop() { systemctl show -p "$1" --value "$SERVICE_NAME"; }
 SVC_USER="$(prop User)"; SVC_USER="${SVC_USER:-root}"
 WORKDIR="$(prop WorkingDirectory)"
 [ -n "$WORKDIR" ] || { echo "The unit has no WorkingDirectory; cannot locate the checkout." >&2; exit 1; }
-APP_DIR="$(cd "$WORKDIR" && git rev-parse --show-toplevel 2>/dev/null || true)"
-[ -n "$APP_DIR" ] && [ -f "$APP_DIR/scripts/upgrade.sh" ] || { echo "$WORKDIR is not inside a ScreenTinker git checkout." >&2; exit 1; }
+command -v runuser >/dev/null || { echo "runuser (util-linux) is required." >&2; exit 1; }
+
+# ⚠️ NOT AS ROOT. The documented install chowns the checkout to the service user, and git 2.35.2+
+# refuses to work in a repository owned by someone else ("detected dubious ownership"). Run as
+# root, this rev-parse failed silently and the script reported a perfectly good checkout as "not
+# inside a ScreenTinker git checkout". Ask git as the directory's owner, the same way st-updater.sh
+# runs every git command (as_owner), so no safe.directory exception is needed or added.
+git_as_owner() {
+  local dir="$1"; shift
+  local owner home
+  owner="$(stat -c %U "$dir")"
+  if [ "$owner" = root ]; then git -C "$dir" "$@"; return; fi
+  home="$(getent passwd "$owner" | cut -d: -f6)"
+  runuser -u "$owner" -- env HOME="${home:-/tmp}" PATH="$PATH" git -C "$dir" "$@"
+}
+APP_DIR="$(git_as_owner "$WORKDIR" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$APP_DIR" ] || [ ! -f "$APP_DIR/scripts/upgrade.sh" ]; then
+  echo "$WORKDIR is not inside a ScreenTinker git checkout (git, run as $(stat -c %U "$WORKDIR" 2>/dev/null || echo '?'), said:" >&2
+  git_as_owner "$WORKDIR" rev-parse --show-toplevel >&2 || true
+  echo ")" >&2
+  exit 1
+fi
 
 # The node the service runs, so npm ci builds native modules against the same one.
 NODE_BIN="$(prop ExecStart | sed -n 's/.*path=\([^ ;]*\).*/\1/p')"
@@ -66,8 +94,6 @@ LIB=/usr/local/lib/screentinker-updater
 
 [ -f "$DB" ] || { echo "WARNING: no database at $DB - fix DB in /etc/screentinker-updater.env before using the button." >&2; }
 command -v sqlite3 >/dev/null || echo "WARNING: sqlite3 is not installed; the updater refuses to upgrade without a backup (apt install sqlite3)." >&2
-command -v runuser >/dev/null || { echo "runuser (util-linux) is required." >&2; exit 1; }
-
 install -d -m 755 "$LIB" "$OUT_DIR"
 install -m 755 "$SRC_DIR/st-updater.sh" "$LIB/st-updater.sh"
 # The parent is ROOT's: only the requests directory inside it belongs to the app. An app-owned

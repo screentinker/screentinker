@@ -17,7 +17,7 @@ RestartPreventExitStatus=78
 Environment=NODE_ENV=production
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=remotedisplay
+SyslogIdentifier=@NAME@
 
 [Install]
 WantedBy=multi-user.target
