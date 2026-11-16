@@ -1410,7 +1410,7 @@
        * During a sale the card's headline is the sale price but the per-screen figure is the regular
        * annual one, so "$1/mo" for 2 screens next to "$4.13 per screen" read as broken math. A sale that
        * lasts for the whole subscription on the annual price really does change the per-screen cost, so
-       * use it; a first-month/first-year sale does not, so say the figure is the price after the sale.
+       * use it; a limited sale shows both: the sale per-screen for the sale period, then the regular one.
        */
       const saleForeverOnYearly = (p) => !!sale && sale.duration === 'forever'
         && (sale.cycles === 'both' || sale.cycles === 'yearly')
@@ -1421,7 +1421,16 @@
         if (saleForeverOnYearly(p)) {
           return `<div class="per-screen"><strong>$${(cut(p.price_yearly) / p.max_devices / 12).toFixed(2)}</strong> per screen / month at ${p.max_devices} screens, billed annually</div>`;
         }
-        return `<div class="per-screen"><strong>$${ps}</strong> per screen / month at ${p.max_devices} screens, billed annually${onSale ? ', after the sale' : ''}</div>`;
+        if (onSale) {
+          // The sale price for the cycle on show, per screen per month, for as long as the sale lasts.
+          const yearly = cycle === 'annual' && p.price_yearly > 0;
+          const salePs = (yearly ? cut(p.price_yearly) / 12 : cut(p.price_monthly)) / p.max_devices;
+          const period = sale.duration === 'forever' ? 'for as long as you subscribe'
+            : sale.duration === 'repeating' ? `your first ${sale.duration_in_months} months`
+            : (yearly ? 'your first year' : 'your first month');
+          return `<div class="per-screen"><strong>$${salePs.toFixed(2)}</strong> per screen ${yearly ? '/ month ' : ''}${period}, then <strong>$${ps}</strong> per screen / month billed annually (${p.max_devices} screens)</div>`;
+        }
+        return `<div class="per-screen"><strong>$${ps}</strong> per screen / month at ${p.max_devices} screens, billed annually</div>`;
       };
 
       const money = (n) => '$' + Number(n).toLocaleString('en-US', Number(n) % 1 ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : {});
