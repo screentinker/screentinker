@@ -2844,16 +2844,12 @@ function unlockAudio() {
   }
   if (isWallFollower()) return;
   document.querySelectorAll("video").forEach((v) => {
-    if (baseAudioSuppressed && !isOverlayMedia(v)) return;
-    v.muted = false;
+    if (isOverlayMedia(v)) v.muted = false;
   });
   try {
-    if (activeYtPlayer && typeof activeYtPlayer.unMute === "function" && !baseAudioSuppressed) {
-      activeYtPlayer.unMute();
-      activeYtPlayer.setVolume(100);
-    }
+    applyMute();
   } catch (e) {
-    console.warn("YT unmute failed:", e);
+    console.warn("re-resolving mute after the unlock failed:", e);
   }
 }
 document.getElementById("connectBtn").onclick = connectBtnFunc;
