@@ -5520,6 +5520,14 @@ migrationStep('now serving queues', () => {
   if (!had) console.log('[migrate] queues + queue_tickets + queue_events created (now serving)');
 });
 
+migrationStep('native video plane per display', () => {
+  // Android player: full-screen video on a SurfaceView (the display's hardware plane) instead of a
+  // TextureView in the UI layer, so a 4K clip reaches a 4K panel at 4K on boxes whose UI renders at
+  // 1080p (Chromecast with Google TV and most TV sticks). Opt-in: on the hardware plane a clip loses
+  // transitions, screenshots and rotation. See android/.../player/NativeVideoPlane.kt.
+  try { db.prepare('ALTER TABLE devices ADD COLUMN native_video INTEGER NOT NULL DEFAULT 0').run(); console.log('[migrate] devices.native_video added'); } catch (_) { /* present */ }
+});
+
 /*
  * #792: a content request can carry a WEBSITE instead of a file. It becomes a webpage widget (the
  * thing every player already renders for a URL), so the request points at a widget instead of a

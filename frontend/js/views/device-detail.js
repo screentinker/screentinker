@@ -1606,6 +1606,13 @@ async function loadDevice(deviceId, activeTab = null) {
             </label>
             <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 24px">${t('device.ignore_battery.hint')}</div>
           </div>` : ''}
+          ${isAndroidDevice(device) ? `
+          <div style="margin:12px 0">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+              <input type="checkbox" id="nativeVideoToggle" ${device.native_video === 1 ? 'checked' : ''}> ${t('device.native_video.toggle')}
+            </label>
+            <div style="font-size:11px;color:var(--text-muted);margin:4px 0 0 24px">${t('device.native_video.hint')}</div>
+          </div>` : ''}
           ${(!isEmbeddedDevice(device) || device.power_source === 'usb') ? `
           <div class="form-group" style="max-width:280px">
             <label>${t('device.reboot_schedule.label')}</label>
@@ -3174,6 +3181,9 @@ function setupActions(device) {
         // #724: "mains powered, ignore battery" override. Only sent when its control rendered.
         ...(document.getElementById('ignoreBatteryToggle')
           ? { ignore_battery: document.getElementById('ignoreBatteryToggle').checked ? 1 : 0 } : {}),
+        // Android native video plane. Only sent when its control rendered (Android players).
+        ...(document.getElementById('nativeVideoToggle')
+          ? { native_video: document.getElementById('nativeVideoToggle').checked ? 1 : 0 } : {}),
         ...(epdProfileUpdate !== undefined ? { screen_profile: epdProfileUpdate } : {}),
       });
       if (saved && saved.screen_profile !== undefined) {

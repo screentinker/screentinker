@@ -28,7 +28,8 @@ import java.io.File
 
 class MediaPlayerManager(
     private val context: Context,
-    private val playerView: PlayerView,
+    /** The usual video view (TextureView): part of the UI layer, so it rotates, wipes and screenshots. */
+    private val texturePlayerView: PlayerView,
     private val imageView: ImageView,
     private val youtubeWebView: WebView? = null,
     private val onVideoComplete: () -> Unit,
@@ -49,9 +50,54 @@ class MediaPlayerManager(
     private val onYoutubeEnded: () -> Unit = {},
     // #649: the bundle on screen asked to be skipped (BundleSkip); the raw reason, unsanitised.
     // Always on the main thread, and only for the bundle mounted now.
-    private val onBundleSkip: (String?) -> Unit = {}
+    private val onBundleSkip: (String?) -> Unit = {},
+    /** The native video plane (SurfaceView), see [NativeVideoPlane]. Null = never used. */
+    private val nativePlayerView: PlayerView? = null
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /*
+     * The video view the current clip plays in: [texturePlayerView], or [nativePlayerView] when the
+     * display opted into the native plane and the clip is eligible (NativeVideoPlane.eligible). Every
+     * show/hide below goes through this, so the other one is always GONE and detached.
+     */
+    private var playerView: PlayerView = texturePlayerView
+    private var nativeVideo = false
+    private var counterTurnDeg = 0f
+
+    /** The display's "native 4K video" setting, from the playlist payload. Applies from the next clip. */
+    fun setNativeVideo(enabled: Boolean) {
+        if (nativeVideo == enabled) return
+        nativeVideo = enabled
+        Log.i("MediaPlayerManager", "native video plane ${if (enabled) "ON" else "off"}${if (enabled && nativePlayerView == null) " (no native view: ignored)" else ""}")
+        // A clip playing now moves over at once: a single looping 4K clip never remounts, so "from
+        // the next clip" would mean never. ExoPlayer follows its PlayerView to the new surface.
+        if (currentType == MediaType.VIDEO && !audioOnly && !fisheyePlayer) {
+            val want = nativeEligible(fisheye = false, audio = false)
+            if (want != (playerView !== texturePlayerView)) {
+                selectVideoView(want)
+                playerView.visibility = android.view.View.VISIBLE
+            }
+        }
+    }
+
+    private fun nativeEligible(fisheye: Boolean, audio: Boolean): Boolean = NativeVideoPlane.eligible(
+        enabled = nativeVideo, hasNativeView = nativePlayerView != null, wallMode = wallMode,
+        stageRotationDeg = stageRotation, counterTurnDeg = counterTurnDeg, fisheye = fisheye, audioOnly = audio)
+
+    /** Point the active player at the view this clip needs. A no-op when it is already there. */
+    private fun selectVideoView(native: Boolean) {
+        val target = if (native) nativePlayerView ?: texturePlayerView else texturePlayerView
+        if (target === playerView) return
+        val old = playerView
+        try { old.player = null } catch (_: Throwable) {}
+        old.visibility = android.view.View.GONE
+        playerView = target
+        try { target.setKeepContentOnPlayerReset(true) } catch (_: Throwable) {}
+        target.player = exoPlayer
+        applyVideoFit()
+        Log.i("MediaPlayerManager", "video view -> ${if (target === texturePlayerView) "texture" else "native plane (SurfaceView)"}")
+    }
 
     /*
      * #624: the wrapper page's way to report a play-to-end video's length and end (PlayToEnd.bridgeScript).
@@ -775,6 +821,7 @@ class MediaPlayerManager(
         // Redacted: a camera URL can carry its password (rtsp://user:pass@cam).
         Log.i("MediaPlayerManager", "Streaming ${if (audioCard != null) "audio" else "video"} from URL: ${RtspUrl.redact(url)} (muted=$muted${if (fisheye != null) ", fisheye" else ""})")
         mountGeneration++
+        selectVideoView(nativeEligible(fisheye = fisheye != null, audio = audioCard != null))
         if (fisheye != null || fisheyePlayer) rebuildActivePlayer(fisheye)
         fisheyeView = fisheye
         stopYoutubeIfPlaying()
@@ -907,8 +954,10 @@ class MediaPlayerManager(
         // image->video / video->video wipe: extract the incoming clip's first frame OFF the main thread,
         // wipe from the outgoing frame into it, then warm-mount the real video (which starts from frame 0,
         // matching the wipe's `to`). Any failure hard-cuts to the plain mount. Local files only — remote
-        // streams (playVideoFromUrl) keep the plain path.
-        if (transition != null && transitionsActive()) {
+        // streams (playVideoFromUrl) keep the plain path. A clip bound for the native plane hard-cuts
+        // in: the wipe overlay and a SurfaceView do not stack reliably, and nothing could wipe back
+        // out of it anyway (no TextureView frame to grab).
+        if (transition != null && transitionsActive() && !nativeEligible(fisheye = false, audio = false)) {
             val from = captureCurrentFrame()
             if (from != null) {
                 Thread {
@@ -929,6 +978,8 @@ class MediaPlayerManager(
         // #298: grab the outgoing frame BEFORE currentType moves — captureCurrentFrame() reads it.
         // Not for audio: it shows its card at once and never renders a frame to take a cover down.
         if (audioCard == null) coverSwitchGap(myGeneration)
+        // After the cover: coverSwitchGap grabs the OUTGOING frame from the view it is still in.
+        selectVideoView(nativeEligible(fisheye = false, audio = audioCard != null))
         stall.reset()             // a new item starts its own stall clock
         stopYoutubeIfPlaying()
         stopLiveInputIfPlaying()
@@ -1024,6 +1075,7 @@ class MediaPlayerManager(
         mountGeneration++
         stop()
         playerView.visibility = android.view.View.GONE
+        nativePlayerView?.visibility = android.view.View.GONE
         imageView.visibility = android.view.View.GONE
     }
 
@@ -1165,23 +1217,27 @@ class MediaPlayerManager(
      * swapped); rotating about its own centre then cancels the stage's turn exactly.
      */
     fun setVideoCounterTurn(deg: Float, screenW: Int, screenH: Int) {
-        val lp = playerView.layoutParams ?: return
+        // Always the texture view: a counter-turned clip never goes to the native plane (a
+        // SurfaceView ignores the rotation), see NativeVideoPlane.
+        counterTurnDeg = deg
+        val v = texturePlayerView
+        val lp = v.layoutParams ?: return
         if (deg == 0f) {
-            if (playerView.rotation == 0f && lp.width == android.view.ViewGroup.LayoutParams.MATCH_PARENT) return
+            if (v.rotation == 0f && lp.width == android.view.ViewGroup.LayoutParams.MATCH_PARENT) return
             lp.width = android.view.ViewGroup.LayoutParams.MATCH_PARENT
             lp.height = android.view.ViewGroup.LayoutParams.MATCH_PARENT
-            playerView.layoutParams = lp
-            playerView.rotation = 0f
-            playerView.translationX = 0f
-            playerView.translationY = 0f
+            v.layoutParams = lp
+            v.rotation = 0f
+            v.translationX = 0f
+            v.translationY = 0f
             return
         }
         lp.width = screenW
         lp.height = screenH
-        playerView.layoutParams = lp
-        playerView.translationX = (screenH - screenW) / 2f
-        playerView.translationY = (screenW - screenH) / 2f
-        playerView.rotation = -deg
+        v.layoutParams = lp
+        v.translationX = (screenH - screenW) / 2f
+        v.translationY = (screenW - screenH) / 2f
+        v.rotation = -deg
     }
 
     /**

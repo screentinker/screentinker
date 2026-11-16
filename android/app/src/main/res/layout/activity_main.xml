@@ -18,6 +18,18 @@
         app:surface_type="texture_view"
         android:visibility="gone" />
 
+    <!-- Native video plane (NativeVideoPlane.kt): the same player on a SurfaceView, so a 4K clip is
+         composed by the display hardware at the output resolution instead of being drawn into a
+         1080p UI layer. Only used when the display opts in and no view transform is in play. -->
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/nativePlayerView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:use_controller="false"
+        app:resize_mode="fit"
+        app:surface_type="surface_view"
+        android:visibility="gone" />
+
     <!-- Image View for static images -->
     <ImageView
         android:id="@+id/imageView"

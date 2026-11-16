@@ -2416,6 +2416,8 @@ export default {
   'device.live_video.toggle': 'Enable live video for this screen',
   'device.live_video.hint': 'Shows a live WebRTC feed in Now Playing when a player is publishing. Also requires live video enabled for this workspace and configured on the server. Falls back to screenshots otherwise.',
   'device.ignore_battery.toggle': 'Mains powered (ignore battery)',
+  'device.native_video.toggle': 'Native 4K video (hardware video plane)',
+  'device.native_video.hint': 'Plays full-screen video on the display\'s hardware video plane, so a 4K clip reaches a 4K screen at 4K on boxes whose menus run at 1080p (Chromecast with Google TV, most TV sticks). If the screen info shows a lower "UI" resolution next to the screen resolution (for example 3840x2160 (UI 1920x1080)), this setting is what gets video past it. While a video plays this way it cuts in and out with no transition and shows black in screenshots. Rotated screens, video walls and layouts with zones keep the normal path. Images are not affected. Needs an Android app released after this setting appeared; older apps ignore it.',
   'device.ignore_battery.hint': 'For TVs and panels with no battery whose board still reports a fake level (e.g. a permanent "42%, charging"). Forces the battery reading to blank so it reads as mains everywhere, including alerts. Leave off for real battery devices.',
   // Shown instead of the line above on a player that cannot capture its own screen — pointing at
   // a "Screenshot" button that is correctly not rendered reads as a broken dashboard.
