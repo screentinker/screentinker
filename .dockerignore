@@ -10,16 +10,35 @@ node_modules
 # mutable state (lives on the /data volume, never baked into the image).
 # Note: the *.db* patterns drop the database FILES; we must NOT exclude the
 # server/db/ directory itself - it holds database.js + schema.sql.
-*.db
-*.db-wal
-*.db-shm
-*.db.*
+#
+# ⚠️ ROOT-ANCHORED: a .dockerignore pattern without a leading **/ matches at the context ROOT only
+# (unlike .gitignore). `*.db` alone let a local `docker build` from a working tree copy
+# server/db/remote_display.db (every account, token and device secret) into the image.
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.db.*
+**/*.sqlite
+**/*.sqlite3
 server/uploads
 server/certs
+server/data
+server/plugins
+server/plugin-inbox
+server/.upgrade-in-progress
+backups
+server/backups
+**/backups/content-*
 
 # secrets
 .env
 **/.env
+**/.env.*
+!**/.env.example
+**/.jwt_secret
+**/.license_key
+**/*.pem
+**/*.jks
 
 # not needed at runtime (NOTE: scripts/ IS needed - database.js requires
 # scripts/migrate-multitenancy at boot - so it must stay in the image)
