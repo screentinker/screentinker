@@ -3613,6 +3613,12 @@ const migrations = [
   // without the guide being live. When on AND the video has tracks, visitors get the guide (the
   // /listen poll exposes the tracks) and the player shows a "Scan for audio guide" QR while it plays.
   "ALTER TABLE content ADD COLUMN audio_guide_enabled INTEGER NOT NULL DEFAULT 0",
+  /*
+   * GHSA-rvxj 5.2 (lib/enrol-key.js revokeRedeemedCredentials): 1 once the enrolment-key exchange has
+   * handed this row's device_token to a key holder. Rolling or clearing the key then re-issues the
+   * token of every marked row, so a leaked URL's redeemer is cut off. Not a secret — a flag.
+   */
+  'ALTER TABLE devices ADD COLUMN enrol_redeemed INTEGER NOT NULL DEFAULT 0',
 ];
 // Apply each ALTER idempotently. A "duplicate column name" / "already exists"
 // error means the column is already present (expected on a migrated DB) - benign.

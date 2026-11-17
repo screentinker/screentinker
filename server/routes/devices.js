@@ -1451,6 +1451,23 @@ router.post('/:id/settings-pin', (req, res) => {
  * denial of service on a screen the token was never given control of.
  */
 /*
+ * GHSA-rvxj 5.2: re-issue the device token of every screen that redeemed the current key (the
+ * display and its mirrors), then drop their live sockets so the holder of the old token is cut off
+ * now rather than at its next reconnect. A legitimate web player given the new URL presents the new
+ * key and is handed the new token by the same exchange; one still on the old URL is told the key is
+ * unknown (enrol_key_unknown) or that its stored token is invalid, which is what "New URL" promises.
+ */
+function revokeEnrolHolders(req, deviceId) {
+  const revoked = enrolKey.revokeRedeemedCredentials(db, deviceId);
+  if (!revoked.length) return revoked;
+  try {
+    const io = req.app.get('io');
+    if (io) for (const id of revoked) io.of('/device').in(id).disconnectSockets(true);
+  } catch (e) { console.warn(`[enrol] disconnect after revoke failed for ${deviceId}: ${e.message}`); }
+  return revoked;
+}
+
+/*
  * ⚠️ AND NEVER FROM AN API TOKEN, even a full-scope one (GHSA-rvxj 2.3).
  *
  * This route hands back the raw key and the player URL, i.e. a transferable "be this screen"
@@ -1473,9 +1490,10 @@ router.post('/:id/enrol-key', requireScope('full'), (req, res) => {
   if (!device) return;
   // 3.0 mirrors: a link always names the ORIGINAL; a mirror is what a second opening of it becomes.
   if (device.mirror_of) return res.status(409).json({ error: 'This screen is a mirror. Its display link is the original display’s link: open the original to see or replace it.', code: 'MIRROR' });
+  const revoked = revokeEnrolHolders(req, req.params.id);
   const key = enrolKey.setEnrolKey(db, req.params.id);
   const rolled = !!device.enrol_key;
-  console.warn(`[enrol] ${rolled ? 'rolled' : 'minted'} enrolment key for device ${req.params.id} (user ${req.user.id})`);
+  console.warn(`[enrol] ${rolled ? 'rolled' : 'minted'} enrolment key for device ${req.params.id} (user ${req.user.id})${revoked.length ? `; re-issued the token of ${revoked.length} screen(s) that had redeemed the old one` : ''}`);
   res.json({
     success: true,
     id: req.params.id,
@@ -1492,8 +1510,9 @@ router.post('/:id/enrol-key', requireScope('full'), (req, res) => {
 router.delete('/:id/enrol-key', requireScope('full'), (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
+  const revoked = revokeEnrolHolders(req, req.params.id);
   enrolKey.clearEnrolKey(db, req.params.id);
-  console.warn(`[enrol] revoked enrolment key for device ${req.params.id} (user ${req.user.id})`);
+  console.warn(`[enrol] revoked enrolment key for device ${req.params.id} (user ${req.user.id})${revoked.length ? `; re-issued the token of ${revoked.length} screen(s) that had redeemed it` : ''}`);
   res.json({ success: true, id: req.params.id, enrol_key: null });
 });
 

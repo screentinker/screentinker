@@ -249,3 +249,99 @@ test('#630: a stored identity alone, with no key, is unaffected', async () => {
   const r = await connectWith({ device_id: a.device_id, device_token: a.device_token });
   assert.equal(r.device_id, a.device_id);
 });
+
+/*
+ * ⚠️ GHSA-rvxj 5.2: "NEW URL" MUST CUT OFF WHOEVER ALREADY REDEEMED THE OLD ONE.
+ *
+ * Redeeming a key hands back the display's device_token. Rolling only the key left that token
+ * working, so a leaked URL's holder stayed the display after the operator pressed "New URL" — and
+ * the fingerprint the exchange linked to the row let the reinstall path mint them a fresh one.
+ */
+let _owner = null;
+async function owner() {
+  if (_owner) return _owner;
+  const email = 'enrol' + crypto.randomBytes(4).toString('hex') + '@example.com';
+  const reg = await (await fetch(`${BASE}/api/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: 'Passw0rd123', name: 'Op' }) })).json();
+  assert.ok(reg.token, JSON.stringify(reg));
+  _owner = { token: reg.token, userId: reg.user.id, ws: reg.current_workspace_id };
+  return _owner;
+}
+/** A display claimed into the operator's workspace — the shape the reinstall reclaim path serves. */
+async function claimed() {
+  const o = await owner();
+  const dev = await provision();
+  db.prepare('UPDATE devices SET user_id = ?, workspace_id = ?, pairing_code = NULL, status = ? WHERE id = ?')
+    .run(o.userId, o.ws, 'offline', dev.device_id);
+  return dev;
+}
+
+test('5.2: rolling the key re-issues the token the old key handed out; the new URL still works', async () => {
+  const enrol = require('../lib/enrol-key');
+  const dev = await claimed();
+  const oldKey = enrol.setEnrolKey(db, dev.device_id);
+  const fp = 'web-leak-' + crypto.randomBytes(6).toString('hex');
+  const leaked = await connectWith({ enrol_key: oldKey, fingerprint: fp });
+  assert.equal(leaked.registered, true, JSON.stringify(leaked));
+  assert.ok(leaked.device_token, 'precondition: redeeming the URL handed out the device token');
+
+  const newKey = enrol.setEnrolKey(db, dev.device_id);   // the operator presses "New URL"
+
+  const replay = await connectWith({ device_id: dev.device_id, device_token: leaked.device_token, fingerprint: fp });
+  assert.equal(replay.registered, false, `the old holder must be cut off: ${JSON.stringify(replay)}`);
+  assert.match(String(replay.authError || ''), /token/i);
+
+  // ...and cannot be handed a fresh token by the reinstall (fingerprint) reclaim path either.
+  const reclaim = await connectWith({ fingerprint: fp, pairing_code: String(crypto.randomInt(100000, 1000000)) });
+  assert.notEqual(reclaim.device_id, dev.device_id, `fingerprint reclaim gave the old holder the display: ${JSON.stringify(reclaim)}`);
+
+  // The legitimate player, given the new URL, is the display again and gets the new token.
+  const legit = await connectWith({ enrol_key: newKey });
+  assert.equal(legit.device_id, dev.device_id, JSON.stringify(legit));
+  assert.ok(legit.device_token && legit.device_token !== leaked.device_token, 'handed the NEW token');
+  const again = await connectWith({ device_id: dev.device_id, device_token: legit.device_token });
+  assert.equal(again.registered, true, 'and that new token keeps working');
+});
+
+test('5.2: clearing the key cuts off a redeemed token too', async () => {
+  const enrol = require('../lib/enrol-key');
+  const dev = await provision();
+  const key = enrol.setEnrolKey(db, dev.device_id);
+  const leaked = await connectWith({ enrol_key: key });
+  assert.ok(leaked.device_token, JSON.stringify(leaked));
+  enrol.clearEnrolKey(db, dev.device_id);
+  const replay = await connectWith({ device_id: dev.device_id, device_token: leaked.device_token });
+  assert.equal(replay.registered, false, JSON.stringify(replay));
+});
+
+test('5.2: a code-paired screen whose link nobody opened keeps its own token through a roll', async () => {
+  const enrol = require('../lib/enrol-key');
+  const dev = await provision();
+  enrol.setEnrolKey(db, dev.device_id);
+  enrol.setEnrolKey(db, dev.device_id);
+  enrol.clearEnrolKey(db, dev.device_id);
+  const r = await connectWith({ device_id: dev.device_id, device_token: dev.device_token });
+  assert.equal(r.registered, true, `a screen whose token never left through the URL must not be knocked off: ${JSON.stringify(r)}`);
+});
+
+test('5.2: pressing New URL in the dashboard drops the redeemed holder\'s live socket', async () => {
+  const enrol = require('../lib/enrol-key');
+  const reg = await owner();
+  const dev = await claimed();
+  const key = enrol.setEnrolKey(db, dev.device_id);
+
+  const sock = ioClient(`${BASE}/device`, { transports: ['websocket'], reconnection: false, forceNew: true });
+  const registered = new Promise((resolve) => sock.on('device:registered', resolve));
+  const dropped = new Promise((resolve) => sock.on('disconnect', resolve));
+  sock.on('connect', () => sock.emit('device:register', { enrol_key: key, device_info: { app_version: 'test' } }));
+  try {
+    const d = await Promise.race([registered, new Promise((_, rej) => setTimeout(() => rej(new Error('no register')), 5000))]);
+    assert.equal(d.device_id, dev.device_id);
+
+    const r = await fetch(`${BASE}/api/devices/${dev.device_id}/enrol-key`, { method: 'POST',
+      headers: { Authorization: 'Bearer ' + reg.token, 'Content-Type': 'application/json' }, body: '{}' });
+    assert.equal(r.status, 200, await r.text());
+    const why = await Promise.race([dropped, new Promise((res) => setTimeout(() => res('still connected'), 3000))]);
+    assert.notEqual(why, 'still connected', 'the holder of the old token must be disconnected now, not at its next reconnect');
+  } finally { try { sock.close(); } catch { /* */ } }
+});

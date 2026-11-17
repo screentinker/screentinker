@@ -2974,7 +2974,9 @@ module.exports = function setupDeviceSocket(io) {
        *     instruction and the key is a 256-bit credential for exactly that display, so this is no
        *     more than the same player would get by clearing its storage first;
        *   - the key names NOTHING: it is ignored and the stored identity decides, so a working
-       *     screen still holding an old link after a key roll keeps working.
+       *     screen still holding an old link after a key roll keeps working — unless that screen
+       *     got its token THROUGH the link, in which case the roll re-issued the token (GHSA-rvxj
+       *     5.2, lib/enrol-key.js) and it needs the new URL like any other holder of the old one.
        */
       const presentedKey = data.enrol_key;
       const resolvedKey = presentedKey && device_id ? enrolKey.resolveEnrolKey(db, presentedKey) : null;
@@ -3066,6 +3068,9 @@ module.exports = function setupDeviceSocket(io) {
             device_id = m.mirror.id;
             device_token = m.mirror.device_token;
           }
+          // GHSA-rvxj 5.2: this row's token is about to go to the key holder, so a later roll or
+          // clear of the key must re-issue it (lib/enrol-key.js revokeRedeemedCredentials).
+          enrolKey.markRedeemed(db, device_id);
         }
       }
 
