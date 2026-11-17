@@ -55,7 +55,21 @@ object OfflinePlan {
     fun read(raw: String?): JSONObject? {
         if (raw.isNullOrBlank() || raw == "null") return null
         return try {
-            val plan = JSONObject(raw)
+            validated(JSONObject(raw))
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /*
+     * The envelope check on an already-parsed plan, WITHOUT copying it. select / nextTransitionAfter /
+     * dependencies run on every payload and every tick against a plan that read() already produced;
+     * a toString()+reparse of the whole plan per call was pure main-thread waste. read(JSONObject)
+     * still deep-copies, once, where a live payload's plan is adopted.
+     */
+    private fun validated(plan: JSONObject?): JSONObject? {
+        if (plan == null) return null
+        return try {
             if (plan.optInt("protocol_version", -1) != PROTOCOL_VERSION) return null
             if (plan.optJSONArray("intervals") == null || plan.optJSONArray("states") == null) return null
             if (plan.optLong("valid_until_utc_ms", 0L) == 0L || plan.optLong("generated_at_utc_ms", 0L) == 0L) return null
@@ -95,7 +109,7 @@ object OfflinePlan {
      *    whose default row is absent - still valid, still "show idle", never the last playlist.
      */
     fun select(plan: JSONObject?, now: Long): Selection {
-        val p = read(plan) ?: return Selection(false, null, null)
+        val p = validated(plan) ?: return Selection(false, null, null)
         if (now < p.optLong("generated_at_utc_ms", 0L) || now >= p.optLong("valid_until_utc_ms", 0L)) {
             return Selection(false, null, null)
         }
@@ -123,7 +137,7 @@ object OfflinePlan {
      * rollover tick. Null when the plan is unusable or nothing remains before it expires.
      */
     fun nextTransitionAfter(plan: JSONObject?, now: Long): Long? {
-        val p = read(plan) ?: return null
+        val p = validated(plan) ?: return null
         val validUntil = p.optLong("valid_until_utc_ms", 0L)
         if (now >= validUntil) return null
         val intervals = p.optJSONArray("intervals") ?: return null
@@ -145,7 +159,7 @@ object OfflinePlan {
      * Identity mirrors the JS reference: (widget_id|content_id)|(widget_rev|content_rev)|filepath.
      */
     fun dependencies(plan: JSONObject?): List<JSONObject> {
-        val p = read(plan) ?: return emptyList()
+        val p = validated(plan) ?: return emptyList()
         val states = p.optJSONArray("states") ?: return emptyList()
         val out = ArrayList<JSONObject>()
         val seen = HashSet<String>()
