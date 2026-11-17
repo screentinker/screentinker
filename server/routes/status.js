@@ -182,8 +182,8 @@ function formatUptime(seconds) {
   return `${m}m`;
 }
 
-// These three routes take the session token from the query string / Authorization header
-// and resolve it themselves rather than sitting behind requireAuth. resolveSessionUser is
+// These routes take the session token from the query string (export) or the Authorization header
+// (backup, import) and resolve it themselves rather than sitting behind requireAuth. resolveSessionUser is
 // the SAME resolver requireAuth uses, so they inherit every check it makes (pre-TOTP
 // refusal, live user row, forced password change). Each keeps the exact status/body it
 // returned before for the invalid-token case.
@@ -194,8 +194,14 @@ function denySession(res, err) {
 }
 
 // Full database backup (superadmin only)
+//
+// ⚠️ GHSA-rvxj (D): AUTHORIZATION HEADER ONLY. It accepted `?token=<session JWT>` for a plain <a
+// href> download, which put a full platform-admin session into proxy access logs and browser
+// history. The admin page now fetches it with a Bearer header and saves the blob
+// (frontend/js/views/admin.js), and no script or doc used the query form.
 router.get('/backup', (req, res) => {
-  const token = req.query.token;
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Token required' });
 
   let session;

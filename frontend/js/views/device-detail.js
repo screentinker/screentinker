@@ -137,6 +137,8 @@ function frameNowPlaying() {
   const stage = document.getElementById('screenshotStage');
   const img = document.getElementById('currentScreenshot');
   if (stage && img && img.tagName === 'IMG') frameDeviceOutput(stage, img, currentDevice?.orientation);
+  // GHSA-rvxj (D): the stored screenshot loads through a Bearer fetch, not a token in its URL.
+  if (stage) hydrateAuthImages(stage, { eager: true });
 }
 
 // #go2rtc — put a live WebRTC feed in the Now Playing tile when the server, workspace and device
@@ -755,11 +757,10 @@ export function render(container, deviceId) {
 
   screenshotHandler = (data) => {
     if (data.device_id !== deviceId) return;
-    // Use inline base64 data if available, otherwise fall back to URL
-    const imgSrc = data.image_data || (() => {
-      const token = localStorage.getItem('token');
-      return data.url + (data.url.includes('?') ? '&' : '?') + 'token=' + token;
-    })();
+    // The server only ever sends image_data inline (ws/deviceSocket.js). The old URL fallback
+    // appended the session JWT to it and was never reached — removed (GHSA-rvxj D).
+    const imgSrc = data.image_data;
+    if (!imgSrc) return;
     // Update screenshot in Now Playing tab
     const screenshotEl = document.getElementById('currentScreenshot');
     if (screenshotEl) {
@@ -1051,7 +1052,7 @@ async function loadDevice(deviceId, activeTab = null) {
           <video id="liveVideo" class="live-video" hidden autoplay playsinline muted></video>
           <span id="liveBadge" class="live-badge" hidden>${t('device.live_badge')}</span>
           ${device.screenshot
-            ? `<img id="currentScreenshot" src="${screenshotUrl(device.id, Date.now())}" alt="Current screen">`
+            ? `<img id="currentScreenshot" data-auth-src="${esc(screenshotUrl(device.id, Date.now()))}" alt="Current screen">`
             : `<div class="no-screenshot" id="currentScreenshot">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                   <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>

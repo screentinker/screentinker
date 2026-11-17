@@ -1819,13 +1819,18 @@ app.get('/api/branding', (req, res) => {
 app.use('/api/stripe', stripeRouter);
 
 
-// Screenshot route (before protected routes - needs custom auth for img tags)
+// Screenshot route (before protected routes; its own session check).
+//
+// ⚠️ GHSA-rvxj (D): AUTHORIZATION HEADER ONLY. It used to accept `?token=<session JWT>` so a plain
+// <img src> could load it, which wrote a 7-day full session into reverse-proxy access logs, browser
+// history and every copied image link. The dashboard now loads it with a Bearer fetch into a blob
+// URL (frontend/js/utils.js hydrateAuthImages), and nothing else ever used the query form — players,
+// mesh children and native apps don't call this route. Do not bring the query parameter back.
 const { resolveSessionUser } = require('./middleware/auth');
 app.get('/api/devices/:id/screenshot', (req, res) => {
   let user = null;
   const authHeader = req.headers.authorization;
-  const tokenParam = req.query.token;
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : tokenParam;
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
   if (!token) return res.status(401).json({ error: 'Authentication required' });
   // resolveSessionUser is the same resolver requireAuth uses, so this route inherits the
   // pre-TOTP refusal, the live-user check and the forced-password-change gate.

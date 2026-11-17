@@ -550,21 +550,20 @@ test('topology reports per-edge health and the depth cap', async () => {
   } finally { cleanup(db); }
 });
 
-test('⚠️ the screenshot proxy accepts a QUERY token, because an <img> cannot send a header', async () => {
+test('⚠️ the screenshot proxy takes the Authorization header only (GHSA-rvxj D)', async () => {
   /*
-   * The proxy worked and the page still showed a broken image: requireAuth reads the Authorization
-   * header, and a browser loading an image cannot send one — so the route answered 401 to the only
-   * client that will ever call it. Every test passed because every test used a header.
-   *
-   * The local screenshot route solved this the same way with the same resolver; matching it keeps
-   * ONE definition of "this token is a usable session" rather than a second, subtly different one.
+   * It used to accept `?token=<session JWT>` too, because the dashboard loaded it as a plain <img
+   * src> that cannot send a header. That put a 7-day full session into proxy access logs, browser
+   * history and copied image links. The dashboard now fetches with a Bearer header into a blob URL
+   * (frontend/js/utils.js hydrateAuthImages), so the route is plain requireAuth again.
    */
   const fs = require('node:fs');
   const src = fs.readFileSync(require.resolve('../routes/mesh.js'), 'utf8');
   const route = src.slice(src.indexOf("router.get('/screenshot/"));
+  const head = route.slice(0, route.indexOf('\n'));
+  assert.match(head, /router\.get\('\/screenshot\/:nodeId\/:deviceId', requireAuth, async/,
+    'the proxy must sit behind plain requireAuth');
   const body = route.slice(0, 1400);
-  assert.match(body, /req\.headers\.authorization/, 'a header still works');
-  assert.match(body, /req\.query\.token/, 'and a query token, for the <img> case');
-  assert.match(body, /resolveSessionUser/, 'resolved by the shared resolver, not a local copy');
+  assert.doesNotMatch(body, /req\.query\.token/, 'no session in the query string');
   assert.doesNotMatch(body, /jwt\.verify/, 'never a second, hand-rolled verification');
 });

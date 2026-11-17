@@ -21,7 +21,6 @@ const clientTree = require('../lib/mesh/client-tree');
 const meshUptime = require('../lib/mesh/uptime-report');
 const alertRollup = require('../lib/mesh/alert-rollup');
 const { openIncidents } = require('../services/threshold-alerts');
-const { resolveSessionUser } = require('../middleware/auth');
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
@@ -1248,29 +1247,15 @@ module.exports = function meshRoutes(db, { requireAuth }) {
    * display-capture grant: this endpoint cannot be a way around it.
    */
   /*
-   * ⚠️ AUTHENTICATED BY HEADER **OR** QUERY, because the caller is an <img> tag.
+   * ⚠️ AUTHORIZATION HEADER ONLY — plain requireAuth (GHSA-rvxj D).
    *
-   * requireAuth reads the Authorization header, and a browser loading an image cannot send one — so
-   * this route answered 401 to the only client that will ever call it, and the page rendered a
-   * broken image with no error anybody would see. The proxy itself was working the whole time; the
-   * door it was behind only opened for callers that could not knock.
-   *
-   * The local screenshot route already solved this the same way, with the same resolver, for the
-   * same reason. Matching it means one definition of "this token is a usable session" rather than a
-   * second, subtly different one.
+   * This used to accept `?token=<session JWT>` as well, because the caller was a plain <img src>
+   * that cannot send a header. That put a 7-day full session into reverse-proxy access logs,
+   * browser history and copied image links. The dashboard now loads screenshots with a Bearer
+   * fetch into a blob URL (frontend/js/utils.js hydrateAuthImages), matching the local screenshot
+   * route in server.js, which also dropped the query form. Nothing else calls this route.
    */
-  router.get('/screenshot/:nodeId/:deviceId', (req, res, next) => {
-    if (req.headers.authorization) return requireAuth(req, res, next);
-    const token = req.query.token;
-    if (!token) return res.status(401).json({ error: 'Authentication required' });
-    try {
-      const session = resolveSessionUser(token, { sourceIp: req.ip || null });
-      req.user = session.user;
-      return next();
-    } catch (e) {
-      return res.status(401).json({ error: 'Invalid or expired token' });
-    }
-  }, async (req, res) => {
+  router.get('/screenshot/:nodeId/:deviceId', requireAuth, async (req, res) => {
     const ids = visibleNodeIds(req.user);
     if (!ids.includes(req.params.nodeId)) return res.status(404).json({ error: 'No such server.' });
     const readFrom = global.__meshReadFrom;
