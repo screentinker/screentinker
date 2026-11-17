@@ -6217,6 +6217,7 @@ function playCurrentItem() {
   }
   currentItemStartedAt = Date.now();
   applySlideAudio(item);
+  offlinePlayOpen = null;
   if (!PREVIEW_MODE && !(socket == null ? void 0 : socket.connected) && (!wallConfig || wallConfig.is_leader) && shouldLogPlay(item)) {
     offlinePlayOpen = {
       content_id: item.content_id || null,
@@ -6265,7 +6266,16 @@ function nextItem() {
     offlinePlayOpen = null;
     queueOfflinePlay(open, true);
   }
-  if (!bySkip && playlist[currentIndex] && (socket == null ? void 0 : socket.connected)) {
+  let endedViaQueue = false;
+  if (!bySkip && !PREVIEW_MODE && playlist[currentIndex] && (socket == null ? void 0 : socket.connected) && offlinePlayOpen) {
+    const open = offlinePlayOpen;
+    offlinePlayOpen = null;
+    queueOfflinePlay(open, true);
+    flushOfflinePlays();
+    endedViaQueue = true;
+  }
+  offlinePlayOpen = null;
+  if (!bySkip && !endedViaQueue && playlist[currentIndex] && (socket == null ? void 0 : socket.connected)) {
     socket.emit("device:play-event", {
       device_id: config.deviceId,
       event: "play_end",
@@ -6295,22 +6305,53 @@ function extractVideoId(url) {
     return null;
   }
 }
-function loadYoutubeApi(cb) {
+function loadYoutubeApi(cb, onFail) {
   if (ytApiReady) {
     cb();
     return;
   }
-  ytApiCallbacks.push(cb);
+  ytApiCallbacks.push({ ok: cb, fail: onFail });
   if (!document.getElementById("yt-api-script")) {
     const tag = document.createElement("script");
     tag.id = "yt-api-script";
     tag.src = "https://www.youtube.com/iframe_api";
-    document.head.appendChild(tag);
+    let timer = null;
+    const settle = (ok) => {
+      clearTimeout(timer);
+      tag.onerror = null;
+      const pending = ytApiCallbacks;
+      ytApiCallbacks = [];
+      if (!ok) {
+        console.warn("YouTube IFrame API failed to load");
+        try {
+          tag.remove();
+        } catch (e) {
+        }
+        try {
+          if (window.YT && !window.YT.loaded) window.YT = void 0;
+        } catch (e) {
+        }
+      }
+      pending.forEach((p) => {
+        try {
+          const fn = ok ? p.ok : p.fail;
+          if (fn) fn();
+        } catch (e) {
+          console.error(e);
+        }
+      });
+    };
+    tag.onerror = () => {
+      if (!ytApiReady) settle(false);
+    };
+    timer = setTimeout(() => {
+      if (!ytApiReady) settle(false);
+    }, 2e4);
     window.onYouTubeIframeAPIReady = () => {
       ytApiReady = true;
-      ytApiCallbacks.forEach((fn) => fn());
-      ytApiCallbacks = [];
+      settle(true);
     };
+    document.head.appendChild(tag);
   }
 }
 function createYoutubeEmbed(src, item, container, opts) {
@@ -6402,12 +6443,16 @@ function createYoutubeEmbed(src, item, container, opts) {
     };
     container.appendChild(overlay);
   }
+  const shouldLoop = zoneMode ? !!opts.loop : playlist.length <= 1;
+  const itemMs = () => Math.max(1, Number(item.duration_sec) || 10) * 1e3;
+  const byDuration = !zoneMode && !shouldLoop && !!done && !item.play_to_end;
+  const loops = shouldLoop || byDuration;
+  if (byDuration) setSafety(itemMs());
+  else if (!loops && done) setSafety(Math.max(itemMs(), 6e4));
   loadYoutubeApi(() => {
     if (!alive()) return;
-    const shouldLoop = zoneMode ? !!opts.loop : playlist.length <= 1;
     let playStartTime = 0;
     let liveArmed = false;
-    const itemMs = () => Math.max(1, Number(item.duration_sec) || 10) * 1e3;
     const ytIsLive = (t) => {
       try {
         const d = t && t.getVideoData && t.getVideoData();
@@ -6416,8 +6461,6 @@ function createYoutubeEmbed(src, item, container, opts) {
         return false;
       }
     };
-    const byDuration = !zoneMode && !shouldLoop && !!done && !item.play_to_end;
-    const loops = shouldLoop || byDuration;
     activeYtPlayer = new YT.Player(playerDiv.id, {
       videoId,
       width: "100%",
@@ -6514,7 +6557,10 @@ function createYoutubeEmbed(src, item, container, opts) {
         }
       }
     });
-    if (byDuration) setSafety(itemMs());
+  }, () => {
+    if (!alive() || !done || shouldLoop) return;
+    console.warn("YouTube API unavailable, skipping:", item.filename);
+    setSafety(2e3);
   });
   return playerDiv;
 }
@@ -6961,11 +7007,15 @@ function runImageTransition(fromImg, toImg, t, item) {
 function renderImageBuffered(item) {
   const src = imgSrcFor(item);
   const cached = imgPreloadCache[src];
+  const mySeq = renderSeq;
+  const stale = () => renderSeq !== mySeq;
+  discardPendingSwap();
   let done = false, watchdog = null;
   const swap = (img) => {
     if (done) return;
     done = true;
     if (watchdog) clearTimeout(watchdog);
+    if (stale()) return;
     delete imgPreloadCache[src];
     if (glTxAbort) glTxAbort();
     const from = currentTexturableFrame();
@@ -6981,6 +7031,7 @@ function renderImageBuffered(item) {
     if (done) return;
     done = true;
     if (watchdog) clearTimeout(watchdog);
+    if (stale()) return;
     mediaFailureSkip(null, "image", src);
   };
   watchdog = setTimeout(() => {
