@@ -118,8 +118,14 @@ test('#790 scalarFieldDeltas: lowercased slug + exact key, scalars only, null wh
     { 'menu.price': '9.5', 'menu.Name': 'Soup' }, 'slug lowercased, key exact, values stringified');
   assert.equal(svc.scalarFieldDeltas('menu', ['items'], { items: [1, 2] }), null, 'arrays are list bindings, not patchable');
   assert.equal(svc.scalarFieldDeltas('menu', ['obj'], { obj: { a: 1 } }), null, 'objects are whole-source, not patchable');
-  assert.deepEqual(svc.scalarFieldDeltas('menu', ['a', 'b', 'c'], { a: 'x', b: null, c: undefined }),
-    { 'menu.a': 'x' }, 'null/undefined keys are dropped');
+  // All or nothing: the player adopts the new rev on any ack, so a partial patch would leave the
+  // unpatched keys stale — anything unpatchable means a full reload instead.
+  assert.equal(svc.scalarFieldDeltas('menu', ['a', 'b', 'c'], { a: 'x', b: null, c: undefined }),
+    null, 'a key that became null/removed forces the reload, not a partial patch');
+  assert.equal(svc.scalarFieldDeltas('menu', ['temp', 'forecast'], { temp: 21, forecast: [1, 2] }),
+    null, 'a scalar changing beside a list must not patch the scalar and strand the list');
+  assert.equal(svc.scalarFieldDeltas('menu', ['v'], { v: 'x'.repeat(5000) })['menu.v'].length, 2000,
+    'patched values are capped like rendered fields');
   assert.equal(svc.scalarFieldDeltas('menu', [], {}), null, 'no keys -> null');
   assert.equal(svc.scalarFieldDeltas('menu', ['k'], null), null, 'no data -> null');
   assert.deepEqual(svc.scalarFieldDeltas('menu', ['on'], { on: false }), { 'menu.on': 'false' }, 'false is a value, not absence');

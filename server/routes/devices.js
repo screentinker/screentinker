@@ -217,6 +217,25 @@ router.post('/move-workspace', (req, res) => {
   }
   const budget = moveLib.bringBudget(db, v);
   if (budget) return res.status(budget.status).json({ error: budget.error, code: budget.code });
+  // One free trial per screen applies to a MOVE as it does to pairing (lib/trial-screens.js
+  // checkTrialMove): otherwise re-used screens paired in a scratch workspace could be moved into
+  // the shared one, where the per-workspace count never saw them. Hosted only, like pairing; a
+  // fault skips the check rather than blocking a move.
+  if (!config.selfHosted) {
+    let refused = null;
+    try {
+      refused = require('../lib/trial-screens').checkTrialMove(db, { devices, toWorkspaceId: target.id,
+        ownerFor: (d) => (v.crossOrg ? v.ownerId : d.user_id) });
+      if (refused.allowed) refused = null;
+    } catch (e) { console.warn(`[trial-screens] move check skipped: ${e && e.message}`); }
+    if (refused) {
+      console.warn(`[trial-screens] refused move of ${refused.deviceId} into ${target.id}: screen used by an earlier unpaid trial (${refused.priorUserId}, ${refused.reused} re-used)`);
+      return res.status(403).json({
+        error: 'One of these screens has already been used with a free trial on another account. Choose a plan to add it to this workspace.',
+        code: 'TRIAL_SCREEN_USED', device_id: refused.deviceId,
+      });
+    }
+  }
   const sim = corpGuard.guarded(req, res, () => moveLib.simulate(db, req, devices, target, moveOpts(v)));
   if (!sim) return;
   const impact = moveImpact(sim);

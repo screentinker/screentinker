@@ -64,3 +64,17 @@ test('SNAT: N paired devices from one IP all admitted on reconnect; repeated cyc
     }
   }
 });
+
+// A spoofer naming a victim's device_id without its token must not be able to spend the victim's
+// bucket: device ids are not secret, and the paired exemption waives the quarantine but not the
+// cooldown, so a shared bucket let anyone keep a real panel offline on a loop.
+test('tokenless registers naming a device do not spend that device\'s flap bucket', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'ws', 'deviceSocket.js'), 'utf8');
+  assert.match(src, /const flapKey = \(!paired && ident\.key\.startsWith\('d:'\)\) \? 'u' \+ ident\.key : ident\.key;/,
+    'the register gate must key unproven callers apart from the device they name');
+  assert.match(src, /flapLimiter\.check\(flapKey,/);
+  // And the behaviour that keying buys: the spoofer's bucket trips, the device's stays clear.
+  for (let t = 0; t < 40; t += 11) tripAt('ud:victim', t, false);
+  assert.equal(flap.check('d:victim', 50, { paired: true }).allow, true,
+    'the real, paired device was refused because of somebody else\'s connects');
+});

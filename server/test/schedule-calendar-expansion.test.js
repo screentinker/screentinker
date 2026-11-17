@@ -111,3 +111,17 @@ test('each drawn event keeps the schedule duration', () => {
 });
 
 test.after(() => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {} });
+
+// #802 made the ENGINE honour INTERVAL for weekly and monthly rules; the calendar applied it only
+// to DAILY, so it drew every Monday for an every-other-Monday schedule.
+test('weekly and monthly INTERVAL are drawn the way the engine fires them', () => {
+  const twoWeeks = (s) => expandSchedule(mk('FREQ=WEEKLY;BYDAY=MO;INTERVAL=2', s),
+    new Date('2026-08-03T00:00:00'), new Date('2026-08-16T23:59:59'));
+  // Started Monday 27 July: fires 27 Jul, 10 Aug — not 3 Aug.
+  const ev = twoWeeks('2026-07-27T09:00:00');
+  assert.deepEqual(ev.map(e => e.instance_start.slice(0, 10)), ['2026-08-10']);
+
+  const monthly = expandSchedule(mk('FREQ=MONTHLY;INTERVAL=2', '2026-01-15T09:00:00'),
+    new Date('2026-02-01T00:00:00'), new Date('2026-05-31T23:59:59'));
+  assert.deepEqual(monthly.map(e => e.instance_start.slice(0, 10)), ['2026-03-15', '2026-05-15']);
+});

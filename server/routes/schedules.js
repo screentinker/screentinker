@@ -158,13 +158,15 @@ function scheduleTargetRefusal(req, res, deviceId, groupId, wallId = null) {
 }
 
 // A wall keeps ONE clock for its schedules, or its panels could switch an hour apart: the leader's
-// zone, else the oldest member that reports one (the group rule).
+// zone, else the oldest member that reports one (the group rule). ⚠️ devices.timezone DEFAULTS to
+// 'UTC', so 'UTC' there means "unset" (effectiveDeviceTz) — filter it the way services/scheduler.js
+// wallClockTz does, or every member qualifies and the oldest one's null wins.
 function wallTz(wallId) {
   const wall = db.prepare('SELECT leader_device_id FROM video_walls WHERE id = ?').get(wallId);
   const leader = wall && wall.leader_device_id ? db.prepare('SELECT timezone, reported_timezone FROM devices WHERE id = ?').get(wall.leader_device_id) : null;
   return effectiveDeviceTz(leader) || effectiveDeviceTz(db.prepare(`SELECT d.timezone, d.reported_timezone FROM devices d
     JOIN video_wall_devices m ON m.device_id = d.id
-    WHERE m.wall_id = ? AND COALESCE(d.timezone, d.reported_timezone) IS NOT NULL
+    WHERE m.wall_id = ? AND COALESCE(NULLIF(d.timezone, 'UTC'), d.reported_timezone) IS NOT NULL
     ORDER BY d.created_at LIMIT 1`).get(wallId));
 }
 // A group's clock: its leader's zone, else the oldest member that reports one (the wall rule).
@@ -172,7 +174,7 @@ function groupTz(groupId, leaderDeviceId) {
   const leader = leaderDeviceId ? db.prepare('SELECT timezone, reported_timezone FROM devices WHERE id = ?').get(leaderDeviceId) : null;
   return effectiveDeviceTz(leader) || effectiveDeviceTz(db.prepare(`SELECT d.timezone, d.reported_timezone FROM devices d
     JOIN device_group_members m ON m.device_id = d.id
-    WHERE m.group_id = ? AND COALESCE(d.timezone, d.reported_timezone) IS NOT NULL
+    WHERE m.group_id = ? AND COALESCE(NULLIF(d.timezone, 'UTC'), d.reported_timezone) IS NOT NULL
     ORDER BY d.created_at LIMIT 1`).get(groupId));
 }
 // The workspace's zone, where the column exists (routes/embedded.js reads it the same way).
@@ -717,25 +719,21 @@ function expandSchedule(schedule, rangeStart, rangeEnd) {
   if (cursor.getTime() + durationMs < rangeStart.getTime()) cursor = new Date(cursor.getTime() + dayMs);
 
   const lastDay = new Date(Math.min(rangeEnd.getTime(), recEnd.getTime()));
-  const interval = Math.max(1, rule.interval || 1);
+  const { fires: recurrenceFires, startDate: recurrenceStartDate } = require('../lib/schedule-recurrence');
+  const firstParts = recurrenceStartDate(String(schedule.start_time || '').slice(0, 10));
 
   while (cursor <= lastDay) {
     const instanceEnd = new Date(cursor.getTime() + durationMs);
     let fires = false;
-    switch (rule.freq) {
-      case 'DAILY':
-        // Honour the interval by counting whole days from the original start.
-        fires = Math.floor((cursor - start) / dayMs) % interval === 0;
-        break;
-      case 'WEEKLY':
-        // byDay is what makes Mon-Fri work. Without it, weekly means "the start's weekday".
-        fires = rule.byDay ? rule.byDay.includes(cursor.getDay()) : cursor.getDay() === start.getDay();
-        break;
-      case 'MONTHLY':
-        fires = cursor.getDate() === start.getDate();
-        break;
-      default:
-        fires = true;
+    if (['DAILY', 'WEEKLY', 'MONTHLY'].includes(rule.freq) && firstParts) {
+      // The engine's own rule (lib/schedule-recurrence.js), on the cursor's calendar date. This
+      // drew every Monday for FREQ=WEEKLY;BYDAY=MO;INTERVAL=2 (and every month for a monthly
+      // INTERVAL) while the panel played every other one.
+      fires = recurrenceFires(rule, {
+        y: cursor.getFullYear(), mo: cursor.getMonth() + 1, day: cursor.getDate(), dow: cursor.getDay(), min: 0,
+      }, firstParts);
+    } else {
+      fires = !['DAILY', 'WEEKLY', 'MONTHLY'].includes(rule.freq);
     }
     if (fires && (cursor >= rangeStart || instanceEnd >= rangeStart)) {
       events.push({

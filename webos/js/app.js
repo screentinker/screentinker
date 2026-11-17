@@ -179,7 +179,10 @@
   // ---------------------------------------------------------------- self-update
   // Ask the server what it publishes; install when it is newer than us, once per version.
   function newer(a, b) {
-    var pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+    // parseInt, as the server's compareVersions does (lib/ipk-cache.js): Number('6-beta1') is NaN,
+    // which made a prerelease "never newer" here while the server served it as newest.
+    var toN = function (n) { return parseInt(n, 10) || 0; };
+    var pa = String(a).split('.').map(toN), pb = String(b).split('.').map(toN);
     for (var i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0); }
     return false;
   }

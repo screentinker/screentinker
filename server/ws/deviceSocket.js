@@ -1359,9 +1359,18 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
           } else {
             const inputRevision = crypto.createHash('sha256').update(JSON.stringify(inputs)).digest('hex');
             const publicationRevision = offlineStateRevision(row.workspace_id);
+            /*
+             * ⚠️ The payloads carry stamped file_urls, and on object storage those are presigned
+             * (lib/storage/locations.js presignStable: stable for a window of TTL/3, valid ~1h at
+             * most). With no time in the key a hit could hand out URLs signed hours ago, so a plan's
+             * future states pointed at dead links. Bucket on the SAME window presignStable signs on:
+             * a hit is then byte-identical to a fresh build, and a new window rebuilds.
+             */
+            const presignWindowSec = Math.max(60, Math.floor(require('../lib/storage').presignTtl() / 3));
+            const presignBucket = Math.floor(Date.now() / 1000 / presignWindowSec);
             const stateRows = [];
             for (const [stateKey, schedule] of requestedStates) {
-              const cacheKey = `${planKey}|${inputRevision}|${publicationRevision}|${stateKey}`;
+              const cacheKey = `${planKey}|${inputRevision}|${publicationRevision}|${presignBucket}|${stateKey}`;
               stateRows.push(cachedOfflineState(cacheKey, () => {
                 const resolved = simulator.resolveFromInputs(inputs, schedule
                   ? { playlist_id: schedule.playlist_id || null, layout_id: schedule.layout_id || null }
@@ -3122,7 +3131,16 @@ module.exports = function setupDeviceSocket(io) {
         // a matching STORED token (false for missing/mismatch), so a spoofed device_id can't
         // claim the exemption — an attacker without the real token is still quarantinable.
         const paired = !!device_id && validateDeviceToken(device_id, device_token);
-        const fv = flapLimiter.check(ident.key, Date.now(), { paired });
+        /*
+         * ⚠️ Only a caller that PROVED it is the device may spend that device's bucket. Device ids
+         * are not secret (the update check takes one unauthenticated), so counting tokenless
+         * registers that merely NAME a device against 'd:<id>' let anyone trip its cooldown on a
+         * loop and keep the real, paired panel offline — the #148 exemption waives only the
+         * quarantine, not the cooldown. Unproven attempts get their own bucket instead, so a
+         * spoofer throttles itself and nobody else.
+         */
+        const flapKey = (!paired && ident.key.startsWith('d:')) ? 'u' + ident.key : ident.key;
+        const fv = flapLimiter.check(flapKey, Date.now(), { paired });
         if (!fv.allow) {
           // #146 P0: auto-quarantine is IN-MEMORY + TIME-LIMITED (lib/flap-limiter),
           // never a DB block — a stuck-then-recovered device self-heals. The
@@ -3131,7 +3149,7 @@ module.exports = function setupDeviceSocket(io) {
           if (fv.quarantined) {
             console.warn(`[flap] quarantined ${ident.deviceId || ident.key} for ${Math.round(config.connectRateQuarantineMs / 60000)}m after ${fv.trips} trips`);
           } else {
-            logCoalescer.record(`flap-refused:${ident.key}`, `[flap] refused ${ident.kind} ${ident.deviceId || ident.key} reason=${fv.reason}`);
+            logCoalescer.record(`flap-refused:${flapKey}`, `[flap] refused ${ident.kind} ${ident.deviceId || flapKey} reason=${fv.reason}`);
           }
           socket.emit('device:throttled', { retry_after_ms: fv.retryAfterMs, reason: 'connect_rate' });
           process.nextTick(() => { try { socket.disconnect(true); } catch (_) { /* */ } });
@@ -3306,7 +3324,9 @@ module.exports = function setupDeviceSocket(io) {
                 // 60-second sweep overwrites it. Do this before flushing too: a queued
                 // playlist marker is rebuilt at flush time and must see the reconciled rows.
                 // noPush avoids a duplicate socket update.
-                if (capsLib.supports(existing, 'offline.schedule_plan')) {
+                // `existing` is the device_fingerprints row — no capabilities/platform, so it always read as the
+                // web baseline and this reconcile never ran. Ask the devices row.
+                if (capsLib.supports(db.prepare('SELECT * FROM devices WHERE id = ?').get(existing.device_id), 'offline.schedule_plan')) {
                   require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
                 }
                 // Flush any commands/playlist-updates queued while this device was offline.
@@ -3355,7 +3375,9 @@ module.exports = function setupDeviceSocket(io) {
                   emitToDeviceWorkspace(dashboardNs, existing.device_id, 'dashboard:device-status', { device_id: existing.device_id, status: 'online', liveness: heartbeat.livenessFor(existing.device_id) });
                   // This branch is normally unpaired, but may retain a schedule after an
                   // interrupted claim. Make its first payload deterministic as well.
-                  if (capsLib.supports(existing, 'offline.schedule_plan')) {
+                  // `existing` is the device_fingerprints row — no capabilities/platform, so it always read as the
+                // web baseline and this reconcile never ran. Ask the devices row.
+                if (capsLib.supports(db.prepare('SELECT * FROM devices WHERE id = ?').get(existing.device_id), 'offline.schedule_plan')) {
                     require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
                   }
                   // Flush any commands/playlist-updates queued while this device was offline.

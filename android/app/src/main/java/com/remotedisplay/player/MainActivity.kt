@@ -557,13 +557,22 @@ class MainActivity : AppCompatActivity() {
         // armed below paints its standby once the service binds offline).
         offlinePlanJson = com.remotedisplay.player.player.OfflinePlan.read(config.cachedOfflinePlan)
         val planSelection = com.remotedisplay.player.player.OfflinePlan.select(offlinePlanJson, System.currentTimeMillis())
+        val planPayload = if (planSelection.valid) planSelection.state?.optJSONObject("payload") else null
+        // Overlaid on the last live payload (mergeOfflineState), so the cold start keeps its timezone,
+        // wall and group as well as the state's own content.
         val cachedJson = if (planSelection.valid) {
-            (planSelection.state?.optJSONObject("payload")?.toString()) ?: ""
+            planPayload?.let { mergeOfflineState(it).toString() } ?: ""
         } else config.cachedPlaylist
         // Seed the driver's "what is on screen" to the interval we are about to render, so a periodic
         // re-tick inside the same interval does not needlessly reload it; a real boundary still does.
         offlinePlanAppliedKey = if (planSelection.valid) intervalKey(planSelection.interval) else null
-        if (planSelection.valid && cachedJson.isEmpty()) {
+        // A gap's state row is usually a REAL payload with no assignments (just default_content):
+        // keying the gap branch on an empty string missed it, the restore below skips an empty list,
+        // and the applied key above stopped the driver retrying — "Connecting..." until the next
+        // boundary instead of the standby image.
+        val planIsGap = planSelection.valid &&
+            (planPayload == null || (planPayload.optJSONArray("assignments")?.length() ?: 0) == 0)
+        if (planIsGap) {
             // Cold boot during a scheduled gap (or an interval whose state carries no assignments):
             // paint the plan's standby/idle, NEVER the last non-empty playlist. The default image was
             // pre-cached when the plan committed, so it renders with no server; otherwise idle text.
@@ -795,6 +804,33 @@ class MainActivity : AppCompatActivity() {
     private fun intervalKey(interval: org.json.JSONObject?): String =
         interval?.let { it.optLong("start_utc_ms").toString() } ?: "none"
 
+    /*
+     * ⚠️ A plan state is a TRIMMED payload, not a whole one. The server keeps only these keys
+     * (offlineStatePayload in server/ws/deviceSocket.js); onPlaylistUpdate reads every OTHER key's
+     * absence as "turn it off" — so replaying a bare state disabled LAN triggers and audience
+     * counting, dropped the timezone (per-item dayparting fell back to the device clock), took a
+     * wall member out of tiling and a sync group out of sync at every boundary, and then saved that
+     * stripped payload as the offline cache. The state is authoritative for its own keys and nothing
+     * else: overlay it on the last live payload, and mark it so it is never cached as live.
+     */
+    private val offlineStateKeys = listOf("assignments", "layout", "orientation", "background_color", "playback_order", "default_content")
+
+    private fun mergeOfflineState(state: org.json.JSONObject): org.json.JSONObject {
+        val base = try {
+            if (config.cachedPlaylist.isNotEmpty()) org.json.JSONObject(config.cachedPlaylist) else org.json.JSONObject()
+        } catch (e: Throwable) { org.json.JSONObject() }
+        // Never re-adopt a (possibly stale) plan from the cache, and never replay a suspension notice.
+        for (k in listOf("offline_plan", "suspended", "message", "detail")) base.remove(k)
+        for (k in offlineStateKeys) {
+            if (state.has(k)) base.put(k, state.opt(k)) else base.remove(k)
+        }
+        if (!base.has("assignments")) base.put("assignments", org.json.JSONArray())
+        // Keep the driver's OFFLINE_STATE_TAG (#855): the replay must not re-apply native_video.
+        if (state.optBoolean(OFFLINE_STATE_TAG, false)) base.put(OFFLINE_STATE_TAG, true) else base.remove(OFFLINE_STATE_TAG)
+        base.put(OFFLINE_REPLAY_KEY, true)
+        return base
+    }
+
     /** Adopt (or clear) the plan from a live payload. Commits only a fully-cached plan. */
     private fun onLiveOfflinePlan(plan: org.json.JSONObject?) {
         val parsed = com.remotedisplay.player.player.OfflinePlan.read(plan)
@@ -897,7 +933,8 @@ class MainActivity : AppCompatActivity() {
         if (payload != null) {
             val cb = wsService?.onPlaylistUpdate ?: return // service not bound yet; retry next tick
             offlinePlanAppliedKey = key
-            handler.post { try { cb.invoke(payload) } catch (e: Throwable) { Log.w("MainActivity", "offline plan apply failed: ${e.message}") } }
+            val merged = mergeOfflineState(payload)
+            handler.post { try { cb.invoke(merged) } catch (e: Throwable) { Log.w("MainActivity", "offline plan apply failed: ${e.message}") } }
         } else {
             // A gap with no default state row: show idle, never the last playlist.
             offlinePlanAppliedKey = key
@@ -1207,7 +1244,9 @@ class MainActivity : AppCompatActivity() {
              * and arrives as an ordinary update — but it is applied to PLAYBACK by the controller
              * below. What survives on disk is the last payload we could actually have played.
              */
-            if (assignments.length() > 0) {
+            if (data.optBoolean(OFFLINE_REPLAY_KEY, false)) {
+                // A replayed plan state (mergeOfflineState) is not a live answer: keep the live cache.
+            } else if (assignments.length() > 0) {
                 config.cachedPlaylist = data.toString()
             } else {
                 Log.i("MainActivity", "Empty playlist payload — keeping the previous offline cache")
@@ -2768,6 +2807,8 @@ class MainActivity : AppCompatActivity() {
         // Marks a payload replayed from the offline plan (driveOfflinePlan). Those are a subset of
         // the live payload, so a field they never carry (native_video) must not be read as "off".
         const val OFFLINE_STATE_TAG = "__st_offline_state"
+        // Marks a payload the offline-plan driver built (mergeOfflineState); the server never sends it.
+        const val OFFLINE_REPLAY_KEY = "_st_offline_replay"
     }
 }
 

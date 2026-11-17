@@ -126,11 +126,13 @@ const ITEM_SELECT = `
 // Get assignments (playlist items) for a device
 router.get('/device/:deviceId', (req, res) => {
   if (!checkDeviceAccess(req, res, 'deviceId', false)) return;
-  const device = db.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(req.params.deviceId);
-  if (!device?.playlist_id) return res.json([]);
+  // Resolved, not devices.playlist_id: that column is NULL for a screen that inherits from a
+  // group or wall, so the list came back empty (the reorder route below already resolves).
+  const playlistId = resolveDevicePlaylistId(req.params.deviceId);
+  if (!playlistId) return res.json([]);
 
   const items = db.prepare(`${ITEM_SELECT} WHERE pi.playlist_id = ? ORDER BY pi.sort_order ASC`)
-    .all(device.playlist_id);
+    .all(playlistId);
   res.json(items);
 });
 
@@ -359,7 +361,7 @@ function fillItemTarget(req, res, item, deviceId, fillScope) {
 
 // Per-item mute lives in lib/mute-sync.js so routes/playlists.js can share it.
 const { emitMuteChanged } = require('../lib/mute-sync');
-const { resolveDevicePlaylistId } = require('../lib/resolve-device-playlist');
+const { resolveDevicePlaylistId, resolveDevicePlaylist } = require('../lib/resolve-device-playlist');
 const { forkInheritedPlaylist, forkForItemEdit } = require('../lib/fork-device-playlist');
 
 // Update playlist item
@@ -525,11 +527,17 @@ router.post('/device/:deviceId/copy-to/:targetDeviceId', (req, res) => {
   // A mandated target plays head office's playlist; a copy onto it would never show.
   if (mandateRefusal(req, res, req.params.targetDeviceId)) return;
 
-  const sourceDevice = db.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(req.params.deviceId);
-  if (!sourceDevice?.playlist_id) return res.status(404).json({ error: 'Source device has no playlist' });
+  // Resolved, so a screen that inherits from a group or wall can be copied from. Head office's
+  // mandated playlist is never copied into a store's own (same rule as forkInheritedPlaylist);
+  // such a source falls back to the screen's own row as before.
+  const resolvedSource = resolveDevicePlaylist(req.params.deviceId);
+  const sourcePlaylistId = resolvedSource.source === 'corporate'
+    ? db.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(req.params.deviceId)?.playlist_id
+    : resolvedSource.playlist_id;
+  if (!sourcePlaylistId) return res.status(404).json({ error: 'Source device has no playlist' });
 
   const allSource = db.prepare('SELECT * FROM playlist_items WHERE playlist_id = ? ORDER BY sort_order')
-    .all(sourceDevice.playlist_id);
+    .all(sourcePlaylistId);
   // A local slot row only means something inside its corporate playlist; copied it would be a ghost
   // item (spec §6.1-4). Skipped and counted.
   const sourceItems = allSource.filter((a) => !a.slot_id);
@@ -542,12 +550,10 @@ router.post('/device/:deviceId/copy-to/:targetDeviceId', (req, res) => {
   const targetPlaylistId = ensureDevicePlaylist(req.params.targetDeviceId, target.user_id || req.user.id);
   { const smartErr = require('../lib/smart-playlist').smartAddError(db, targetPlaylistId); if (smartErr) return res.status(400).json({ error: smartErr }); }
 
-  if (req.body.replace) {
-    db.prepare('DELETE FROM playlist_items WHERE playlist_id = ?').run(targetPlaylistId);
+  if (req.body.replace && targetPlaylistId === sourcePlaylistId) {
+    // Both screens play the same playlist: a replace would delete the very rows being copied.
+    return res.status(400).json({ error: 'Source and target already play the same playlist' });
   }
-
-  const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM playlist_items WHERE playlist_id = ?')
-    .get(targetPlaylistId).m || 0;
   /*
    * ⚠️ Nested items copy as REFERENCES, not as a flattened copy of the child's contents — the
    * whole point of nesting is that editing the child reaches every parent, and flattening here
@@ -572,12 +578,38 @@ router.post('/device/:deviceId/copy-to/:targetDeviceId', (req, res) => {
     }
   }
 
-  const stmt = db.prepare('INSERT INTO playlist_items (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, play_to_end) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  // Every item column, and the per-item dayparting rows: a copy that drops play_from/play_until,
+  // enabled or muted makes an expired promo play forever and a muted video play with sound.
+  // The replace DELETE is inside the same transaction and after every refusal above, so a refused
+  // or failed copy can no longer leave the target's playlist empty.
+  const stmt = db.prepare(`INSERT INTO playlist_items
+    (playlist_id, content_id, widget_id, child_playlist_id, zone_id, sort_order, duration_sec, muted, play_from, play_until, enabled, log_play, fit_mode, play_when, weight, repeat_every_sec, play_to_end)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const scheds = db.prepare(`SELECT active_days, start_time, end_time, start_date, end_date, sort_order
+                               FROM playlist_item_schedules WHERE playlist_item_id = ?`);
+  const insSched = db.prepare(`INSERT INTO playlist_item_schedules
+    (id, playlist_item_id, active_days, start_time, end_time, start_date, end_date, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+  const itemIdMap = new Map();
 
   const transaction = db.transaction(() => {
+    if (req.body.replace) {
+      db.prepare('DELETE FROM playlist_items WHERE playlist_id = ?').run(targetPlaylistId);
+    }
+    const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM playlist_items WHERE playlist_id = ?')
+      .get(targetPlaylistId).m || 0;
     sourceItems.forEach((a, i) => {
-      stmt.run(targetPlaylistId, a.content_id, a.widget_id, a.child_playlist_id || null, a.zone_id || null, maxOrder + i + 1, resolveItemDuration(a.duration_sec, null), a.play_to_end ? 1 : null);
+      const r = stmt.run(targetPlaylistId, a.content_id, a.widget_id, a.child_playlist_id || null, a.zone_id || null,
+        maxOrder + i + 1, resolveItemDuration(a.duration_sec, null), a.muted ? 1 : 0, a.play_from || null, a.play_until || null,
+        a.enabled === 0 ? 0 : 1, a.log_play === 0 ? 0 : 1, a.fit_mode || null, a.play_when || null, a.weight || 1,
+        a.repeat_every_sec || null, a.play_to_end ? 1 : null);
+      itemIdMap.set(a.id, r.lastInsertRowid);
+      for (const sch of scheds.all(a.id)) {
+        insSched.run(uuidv4(), r.lastInsertRowid, sch.active_days, sch.start_time, sch.end_time,
+                     sch.start_date, sch.end_date, sch.sort_order);
+      }
     });
+    require('../lib/backgrounds').copyTransparentBg(db, itemIdMap);   // #660, as in the fork
   });
   transaction();
 
