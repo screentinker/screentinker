@@ -64,7 +64,21 @@ function startHeartbeatChecker(io) {
 
   const deviceNs = io.of('/device');
 
+  /*
+   * ⚠️ THE TICK NEVER THROWS OUT OF THE INTERVAL. An exception escaping a timer callback is an
+   * uncaughtException, which this server answers with logFatalAndExit: one SQLITE_BUSY on the
+   * offline sweep restarted the process and dropped every screen's socket. The whole tick is
+   * guarded, and so is each device, so one bad row cannot stop the sweep for the rest.
+   */
   setInterval(() => {
+    try { heartbeatTick(io, deviceNs); } catch (e) {
+      console.error(`[heartbeat] tick failed: ${e && e.message}`);
+    }
+  }, config.heartbeatInterval);
+}
+
+function heartbeatTick(io, deviceNs) {
+  {
     const now = Date.now();
     const dashboardNs = io.of('/dashboard');
 
@@ -77,6 +91,12 @@ function startHeartbeatChecker(io) {
     const onlineDevices = db.prepare(`SELECT id, last_heartbeat, heartbeat_expected_by FROM devices WHERE status = 'online' AND ${LOCAL_ROWS_SQL('devices')}`).all();
 
     for (const device of onlineDevices) {
+      try { sweepDevice(device); } catch (e) {
+        console.error(`[heartbeat] offline check for ${device.id} failed: ${e && e.message}`);
+      }
+    }
+
+    function sweepDevice(device) {
       const conn = deviceConnections.get(device.id);
 
       // #146: a device with a live, still-connected socket is UP, even if its last
@@ -87,7 +107,7 @@ function startHeartbeatChecker(io) {
       // (possibly queued) heartbeat clock. If the socket is genuinely gone, conn is
       // either absent or points at a socket no longer in the namespace, and we fall
       // through to the timeout below.
-      if (conn && deviceNs.sockets.has(conn.socketId)) continue;
+      if (conn && deviceNs.sockets.has(conn.socketId)) return;
 
       let lastBeat = conn ? conn.lastHeartbeat : (device.last_heartbeat ? device.last_heartbeat * 1000 : 0);
       // An embedded display that was told to sleep until T is not late until T. Timing out from
@@ -141,9 +161,8 @@ function startHeartbeatChecker(io) {
     // #146: all table-growth maintenance runs OFF the interval body — async, chunked,
     // band-gated, re-entrancy-guarded — so a sweep can never block the loop or stack.
     // The offline-marking above stays synchronous (it's the core heartbeat function).
-    runMaintenance();
-
-  }, config.heartbeatInterval);
+    try { runMaintenance(); } catch (e) { console.error(`[heartbeat] maintenance failed to start: ${e && e.message}`); }
+  }
 }
 
 // #146: batched play-log prune (idx_play_logs_time), chunked so a 90-day backlog
@@ -467,6 +486,7 @@ async function pruneProvisioningDevices() {
 
 module.exports = {
   startHeartbeatChecker,
+  _heartbeatTickForTests: (io, deviceNs) => heartbeatTick(io, deviceNs),
   registerConnection,
   updateHeartbeat,
   removeConnection,
