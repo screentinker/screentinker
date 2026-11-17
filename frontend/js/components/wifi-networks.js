@@ -117,7 +117,9 @@ function deliveryToast(delivery) {
  * (the server refuses their writes anyway). Returns a dispose function for the page's cleanup().
  */
 export function mountWifiNetworks(host, device) {
-  const canEdit = canWrite();
+  // Changing a screen's Wi-Fi is admin-only on the server (routes/device-wifi.js deviceForWrite),
+  // like the Terminal tab: an editor sees the list but is not offered edits that are refused.
+  const canEdit = canWrite('admin');
   let state = null;
   let editing = null; // null | 'new' | network id
   let staleWhileEditing = false; // a report arrived while a form was open

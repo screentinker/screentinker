@@ -712,6 +712,20 @@ test('the Terminal tab and Change server URL are for workspace admins only', () 
   } finally { render.adminTools = true; }
 });
 
+test('kiosk unlock and force update are admin-only, so an editor is not offered them', () => {
+  render.adminTools = false;
+  try {
+    for (const dev of [PI, ANDROID_FULL]) {
+      const editor = render(dev);
+      assert.equal(has(editor, 't2KioskOff'), false, 'no Kiosk off for an editor');
+      assert.equal(has(editor, 'forceUpdateBtn'), false, 'no Force update for an editor');
+    }
+    assert.ok(has(render(PI), 't2KioskOn'), 'locking kiosk is not admin-only');
+  } finally { render.adminTools = true; }
+  assert.ok(has(render(PI), 't2KioskOff'), 'an admin still has it');
+  assert.ok(has(render(ANDROID_FULL), 'forceUpdateBtn'));
+});
+
 test('a Pi declaring system.kiosk gets kiosk lock/unlock and the power menu', () => {
   const html = render(PI);
   for (const id of ['t2KioskOn', 't2KioskOff', 't2PowerMenu', 't2Reboot']) assert.ok(has(html, id), `${id} missing`);

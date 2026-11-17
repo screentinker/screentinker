@@ -990,7 +990,7 @@ async function loadDevice(deviceId, activeTab = null) {
         <button class="btn btn-secondary btn-sm" id="t2Lock">${t('device.tier2.lock')}</button>
         ${(device.tier === 2 || can('system.kiosk')) ? `
         <button class="btn btn-secondary btn-sm" id="t2KioskOn">${t('device.tier2.kiosk_on')}</button>
-        <button class="btn btn-secondary btn-sm" id="t2KioskOff">${t('device.tier2.kiosk_off')}</button>` : ''}
+        ${canUseAdminTools() ? `<button class="btn btn-secondary btn-sm" id="t2KioskOff">${t('device.tier2.kiosk_off')}</button>` : ''}` : ''}
         <button class="btn btn-secondary btn-sm" id="t2PowerMenu">${t('device.tier2.power_menu')}</button>
       </div>` : ''}
 
@@ -1180,7 +1180,7 @@ async function loadDevice(deviceId, activeTab = null) {
             </svg>
             ${t('device.ctl.reload_player')}
           </button>` : ''}
-          ${can('system.self_update') ? `
+          ${can('system.self_update') && canUseAdminTools() ? `
           <button class="btn btn-secondary btn-sm" id="forceUpdateBtn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
