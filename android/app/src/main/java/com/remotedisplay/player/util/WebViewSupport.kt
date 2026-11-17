@@ -235,6 +235,18 @@ object WebViewSupport {
         }
     }
 
+    /**
+     * Fully release a WebView that is being replaced or torn down: removing it from its parent alone
+     * leaks its renderer, page timers and any media it is still playing. Stop, blank, detach, destroy.
+     */
+    fun release(view: WebView) {
+        try { view.stopLoading() } catch (_: Throwable) {}
+        try { view.loadUrl("about:blank") } catch (_: Throwable) {}
+        try { (view.parent as? ViewGroup)?.removeView(view) } catch (_: Throwable) {}
+        try { view.removeAllViews() } catch (_: Throwable) {}
+        try { view.destroy() } catch (_: Throwable) {}
+    }
+
     /** Detach a WebView whose renderer died and destroy it. Never load anything into it first. */
     fun discardDead(view: WebView) {
         try { (view.parent as? ViewGroup)?.removeView(view) } catch (_: Throwable) {}
