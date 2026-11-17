@@ -178,6 +178,12 @@ open a socket. A POST-JSON-only door is unreachable from both. The secret rides 
 for the same reason Carousel's CAP endpoint takes its token there: plenty of this gear cannot set a
 request header at all.
 
+⚠️ **A query-string secret is only as private as every log on the path.** ScreenTinker's own access
+log records the route template (`/api/trigger`), never the URL, so `secret=` and `token=` never reach
+it. A reverse proxy in front of the server (nginx, Caddy, a load balancer) logs the full request line
+by default: if controllers use the GET form, configure the proxy to log `$uri` rather than
+`$request_uri` for `/api/trigger`, and prefer one of the POST shapes from any device that can send one.
+
 **Framing is deliberately liberal**, and this is the documentation of that. Trailing `\r`, `\n`,
 `\r\n`, a NUL byte, or nothing at all are all accepted, and leading/trailing whitespace is trimmed.
 Crestron's own worked example emits HTTP/1.0 with bare LF; Q-SYS ships an EOL constant literally

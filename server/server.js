@@ -1268,6 +1268,15 @@ if (config.triggerIngress) {
   // The same four shapes the player's door accepts (docs/triggers-design.md §11) — a control system
   // should not have to know which kind of box is behind the address.
   app.post('/api/trigger', express.text({ type: '*/*', limit: '2kb' }), (req, res) => handleIngress(req, res, 'http'));
+  /*
+   * ⚠️ GET CARRIES THE SECRET AND TOKEN IN THE QUERY STRING, on purpose (GHSA-rvxj 8.2): Extron
+   * Global Scripter and AMX NetLinx can build a URL but cannot set a header or open a socket. Do not
+   * remove it. What keeps the credential out of THIS server's logs: the access logger records only
+   * the route template, never the URL (lib/http-logging.js), the API error handler strips the query
+   * (lib/api-errors.js), and handleIngress logs nothing about the request. A reverse proxy in front
+   * logs whatever it is configured to — docs/triggers-design.md tells operators to drop the query.
+   * Pinned by test/trigger-get-not-logged.test.js.
+   */
   app.get('/api/trigger', (req, res) => handleIngress(req, res, 'http'));
 
   /*
