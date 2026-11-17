@@ -156,7 +156,8 @@ test('fullscreen WITH the flag still plays to the end: no duration timer, length
   const h = embedHarness();
   h.api.createYoutubeEmbed('x', item({ play_to_end: 1, duration_sec: 10 }), fakeEl());
   assert.equal(h.players[0].cfg.playerVars.loop, 0);
-  assert.equal(h.liveTimers().length, 0);
+  // Only the generous cap for a player that never readies (offline embed), never the 10 s duration.
+  assert.deepEqual(h.liveTimers().map((t) => t.ms), [60_000]);
   h.fire(h.players[0], 'onReady', undefined, { getDuration: () => 600, playVideo() {}, mute() {}, unMute() {}, setVolume() {} });
   assert.deepEqual(h.liveTimers().map((t) => t.ms), [603_000]);
   realEnd(h, h.players[0]);
@@ -200,13 +201,14 @@ test('#828: the live flag that only shows up at PLAYING still arms the duration,
   const h = embedHarness();
   h.api.createYoutubeEmbed('x', item({ duration_sec: 30, play_to_end: 1 }), fakeEl());
   const p = h.players[0];
+  assert.equal(h.timeouts.length, 1);                      // the not-ready cap, armed at the item start
   h.fire(p, 'onReady', undefined, liveTarget(0, false));   // no live flag, no length yet: the duration fallback
-  assert.equal(h.timeouts.length, 1);
+  assert.equal(h.timeouts.length, 2);
   h.fire(p, 'onStateChange', 1, liveTarget(120));          // live now known: armed from playback start
   assert.deepEqual(h.liveTimers().map((t) => t.ms), [30_000]);
-  assert.equal(h.timeouts.length, 2);
+  assert.equal(h.timeouts.length, 3);
   h.fire(p, 'onStateChange', 1, liveTarget(150));          // rebuffer -> PLAYING again: not re-armed
-  assert.equal(h.timeouts.length, 2);
+  assert.equal(h.timeouts.length, 3);
 });
 
 test('#828: a zone live stream with play to end fires the ZONE advance at its duration', () => {
