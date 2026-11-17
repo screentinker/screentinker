@@ -20,6 +20,8 @@
 // Memory bounds: worst-case ~6 entries per device (1 playlist marker + 5
 // command types), each ~200 bytes. 10,000 offline devices = ~12MB. Sweep
 // thread prunes empty per-device records every 30s.
+// Payload bytes are capped per command and per device (MAX_COMMAND_PAYLOAD_BYTES /
+// MAX_DEVICE_QUEUE_BYTES below), so "each ~200 bytes" is a ceiling the queue enforces, not a hope.
 
 const config = require('../config');
 
@@ -76,19 +78,43 @@ function queueOrEmitPlaylistUpdate(deviceNs, deviceId, buildPayload, _mirrorHop)
   return { delivered: false, queued: true };
 }
 
-// Queue a single command for an offline device. Returns true if accepted
-// (always true under current logic; reserved for future "rejected because
-// stale/full" cases). Used by item 6 in commit D - dashboard command handler
-// calls this when the device room is empty.
+/*
+ * ⚠️ SIZE CAPS. "Last-of-type wins" bounds the COUNT of queued commands per screen (the callers'
+ * allowlist is ~30 types), but not their SIZE: payloads were held verbatim and a dashboard socket
+ * message may be up to 10 MB, so an editor could park ~30 x 10 MB against every offline screen in
+ * their workspace — for 7 days on an embedded panel (ttlForDevice). Every real command payload is
+ * well under a kilobyte (a URL, a level, a schedule, an http_request with a modest body), so these
+ * limits sit two orders of magnitude above real use. Over a cap the command is NOT queued and the
+ * caller reports 'offline' (deliverCommand), which is what happened before for a screen with no
+ * queue at all — refused visibly, never silently truncated.
+ */
+const MAX_COMMAND_PAYLOAD_BYTES = 64 * 1024;
+const MAX_DEVICE_QUEUE_BYTES = 256 * 1024;
+
+function payloadBytes(type, payload) {
+  try { return Buffer.byteLength(String(type)) + Buffer.byteLength(JSON.stringify(payload || {}) || ''); }
+  catch (_) { return Infinity; }   // circular / unserialisable: it could never be emitted anyway
+}
+
+// Queue a single command for an offline device. Returns true if accepted, false when it is
+// refused (no device/type, or over a size cap above). Used by item 6 in commit D - dashboard
+// command handler calls this when the device room is empty.
 function queueCommand(deviceId, type, payload, opts = {}) {
   if (!deviceId || !type) return false;
+  const bytes = payloadBytes(type, payload);
+  if (bytes > MAX_COMMAND_PAYLOAD_BYTES) return false;
+  pruneDevice(deviceId);
   let perDevice = pendingCommands.get(deviceId);
+  // The entry this one replaces (same type) does not count against the budget.
+  let held = 0;
+  if (perDevice) for (const [t, e] of perDevice) if (t !== type) held += e.bytes || 0;
+  if (held + bytes > MAX_DEVICE_QUEUE_BYTES) return false;
   if (!perDevice) {
     perDevice = new Map();
     pendingCommands.set(deviceId, perDevice);
   }
   const ttl = Number.isFinite(opts.ttlMs) && opts.ttlMs > 0 ? opts.ttlMs : config.commandQueueTtlMs;
-  perDevice.set(type, { payload: payload || {}, expiresAt: Date.now() + ttl });
+  perDevice.set(type, { payload: payload || {}, bytes, expiresAt: Date.now() + ttl });
   return true;
 }
 
@@ -234,6 +260,8 @@ module.exports = {
   popCommand,
   ttlForDevice,
   getQueueDepth,
+  MAX_COMMAND_PAYLOAD_BYTES,
+  MAX_DEVICE_QUEUE_BYTES,
   startSweep,
   stopSweep,
   _resetForTests,
