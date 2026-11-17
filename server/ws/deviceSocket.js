@@ -3296,7 +3296,17 @@ module.exports = function setupDeviceSocket(io) {
                 }
                 // No live socket from here on — the old connection is gone.
                 lastReclaimRejectLogAt.delete(existing.device_id);
-                if (oldDevice.user_id) {
+                /*
+                 * ⚠️ A MODEL-LEVEL fingerprint never reclaims a claimed screen. A web player with no
+                 * storage sends its bare hardware value (web-<hash>-<len>), which every unit of that
+                 * model shares, so "it matched" says nothing about WHICH screen this is: the next
+                 * identical panel anywhere, in any tenant, would be handed this one's new token,
+                 * settings PIN, queued commands and content. Per-unit ids (Android/Tizen/Roku/native)
+                 * and the salted web value (web-<hash>-<len>-<install id>) still reclaim. This caller
+                 * falls through and is provisioned a fresh row with its on-screen code instead.
+                 */
+                const modelLevelFp = fingerprint === hw_fingerprint || /^web-[0-9a-z]+-[0-9a-z]+$/.test(String(fingerprint));
+                if (oldDevice.user_id && !modelLevelFp) {
                   // The old row is CLAIMED. A reinstalled panel (MDM wiped its data, so it presents
                   // only its stable fingerprint — no device_id, no token) must REMATCH to this row —
                   // preserving the claim, name, playlist, and content — instead of provisioning a

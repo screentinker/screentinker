@@ -2902,8 +2902,8 @@ async function showReAdoptModal(device) {
     const blockedBadge = s.blocked
       ? `<span style="background:var(--danger,#dc2626);color:#fff;padding:1px 7px;border-radius:4px;font-size:11px;margin-left:8px;vertical-align:middle">${t('device.readopt.blocked')}</span>`
       : '';
-    // Fingerprint is the key but not an operator-facing identifier — truncated + on-hover only.
-    const fpShort = (s.fingerprint || '').slice(0, 8);
+    // The server names a snapshot by an opaque ref (the fingerprint is a device credential).
+    const fpShort = (s.ref || '').slice(0, 8);
     return `
       <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:12px">
         <div style="flex:1;min-width:0">
@@ -2952,7 +2952,7 @@ async function showReAdoptModal(device) {
       if (!confirm(msg)) return;
       btn.disabled = true;
       try {
-        await api.reAdoptDevice(device.id, s.fingerprint);
+        await api.reAdoptDevice(device.id, s.ref);
         showToast(t('device.readopt.success', { orientation: orientLabel(s.orientation) }), 'success');
         close();
         loadDevice(device.id);   // refresh so restored orientation/name/etc show immediately

@@ -174,3 +174,33 @@ test('log noise: a retried reclaim logs at most once per device per window', asy
   const lines = fs.readFileSync(LOG, 'utf8').split('\n').filter(l => l.includes('reclaim rejected for ' + dev.id)).length;
   assert.ok(lines <= 1, `at most one rejection log per window (got ${lines}); no double-log / per-2s flood`);
 });
+
+// A web player with no storage sends its bare hardware value, which every unit of that model shares.
+// Matching it says nothing about WHICH screen this is, so it must never take over a claimed row (new
+// token, settings PIN, queued commands, content); the caller gets a fresh row with its own code.
+test('model-level fingerprint: a bare web hardware value does NOT reclaim a claimed screen', async () => {
+  const userId = 'u-' + crypto.randomBytes(4).toString('hex');
+  tdb.prepare("INSERT INTO users (id, email, name, role) VALUES (?, ?, 'v', 'user')").run(userId, userId + '@t');
+  const hw = 'web-' + crypto.randomBytes(4).toString('hex').replace(/[^0-9a-z]/g, 'a') + '-5f';
+  const dev = seedDevice(hw, { token: 'tok-model', heartbeatAgo: 99999, userId });
+  const code = rnd();
+  const r = await attempt({ pairing_code: code, fingerprint: hw, hw_fingerprint: hw });
+  assert.ok(r.registered && !r.authError);
+  assert.notEqual(r.newId, dev.id, 'not handed the victim row');
+  assert.equal(r.paired, false, 'no device:paired (no settings PIN)');
+  assert.equal(tdb.prepare('SELECT device_token FROM devices WHERE id = ?').get(dev.id).device_token, 'tok-model', 'victim token untouched');
+  const row = tdb.prepare('SELECT status FROM devices WHERE pairing_code = ?').get(code);
+  assert.ok(row && row.status === 'provisioning', 'the on-screen code is a fresh provisioning row');
+});
+
+test('a salted web fingerprint (per install) still reclaims its claimed row', async () => {
+  const userId = 'u-' + crypto.randomBytes(4).toString('hex');
+  tdb.prepare("INSERT INTO users (id, email, name, role) VALUES (?, ?, 'v', 'user')").run(userId, userId + '@t');
+  const hw = 'web-m73u8w-5f';
+  const fp = hw + '-' + crypto.randomBytes(8).toString('hex');
+  const dev = seedDevice(fp, { token: 'tok-salted', heartbeatAgo: 99999, userId });
+  const r = await attempt({ pairing_code: rnd(), fingerprint: fp, hw_fingerprint: hw });
+  assert.ok(r.registered && !r.authError);
+  assert.equal(r.newId, dev.id, 'reclaimed its own row');
+  assert.equal(r.paired, true);
+});

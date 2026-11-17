@@ -1677,7 +1677,11 @@ router.post('/:id/unblock', (req, res) => {
 router.post('/:id/re-adopt', (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
-  const { fingerprint } = req.body || {};
+  // The dashboard sends the opaque `ref` from GET /removed (fingerprints are no longer listed);
+  // an API client that already knows the fingerprint may still send it.
+  const body = req.body || {};
+  const fingerprint = body.ref ? deviceSettings.fingerprintForRef(device.workspace_id, body.ref) : body.fingerprint;
+  if (body.ref && !fingerprint) return res.status(404).json({ error: 'No saved settings for that fingerprint' });
   if (!fingerprint) return res.status(400).json({ error: 'fingerprint required' });
   const snap = deviceSettings.getByFingerprint(fingerprint);
   if (!snap) return res.status(404).json({ error: 'No saved settings for that fingerprint' });
