@@ -14,6 +14,17 @@
   ],
   "releases": [
     {
+      "version": "3.2.3",
+      "date": "2026-11-17",
+      "notes": [
+        "Security update: please upgrade if other people have editor or viewer logins. Editors can no longer run commands, install apps or change the server address on screens; those are now for workspace admins.",
+        "Shell output and debug logs are now shown only to people who may run commands, and your sign-in is no longer put in screenshot or download links.",
+        "\"New URL\" on a web player link now really cuts off whoever used the old link. A screen set up through that old link needs the new one.",
+        "Copy to another screen now keeps each item's dayparting, mute and on/off settings, and calendar schedules that repeat every few weeks or months show on the right days.",
+        "Dashboard language and theme now follow your account across browsers."
+      ]
+    },
+    {
       "version": "3.2.2",
       "date": "2026-11-16",
       "notes": [

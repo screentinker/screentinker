@@ -1,5 +1,69 @@
 # Changelog
 
+## 3.2.3
+
+### ⚠️ Security (GHSA-rvxj-33gm-crwp, reported by bold-media-group)
+
+Upgrade if people other than you have **editor** or **viewer** logins in your workspaces (#866).
+
+- **Editors could run shell commands, install APKs, change the server URL and open the Terminal on
+  screens.** The server checked only write access. `shell`, `install_apk`, `set_server_url` and the
+  PTY are now limited to workspace admins, org owners and admins, and platform admins (API tokens:
+  their owner's role), at the one delivery point every path uses.
+- **Every workspace member, viewers included, received other users' shell output and debug logs.**
+  They now go only to people who may run a shell.
+- **The full session token was put in screenshot URLs** (and the database backup and account export
+  links), so it reached proxy logs and browser history. Screenshots load with the Authorization
+  header; the export uses a single-use 60-second ticket; `?token=` no longer works on these routes.
+- `trigger_clear_all_token` is no longer sent to viewers, API tokens or device lists; brand names
+  are plain text.
+- Lower-severity hardening from the same report:
+  - "New URL" / "Clear" on a web-player link now also replaces the device token of anything that
+    redeemed the old link.
+  - API tokens can't re-fetch an existing screen's enrol key.
+  - Only the leader's wall sync is relayed.
+  - Size caps on queued commands; remote key/touch rate limits.
+  - Editors can't delete live content while approval is required.
+  - Password lockout (and no partial writes) on account password change.
+  - Device-owner QR uses the configured public address.
+  - RSS feed URLs stay out of the public widget page.
+- Android player: auto-confirms only its own update's install prompt, bounded remote image reads,
+  trigger listener limits, play-once triggers end and honour `max_duration_sec`, URLs redacted
+  from debug logs.
+- BrightSign server mode: plain-HTTP payload URLs only to LAN hosts, no HTTPS→HTTP redirects, an
+  installed server is never replaced without a checksum, and the payload defaults to the box's own
+  server.
+
+### ⚠️ Behaviour changes
+
+- Editors no longer see Terminal, Install APK or Change server URL.
+- On Android panels that are not device owner, a pushed APK install needs a tap on the panel.
+- After "New URL" or "Clear", a screen that was enrolled through the old web-player link needs the
+  new link (or a re-pair).
+- BrightSign server mode: a public `http://` payload URL needs `allowInsecurePayloadUrl: true`; with
+  no `payloadUrl` set, the box now updates from its own configured server.
+- With approval required, editors can't delete content a published playlist plays.
+
+### Fixed
+
+- **Copy to another screen dropped dayparting, enabled/muted and other item settings**, and copied
+  nothing from a screen that inherits its playlist (#866).
+- **Weekly and monthly schedules with an interval** ("every 2 weeks") showed on every week in the
+  calendar; wall and group schedules ignored a screen's reported timezone (#866).
+- **Android offline schedule plan** replaced the whole payload at each boundary (layout, wall tiling
+  and sync were lost) and was cached as if it came from the server (#866).
+- Web player: a live data-field update could re-render the wrong item; a failed video kept its
+  memory; the shell is served from cache when the server returns a 5xx (#866).
+- webOS compared version numbers as text (#866).
+- A screen moved into another workspace could skip the one-trial-per-screen check, and a single old
+  payment counted as a paid team (#866).
+- Device secrets were left in some device-added broadcasts; one unpaired client could trip the
+  reconnect limiter for a paired screen (#866).
+- Turning widget sandbox isolation off never reached screens already showing widgets (#864).
+- Dashboard language and theme now follow the account, not just the browser (#865).
+- Pricing cards showed a per-screen price that contradicted the sale price (#863); trial-to-paid
+  funnel bars rendered empty since the 3.2 themes (#862).
+
 ## 3.2.2
 
 ### ⚠️ Upgrade note: git + systemd installs using Update now
