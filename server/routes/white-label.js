@@ -7,7 +7,7 @@ const { db } = require('../db/database');
 // Phase 2.2f: workspace-scoped branding. POST gated by requireWorkspaceAdmin
 // per the design doc (branding is a workspace_admin power, not editor).
 const { requireWorkspaceAdmin } = require('../lib/permissions');
-const { resolveBranding, publicBranding } = require('../lib/branding');
+const { resolveBranding, publicBranding, brandNameProblem } = require('../lib/branding');
 
 // Get the current workspace's effective branding. #15: when the workspace has no
 // row of its own, fall through to the platform default (workspace_id IS NULL)
@@ -29,8 +29,18 @@ router.get('/domain/:domain', (req, res) => {
 router.post('/', requireWorkspaceAdmin, (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before configuring branding.' });
 
-  const { brand_name, logo_url, favicon_url, primary_color, secondary_color, bg_color,
+  const { logo_url, favicon_url, primary_color, secondary_color, bg_color,
           custom_domain, custom_css, hide_branding } = req.body;
+  let { brand_name } = req.body;
+
+  // GHSA-rvxj (E): the brand name is plain text. ⚠️ WHY refuse rather than strip: an admin who typed
+  // markup should see why it didn't save, not find a silently different name on every screen.
+  // undefined = field not sent (leave it); null is "not text" and refused like any non-string.
+  if (brand_name !== undefined) {
+    const problem = brandNameProblem(brand_name);
+    if (problem) return res.status(400).json({ error: problem });
+    brand_name = brand_name.trim();
+  }
 
   // Security (#3): custom_domain drives the PUBLIC, pre-auth branding resolver
   // (GET /api/branding) and custom_css is injected into the login page's <style>.

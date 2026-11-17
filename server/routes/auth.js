@@ -1111,9 +1111,18 @@ router.put('/me', requireAuth, (req, res) => {
       return res.status(400).json({ error: `Your account signs in via ${row.auth_provider}. Manage your password there.` });
     }
     if (row.password_hash) {
+      /*
+       * GHSA-rvxj 12.1: the same per-account lockout as login and account deletion. ⚠️ WHY: a
+       * stolen session could otherwise guess current_password here without limit and, on a hit,
+       * set a new one: a session theft turned into an account takeover. Checked BEFORE bcrypt, so
+       * a locked account says nothing about whether the guess was right (see the login comment).
+       */
+      if (loginLockout.isLocked(req.user.id)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
       if (!current_password || !bcrypt.compareSync(current_password, row.password_hash)) {
+        loginLockout.recordFailure(req.user.id);
         return res.status(401).json({ error: 'Current password is incorrect' });
       }
+      loginLockout.reset(req.user.id);
     }
     const hash = bcrypt.hashSync(password, 10);
     // #10: a successful password change clears must_change_password, releasing

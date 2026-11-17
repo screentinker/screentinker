@@ -31,6 +31,9 @@ const HARDCODED_BRANDING = {
   hide_branding: 0,
 };
 
+// The longest brand name a screen shows (playerBrand) and the most the white-label save accepts.
+const BRAND_NAME_MAX = 80;
+
 // The single platform-default row (fixed id), or null if none has been set.
 function platformDefaultRow(db) {
   return db.prepare('SELECT * FROM white_labels WHERE id = ?').get(PLATFORM_DEFAULT_ID) || null;
@@ -66,10 +69,24 @@ function publicBranding(row) {
 // result is plain text: the caller escapes it for wherever it lands.
 function playerBrand(row) {
   const r = row || HARDCODED_BRANDING;
-  const name = String(r.brand_name || '').trim().slice(0, 80);
+  const name = String(r.brand_name || '').trim().slice(0, BRAND_NAME_MAX);
   const upstream = !name || name === HARDCODED_BRANDING.brand_name;
   if (upstream && r.hide_branding) return { name: '', hidden: true };
   return { name: name || HARDCODED_BRANDING.brand_name, hidden: false };
+}
+
+// GHSA-rvxj (E): a brand name is plain text, so refuse anything that only makes sense as markup.
+// ⚠️ WHY at write time as well as at render: main's t()/asText() already neutralises it, but players
+// and dashboards from before v3.2.0 render brand_name unescaped, and so would any future sink that
+// doesn't go through t(). The cap is playerBrand's. Returns a plain message, or null when fine.
+// Callers pass the raw request value; undefined (field not sent) is theirs to skip.
+function brandNameProblem(v) {
+  if (typeof v !== 'string') return 'Brand name must be text.';
+  if (/[<>]/.test(v)) return 'Brand name cannot contain < or >.';
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(v)) return 'Brand name cannot contain control characters.';
+  if (v.trim().length > BRAND_NAME_MAX) return `Brand name must be ${BRAND_NAME_MAX} characters or fewer.`;
+  return null;
 }
 
 // The brand of the workspace a display belongs to. Workspace row, then the platform default, as for
@@ -83,4 +100,4 @@ function playerBrandForDevice(db, deviceId) {
   }
 }
 
-module.exports = { resolveBranding, platformDefaultRow, publicBranding, playerBrand, playerBrandForDevice, HARDCODED_BRANDING, PLATFORM_DEFAULT_ID };
+module.exports = { brandNameProblem, BRAND_NAME_MAX, resolveBranding, platformDefaultRow, publicBranding, playerBrand, playerBrandForDevice, HARDCODED_BRANDING, PLATFORM_DEFAULT_ID };

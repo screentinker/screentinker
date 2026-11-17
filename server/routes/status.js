@@ -1049,10 +1049,15 @@ async function handleImport(req, res) {
       // custom_domain and custom_css stay platform-admin only, exactly as routes/white-label.js
       // enforces: the domain drives the pre-auth branding resolver, the CSS lands on the login page.
       const existing = db.prepare('SELECT id, custom_domain, custom_css FROM white_labels WHERE workspace_id = ?').get(workspaceId);
+      // GHSA-rvxj (E): the brand name is plain text, checked as POST /api/white-label checks it.
+      // ⚠️ WHY fall back instead of failing: one bad field in an old export must not throw away the
+      // whole import (devices, playlists, schedules); the admin can rename it afterwards.
+      const { brandNameProblem, HARDCODED_BRANDING } = require('../lib/branding');
+      const brandName = (wl.brand_name && !brandNameProblem(wl.brand_name)) ? (wl.brand_name.trim() || HARDCODED_BRANDING.brand_name) : HARDCODED_BRANDING.brand_name;
       if (existing) {
-        db.prepare(`UPDATE white_labels SET brand_name=?, logo_url=?, favicon_url=?, primary_color=?, bg_color=?, custom_domain=?, custom_css=?, hide_branding=?, updated_at=strftime('%s','now') WHERE workspace_id=?`).run(wl.brand_name || 'ScreenTinker', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', importerIsPlatformAdmin ? (wl.custom_domain || null) : (existing.custom_domain ?? null), importerIsPlatformAdmin ? (wl.custom_css || null) : (existing.custom_css ?? null), wl.hide_branding || 0, workspaceId);
+        db.prepare(`UPDATE white_labels SET brand_name=?, logo_url=?, favicon_url=?, primary_color=?, bg_color=?, custom_domain=?, custom_css=?, hide_branding=?, updated_at=strftime('%s','now') WHERE workspace_id=?`).run(brandName, wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', importerIsPlatformAdmin ? (wl.custom_domain || null) : (existing.custom_domain ?? null), importerIsPlatformAdmin ? (wl.custom_css || null) : (existing.custom_css ?? null), wl.hide_branding || 0, workspaceId);
       } else {
-        db.prepare(`INSERT INTO white_labels (id, user_id, workspace_id, brand_name, logo_url, favicon_url, primary_color, bg_color, custom_domain, custom_css, hide_branding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(uuid.v4(), userId, workspaceId, wl.brand_name || 'ScreenTinker', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', importerIsPlatformAdmin ? (wl.custom_domain || null) : null, importerIsPlatformAdmin ? (wl.custom_css || null) : null, wl.hide_branding || 0);
+        db.prepare(`INSERT INTO white_labels (id, user_id, workspace_id, brand_name, logo_url, favicon_url, primary_color, bg_color, custom_domain, custom_css, hide_branding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(uuid.v4(), userId, workspaceId, brandName, wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', importerIsPlatformAdmin ? (wl.custom_domain || null) : null, importerIsPlatformAdmin ? (wl.custom_css || null) : null, wl.hide_branding || 0);
       }
     }
   });
