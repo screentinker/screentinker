@@ -330,9 +330,53 @@ function collectExportData({ userId, workspaceId, byWorkspace = false }) {
   };
 }
 
+/*
+ * ⚠️ GHSA-rvxj (D follow-up): the export used to be reached with ?token=<session JWT>, so a full
+ * 7-day session landed in proxy access logs and browser history. A browser download cannot send an
+ * Authorization header, and fetching the export into a blob would hold a possibly large zip (with
+ * every media file) in browser memory. So the page asks for a TICKET with its header, then navigates
+ * to ?ticket=. The ticket is random, single-use and lives 60 seconds; it names the session token,
+ * which is resolved again at download time, so every session check below still applies (and a
+ * session revoked in between is refused). In-memory is enough: both requests come from one browser
+ * to the same node within a minute.
+ */
+const crypto = require('crypto');
+const EXPORT_TICKET_TTL_MS = 60 * 1000;
+const EXPORT_TICKETS_MAX = 1000;
+const exportTickets = new Map(); // ticket -> { token, expires }
+
+function sweepExportTickets(now = Date.now()) {
+  for (const [k, v] of exportTickets) if (v.expires <= now) exportTickets.delete(k);
+}
+
+router.post('/export-ticket', (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'Token required' });
+  try {
+    resolveSessionUser(token);
+  } catch (err) {
+    if (err.code === 'user_not_found') return res.status(404).json({ error: 'User not found' });
+    return denySession(res, err);
+  }
+  sweepExportTickets();
+  if (exportTickets.size >= EXPORT_TICKETS_MAX) return res.status(429).json({ error: 'Too many pending exports. Try again in a minute.' });
+  const ticket = crypto.randomBytes(24).toString('base64url');
+  exportTickets.set(ticket, { token, expires: Date.now() + EXPORT_TICKET_TTL_MS });
+  res.json({ ticket, expires_in: EXPORT_TICKET_TTL_MS / 1000 });
+});
+
 // User data export (own data only)
 router.get('/export', async (req, res) => {
-  const token = req.query.token;
+  // The header (scripts, tests) or a single-use ticket (the browser download). Never ?token=.
+  const authHeader = req.headers.authorization;
+  let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token && typeof req.query.ticket === 'string') {
+    const t = exportTickets.get(req.query.ticket);
+    exportTickets.delete(req.query.ticket);
+    if (t && t.expires > Date.now()) token = t.token;
+    else return res.status(401).json({ error: 'This download link has expired. Start the export again.' });
+  }
   if (!token) return res.status(401).json({ error: 'Token required' });
 
   let userId;

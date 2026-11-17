@@ -348,7 +348,7 @@ test('⚠️ EXPORT/IMPORT round-trips nesting instead of quietly shortening the
 
   // ⚠️ /export authenticates by QUERY PARAMETER, not by header — a JWT in a URL. Pre-existing,
   // noted here because the header form silently 401s and the test would read {error} as a dump.
-  const dump = await (await fetch(`${BASE}/api/status/export?token=${jwt}`)).json();
+  const dump = await (await fetch(`${BASE}/api/status/export`, { headers: { Authorization: 'Bearer ' + jwt } })).json();
   const exported = dump.playlist_items.filter((i) => i.playlist_id === parent.id);
   assert.equal(exported.length, 2, 'the export dropped an item');
   assert.ok(exported.some((i) => i.child_playlist_id === child.id),

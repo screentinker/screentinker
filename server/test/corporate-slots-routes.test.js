@@ -503,7 +503,7 @@ test('store face and the compliance report', async () => {
 });
 
 test('export carries corporate playlists and slots; import outside head office turns slots into their fallback', async () => {
-  const dump = await (await fetch(`${BASE}/api/status/export?token=${U.admin.token}`)).json();
+  const dump = await (await fetch(`${BASE}/api/status/export`, { headers: { Authorization: 'Bearer ' + U.admin.token } })).json();
   const exp = dump.playlists.find((p) => p.id === P);
   assert.equal(exp.corporate, 1);
   assert.ok(dump.playlist_items.some((pi) => pi.playlist_id === P && pi.slot_id === SLOT));

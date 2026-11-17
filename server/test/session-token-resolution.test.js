@@ -163,19 +163,22 @@ test('status/backup: pre-TOTP token refused, full admin session accepted, recove
 });
 
 // ---------------------------------------------------------------------------
-// 2. GET /api/status/export  (?token=)
+// 2. GET /api/status/export  (Authorization header, or a single-use ticket)
 // ---------------------------------------------------------------------------
 test('status/export: pre-TOTP token refused, full session accepted, recovery refused', async () => {
-  const mfa = await jfetch(`/api/status/export?token=${encodeURIComponent(S.mfaToken)}`);
+  const mfa = await jfetch('/api/status/export', auth(S.mfaToken));
   assert.equal(mfa.status, 401, 'pre-TOTP token must not export account data');
   assert.equal(mfa.body.error, 'mfa_required');
 
-  const ok = await jfetch(`/api/status/export?token=${encodeURIComponent(S.adminToken)}`);
+  const ok = await jfetch('/api/status/export', auth(S.adminToken));
   assert.equal(ok.status, 200, 'a full session still exports');
 
-  const rec = await jfetch(`/api/status/export?token=${encodeURIComponent(S.recoveryToken)}`);
+  const rec = await jfetch('/api/status/export', auth(S.recoveryToken));
   assert.equal(rec.status, 404, 'recovery identity has no users row (unchanged)');
 });
+
+// The ?token= refusal and the single-use ticket are in export-ticket.test.js (own server, so the
+// 5-per-minute export limit does not run out here).
 
 // ---------------------------------------------------------------------------
 // 3. POST /api/status/import  (Authorization header)
