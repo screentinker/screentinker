@@ -390,6 +390,37 @@ function usedBy(widgetIds) {
   return [...names];
 }
 
+/*
+ * A page has no draft: its render is served live, so saving it changes every screen that plays it at
+ * once. The rules that hold for the widget that frames it must therefore hold for the page too:
+ *  - CORPORATE: a page whose widget a head-office playlist plays is changed only by a corporate author.
+ *  - APPROVAL: in a workspace that requires review, a page live in a published playlist is changed only
+ *    by a reviewer or admin (there is no draft to queue), the same rule as deleting live content.
+ * Returns true when refused (the response is sent).
+ */
+function liveEditRefused(req, res, page) {
+  const widgetIds = kioskWidgetIds(page.id);
+  if (!widgetIds.length) return false;
+  const corpGuard = require('../lib/corporate/guard');
+  for (const wid of widgetIds) {
+    try { corpGuard.assertMediaWritable(req, 'widget', wid); } catch (e) {
+      if (corpGuard.send(res, e, req)) return true;
+      throw e;
+    }
+  }
+  const policy = require('../lib/release-policy');
+  if (!page.workspace_id || policy.mayChangeLiveUnreviewed(db, page.workspace_id, req.user)) return false;
+  const live = new Set();
+  for (const wid of widgetIds) for (const n of policy.liveReferences(db, page.workspace_id, 'widget', wid)) live.add(n);
+  if (!live.size) return false;
+  const names = [...live].slice(0, 3).map((n) => `"${n}"`).join(', ') + (live.size > 3 ? ` and ${live.size - 3} more` : '');
+  res.status(403).json({
+    error: `"${page.name}" is live in published ${live.size === 1 ? 'playlist' : 'playlists'} ${names}, and this workspace requires review before what screens show changes. Ask a reviewer or admin to save this change.`,
+    code: 'review_required',
+  });
+  return true;
+}
+
 // Update kiosk page
 router.put('/:id', (req, res) => {
   const page = checkKioskWrite(req, res);
@@ -398,6 +429,7 @@ router.put('/:id', (req, res) => {
   const { name, config: pageConfig } = req.body;
   const addrProblem = buttonAddressProblem(pageConfig);
   if (addrProblem) return res.status(400).json({ error: addrProblem, code: 'KIOSK_BAD_ADDRESS' });
+  if (pageConfig && liveEditRefused(req, res, page)) return;
   if (name) db.prepare('UPDATE kiosk_pages SET name = ? WHERE id = ?').run(name, req.params.id);
   if (pageConfig) {
     db.prepare('UPDATE kiosk_pages SET config = ?, updated_at = strftime(\'%s\',\'now\') WHERE id = ?')
