@@ -58,4 +58,18 @@ test('unknown recurrence kinds retain the legacy daily-like inclusive fallback',
   assert.equal(active(unknown, '2026-11-02T10:00:00Z'), true);
 });
 
+test('a recurring 24-hour window (end time of day equals start) runs all day, as the calendar shows it', () => {
+  const allDay = { ...base, start_time: '2026-11-01T00:00:00', end_time: '2026-11-02T00:00:00' };
+  for (const at of ['2026-11-02T00:00:00Z', '2026-11-02T12:00:00Z', '2026-11-02T23:59:00Z']) {
+    assert.equal(active(allDay, at), true, at);
+  }
+  const nineToNine = { ...base, recurrence: 'FREQ=WEEKLY;BYDAY=MO', start_time: '2026-11-02T09:00:00', end_time: '2026-11-03T09:00:00' };
+  assert.equal(active(nineToNine, '2026-11-02T09:00:00Z'), true, 'Monday from 09:00');
+  assert.equal(active(nineToNine, '2026-11-03T08:59:00Z'), true, 'until Tuesday 09:00');
+  assert.equal(active(nineToNine, '2026-11-03T12:00:00Z'), false, 'Tuesday afternoon is not an occurrence');
+  assert.equal(active(nineToNine, '2026-11-02T08:00:00Z'), false, 'before the first start');
+  const zero = { ...base, start_time: '2026-11-01T09:00:00', end_time: '2026-11-01T09:00:00' };
+  assert.equal(active(zero, '2026-11-02T12:00:00Z'), false, 'a zero-length window never runs');
+});
+
 test.after(() => fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true }));
