@@ -1502,7 +1502,9 @@ class WebSocketService : Service() {
         }
 
         Log.i("WebSocketService", "Injecting key: $keycode ($code)")
-        Thread {
+        // GHSA-rvxj 7.7: one bounded worker, not a thread + process per key; a full queue drops the
+        // key (counted and logged by the queue). See KeyInjectQueue.
+        KeyInjectQueue.shared.submit {
             try {
                 val exit = Runtime.getRuntime().exec(arrayOf("input", "keyevent", code)).waitFor()
                 if (exit != 0) {
@@ -1512,7 +1514,7 @@ class WebSocketService : Service() {
             } catch (e: Exception) {
                 Log.e("WebSocketService", "Key injection failed for $keycode: ${e.message}")
             }
-        }.start()
+        }
     }
 
     fun sendContentAck(contentId: String, status: String) {

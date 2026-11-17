@@ -86,7 +86,13 @@ function shellNetworkFirst(request) {
     });
     try {
       const winner = yield Promise.race([fromNetwork.then((r) => r, () => "failed"), timeout]);
-      if (winner !== "timeout" && winner !== "failed") return winner;
+      if (winner !== "timeout" && winner !== "failed") {
+        if (winner.status >= 500) {
+          const c = yield fromCache();
+          if (c) return c;
+        }
+        return winner;
+      }
       const cached = yield fromCache();
       if (cached) return cached;
       if (winner === "timeout") {

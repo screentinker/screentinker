@@ -58,4 +58,6 @@ function evaluateKnown(schedule, local, rule) {
   return fires(rule, anchor, first);
 }
 
-module.exports = { evaluateKnown };
+// fires/startDate are shared with the calendar (routes/schedules.js expandSchedule) so the drawing
+// and the engine apply one rule — they disagreed on INTERVAL for WEEKLY/MONTHLY.
+module.exports = { evaluateKnown, fires, startDate };

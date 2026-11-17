@@ -122,6 +122,19 @@ function everPaid(db, userId) {
   } catch { return false; }
 }
 
+/**
+ * Is this account paying RIGHT NOW? A live Stripe subscription (routes/stripe.js clears the id on
+ * cancellation), a comped plan, or an invoice period that has not ended. Unlike everPaid, a payment
+ * that has lapsed does not count.
+ */
+function currentlyPaid(db, userId, now = Math.floor(Date.now() / 1000)) {
+  if (!userId) return false;
+  try {
+    const u = db.prepare('SELECT stripe_subscription_id, plan_comped, renewal_at FROM users WHERE id = ?').get(userId);
+    return !!(u && (u.stripe_subscription_id || u.plan_comped || (u.renewal_at && u.renewal_at > now)));
+  } catch { return false; }
+}
+
 /** Organizations an account belongs to, directly or through a workspace. */
 function orgsOf(db, userId) {
   try {
@@ -144,7 +157,10 @@ function samePaidTeam(db, a, b) {
     if (!mine.has(id)) continue;
     try {
       const o = db.prepare('SELECT owner_user_id, stripe_subscription_id FROM organizations WHERE id = ?').get(id);
-      if (o && (o.stripe_subscription_id || everPaid(db, o.owner_user_id))) return true;
+      // ⚠️ currentlyPaid, not everPaid: one month paid and cancelled made the organization a "paid
+      // team" forever, and every trial its owner invited could then hop screens freely. everPaid
+      // stays the rule for whether an account's OWN screens count as burned (countsAgainst).
+      if (o && (o.stripe_subscription_id || currentlyPaid(db, o.owner_user_id))) return true;
     } catch { /* no organizations table: not a team */ }
   }
   return false;
@@ -155,7 +171,7 @@ function samePaidTeam(db, a, b) {
  * account whose trial used it, if any, within LEDGER_TTL. Returns Map<priorUserId, count>.
  * The one definition both Part A and Part B count with.
  */
-function heldByPrior(db, userId, { exceptDeviceId = null, workspaceId = null, now }) {
+function heldByPrior(db, userId, { exceptDeviceId = null, workspaceId = null, alsoHeld = [], now }) {
   const out = new Map();
   if (!tableExists(db, 'trial_screen_ledger')) return out;
   const lookup = db.prepare('SELECT user_id FROM trial_screen_ledger WHERE screen_key = ? AND first_trial_at >= ?');
@@ -169,6 +185,15 @@ function heldByPrior(db, userId, { exceptDeviceId = null, workspaceId = null, no
                            SELECT f.fingerprint, d.user_id AS holder FROM devices d JOIN device_fingerprints f ON f.device_id = d.id
                             WHERE ? IS NOT NULL AND d.workspace_id = ? AND d.id IS NOT ?`)
     .all(userId, exceptDeviceId, workspaceId, workspaceId, exceptDeviceId);
+  // Screens that are not there yet but are arriving in the same move (checkTrialMove), with the
+  // account that will hold them.
+  if (alsoHeld.length) {
+    const fps = db.prepare('SELECT fingerprint FROM device_fingerprints WHERE device_id = ?');
+    for (const h of alsoHeld) {
+      if (!h || h.deviceId === exceptDeviceId) continue;
+      for (const f of fps.all(h.deviceId)) rows.push({ fingerprint: f.fingerprint, holder: h.holder });
+    }
+  }
   const seen = new Set();
   for (const r of rows) {
     const k = screenKeyOf(r.fingerprint);
@@ -214,7 +239,7 @@ function recordTrialScreen(db, { userId, workspaceId, deviceId, plan, now = Math
  * May this trialing account claim this screen? { allowed, priorUserId?, reused? }.
  * Only a running trial is ever refused; a paying, comped or Free account always passes.
  */
-function checkTrialScreen(db, { userId, workspaceId = null, deviceId, plan, now = Math.floor(Date.now() / 1000) }) {
+function checkTrialScreen(db, { userId, workspaceId = null, deviceId, plan, alsoHeld = [], now = Math.floor(Date.now() / 1000) }) {
   const ok = { allowed: true };
   if (!tableExists(db, 'trial_screen_ledger') || !trialRunning(plan) || everPaid(db, userId)) return ok;
   const keys = keysForDevice(db, deviceId);
@@ -230,11 +255,40 @@ function checkTrialScreen(db, { userId, workspaceId = null, deviceId, plan, now 
   if (!burnedBy.size) return ok;
 
   // How many screens this account ALREADY holds that the same earlier account burned.
-  const held = heldByPrior(db, userId, { exceptDeviceId: deviceId, workspaceId, now });
+  const held = heldByPrior(db, userId, { exceptDeviceId: deviceId, workspaceId, alsoHeld, now });
   for (const prior of burnedBy) {
     if (!countsAgainst(db, userId, prior)) continue;
     const already = held.get(prior) || 0;
     if (already + 1 >= REUSE_THRESHOLD) return { allowed: false, priorUserId: prior, reused: already + 1 };
+  }
+  return ok;
+}
+
+/**
+ * May these screens MOVE into this workspace? The same rule as pairing them there.
+ *
+ * The check used to run only at pairing, so the per-workspace count (see TEAMS) could be dodged:
+ * each invitee pairs two re-used screens in a scratch workspace of their own (two, allowed), then
+ * moves them into the shared one, where nothing counted them again. A move is judged for the
+ * account that will HOLD each screen (ownerFor: the same account within an organization), as if
+ * that account paired it into the target, counting the screens already there AND the ones landing
+ * earlier in the same move. Returns { allowed } or the refusing verdict plus deviceId.
+ */
+function checkTrialMove(db, { devices, toWorkspaceId, ownerFor = (d) => d.user_id, now = Math.floor(Date.now() / 1000) }) {
+  const ok = { allowed: true };
+  if (!tableExists(db, 'trial_screen_ledger') || !Array.isArray(devices) || !devices.length) return ok;
+  let getPlan = null;
+  try { getPlan = require('../middleware/subscription').getUserPlan; } catch { return ok; }
+  const landed = [];
+  for (const d of devices) {
+    const holder = ownerFor(d);
+    if (holder) {
+      let plan = null;
+      try { plan = getPlan(holder); } catch { plan = null; }
+      const v = checkTrialScreen(db, { userId: holder, workspaceId: toWorkspaceId, deviceId: d.id, plan, alsoHeld: landed, now });
+      if (!v.allowed) return { ...v, deviceId: d.id, holderUserId: holder };
+    }
+    landed.push({ deviceId: d.id, holder: holder || null });
   }
   return ok;
 }
@@ -348,6 +402,6 @@ function anonymizeUser(db, userId) {
 }
 
 module.exports = {
-  screenKeyOf, trialRunning, samePaidTeam, everPaid, recordTrialScreen, checkTrialScreen, suspectTrialReuse,
+  screenKeyOf, trialRunning, samePaidTeam, everPaid, currentlyPaid, recordTrialScreen, checkTrialScreen, checkTrialMove, suspectTrialReuse,
   backfillLedger, anonymizeUser, netOf, REUSE_THRESHOLD, LEDGER_TTL, LAPSED_WINDOW, SUSPECT_MIN_SCREENS,
 };

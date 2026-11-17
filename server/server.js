@@ -1268,6 +1268,15 @@ if (config.triggerIngress) {
   // The same four shapes the player's door accepts (docs/triggers-design.md §11) — a control system
   // should not have to know which kind of box is behind the address.
   app.post('/api/trigger', express.text({ type: '*/*', limit: '2kb' }), (req, res) => handleIngress(req, res, 'http'));
+  /*
+   * ⚠️ GET CARRIES THE SECRET AND TOKEN IN THE QUERY STRING, on purpose (GHSA-rvxj 8.2): Extron
+   * Global Scripter and AMX NetLinx can build a URL but cannot set a header or open a socket. Do not
+   * remove it. What keeps the credential out of THIS server's logs: the access logger records only
+   * the route template, never the URL (lib/http-logging.js), the API error handler strips the query
+   * (lib/api-errors.js), and handleIngress logs nothing about the request. A reverse proxy in front
+   * logs whatever it is configured to — docs/triggers-design.md tells operators to drop the query.
+   * Pinned by test/trigger-get-not-logged.test.js.
+   */
   app.get('/api/trigger', (req, res) => handleIngress(req, res, 'http'));
 
   /*
@@ -1819,13 +1828,18 @@ app.get('/api/branding', (req, res) => {
 app.use('/api/stripe', stripeRouter);
 
 
-// Screenshot route (before protected routes - needs custom auth for img tags)
+// Screenshot route (before protected routes; its own session check).
+//
+// ⚠️ GHSA-rvxj (D): AUTHORIZATION HEADER ONLY. It used to accept `?token=<session JWT>` so a plain
+// <img src> could load it, which wrote a 7-day full session into reverse-proxy access logs, browser
+// history and every copied image link. The dashboard now loads it with a Bearer fetch into a blob
+// URL (frontend/js/utils.js hydrateAuthImages), and nothing else ever used the query form — players,
+// mesh children and native apps don't call this route. Do not bring the query parameter back.
 const { resolveSessionUser } = require('./middleware/auth');
 app.get('/api/devices/:id/screenshot', (req, res) => {
   let user = null;
   const authHeader = req.headers.authorization;
-  const tokenParam = req.query.token;
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : tokenParam;
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
   if (!token) return res.status(401).json({ error: 'Authentication required' });
   // resolveSessionUser is the same resolver requireAuth uses, so this route inherits the
   // pre-TOTP refusal, the live-user check and the forced-password-change gate.
@@ -3272,9 +3286,18 @@ const DEVICE_ADMIN_COMPONENT = 'com.remotedisplay.player/.admin.STDeviceAdminRec
 // only when the APK is absent/unparseable. Env override wins over the baked-in default.
 const DEVICE_ADMIN_SIGNATURE_CHECKSUM =
   process.env.DEVICE_ADMIN_SIGNATURE_CHECKSUM || 's9ZOWAvn3qFYJxaaR0j41ZttQK1r6_XgaTMcB7rIqqI';
-app.get('/api/provision/device-owner-qr', requireAuth, async (req, res) => {
+/*
+ * GHSA-rvxj 10.1: ⚠️ the origin baked into this QR is the server a factory-fresh panel will enrol
+ * against and download its device-owner APK from, so it is built like an emailed link
+ * (lib/public-origin.js): APP_URL, else only a PUBLIC_HOSTS / loopback Host (or, self-hosted, the
+ * LAN address it was reached on — the same residual risk publicOrigin documents). The raw Host
+ * header it used to trust let a request with a forged Host get a QR that enrols panels elsewhere.
+ * And it needs write access to the workspace: the dashboard offers it from Add Display, which is
+ * an editor action (canWrite), so editors keep it; viewers, who cannot add a display, do not.
+ */
+app.get('/api/provision/device-owner-qr', requireAuth, require('./lib/permissions').requireWorkspaceWrite, async (req, res) => {
   try {
-    const base = trimTrailing(process.env.APP_URL || `${req.protocol}://${req.get('host')}`, '/');
+    const base = trimTrailing(require('./lib/public-origin').publicOrigin(req), '/');
     const apkUrl = `${base}/download/apk`;
     // Derive the signature checksum from the APK the device will actually download, so it can
     // never drift from the served build. Fall back to the configured constant if the APK isn't
@@ -3406,6 +3429,8 @@ app.post('/api/devices/web-player', bearerAuth, resolveTenancy, requireTokenScop
     device: created,
     enrol_key: key,
     player_url: enrolKey.playerUrl(`${req.protocol}://${req.get('host')}`, key),
+    // GHSA-rvxj 2.2: said, not refused — LAN installs over HTTP are supported.
+    ...(enrolKey.cleartextWarning(req) ? { warning: enrolKey.cleartextWarning(req) } : {}),
   });
 });
 

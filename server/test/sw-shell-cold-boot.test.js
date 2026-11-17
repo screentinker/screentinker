@@ -164,3 +164,24 @@ test('the query string does not defeat the fallback (a panel URL carries ?host= 
   const r = await request('http://s/player?host=webos&v=3.1.2');
   assert.equal(r.status, 200, 'a shell cached under the previous app version still boots this one');
 });
+
+// The origin is down behind a proxy: fetch RESOLVES with a 502/503 page. That is not a newer shell,
+// and mounting it left an LG panel on the proxy's error page with the watchdog remounting into it.
+test('origin down behind a proxy: a 5xx answer serves the cached shell, a 4xx does not', async () => {
+  const net = network();
+  const { request } = load((req) => (net.mode === '5xx'
+    ? Promise.resolve(new Response('Bad Gateway', { status: 502 }))
+    : net.mode === '404' ? Promise.resolve(new Response('nope', { status: 404 })) : net.fetch(req)));
+  await request(PLAYER); await new Promise((x) => setImmediate(x));
+  net.mode = '5xx';
+  const r = await request(PLAYER);
+  assert.equal(r.status, 200);
+  assert.equal(await r.text(), '<html>shell</html>');
+  net.mode = '404';
+  assert.equal((await request(PLAYER)).status, 404, 'a real client error is still the network\'s answer');
+});
+
+test('origin down and nothing cached: the 5xx passes through rather than a fake 503', async () => {
+  const { request } = load(() => Promise.resolve(new Response('Bad Gateway', { status: 502 })));
+  assert.equal((await request(PLAYER)).status, 502);
+});

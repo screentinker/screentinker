@@ -1210,7 +1210,6 @@ async function loadSystem() {
   const el = document.getElementById('systemInfo');
   try {
     const version = await fetch('/api/version').then(r => r.json());
-    const token = localStorage.getItem('token');
     // Platform admins only (the route enforces it); anyone else just gets the version cards.
     // ⚠️ isPlatformAdmin needs the user. Called bare it was always false, so this page never asked:
     // no "Updater ready" card, no confirm before Update Now, and no progress after a reload.
@@ -1247,11 +1246,44 @@ async function loadSystem() {
       <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
         <button class="btn btn-secondary btn-sm" id="checkUpdateBtn">${t('admin.check_now')}</button>
         <button class="btn btn-primary btn-sm" id="triggerUpdateBtn"${!version.update_available ? ' style="display:none"' : ''}>${t('admin.update_now')}</button>
-        <a href="/api/status/backup?token=${token}" class="btn btn-secondary btn-sm" style="text-decoration:none">${t('admin.download_db_backup')}</a>
+        <button class="btn btn-secondary btn-sm" id="dbBackupBtn">${t('admin.download_db_backup')}</button>
         <a href="/api/status" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none">${t('admin.server_status')}</a>
       </div>
       <div id="updateResult" style="margin-top:12px"></div>
     `;
+
+    /*
+     * ⚠️ GHSA-rvxj (D): the database backup is fetched with a Bearer header and saved from a blob.
+     * It was a plain <a href> with the session as a query parameter, which put a full platform-admin session in
+     * a URL — proxy access logs, browser history, a copied link. routes/status.js now takes the
+     * Authorization header only.
+     */
+    document.getElementById('dbBackupBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('dbBackupBtn');
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/status/backup', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+        if (!r.ok) {
+          let msg = `HTTP ${r.status}`;
+          try { msg = (await r.json()).error || msg; } catch (_) { /* not JSON */ }
+          throw new Error(msg);
+        }
+        const cd = r.headers.get('Content-Disposition') || '';
+        const m = /filename="?([^";]+)"?/i.exec(cd);
+        const obj = URL.createObjectURL(await r.blob());
+        const a = document.createElement('a');
+        a.href = obj;
+        a.download = m ? m[1] : 'remotedisplay-backup.db';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(obj), 10000);
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    });
 
     // Check Now button
     document.getElementById('checkUpdateBtn')?.addEventListener('click', async () => {

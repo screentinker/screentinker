@@ -94,8 +94,9 @@ class UpdateChecker(private val context: Context) {
                     }
                     // Logcat only — NOT report(): these fire per attempt, and #139 keeps the
                     // device:log/dashboard channel to state transitions (enter-backoff, clear).
-                    android.content.pm.PackageInstaller.STATUS_SUCCESS -> Log.i(TAG, "Update installed successfully")
-                    else -> Log.w(TAG, "Install status: ${intent.getStringExtra(android.content.pm.PackageInstaller.EXTRA_STATUS_MESSAGE)}")
+                    // GHSA-rvxj 3.2: a final result closes the accessibility auto-confirm window.
+                    android.content.pm.PackageInstaller.STATUS_SUCCESS -> { OtaInstallWindow.disarm(); Log.i(TAG, "Update installed successfully") }
+                    else -> { OtaInstallWindow.disarm(); Log.w(TAG, "Install status: ${intent.getStringExtra(android.content.pm.PackageInstaller.EXTRA_STATUS_MESSAGE)}") }
                 }
             }
         }
@@ -460,7 +461,7 @@ class UpdateChecker(private val context: Context) {
             // manual install when silent install isn't possible.
             if (apkFile.exists() && cachedApkIs(apkFile, version) && verifyApkSignature(apkFile)) {
                 Log.i(TAG, "Reusing cached verified APK: ${apkFile.absolutePath} (${apkFile.length()} bytes)")
-                handler.post { installApk(apkFile) }
+                handler.post { installApk(apkFile, ownOta = true) }
                 return true
             }
             // A leftover but invalid file (partial/corrupt/tampered) must never be reused.
@@ -514,7 +515,7 @@ class UpdateChecker(private val context: Context) {
 
             // Install the APK
             handler.post {
-                installApk(apkFile)
+                installApk(apkFile, ownOta = true)
             }
             return true
         } catch (e: Exception) {
@@ -527,7 +528,8 @@ class UpdateChecker(private val context: Context) {
     // #161 device-owner tooling: push + install an ARBITRARY APK from an operator-supplied URL. Unlike
     // the self-update path this does NOT require our signing key — a device owner can install any
     // package, silently (installApk → tryPackageInstaller → USER_ACTION_NOT_REQUIRED on an owner). Off
-    // owner it degrades to the normal confirm-dialog install. Gated to admins server-side.
+    // owner it degrades to the normal confirm-dialog install, which a PERSON must accept: a pushed APK
+    // never opens the accessibility auto-confirm window (GHSA-rvxj 3.2). Gated to admins server-side.
     fun installFromUrl(url: String) {
         Thread {
             try {
@@ -541,12 +543,18 @@ class UpdateChecker(private val context: Context) {
                 if (!response.isSuccessful) { Log.e(TAG, "installFromUrl: download failed ${response.code}"); return@Thread }
                 response.body?.byteStream()?.use { input -> apkFile.outputStream().use { input.copyTo(it) } }
                 Log.i(TAG, "Pushed APK downloaded: ${apkFile.name} (${apkFile.length()} bytes)")
-                handler.post { installApk(apkFile) }
+                handler.post { installApk(apkFile, ownOta = false) }
             } catch (e: Throwable) { Log.e(TAG, "installFromUrl: ${e.message}") }
         }.start()
     }
 
-    private fun installApk(apkFile: File) {
+    /**
+     * [ownOta] = this is our own self-update, already through cachedApkIs + verifyApkSignature. Only
+     * then is the accessibility auto-confirm window opened (GHSA-rvxj 3.2, see OtaInstallWindow);
+     * anything else closes it so a pushed APK's dialog can never ride an earlier OTA's window.
+     */
+    private fun installApk(apkFile: File, ownOta: Boolean) {
+        if (ownOta) OtaInstallWindow.arm() else OtaInstallWindow.disarm()
         // Try silent session install first (no Play Protect dialog)
         try {
             tryPackageInstaller(apkFile)

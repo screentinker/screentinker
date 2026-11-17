@@ -182,8 +182,8 @@ function formatUptime(seconds) {
   return `${m}m`;
 }
 
-// These three routes take the session token from the query string / Authorization header
-// and resolve it themselves rather than sitting behind requireAuth. resolveSessionUser is
+// These routes take the session token from the query string (export) or the Authorization header
+// (backup, import) and resolve it themselves rather than sitting behind requireAuth. resolveSessionUser is
 // the SAME resolver requireAuth uses, so they inherit every check it makes (pre-TOTP
 // refusal, live user row, forced password change). Each keeps the exact status/body it
 // returned before for the invalid-token case.
@@ -194,8 +194,14 @@ function denySession(res, err) {
 }
 
 // Full database backup (superadmin only)
+//
+// ⚠️ GHSA-rvxj (D): AUTHORIZATION HEADER ONLY. It accepted `?token=<session JWT>` for a plain <a
+// href> download, which put a full platform-admin session into proxy access logs and browser
+// history. The admin page now fetches it with a Bearer header and saves the blob
+// (frontend/js/views/admin.js), and no script or doc used the query form.
 router.get('/backup', (req, res) => {
-  const token = req.query.token;
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Token required' });
 
   let session;
@@ -324,9 +330,53 @@ function collectExportData({ userId, workspaceId, byWorkspace = false }) {
   };
 }
 
+/*
+ * ⚠️ GHSA-rvxj (D follow-up): the export used to be reached with ?token=<session JWT>, so a full
+ * 7-day session landed in proxy access logs and browser history. A browser download cannot send an
+ * Authorization header, and fetching the export into a blob would hold a possibly large zip (with
+ * every media file) in browser memory. So the page asks for a TICKET with its header, then navigates
+ * to ?ticket=. The ticket is random, single-use and lives 60 seconds; it names the session token,
+ * which is resolved again at download time, so every session check below still applies (and a
+ * session revoked in between is refused). In-memory is enough: both requests come from one browser
+ * to the same node within a minute.
+ */
+const crypto = require('crypto');
+const EXPORT_TICKET_TTL_MS = 60 * 1000;
+const EXPORT_TICKETS_MAX = 1000;
+const exportTickets = new Map(); // ticket -> { token, expires }
+
+function sweepExportTickets(now = Date.now()) {
+  for (const [k, v] of exportTickets) if (v.expires <= now) exportTickets.delete(k);
+}
+
+router.post('/export-ticket', (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'Token required' });
+  try {
+    resolveSessionUser(token);
+  } catch (err) {
+    if (err.code === 'user_not_found') return res.status(404).json({ error: 'User not found' });
+    return denySession(res, err);
+  }
+  sweepExportTickets();
+  if (exportTickets.size >= EXPORT_TICKETS_MAX) return res.status(429).json({ error: 'Too many pending exports. Try again in a minute.' });
+  const ticket = crypto.randomBytes(24).toString('base64url');
+  exportTickets.set(ticket, { token, expires: Date.now() + EXPORT_TICKET_TTL_MS });
+  res.json({ ticket, expires_in: EXPORT_TICKET_TTL_MS / 1000 });
+});
+
 // User data export (own data only)
 router.get('/export', async (req, res) => {
-  const token = req.query.token;
+  // The header (scripts, tests) or a single-use ticket (the browser download). Never ?token=.
+  const authHeader = req.headers.authorization;
+  let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token && typeof req.query.ticket === 'string') {
+    const t = exportTickets.get(req.query.ticket);
+    exportTickets.delete(req.query.ticket);
+    if (t && t.expires > Date.now()) token = t.token;
+    else return res.status(401).json({ error: 'This download link has expired. Start the export again.' });
+  }
   if (!token) return res.status(401).json({ error: 'Token required' });
 
   let userId;
@@ -1049,10 +1099,15 @@ async function handleImport(req, res) {
       // custom_domain and custom_css stay platform-admin only, exactly as routes/white-label.js
       // enforces: the domain drives the pre-auth branding resolver, the CSS lands on the login page.
       const existing = db.prepare('SELECT id, custom_domain, custom_css FROM white_labels WHERE workspace_id = ?').get(workspaceId);
+      // GHSA-rvxj (E): the brand name is plain text, checked as POST /api/white-label checks it.
+      // ⚠️ WHY fall back instead of failing: one bad field in an old export must not throw away the
+      // whole import (devices, playlists, schedules); the admin can rename it afterwards.
+      const { brandNameProblem, HARDCODED_BRANDING } = require('../lib/branding');
+      const brandName = (wl.brand_name && !brandNameProblem(wl.brand_name)) ? (wl.brand_name.trim() || HARDCODED_BRANDING.brand_name) : HARDCODED_BRANDING.brand_name;
       if (existing) {
-        db.prepare(`UPDATE white_labels SET brand_name=?, logo_url=?, favicon_url=?, primary_color=?, bg_color=?, custom_domain=?, custom_css=?, hide_branding=?, updated_at=strftime('%s','now') WHERE workspace_id=?`).run(wl.brand_name || 'ScreenTinker', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', importerIsPlatformAdmin ? (wl.custom_domain || null) : (existing.custom_domain ?? null), importerIsPlatformAdmin ? (wl.custom_css || null) : (existing.custom_css ?? null), wl.hide_branding || 0, workspaceId);
+        db.prepare(`UPDATE white_labels SET brand_name=?, logo_url=?, favicon_url=?, primary_color=?, bg_color=?, custom_domain=?, custom_css=?, hide_branding=?, updated_at=strftime('%s','now') WHERE workspace_id=?`).run(brandName, wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', importerIsPlatformAdmin ? (wl.custom_domain || null) : (existing.custom_domain ?? null), importerIsPlatformAdmin ? (wl.custom_css || null) : (existing.custom_css ?? null), wl.hide_branding || 0, workspaceId);
       } else {
-        db.prepare(`INSERT INTO white_labels (id, user_id, workspace_id, brand_name, logo_url, favicon_url, primary_color, bg_color, custom_domain, custom_css, hide_branding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(uuid.v4(), userId, workspaceId, wl.brand_name || 'ScreenTinker', wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', importerIsPlatformAdmin ? (wl.custom_domain || null) : null, importerIsPlatformAdmin ? (wl.custom_css || null) : null, wl.hide_branding || 0);
+        db.prepare(`INSERT INTO white_labels (id, user_id, workspace_id, brand_name, logo_url, favicon_url, primary_color, bg_color, custom_domain, custom_css, hide_branding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(uuid.v4(), userId, workspaceId, brandName, wl.logo_url || null, wl.favicon_url || null, wl.primary_color || '#3B82F6', wl.bg_color || '#111827', importerIsPlatformAdmin ? (wl.custom_domain || null) : null, importerIsPlatformAdmin ? (wl.custom_css || null) : null, wl.hide_branding || 0);
       }
     }
   });

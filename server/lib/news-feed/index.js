@@ -90,11 +90,28 @@ function takeHostBudget(host, now = Date.now()) {
 
 /* ───────────── fetching ───────────── */
 
+/*
+ * GHSA-rvxj 13.1: does this feed address carry a user name or password (https://user:pass@host/)?
+ * ⚠️ WHY refuse rather than strip: such a feed needs those credentials to be read, so a stripped
+ * address would just fail; and the address ends up on screens and in the widget config every
+ * workspace member can read. parse.absUrl already refused these silently (the widget showed
+ * nothing); this says why, and the widget save refuses them up front (routes/widgets.js).
+ */
+const CREDENTIALS_MESSAGE = 'A feed address cannot include a user name or password. Use the feed\'s public address.';
+function hasCredentials(raw) {
+  let v = String(raw == null ? '' : raw).trim();
+  if (!v) return false;
+  if (/^feed:/i.test(v)) v = v.replace(/^feed:(\/\/)?/i, '');
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(v)) v = 'https://' + v.replace(/^\/+/, '');
+  try { const u = new URL(v); return !!(u.username || u.password); } catch (_) { return false; }
+}
+
 /** Accept "fox6now.com" and "www.example.com/news" as well as full addresses. */
 function normaliseInput(raw) {
   let v = String(raw == null ? '' : raw).trim();
   if (!v) throw new FeedError('bad-url', 'Enter a web address');
   if (v.length > 2000) throw new FeedError('bad-url', 'That address is too long');
+  if (hasCredentials(v)) throw new FeedError('bad-url', CREDENTIALS_MESSAGE);
   if (/^feed:/i.test(v)) v = v.replace(/^feed:(\/\/)?/i, '');
   if (!/^[a-z][a-z0-9+.-]*:/i.test(v)) v = 'https://' + v.replace(/^\/+/, '');
   const u = parse.absUrl(v);
@@ -451,6 +468,21 @@ function itemsPath(rawUrl, mode = 'feed', origin = '') {
   const m = MODES.includes(mode) ? mode : 'feed';
   return `${origin || ''}/api/news-feeds/items?m=${m}&u=${encodeURIComponent(url)}&s=${signFeed(url, m)}`;
 }
+/*
+ * GHSA-rvxj 13.1: the address a SAVED news widget's page reads its items from. ⚠️ It names the
+ * widget, not the feed: the render page is public to anyone holding the widget id (every player
+ * that shows it), and a feed address can carry a key in its query string
+ * (https://example.com/rss?apikey=...). The items handler looks the feed up from the widget's live
+ * config server-side, so the page never contains it. Signed like the feed form, so the endpoint
+ * still answers only for widgets this server rendered. Pages built without a saved widget (the
+ * editor's preview, offline bundles) keep the feed form above.
+ */
+const signWidgetFeed = (widgetId) => mac('news-feed-widget:v1:', String(widgetId));
+function verifyWidgetFeed(widgetId, sig) { return !!widgetId && sameMac(signWidgetFeed(widgetId), sig); }
+function widgetItemsPath(widgetId, origin = '') {
+  return widgetId ? `${origin || ''}/api/news-feeds/items?w=${encodeURIComponent(widgetId)}&s=${signWidgetFeed(widgetId)}` : '';
+}
+
 function imagePath(url, origin = '') {
   return url ? `${origin || ''}/api/news-feeds/image?u=${encodeURIComponent(url)}&s=${signImage(url)}` : '';
 }
@@ -481,8 +513,8 @@ function _age(rawUrl, mode, ms) {
 }
 
 module.exports = {
-  getFeed, peek, discoverFeeds, getImage, fetchText, normaliseInput, robotsAllow,
-  itemsPath, imagePath, signFeed, signImage, verifyFeed, verifyImage, screenPayload,
+  getFeed, peek, discoverFeeds, getImage, fetchText, normaliseInput, hasCredentials, CREDENTIALS_MESSAGE, robotsAllow,
+  itemsPath, widgetItemsPath, verifyWidgetFeed, imagePath, signFeed, signImage, verifyFeed, verifyImage, screenPayload,
   FeedError, USER_AGENT, MODES, FRESH_MS, STALE_MAX_MS, ERROR_BACKOFF_MS, HOST_LIMIT, ITEMS_MAX,
   _reset, _age,
 };

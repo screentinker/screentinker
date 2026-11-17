@@ -68,18 +68,57 @@ object ImageLoader {
             return null
         }
         return try {
-            val bytes = URL(url).openConnection().apply {
+            val conn = URL(url).openConnection().apply {
                 connectTimeout = 10_000
                 readTimeout = 30_000
-            }.getInputStream().use { it.readBytes() }
+            }
+            // GHSA-rvxj 7.2: bounded, deadlined read (see readBounded). Content-Length is checked
+            // first so an honest oversized image is refused before a single body byte is buffered.
+            val declared = try { conn.getHeaderField("Content-Length")?.trim()?.toLongOrNull() ?: -1L } catch (_: Throwable) { -1L }
+            val deadline = System.currentTimeMillis() + MAX_REMOTE_IMAGE_MS
+            val bytes = conn.getInputStream().use {
+                readBounded(it, declared, MAX_REMOTE_IMAGE_BYTES, deadline) { System.currentTimeMillis() }
+            }
             decodeBytes(bytes, maxW, maxH)
         } catch (e: OutOfMemoryError) {
-            Log.e(TAG, "OOM downloading $url: ${e.message}")
+            Log.e(TAG, "OOM downloading ${LogUrl.redact(url)}: ${e.message}")
             null
         } catch (e: Throwable) {
-            Log.e(TAG, "Failed to download $url: ${e.message}")
+            Log.e(TAG, "Failed to download ${LogUrl.redact(url)}: ${e.message}")
             null
         }
+    }
+
+    /*
+     * ⚠️ A REMOTE IMAGE IS READ THROUGH A CAP AND A CLOCK, NEVER readBytes() (GHSA-rvxj 7.2).
+     *
+     * readBytes() buffers whatever the far end sends. A huge or endless response (a misconfigured
+     * third-party URL, a stream endpoint pasted as an image) grew the buffer until the heap ran out;
+     * the OOM was caught here but every other thread in the player was starved meanwhile. The 30 s
+     * readTimeout does not help: it resets on every byte, so a trickle never trips it.
+     *
+     * MAX_REMOTE_IMAGE_BYTES is far above any still a signage panel can show (a 12 MP decode is the
+     * MAX_DECODE_PIXELS ceiling; its PNG is ~35 MB worst case), and MAX_REMOTE_IMAGE_MS bounds the
+     * whole transfer. Either limit throws, which decodeUrl reports as an unloadable image.
+     */
+    internal const val MAX_REMOTE_IMAGE_BYTES = 48 * 1024 * 1024
+    internal const val MAX_REMOTE_IMAGE_MS = 60_000L
+
+    internal fun readBounded(input: java.io.InputStream, declaredLength: Long, maxBytes: Int,
+                             deadlineMs: Long, now: () -> Long): ByteArray {
+        if (declaredLength > maxBytes) throw java.io.IOException("image too large: Content-Length $declaredLength > $maxBytes")
+        val out = java.io.ByteArrayOutputStream(if (declaredLength in 1..maxBytes.toLong()) declaredLength.toInt() else 64 * 1024)
+        val buf = ByteArray(16 * 1024)
+        var total = 0
+        while (true) {
+            if (now() > deadlineMs) throw java.io.IOException("image download passed its deadline after $total bytes")
+            val n = input.read(buf)
+            if (n < 0) break
+            total += n
+            if (total > maxBytes) throw java.io.IOException("image too large: over $maxBytes bytes")
+            out.write(buf, 0, n)
+        }
+        return out.toByteArray()
     }
 
     // ExifInterface(InputStream) is API 24. Android 6 (API 23) only has the file-path constructor, so

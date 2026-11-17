@@ -4324,6 +4324,7 @@
             }
           }
           if (!currentOnScreen) return;   // nothing matching is showing; revs are set for the next rotation
+          const target = playlist[currentIndex];   // the item the patch is for; the fallback reloads only it
           const patchId = 'p' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
           let acked = false;
           const onMsg = (ev) => {
@@ -4335,7 +4336,11 @@
           frames.forEach((f) => { try { f.contentWindow && f.contentWindow.postMessage({ type: 'st-ds-patch', id: patchId, fields: data.fields }, '*'); } catch (_) {} });
           setTimeout(() => {
             window.removeEventListener('message', onMsg);
-            if (!acked) { try { playCurrentItem(); } catch (_) {} }
+            // Only if that item is STILL on screen: within 1.5s the slide may have advanced or a
+            // playlist-update replaced the list, and playCurrentItem() would restart whatever is
+            // showing now (resetting its dwell and logging a second play_start). renderContent is
+            // the flash-free in-place swap the rev-change path uses, with no play log.
+            if (!acked && playlist[currentIndex] === target) { try { renderContent(target); } catch (_) {} }
           }, 1500);
         } catch (e) { /* a patch must never take the player down; worst case the rev reload still runs */ }
       });
@@ -8697,6 +8702,10 @@
         if (watchdog) clearTimeout(watchdog);
         if (stale()) { abandon(); return; }
         mediaFailureSkip(video, 'video(buffered)', src);   // skip broken clip; hold prior frame
+        // Then release it (mediaFailureSkip reads video.error first). This element was never
+        // mounted, so teardown never clears its src, 'emptied' never fires and a cached clip's
+        // blob: URL (up to 128 MB) leaked on every rotation past an undecodable file.
+        abandon();
       });
       // Watchdog caps the wait so a cold/slow clip hard-cuts (mount+play) instead of the boundary
       // hanging. 800ms — deliberately shorter than renderImageBuffered's 3s: a video either

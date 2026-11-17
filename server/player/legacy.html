@@ -3812,6 +3812,7 @@ function connect(serverUrl) {
         }
       }
       if (!currentOnScreen) return;
+      const target = playlist[currentIndex];
       const patchId = "p" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
       let acked = false;
       const onMsg = (ev) => {
@@ -3828,9 +3829,9 @@ function connect(serverUrl) {
       });
       setTimeout(() => {
         window.removeEventListener("message", onMsg);
-        if (!acked) {
+        if (!acked && playlist[currentIndex] === target) {
           try {
-            playCurrentItem();
+            renderContent(target);
           } catch (_) {
           }
         }
@@ -7314,6 +7315,7 @@ function renderVideoBuffered(item) {
       return;
     }
     mediaFailureSkip(video, "video(buffered)", src);
+    abandon();
   });
   const armAndSet = (resolvedUrl, isBlob) => {
     if (done || stale()) {

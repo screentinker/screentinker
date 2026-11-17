@@ -190,6 +190,50 @@ function isMeshCommand(type) {
   return MESH_COMMANDS.includes(type);
 }
 
+/*
+ * ⚠️ WHAT ONLY A WORKSPACE'S ADMINS MAY SEND — remote code execution, remote software installation,
+ * and repointing the screen at another server (a complete takeover: whoever runs that server now
+ * owns the panel). These were write-tier, so every workspace_editor could run `sh -c` as the player
+ * app, and in a multi-tenant deployment a customer's editor is not someone the operator handed the
+ * hardware to. The players assume this gate exists: UpdateChecker.kt ("Gated to admins
+ * server-side") and PlayerCapabilities.kt (system.shell, "Gated server-side instead").
+ *
+ * The interactive terminal (lib/pty-relay.js) is `shell` with a keyboard and passes the same
+ * check — see canRunShell in ws/dashboardSocket.js.
+ */
+const ADMIN_ONLY_COMMANDS = Object.freeze(['shell', 'install_apk', 'set_server_url']);
+
+/**
+ * May this actor send an ADMIN_ONLY_COMMANDS type to this screen?
+ *
+ * Allowed: a system caller (no actor — the org-move handover, a timer), a platform admin (owner tier;
+ * platform_operator is deliberately NOT, as in canAdminWorkspace), an org owner/admin of the screen's
+ * organization, or a workspace_admin of its workspace. The rule is lib/permissions.js
+ * canAdminWorkspace, consulted rather than restated.
+ *
+ * ⚠️ An API token is judged by its OWNER's membership, never by its role: a token acts as its owner
+ * with role forced to 'user' (middleware/apiToken.js), so the actor's isPlatformAdmin is false and a
+ * platform admin's token reaches these only where the owner is also an org or workspace admin.
+ */
+function canRunAdminCommands(actor, device) {
+  if (!actor) return true;                       // system
+  if (actor.isPlatformAdmin) return true;
+  if (!actor.userId || !device || !device.id) return false;
+  try {
+    // Some callers hand over a partial row; the workspace is what decides, so read it when absent.
+    let wsId = device.workspace_id;
+    if (wsId === undefined) wsId = (db.prepare('SELECT workspace_id FROM devices WHERE id = ?').get(device.id) || {}).workspace_id;
+    if (!wsId) return false;                     // unclaimed: platform admins only (above)
+    const ws = db.prepare('SELECT id, organization_id FROM workspaces WHERE id = ?').get(wsId);
+    if (!ws) return false;
+    // role null: the platform tier was answered above from the actor, which already knows a token
+    // from a session. canAdminWorkspace would otherwise trust whatever role string it was handed.
+    return !!require('./permissions').canAdminWorkspace(db, { id: actor.userId, role: null }, ws);
+  } catch (_) {
+    return false;                                // fail closed
+  }
+}
+
 /**
  * Deliver one command, or say precisely why it did not go.
  *
@@ -217,7 +261,18 @@ function deliverCommand(deviceNs, device, type, payload, opts = {}) {
    * socket); otherwise the request's actor (AsyncLocalStorage). System callers have none.
    */
   const corpActor = opts.actor !== undefined ? opts.actor : require('./corporate/actor').current();
-  const corp = require('./corporate/guard').assertDeviceControl(corpActor, device, type, payload);
+
+  /*
+   * ⚠️ ADMIN-ONLY (shell, install_apk, set_server_url). HERE, beside the corporate rule and for the
+   * same reason: every door — the dashboard socket, POST /devices/:id/command, the group and
+   * workspace fan-outs — reaches a screen through this function, so one check covers them all.
+   * Refused before the corporate guard so its audit trail records only commands that could run.
+   */
+  if (ADMIN_ONLY_COMMANDS.includes(type) && !canRunAdminCommands(corpActor, device)) {
+    return { status: 'refused', code: 'ADMIN_ONLY_COMMAND', error: 'Only a workspace admin can send this command to a screen.' };
+  }
+
+  const corp =require('./corporate/guard').assertDeviceControl(corpActor, device, type, payload);
   if (!corp.ok) return { status: 'refused', code: corp.code, error: corp.error, corporate: corp.corporate };
   payload = corp.payload;
 
@@ -393,4 +448,4 @@ function validateCommand(type, payload) {
   return { ok: true };
 }
 
-module.exports = { ALLOWED_COMMANDS, MESH_COMMANDS, LOCAL_API_COMMANDS, WRITE_SCOPE_COMMANDS, commandScope, requireCommandScope, HTTP_METHODS, isMeshCommand, deliverCommand, validateCommand };
+module.exports = { ALLOWED_COMMANDS, MESH_COMMANDS, LOCAL_API_COMMANDS, WRITE_SCOPE_COMMANDS, ADMIN_ONLY_COMMANDS, commandScope, requireCommandScope, HTTP_METHODS, isMeshCommand, canRunAdminCommands, deliverCommand, validateCommand };

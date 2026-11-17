@@ -153,6 +153,8 @@ function render(device, telemetry) {
     localStorage: { getItem: () => null, setItem: () => {} },
     // Role gate (a workspace viewer sees no Reload Player). Overridable per render for that test.
     canEditWorkspace: () => render.canEdit !== false,
+    // Admin-only tools (Terminal tab, Change server URL). Overridable per render, like canEdit.
+    canUseAdminTools: () => render.adminTools !== false,
     Math, Date, JSON, String, Array, Object,
   };
   return vm.runInNewContext('`' + template + '`', sandbox);
@@ -689,6 +691,25 @@ test('the Terminal tab did not move for Android or appear for a browser', () => 
   assert.equal(has(owner, 'ptyHost'), false, 'Android declares no system.pty');
   assert.equal(render({ ...ANDROID_FULL, tier: 0 }).includes('data-tab="terminal"'), false, 'tier 0 without system.shell: none');
   assert.equal(render(WEB).includes('data-tab="terminal"'), false, 'a browser tab: none');
+});
+
+test('the Terminal tab and Change server URL are for workspace admins only', () => {
+  // GHSA (A): the server refuses shell / install_apk / set_server_url to anyone but a workspace
+  // admin, an org admin or a platform admin (lib/device-command.js ADMIN_ONLY_COMMANDS). An editor
+  // must not be offered the tab or the button that would only ever answer "forbidden".
+  const withUrl = { ...PI, capabilities: [...PI.capabilities, 'remote.set_server_url'] };
+  const admin = render(withUrl);
+  assert.ok(admin.includes('data-tab="terminal"') && has(admin, 'tab-terminal'), 'an admin keeps the Terminal tab');
+  assert.ok(has(admin, 'setServerUrlBtn'), 'and Change server URL');
+  render.adminTools = false;
+  try {
+    const editor = render(withUrl);
+    assert.equal(editor.includes('data-tab="terminal"'), false, 'no Terminal tab for an editor');
+    for (const id of ['tab-terminal', 'termCmd', 'ptyHost', 'apkUrl', 'apkInstall', 'setServerUrlBtn']) {
+      assert.equal(has(editor, id), false, `${id} hidden from an editor`);
+    }
+    assert.ok(has(editor, 't2Reboot'), 'the everyday controls stay');
+  } finally { render.adminTools = true; }
 });
 
 test('a Pi declaring system.kiosk gets kiosk lock/unlock and the power menu', () => {

@@ -13,6 +13,7 @@
  * address (lib/news-feed itemsPath / imagePath), so they serve feeds and pictures some widget was
  * rendered with, never an arbitrary URL:
  *   GET /items?m=&u=&s=   the items, from the shared cache
+ *   GET /items?w=&s=      the same for a saved news widget, by its id (the feed stays server-side)
  *   GET /image?u=&s=      an item's picture, fetched and cached by this server
  */
 
@@ -79,11 +80,36 @@ function publicHeaders(res) {
   res.setHeader('Referrer-Policy', 'no-referrer');
 }
 
+/*
+ * GHSA-rvxj 13.1: ?w=<widget id> (lib/news-feed widgetItemsPath) — a saved news widget's page names
+ * the widget, and the feed is read from its LIVE config here, the config its /render page was drawn
+ * from, so the feed address (and any key in its query string) never reaches the public page.
+ * Returns { u, m } or null.
+ */
+function widgetFeed(widgetId) {
+  try {
+    const { db } = require('../db/database');
+    const w = db.prepare('SELECT widget_type, config FROM widgets WHERE id = ?').get(widgetId);
+    if (!w || w.widget_type !== 'rss') return null;
+    const c = JSON.parse(w.config || '{}') || {};
+    const u = typeof c.feed_url === 'string' ? c.feed_url.trim().slice(0, 2000) : '';
+    return u ? { u, m: c.feed_mode === 'page' ? 'page' : 'feed' } : null;
+  } catch (_) { return null; }
+}
+
 async function itemsHandler(req, res) {
   publicHeaders(res);
-  const u = String(req.query.u || '');
-  const m = String(req.query.m || 'feed');
-  if (!news.verifyFeed(u, m, String(req.query.s || ''))) {
+  let u = String(req.query.u || '');
+  let m = String(req.query.m || 'feed');
+  if (req.query.w !== undefined) {
+    const id = String(req.query.w || '');
+    const feed = news.verifyWidgetFeed(id, String(req.query.s || '')) ? widgetFeed(id) : null;
+    if (!feed) {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(403).json({ error: 'This feed is not signed by this server', items: [] });
+    }
+    ({ u, m } = feed);
+  } else if (!news.verifyFeed(u, m, String(req.query.s || ''))) {
     res.setHeader('Cache-Control', 'no-store');
     return res.status(403).json({ error: 'This feed address is not signed by this server', items: [] });
   }

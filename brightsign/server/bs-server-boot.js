@@ -505,9 +505,83 @@ function stConfig() {
 }
 
 const ST_CFG = stConfig();
+
+/*
+ * ⚠️ NO payloadUrl SET? THEN THE BOX'S OWN SERVER, NOT OURS (GHSA-rvxj 1.1 note).
+ *
+ * The built-in default is alpha.screentinker.com, which is right for our boxes. A self-hosted box
+ * that was put into server mode without anyone setting payloadUrl used to take its server code from
+ * us, silently — not what an operator who runs their own CMS expects. If the device has been told
+ * which ScreenTinker server it belongs to (st-config.json serverUrl, or the player's own
+ * screentinker.json server_url on the same storage root), the payload comes from that server's
+ * /scripts/server-payload.zip, which is where server/server.js publishes it.
+ *
+ * Ignored, falling back to the default, when it names a screentinker.com host (our own boxes keep
+ * exactly the behaviour they had), or loopback / one of this box's own addresses (a player that was
+ * turned into the site's server may still carry a screentinker.json pointing at ITSELF, and a box
+ * cannot be its own update source — it has no payload to serve until it has installed one). An
+ * explicit payloadUrl or ST_PAYLOAD_URL always wins over all of this.
+ */
+function ownAddresses() {
+  const out = new Set();
+  try {
+    for (const addrs of Object.values(os.networkInterfaces())) {
+      for (const a of addrs || []) if (a && a.address) out.add(String(a.address).toLowerCase());
+    }
+  } catch (e) { /* none known: only loopback is excluded */ }
+  return out;
+}
+
+function configuredServerUrl() {
+  const candidates = [ST_CFG.serverUrl, ST_CFG.server_url];
+  for (const dir of [__dirname, path.dirname(__dirname)]) {
+    try {
+      const f = path.join(dir, 'screentinker.json');
+      if (fs.existsSync(f)) candidates.push((JSON.parse(fs.readFileSync(f, 'utf8')) || {}).server_url);
+    } catch (e) { /* a malformed player config must never stop a boot */ }
+  }
+  for (const c of candidates) {
+    if (typeof c !== 'string' || !c.trim()) continue;
+    try {
+      const u = new URL(c.trim());
+      if (u.protocol !== 'https:' && u.protocol !== 'http:') continue;
+      const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+      if (h === 'screentinker.com' || h.endsWith('.screentinker.com')) continue;
+      if (h === 'localhost' || h === '::1' || /^127\./.test(h) || ownAddresses().has(h)) continue;
+      return u.origin + u.pathname.replace(/\/+$/, '');
+    } catch (e) { /* not a URL: try the next one */ }
+  }
+  return null;
+}
+
+const DEFAULT_PAYLOAD_URL = 'https://alpha.screentinker.com/scripts/server-payload.zip';
+const CONFIGURED_SERVER = configuredServerUrl();
 const PAYLOAD_URL = process.env.ST_PAYLOAD_URL || ST_CFG.payloadUrl
-  || 'https://alpha.screentinker.com/scripts/server-payload.zip';
+  || (CONFIGURED_SERVER ? CONFIGURED_SERVER + '/scripts/server-payload.zip' : DEFAULT_PAYLOAD_URL);
 const MANIFEST_URL = String(PAYLOAD_URL).replace(/\.zip$/, '.json');
+// The operator's explicit acceptance of a plain-http payload URL to a public host (see
+// urlRefusal in bs-payload-install.js). Off unless literally true.
+const ALLOW_INSECURE_PAYLOAD = ST_CFG.allowInsecurePayloadUrl === true;
+// console.log, so it reaches the serial console as well as the ring (the wrapper feeds both).
+console.log('[update] server payload source: ' + shownUrl(PAYLOAD_URL) +
+  (process.env.ST_PAYLOAD_URL ? ' (ST_PAYLOAD_URL)' : ST_CFG.payloadUrl ? ' (st-config.json payloadUrl)'
+    : CONFIGURED_SERVER ? ' (this box\'s configured server)' : ' (built-in default — set payloadUrl in st-config.json to use your own server)'));
+
+/*
+ * The URL policy and redaction live in the installer so the manifest and the archive are judged by
+ * the SAME rules — a manifest fetched over a channel the archive would be refused on is worthless.
+ * Loaded lazily and defensively: this file must never fail to boot because of it.
+ */
+function installerHelpers() {
+  try { return require(path.join(__dirname, 'bs-payload-install.js')); } catch (e) { return null; }
+}
+function shownUrl(u) {
+  const h = installerHelpers();
+  if (h && h.redactUrl) return h.redactUrl(u);
+  return String(u || '').replace(/\/\/[^/@]*@/, '//***@').replace(/[?#].*$/, '?…');
+}
+// A checksum we can actually compare against: 64 hex characters, nothing else.
+function validSha(v) { return typeof v === 'string' && /^[0-9a-f]{64}$/i.test(v.trim()); }
 // Set "autoUpdate": false to pin a box to what it has. Absent means updates are on.
 const AUTO_UPDATE = ST_CFG.autoUpdate !== false && ST_CFG.autoUpdate !== 0;
 
@@ -590,12 +664,27 @@ function differs(manifest, have, haveSha) {
  * reach an update server is a far worse outcome than one running last month's build, and it is the
  * failure an operator cannot fix remotely.
  */
-function fetchManifest(cb, url, redirectsLeft) {
+function fetchManifest(cb, url, redirectsLeft, from) {
   const target = url || MANIFEST_URL;
   const hops = redirectsLeft === undefined ? 5 : redirectsLeft;
   let done = false;
   const finish = (v) => { if (!done) { done = true; cb(v); } };
   try {
+    /*
+     * ⚠️ SAME URL RULES AS THE DOWNLOAD (GHSA-rvxj 1.2). The manifest carries the checksum the
+     * archive is verified against; fetched over plain http from a public host, or via an
+     * https -> http redirect, whoever is on the path writes both. Refusing reads as "no manifest",
+     * which is already the fail-safe branch: the installed server starts unchanged.
+     */
+    const h = installerHelpers();
+    const policy = { allowInsecure: ALLOW_INSECURE_PAYLOAD };
+    const refused = !h || !h.urlRefusal ? 'URL policy unavailable (installer missing)'
+      : (from ? h.redirectRefusal(from, target, policy) : h.urlRefusal(target, policy));
+    if (refused) {
+      // console, not remember(): the wrapper feeds the ring AND the serial console sees it.
+      console.warn('[update] not fetching the manifest ' + shownUrl(target) + ': ' + refused);
+      return finish(null);
+    }
     const mod = target.indexOf('https:') === 0 ? require('https') : require('http');
     const req = mod.get(target, (res) => {
       /*
@@ -608,7 +697,7 @@ function fetchManifest(cb, url, redirectsLeft) {
         res.resume();
         if (hops <= 0) return finish(null);
         try {
-          return fetchManifest(cb, new URL(res.headers.location, target).toString(), hops - 1);
+          return fetchManifest(cb, new URL(res.headers.location, target).toString(), hops - 1, target);
         } catch (e) { return finish(null); }
       }
       if (res.statusCode !== 200) { res.resume(); return finish(null); }
@@ -630,9 +719,11 @@ function fetchManifest(cb, url, redirectsLeft) {
 
 function runInstall(manifest) {
   const payloadUrl = PAYLOAD_URL;
-  installState = { phase: 'starting', detail: payloadUrl, pct: null };
+  // ⚠️ Redacted for display (GHSA-rvxj 15.1): installState and the ring are served, unauthenticated,
+  // by the loopback status listener. The real URL goes only to the installer.
+  installState = { phase: 'starting', detail: shownUrl(payloadUrl), pct: null };
   remember('log', [(manifest ? 'updating to ' + manifest.version : 'server payload not installed') +
-                   ' — fetching ' + payloadUrl]);
+                   ' — fetching ' + shownUrl(payloadUrl)]);
 
   let installer;
   try {
@@ -647,7 +738,10 @@ function runInstall(manifest) {
     url: payloadUrl,
     installDir: __dirname,
     // Present only when a manifest was read; the installer treats absence as "cannot verify".
-    expectSha256: manifest && typeof manifest.sha256 === 'string' ? manifest.sha256 : null,
+    expectSha256: manifest && validSha(manifest.sha256) ? manifest.sha256.trim().toLowerCase() : null,
+    // ⚠️ Something to lose means nothing unverified goes in over it (GHSA-rvxj 1.1).
+    requireChecksum: fs.existsSync(SERVER_ENTRY),
+    allowInsecureUrl: ALLOW_INSECURE_PAYLOAD,
     onState: (st) => {
       installState = st;
       /*
@@ -729,6 +823,13 @@ function checkForUpdate() {
     // Same reasoning as the boot path: "nothing new" and "could not ask" take the same branch,
     // because the only safe reading of an unanswerable question is to change nothing.
     if (!m || !differs(m, installedVersion(), installedSha())) return;
+    if (!validSha(m.sha256)) {
+      // The boot path would refuse to install it over this server (GHSA-rvxj 1.1), so a reboot
+      // would buy nothing but an outage.
+      console.error('[update] payload ' + m.version + ' published WITHOUT a valid sha256 — not ' +
+                    'installing an unverified payload over a working server');
+      return;
+    }
 
     const key = payloadKey(m);
     const prev = readAttempt();
@@ -786,6 +887,18 @@ if (fs.existsSync(SERVER_ENTRY) && !AUTO_UPDATE) {
       installState = { phase: 'installed', detail: 'already present (' + (have || '?') + ')', pct: 100 };
       return startServer();
     }
+    /*
+     * ⚠️ NEVER REPLACE A WORKING SERVER WITH SOMETHING WE CANNOT CHECK (GHSA-rvxj 1.1). A manifest
+     * with no usable sha256 gives the installer nothing to verify the archive against. The box
+     * loses nothing by staying put; the installer refuses too (requireChecksum), this just keeps
+     * it from downloading 80MB to find that out.
+     */
+    if (!validSha(m.sha256)) {
+      remember('error', ['payload ' + m.version + ' published without a valid sha256 — not ' +
+                         'installing it over the working server']);
+      installState = { phase: 'installed', detail: 'already present (' + (have || '?') + ')', pct: 100 };
+      return startServer();
+    }
     remember('log', ['payload ' + m.version + ' published, have ' + (have || 'none')]);
     runInstall(m);
   });
@@ -807,7 +920,11 @@ if (fs.existsSync(SERVER_ENTRY) && !AUTO_UPDATE) {
   installState = { phase: 'checking', detail: 'fetching the payload manifest', pct: null };
   fetchManifest((m) => {
     if (!m) {
-      remember('log', ['no manifest at ' + MANIFEST_URL +
+      remember('log', ['no manifest at ' + shownUrl(MANIFEST_URL) +
+                       ' — installing without a checksum to verify against']);
+      unverifiedInstall = true;
+    } else if (!validSha(m.sha256)) {
+      remember('log', ['manifest at ' + shownUrl(MANIFEST_URL) + ' has no valid sha256' +
                        ' — installing without a checksum to verify against']);
       unverifiedInstall = true;
     }

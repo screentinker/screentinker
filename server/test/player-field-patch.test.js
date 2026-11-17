@@ -31,7 +31,10 @@ test('adopts the new rev on matching items so the follow-up playlist-update is a
 test('patches the live iframe(s) and reloads only when nothing acks', () => {
   assert.match(handler, /postMessage\(\{ type: 'st-ds-patch'/, 'posts the patch to the slide agent');
   assert.match(handler, /st-ds-patch-ack/, 'listens for the agent ack');
-  assert.match(handler, /if \(!acked\) \{ try \{ playCurrentItem\(\)/, 'falls back to a reload when no slide confirmed the patch');
+  assert.match(handler, /if \(!acked && playlist\[currentIndex\] === target\) \{ try \{ renderContent\(target\)/,
+    'falls back to an in-place reload of the PATCHED item only, when no slide confirmed the patch');
+  assert.doesNotMatch(handler, /try \{ playCurrentItem\(\)/,
+    'playCurrentItem would restart whatever is on screen 1.5s later and log a second play_start');
 });
 
 test('does nothing visible when the matching widget is not currently on screen', () => {

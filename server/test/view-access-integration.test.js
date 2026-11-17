@@ -177,7 +177,7 @@ test('the token is scoped: not a device token, not an API token, not an enrolmen
     const r = await bearer(m, u, b);
     assert.ok(r.status === 401 || r.status === 403, `${m} ${u} answered ${r.status} to a view token`);
   }
-  const shot = await fetch(`${BASE}/api/devices/${dev.id}/screenshot?token=${token}`);
+  const shot = await fetch(`${BASE}/api/devices/${dev.id}/screenshot`, { headers: { Authorization: `Bearer ${token}` } });
   assert.ok(shot.status === 401 || shot.status === 403, 'no screenshots');
   assert.equal(db.prepare('SELECT name FROM devices WHERE id = ?').get(dev.id).name, 'Scoped', 'nothing was written');
 

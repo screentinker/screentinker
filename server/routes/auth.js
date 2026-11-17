@@ -1078,6 +1078,33 @@ router.post('/switch-workspace', requireAuth, (req, res) => {
 // Update current user
 router.put('/me', requireAuth, (req, res) => {
   const { name, password, current_password, email_alerts, ui_mode, onboarded } = req.body;
+  /*
+   * ⚠️ A password change is checked IN FULL before anything else in this request is written.
+   * The preference and name updates below used to run first, so a request with a wrong
+   * current_password was refused with 401 and had still changed the account.
+   */
+  if (password) {
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    const row = db.prepare('SELECT password_hash, auth_provider FROM users WHERE id = ?').get(req.user.id);
+    if (!row) return res.status(404).json({ error: 'User not found' });
+    if (row.auth_provider !== 'local') {
+      return res.status(400).json({ error: `Your account signs in via ${row.auth_provider}. Manage your password there.` });
+    }
+    if (row.password_hash) {
+      /*
+       * GHSA-rvxj 12.1: the same per-account lockout as login and account deletion. ⚠️ WHY: a
+       * stolen session could otherwise guess current_password here without limit and, on a hit,
+       * set a new one: a session theft turned into an account takeover. Checked BEFORE bcrypt, so
+       * a locked account says nothing about whether the guess was right (see the login comment).
+       */
+      if (loginLockout.isLocked(req.user.id)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+      if (!current_password || !bcrypt.compareSync(current_password, row.password_hash)) {
+        loginLockout.recordFailure(req.user.id);
+        return res.status(401).json({ error: 'Current password is incorrect' });
+      }
+      loginLockout.reset(req.user.id);
+    }
+  }
   // 3.0 preferences. Validated narrowly: anything else is ignored, not stored.
   if (ui_mode === 'simple' || ui_mode === 'advanced' || (ui_mode === 'broadcast' && config.selfHosted)) {
     db.prepare("UPDATE users SET ui_mode = ?, updated_at = strftime('%s','now') WHERE id = ?").run(ui_mode, req.user.id);
@@ -1104,17 +1131,6 @@ router.put('/me', requireAuth, (req, res) => {
       .run(email_alerts ? 1 : 0, req.user.id);
   }
   if (password) {
-    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
-    const row = db.prepare('SELECT password_hash, auth_provider FROM users WHERE id = ?').get(req.user.id);
-    if (!row) return res.status(404).json({ error: 'User not found' });
-    if (row.auth_provider !== 'local') {
-      return res.status(400).json({ error: `Your account signs in via ${row.auth_provider}. Manage your password there.` });
-    }
-    if (row.password_hash) {
-      if (!current_password || !bcrypt.compareSync(current_password, row.password_hash)) {
-        return res.status(401).json({ error: 'Current password is incorrect' });
-      }
-    }
     const hash = bcrypt.hashSync(password, 10);
     // #10: a successful password change clears must_change_password, releasing
     // the first-login change-password gate.

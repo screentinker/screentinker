@@ -37,6 +37,11 @@ const PACKAGE_FILES = ['autozip.brs', 'autorun.brs', 'offline.html', 'screentink
 // holding a ~73KB buffer per entry, is a memory-growth primitive.
 const MAX_CACHED_PACKAGES = 8;
 const cache = new Map();   // serverUrl|'' -> { version, sha256, size, buffer }
+// GHSA-rvxj 7.5: builds in progress, by the same key. ⚠️ WHY: the package routes are public (a
+// player fetches before it has an identity), and before this every request that arrived during a
+// cold build started its own zip; a burst after start-up built the package once per request.
+// Concurrent misses now await the one build. Entries go when it settles, success or not.
+const inflight = new Map(); // serverUrl|'' -> Promise<package|null>
 
 /*
  * The URL to stamp, from the request that asked for the package.
@@ -165,6 +170,14 @@ async function getPackage(serverUrl) {
   const key = serverUrl || '';
   const hit = cache.get(key);
   if (hit) return hit;
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const p = buildPackage(key, serverUrl).finally(() => inflight.delete(key));
+  inflight.set(key, p);
+  return p;
+}
+
+async function buildPackage(key, serverUrl) {
   const version = readVersion();
   if (!version) return null;
   try {
@@ -205,6 +218,6 @@ function available() {
 // and the player's own update check can never advertise different numbers.
 function version() { return readVersion(); }
 
-function _reset() { cache.clear(); }
+function _reset() { cache.clear(); inflight.clear(); }
 
 module.exports = { getPackage, packageServerUrl, available, version, _reset, PACKAGE_FILES };

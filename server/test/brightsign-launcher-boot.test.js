@@ -32,6 +32,8 @@ function box({ config, version = '2.0.0-alpha1', sha = null } = {}) {
   fs.writeFileSync(path.join(dir, 'VERSION'), version + '\n');
   if (sha) fs.writeFileSync(path.join(dir, '.payload-sha256'), sha);
   fs.copyFileSync(LAUNCHER, path.join(dir, 'bs-server-boot.js'));
+  // Beside it, as on a real box: the launcher takes its URL policy from the installer.
+  fs.copyFileSync(path.join(path.dirname(LAUNCHER), 'bs-payload-install.js'), path.join(dir, 'bs-payload-install.js'));
   fs.writeFileSync(path.join(dir, 'st-config.json'), JSON.stringify(config || { server: 1 }));
   return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }

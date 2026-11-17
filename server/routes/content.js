@@ -862,6 +862,17 @@ function contentWritable(req, content) {
   return true;
 }
 
+// GHSA-rvxj 9.1: in a workspace that requires review, deleting content a published playlist plays is
+// a change to live playback, made with no reviewer: purgeContentRow scrubs it out of the published
+// copies and pushes the screens. So only someone who could approve it (a reviewer or a workspace
+// admin, release-policy.mayChangeLiveUnreviewed) may; an editor removes it from the playlist and
+// publishes that through review. Returns the refusal message, or null. ⚠️ Callers ask BEFORE any
+// side effect: the batch route asks for every id before it deletes one.
+function liveDeleteRefusal(req, content) {
+  if (!content) return null;
+  return require('../lib/release-policy').liveDeleteRefusal(db, { workspaceId: content.workspace_id, kind: 'content', id: content.id, label: content.filename, user: req.user });
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // #213: shared single-row teardown used by DELETE /:id and POST /batch/delete. Removes the
@@ -1004,6 +1015,8 @@ router.post('/batch/delete', (req, res) => {
     const content = db.prepare('SELECT * FROM content WHERE id = ?').get(id);
     if (!content) return res.status(404).json({ error: `Content not found: ${id}` });
     if (!contentWritable(req, content)) return res.status(403).json({ error: `Access denied for content: ${id}` });
+    const refusal = liveDeleteRefusal(req, content);
+    if (refusal) return res.status(403).json({ error: refusal, code: 'review_required', id });
     rows.push(content);
   }
 
@@ -1521,6 +1534,8 @@ router.delete('/:id', (req, res) => {
   if (!content) return;
   // Validate UUID format to prevent LIKE wildcard injection in the snapshot scrub.
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Invalid content ID format' });
+  const refusal = liveDeleteRefusal(req, content);
+  if (refusal) return res.status(403).json({ error: refusal, code: 'review_required' });
 
   // #213: shared teardown (file removal + snapshot scrub + row delete). Returns the affected
   // device ids so we can push a refresh.

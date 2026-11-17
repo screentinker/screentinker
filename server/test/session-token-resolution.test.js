@@ -142,36 +142,43 @@ before(async () => {
 after(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } });
 
 // ---------------------------------------------------------------------------
-// 1. GET /api/status/backup  (?token=)  - full database download
+// 1. GET /api/status/backup  (Authorization header only — GHSA-rvxj D)
 // ---------------------------------------------------------------------------
 test('status/backup: pre-TOTP token refused, full admin session accepted, recovery refused', async () => {
-  const mfa = await jfetch(`/api/status/backup?token=${encodeURIComponent(S.mfaToken)}`);
+  const mfa = await jfetch('/api/status/backup', auth(S.mfaToken));
   assert.equal(mfa.status, 401, 'pre-TOTP token must not reach the database backup');
   assert.equal(mfa.body.error, 'mfa_required');
 
   // Happy path returns the DB file itself, so consume it rather than parsing JSON.
-  const ok = await fetch(`${BASE}/api/status/backup?token=${encodeURIComponent(S.adminToken)}`);
+  const ok = await fetch(`${BASE}/api/status/backup`, auth(S.adminToken));
   await ok.arrayBuffer();
   assert.equal(ok.status, 200, 'a full platform-admin session still downloads the backup');
 
-  const rec = await jfetch(`/api/status/backup?token=${encodeURIComponent(S.recoveryToken)}`);
+  const rec = await jfetch('/api/status/backup', auth(S.recoveryToken));
   assert.equal(rec.status, 403, 'recovery identity is not a platform admin here (unchanged)');
+
+  // ⚠️ GHSA-rvxj (D): a session in the URL lands in proxy logs and history. The query form is gone.
+  const q = await jfetch(`/api/status/backup?token=${encodeURIComponent(S.adminToken)}`);
+  assert.equal(q.status, 401, 'a ?token= query must no longer authenticate the database download');
 });
 
 // ---------------------------------------------------------------------------
-// 2. GET /api/status/export  (?token=)
+// 2. GET /api/status/export  (Authorization header, or a single-use ticket)
 // ---------------------------------------------------------------------------
 test('status/export: pre-TOTP token refused, full session accepted, recovery refused', async () => {
-  const mfa = await jfetch(`/api/status/export?token=${encodeURIComponent(S.mfaToken)}`);
+  const mfa = await jfetch('/api/status/export', auth(S.mfaToken));
   assert.equal(mfa.status, 401, 'pre-TOTP token must not export account data');
   assert.equal(mfa.body.error, 'mfa_required');
 
-  const ok = await jfetch(`/api/status/export?token=${encodeURIComponent(S.adminToken)}`);
+  const ok = await jfetch('/api/status/export', auth(S.adminToken));
   assert.equal(ok.status, 200, 'a full session still exports');
 
-  const rec = await jfetch(`/api/status/export?token=${encodeURIComponent(S.recoveryToken)}`);
+  const rec = await jfetch('/api/status/export', auth(S.recoveryToken));
   assert.equal(rec.status, 404, 'recovery identity has no users row (unchanged)');
 });
+
+// The ?token= refusal and the single-use ticket are in export-ticket.test.js (own server, so the
+// 5-per-minute export limit does not run out here).
 
 // ---------------------------------------------------------------------------
 // 3. POST /api/status/import  (Authorization header)
@@ -191,25 +198,25 @@ test('status/import: pre-TOTP token refused, full session reaches the handler, r
 });
 
 // ---------------------------------------------------------------------------
-// 4. GET /api/devices/:id/screenshot  (?token= and header)
+// 4. GET /api/devices/:id/screenshot  (Authorization header only — GHSA-rvxj D)
 // ---------------------------------------------------------------------------
 test('screenshot: pre-TOTP token refused before the device lookup; full session gets past auth', async () => {
   const id = crypto.randomUUID();
-  const mfa = await jfetch(`/api/devices/${id}/screenshot?token=${encodeURIComponent(S.mfaToken)}`);
+  const mfa = await jfetch(`/api/devices/${id}/screenshot`, auth(S.mfaToken));
   assert.equal(mfa.status, 401, 'pre-TOTP token must not read device screenshots');
   assert.equal(mfa.body.error, 'mfa_required');
 
   // No device exists, so 404 "Device not found" is the proof that auth was accepted and
   // the handler moved on to its (deliberately untouched) ownership logic.
-  const ok = await jfetch(`/api/devices/${id}/screenshot?token=${encodeURIComponent(S.adminToken)}`);
+  const ok = await jfetch(`/api/devices/${id}/screenshot`, auth(S.adminToken));
   assert.equal(ok.status, 404, 'a full session clears auth and reaches the device lookup');
 
-  const rec = await jfetch(`/api/devices/${id}/screenshot?token=${encodeURIComponent(S.recoveryToken)}`);
+  const rec = await jfetch(`/api/devices/${id}/screenshot`, auth(S.recoveryToken));
   assert.equal(rec.status, 401, 'recovery identity has no users row (unchanged)');
 
-  // Same outcome via the Authorization header, not just the query parameter.
-  const hdr = await jfetch(`/api/devices/${id}/screenshot`, auth(S.mfaToken));
-  assert.equal(hdr.status, 401, 'header path refuses the pre-TOTP token too');
+  // ⚠️ GHSA-rvxj (D): the full session JWT used to ride in the <img src>. The query form is gone.
+  const q = await jfetch(`/api/devices/${id}/screenshot?token=${encodeURIComponent(S.adminToken)}`);
+  assert.equal(q.status, 401, 'a ?token= query must no longer authenticate a screenshot');
 });
 
 // ---------------------------------------------------------------------------

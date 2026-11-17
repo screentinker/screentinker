@@ -617,11 +617,16 @@ export async function render(container) {
     document.getElementById('deleteAccountCard')?.scrollIntoView({ block: 'start' });
   }
 
-  document.getElementById('exportDataBtn')?.addEventListener('click', () => {
+  document.getElementById('exportDataBtn')?.addEventListener('click', async () => {
     const includeFiles = document.getElementById('exportIncludeFiles')?.checked;
-    const token = localStorage.getItem('token');
-    const url = `/api/status/export?token=${token}${includeFiles ? '&include_files=true' : ''}`;
-    window.location.href = url;
+    // GHSA-rvxj: never the session token in the URL. A single-use, 60-second ticket fetched with the
+    // header; the browser then downloads straight to disk (no blob held in memory).
+    try {
+      const { ticket } = await api.post('/status/export-ticket', {});
+      window.location.href = `/api/status/export?ticket=${encodeURIComponent(ticket)}${includeFiles ? '&include_files=true' : ''}`;
+    } catch (err) {
+      showToast(err.message || String(err), 'error');
+    }
   });
 
   // Import data handler

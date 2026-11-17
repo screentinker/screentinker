@@ -79,6 +79,13 @@ function device(name, cols = {}) {
 
 const view = (id) => db.prepare('SELECT playlist_id, source, layout_id FROM device_resolved_playlist WHERE device_id = ?').get(id);
 const payload = (id) => setupDeviceSocket.buildPlaylistPayloadUnchecked(id);
+// ⚠️ Fields added to the payload ON PURPOSE since the baseline, removed from today's side before the
+// byte comparison so everything else is still compared exactly. Each one names why it exists.
+//   wall_config.leader_device_id — GHSA-rvxj 3.7: a wall follower ignores a sync not stamped by its leader.
+const withoutAdditions = (p) => {
+  if (p && p.wall_config && typeof p.wall_config === 'object') { const { leader_device_id, ...w } = p.wall_config; return { ...p, wall_config: w }; }
+  return p;
+};
 
 before(() => {
   f = fixture.build(db);
@@ -99,7 +106,7 @@ test('NULL layout: every fixture screen gets a byte-identical payload from the p
   // A schedule column written, so the schedule tier of the view is exercised too.
   db.prepare('UPDATE devices SET scheduled_playlist_id = ? WHERE id = ?').run(f.playlists.Promo, f.devices.tie);
   try {
-    const now = Object.fromEntries(ids.map((id) => [id, JSON.stringify(payload(id))]));
+    const now = Object.fromEntries(ids.map((id) => [id, JSON.stringify(withoutAdditions(payload(id)))]));
     const nowView = Object.fromEntries(ids.map((id) => [id, JSON.stringify(view(id))]));
     // Swap in the BASE views, build with the BASE builder, then put today's back.
     const old = base['lib/playlist-resolver-sql.js'];

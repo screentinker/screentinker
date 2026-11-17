@@ -217,6 +217,25 @@ router.post('/move-workspace', (req, res) => {
   }
   const budget = moveLib.bringBudget(db, v);
   if (budget) return res.status(budget.status).json({ error: budget.error, code: budget.code });
+  // One free trial per screen applies to a MOVE as it does to pairing (lib/trial-screens.js
+  // checkTrialMove): otherwise re-used screens paired in a scratch workspace could be moved into
+  // the shared one, where the per-workspace count never saw them. Hosted only, like pairing; a
+  // fault skips the check rather than blocking a move.
+  if (!config.selfHosted) {
+    let refused = null;
+    try {
+      refused = require('../lib/trial-screens').checkTrialMove(db, { devices, toWorkspaceId: target.id,
+        ownerFor: (d) => (v.crossOrg ? v.ownerId : d.user_id) });
+      if (refused.allowed) refused = null;
+    } catch (e) { console.warn(`[trial-screens] move check skipped: ${e && e.message}`); }
+    if (refused) {
+      console.warn(`[trial-screens] refused move of ${refused.deviceId} into ${target.id}: screen used by an earlier unpaid trial (${refused.priorUserId}, ${refused.reused} re-used)`);
+      return res.status(403).json({
+        error: 'One of these screens has already been used with a free trial on another account. Choose a plan to add it to this workspace.',
+        code: 'TRIAL_SCREEN_USED', device_id: refused.deviceId,
+      });
+    }
+  }
   const sim = corpGuard.guarded(req, res, () => moveLib.simulate(db, req, devices, target, moveOpts(v)));
   if (!sim) return;
   const impact = moveImpact(sim);
@@ -1212,7 +1231,10 @@ router.post('/:id/trigger-config', requireScope('full'), (req, res) => {
       http_port: updated.trigger_http_port,
       udp_port: updated.trigger_udp_port,
       multicast_group: updated.trigger_multicast_group,
-      clear_all_token: updated.trigger_clear_all_token,
+      // GHSA-rvxj (B): the clear-all token is a trigger credential, withheld from API tokens on every
+      // path like the secret. A dashboard session still reads it back (the trigger panel shows it).
+      clear_all_token: req.viaToken ? undefined : updated.trigger_clear_all_token,
+      clear_all_token_set: !!updated.trigger_clear_all_token,
       // ⚠️ Deliberately NOT the secret. It is written and read back only through the dedicated
       // rotate route below, and never leaves the server to an API token at all.
       secret_set: !!updated.trigger_secret,
@@ -1447,14 +1469,50 @@ router.post('/:id/settings-pin', (req, res) => {
  * is gated for the mirror reason — it is the vMix display's only way back, and taking it away is a
  * denial of service on a screen the token was never given control of.
  */
+/*
+ * GHSA-rvxj 5.2: re-issue the device token of every screen that redeemed the current key (the
+ * display and its mirrors), then drop their live sockets so the holder of the old token is cut off
+ * now rather than at its next reconnect. A legitimate web player given the new URL presents the new
+ * key and is handed the new token by the same exchange; one still on the old URL is told the key is
+ * unknown (enrol_key_unknown) or that its stored token is invalid, which is what "New URL" promises.
+ */
+function revokeEnrolHolders(req, deviceId) {
+  const revoked = enrolKey.revokeRedeemedCredentials(db, deviceId);
+  if (!revoked.length) return revoked;
+  try {
+    const io = req.app.get('io');
+    if (io) for (const id of revoked) io.of('/device').in(id).disconnectSockets(true);
+  } catch (e) { console.warn(`[enrol] disconnect after revoke failed for ${deviceId}: ${e.message}`); }
+  return revoked;
+}
+
+/*
+ * ⚠️ AND NEVER FROM AN API TOKEN, even a full-scope one (GHSA-rvxj 2.3).
+ *
+ * This route hands back the raw key and the player URL, i.e. a transferable "be this screen"
+ * credential for an EXISTING display — one a human may have paired and configured, which the token
+ * never created. lib/device-sanitize.js withholds enrol_key from every token read for exactly that
+ * reason; this was the one route that still returned it. #827 deliberately lets a full token CREATE
+ * a web player (POST /api/devices/web-player) and get that new display's URL once, at creation — a
+ * provisioning flow for a screen the integration itself brings into being. Re-fetching or rolling an
+ * existing screen's credential is a dashboard action. Refused before the device lookup, so it does
+ * not confirm which ids exist. Revoking (DELETE below) hands nothing out and stays available.
+ */
 router.post('/:id/enrol-key', requireScope('full'), (req, res) => {
+  if (req.viaToken) {
+    return res.status(403).json({
+      error: 'An API token cannot mint or roll a display link for an existing screen. Use the dashboard, or create a new web player with POST /api/devices/web-player.',
+      code: 'ENROL_KEY_DASHBOARD_ONLY',
+    });
+  }
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
   // 3.0 mirrors: a link always names the ORIGINAL; a mirror is what a second opening of it becomes.
   if (device.mirror_of) return res.status(409).json({ error: 'This screen is a mirror. Its display link is the original display’s link: open the original to see or replace it.', code: 'MIRROR' });
+  const revoked = revokeEnrolHolders(req, req.params.id);
   const key = enrolKey.setEnrolKey(db, req.params.id);
   const rolled = !!device.enrol_key;
-  console.warn(`[enrol] ${rolled ? 'rolled' : 'minted'} enrolment key for device ${req.params.id} (user ${req.user.id})`);
+  console.warn(`[enrol] ${rolled ? 'rolled' : 'minted'} enrolment key for device ${req.params.id} (user ${req.user.id})${revoked.length ? `; re-issued the token of ${revoked.length} screen(s) that had redeemed the old one` : ''}`);
   res.json({
     success: true,
     id: req.params.id,
@@ -1463,6 +1521,8 @@ router.post('/:id/enrol-key', requireScope('full'), (req, res) => {
     // Built from the request's own origin so it is right on a LAN address, a tunnel or a domain,
     // without the operator having to know which one this instance answers on.
     player_url: enrolKey.playerUrl(`${req.protocol}://${req.get('host')}`, key),
+    // GHSA-rvxj 2.2: said, not refused — LAN installs over HTTP are supported.
+    ...(enrolKey.cleartextWarning(req) ? { warning: enrolKey.cleartextWarning(req) } : {}),
   });
 });
 
@@ -1471,8 +1531,9 @@ router.post('/:id/enrol-key', requireScope('full'), (req, res) => {
 router.delete('/:id/enrol-key', requireScope('full'), (req, res) => {
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
+  const revoked = revokeEnrolHolders(req, req.params.id);
   enrolKey.clearEnrolKey(db, req.params.id);
-  console.warn(`[enrol] revoked enrolment key for device ${req.params.id} (user ${req.user.id})`);
+  console.warn(`[enrol] revoked enrolment key for device ${req.params.id} (user ${req.user.id})${revoked.length ? `; re-issued the token of ${revoked.length} screen(s) that had redeemed it` : ''}`);
   res.json({ success: true, id: req.params.id, enrol_key: null });
 });
 

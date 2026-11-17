@@ -226,3 +226,16 @@ test('BOTH routes derive the stamped URL the same way, or the manifest lies abou
   assert.ok(fromRequest >= 2,
     `the manifest and download routes must both derive from the request; found ${fromRequest}`);
 });
+
+test('GHSA-rvxj 7.5: concurrent cold misses share one build', async () => {
+  // The package routes are public. Every request arriving during a cold build used to start its
+  // own zip; now they all await the one in flight, so they get the very same package object.
+  pkgLib._reset();
+  const all = await Promise.all(Array.from({ length: 6 }, () => pkgLib.getPackage('https://burst.example')));
+  assert.ok(all[0], 'built');
+  for (const p of all) assert.strictEqual(p, all[0], 'one build, shared');
+  // And once it settles the cache answers, and a later miss for another key still builds.
+  assert.strictEqual(await pkgLib.getPackage('https://burst.example'), all[0]);
+  const other = await pkgLib.getPackage('https://other.example');
+  assert.ok(other && other !== all[0]);
+});

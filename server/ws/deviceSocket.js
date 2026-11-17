@@ -314,6 +314,16 @@ function emitToDeviceWorkspace(dashboardNs, deviceId, event, payload) {
   emitToWorkspace(dashboardNs, deviceRoom(deviceId), event, payload);
 }
 
+/*
+ * ⚠️ dashboard:shell-result and dashboard:device-log are NOT workspace broadcasts: they go only to
+ * the sockets that could have run the shell themselves (ws/dashboardSocket.js emitToShellUsers —
+ * see there for why). Required lazily: dashboardSocket requires this module.
+ */
+function emitToShellUsers(dashboardNs, deviceId, event, payload) {
+  if (!dashboardNs) return;
+  require('./dashboardSocket').emitToShellUsers(dashboardNs, deviceId, event, payload);
+}
+
 // In-memory store for latest screenshot per device (avoids disk writes during streaming)
 let lastScreenshots = {};
 
@@ -1169,6 +1179,9 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
         screen_rect: screenRect,
         player_rect: playerRect,
         is_leader: wall.leader_device_id === deviceId,
+        // The leader's id, so a follower can check the server-stamped sender of a wall:sync against
+        // it (the server already refuses a sync from anyone else). Additive: is_leader stays.
+        leader_device_id: wall.leader_device_id || null,
         // #236: how far this panel's own image has to be turned to come out upright on the wall.
         // Normalised here so a junk column value can never reach a player and stand one panel of a
         // live wall on its side — a bad rotation degrades to "as drawn", not to "sideways".
@@ -1359,9 +1372,18 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
           } else {
             const inputRevision = crypto.createHash('sha256').update(JSON.stringify(inputs)).digest('hex');
             const publicationRevision = offlineStateRevision(row.workspace_id);
+            /*
+             * ⚠️ The payloads carry stamped file_urls, and on object storage those are presigned
+             * (lib/storage/locations.js presignStable: stable for a window of TTL/3, valid ~1h at
+             * most). With no time in the key a hit could hand out URLs signed hours ago, so a plan's
+             * future states pointed at dead links. Bucket on the SAME window presignStable signs on:
+             * a hit is then byte-identical to a fresh build, and a new window rebuilds.
+             */
+            const presignWindowSec = Math.max(60, Math.floor(require('../lib/storage').presignTtl() / 3));
+            const presignBucket = Math.floor(Date.now() / 1000 / presignWindowSec);
             const stateRows = [];
             for (const [stateKey, schedule] of requestedStates) {
-              const cacheKey = `${planKey}|${inputRevision}|${publicationRevision}|${stateKey}`;
+              const cacheKey = `${planKey}|${inputRevision}|${publicationRevision}|${presignBucket}|${stateKey}`;
               stateRows.push(cachedOfflineState(cacheKey, () => {
                 const resolved = simulator.resolveFromInputs(inputs, schedule
                   ? { playlist_id: schedule.playlist_id || null, layout_id: schedule.layout_id || null }
@@ -2116,7 +2138,7 @@ const EVENT_APPLIERS = Object.freeze({
   'shell-result'(deviceId, data, ctx) {
     const { device_id, cmd, output, exit } = data || {};
     if (!device_id || device_id !== deviceId) return;
-    emitToDeviceWorkspace(_dashboardNsRef, device_id, 'dashboard:shell-result', {
+    emitToShellUsers(_dashboardNsRef, device_id, 'dashboard:shell-result', {
       device_id, cmd: String(cmd || '').slice(0, 500), output: String(output || '').slice(0, 8000), exit,
     });
   },
@@ -2154,7 +2176,7 @@ const EVENT_APPLIERS = Object.freeze({
   'log'(deviceId, data, ctx) {
     const message = typeof data?.message === 'string' ? data.message.slice(0, 2000) : '';
     if (!message) return;
-    emitToDeviceWorkspace(_dashboardNsRef, deviceId, 'dashboard:device-log', {
+    emitToShellUsers(_dashboardNsRef, deviceId, 'dashboard:device-log', {
       device_id: deviceId,
       tag: typeof data?.tag === 'string' ? data.tag.slice(0, 64) : '',
       level: typeof data?.level === 'string' ? data.level.slice(0, 8) : 'd',
@@ -2974,7 +2996,9 @@ module.exports = function setupDeviceSocket(io) {
        *     instruction and the key is a 256-bit credential for exactly that display, so this is no
        *     more than the same player would get by clearing its storage first;
        *   - the key names NOTHING: it is ignored and the stored identity decides, so a working
-       *     screen still holding an old link after a key roll keeps working.
+       *     screen still holding an old link after a key roll keeps working — unless that screen
+       *     got its token THROUGH the link, in which case the roll re-issued the token (GHSA-rvxj
+       *     5.2, lib/enrol-key.js) and it needs the new URL like any other holder of the old one.
        */
       const presentedKey = data.enrol_key;
       const resolvedKey = presentedKey && device_id ? enrolKey.resolveEnrolKey(db, presentedKey) : null;
@@ -3066,6 +3090,9 @@ module.exports = function setupDeviceSocket(io) {
             device_id = m.mirror.id;
             device_token = m.mirror.device_token;
           }
+          // GHSA-rvxj 5.2: this row's token is about to go to the key holder, so a later roll or
+          // clear of the key must re-issue it (lib/enrol-key.js revokeRedeemedCredentials).
+          enrolKey.markRedeemed(db, device_id);
         }
       }
 
@@ -3122,7 +3149,16 @@ module.exports = function setupDeviceSocket(io) {
         // a matching STORED token (false for missing/mismatch), so a spoofed device_id can't
         // claim the exemption — an attacker without the real token is still quarantinable.
         const paired = !!device_id && validateDeviceToken(device_id, device_token);
-        const fv = flapLimiter.check(ident.key, Date.now(), { paired });
+        /*
+         * ⚠️ Only a caller that PROVED it is the device may spend that device's bucket. Device ids
+         * are not secret (the update check takes one unauthenticated), so counting tokenless
+         * registers that merely NAME a device against 'd:<id>' let anyone trip its cooldown on a
+         * loop and keep the real, paired panel offline — the #148 exemption waives only the
+         * quarantine, not the cooldown. Unproven attempts get their own bucket instead, so a
+         * spoofer throttles itself and nobody else.
+         */
+        const flapKey = (!paired && ident.key.startsWith('d:')) ? 'u' + ident.key : ident.key;
+        const fv = flapLimiter.check(flapKey, Date.now(), { paired });
         if (!fv.allow) {
           // #146 P0: auto-quarantine is IN-MEMORY + TIME-LIMITED (lib/flap-limiter),
           // never a DB block — a stuck-then-recovered device self-heals. The
@@ -3131,7 +3167,7 @@ module.exports = function setupDeviceSocket(io) {
           if (fv.quarantined) {
             console.warn(`[flap] quarantined ${ident.deviceId || ident.key} for ${Math.round(config.connectRateQuarantineMs / 60000)}m after ${fv.trips} trips`);
           } else {
-            logCoalescer.record(`flap-refused:${ident.key}`, `[flap] refused ${ident.kind} ${ident.deviceId || ident.key} reason=${fv.reason}`);
+            logCoalescer.record(`flap-refused:${flapKey}`, `[flap] refused ${ident.kind} ${ident.deviceId || flapKey} reason=${fv.reason}`);
           }
           socket.emit('device:throttled', { retry_after_ms: fv.retryAfterMs, reason: 'connect_rate' });
           process.nextTick(() => { try { socket.disconnect(true); } catch (_) { /* */ } });
@@ -3306,7 +3342,9 @@ module.exports = function setupDeviceSocket(io) {
                 // 60-second sweep overwrites it. Do this before flushing too: a queued
                 // playlist marker is rebuilt at flush time and must see the reconciled rows.
                 // noPush avoids a duplicate socket update.
-                if (capsLib.supports(existing, 'offline.schedule_plan')) {
+                // `existing` is the device_fingerprints row — no capabilities/platform, so it always read as the
+                // web baseline and this reconcile never ran. Ask the devices row.
+                if (capsLib.supports(db.prepare('SELECT * FROM devices WHERE id = ?').get(existing.device_id), 'offline.schedule_plan')) {
                   require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
                 }
                 // Flush any commands/playlist-updates queued while this device was offline.
@@ -3355,7 +3393,9 @@ module.exports = function setupDeviceSocket(io) {
                   emitToDeviceWorkspace(dashboardNs, existing.device_id, 'dashboard:device-status', { device_id: existing.device_id, status: 'online', liveness: heartbeat.livenessFor(existing.device_id) });
                   // This branch is normally unpaired, but may retain a schedule after an
                   // interrupted claim. Make its first payload deterministic as well.
-                  if (capsLib.supports(existing, 'offline.schedule_plan')) {
+                  // `existing` is the device_fingerprints row — no capabilities/platform, so it always read as the
+                // web baseline and this reconcile never ran. Ask the devices row.
+                if (capsLib.supports(db.prepare('SELECT * FROM devices WHERE id = ?').get(existing.device_id), 'offline.schedule_plan')) {
                     require('../services/scheduler').evaluateSchedules(io, undefined, { skipReboots: true, deviceId: existing.device_id, noPush: true });
                   }
                   // Flush any commands/playlist-updates queued while this device was offline.
@@ -3712,8 +3752,8 @@ module.exports = function setupDeviceSocket(io) {
       }
       if (kind === 'playback-state') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:playback-state', { ...(data || {}), device_id: deviceId });
       if (kind === 'content-ack') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:content-ack', { device_id: deviceId, content_id: data && data.content_id, status: data && data.status });
-      if (kind === 'shell-result') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:shell-result', { device_id: deviceId, cmd: String((data && data.cmd) || '').slice(0, 500), output: String((data && data.output) || '').slice(0, 8000), exit: data && data.exit });
-      if (kind === 'log') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:device-log', { device_id: deviceId, tag: String((data && data.tag) || '').slice(0, 64), level: String((data && data.level) || 'd').slice(0, 8), message: String((data && data.message) || '').slice(0, 2000), ts: Date.now() });
+      if (kind === 'shell-result') return emitToShellUsers(dashboardNs, deviceId, 'dashboard:shell-result', { device_id: deviceId, cmd: String((data && data.cmd) || '').slice(0, 500), output: String((data && data.output) || '').slice(0, 8000), exit: data && data.exit });
+      if (kind === 'log') return emitToShellUsers(dashboardNs, deviceId, 'dashboard:device-log', { device_id: deviceId, tag: String((data && data.tag) || '').slice(0, 64), level: String((data && data.level) || 'd').slice(0, 8), message: String((data && data.message) || '').slice(0, 2000), ts: Date.now() });
       if (kind === 'screenshot' && data && data.image_b64) return ingestScreenshot(deviceId, data.image_b64);
       if (kind === 'play-event' && data && data.event === 'play_start') {
         return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:playback-progress', {
@@ -3886,6 +3926,14 @@ module.exports = function setupDeviceSocket(io) {
         'SELECT 1 FROM video_wall_devices WHERE wall_id = ? AND device_id = ?'
       ).get(data.wall_id, currentDeviceId);
       if (!isMember) return;
+      /*
+       * ⚠️ ONLY THE LEADER SETS THE WALL'S POSITION. Membership alone let any panel of the wall —
+       * one whose device token leaked, say — broadcast its own index and position, and every
+       * follower jumped to it. Players only send when wall_config.is_leader, so a real wall loses
+       * nothing; the sync-request handler below already looks the leader up the same way.
+       */
+      const leader = db.prepare('SELECT leader_device_id FROM video_walls WHERE id = ?').get(data.wall_id);
+      if (!leader || leader.leader_device_id !== currentDeviceId) return;
       const wallDevices = db.prepare(
         'SELECT device_id FROM video_wall_devices WHERE wall_id = ? AND device_id != ?'
       ).all(data.wall_id, currentDeviceId);

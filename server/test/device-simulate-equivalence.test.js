@@ -98,6 +98,13 @@ const viewRow = (id) => {
   return { playlist_id: r.playlist_id ?? null, source: r.source ?? null, layout_id: r.layout_id ?? null };
 };
 const json = (x) => JSON.parse(JSON.stringify(x));
+// ⚠️ Fields added to the payload ON PURPOSE since the baseline, removed from today's side before the
+// byte comparison so everything else is still compared exactly. Each one names why it exists.
+//   wall_config.leader_device_id — GHSA-rvxj 3.7: a wall follower ignores a sync not stamped by its leader.
+const withoutAdditions = (p) => {
+  if (p && p.wall_config && typeof p.wall_config === 'object') { const { leader_device_id, ...w } = p.wall_config; return { ...p, wall_config: w }; }
+  return p;
+};
 
 /*
  * The instants: every schedule edge in the fixture on both sides of the US (Mar 8) and EU (Mar 29)
@@ -141,7 +148,7 @@ test('OLD vs NEW: the scheduler writes, and every screen is sent, exactly what i
     scheduler.evaluateSchedules(fakeIo, new Date(at));
     assert.deepEqual(scheduledCols(), oldCols, `scheduler columns differ at ${new Date(at).toISOString()}`);
     for (const id of deviceIds()) {
-      assert.deepEqual(json(setupDeviceSocket.buildPlaylistPayloadUnchecked(id)), oldPayloads[id],
+      assert.deepEqual(withoutAdditions(json(setupDeviceSocket.buildPlaylistPayloadUnchecked(id))), oldPayloads[id],
         `live payload of ${id} differs from the baseline at ${new Date(at).toISOString()}`);
       compared++;
     }
