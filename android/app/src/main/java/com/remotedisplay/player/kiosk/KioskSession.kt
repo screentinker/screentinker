@@ -29,6 +29,7 @@ import android.webkit.WebViewDatabase
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.remotedisplay.player.util.DebugLog
+import com.remotedisplay.player.util.LogUrl
 import com.remotedisplay.player.util.WebViewRetryPolicy
 import org.json.JSONArray
 import org.json.JSONObject
@@ -113,7 +114,7 @@ class KioskSession(
 
         val ua = try { WebSettings.getDefaultUserAgent(activity) } catch (_: Throwable) { null }
         if (WebViewVersion.tooOld(ua, cfg.minWebView)) {
-            DebugLog.w(TAG, "WebView too old for ${cfg.url} (ua=$ua, need ${cfg.minWebView}) — showing card")
+            DebugLog.w(TAG, "WebView too old for ${LogUrl.redact(cfg.url)} (ua=$ua, need ${cfg.minWebView}) — showing card")
             report("webview_too_old", cfg.url, "Chrome ${WebViewVersion.chromeMajor(ua) ?: "?"}, page needs ${cfg.minWebView}")
             showCard(CARD_TOO_OLD)
             return
@@ -199,7 +200,7 @@ class KioskSession(
             isClickable = true
             setOnClickListener {
                 onActivity(touch = true)
-                DebugLog.i(TAG, "home button — back to ${cfg.url}")
+                DebugLog.i(TAG, "home button — back to ${LogUrl.redact(cfg.url)}")
                 webView?.loadUrl(cfg.url)
             }
             container.addView(this, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -234,7 +235,7 @@ class KioskSession(
         wv.isLongClickable = false
         wv.isHapticFeedbackEnabled = false
         wv.setOnLongClickListener { true }        // no long-press menu, no text-selection handles
-        wv.setDownloadListener { url, _, _, _, _ -> DebugLog.w(TAG, "download blocked: $url") }
+        wv.setDownloadListener { url, _, _, _, _ -> DebugLog.w(TAG, "download blocked: ${LogUrl.redact(url)}") }
         wv.setOnTouchListener { _, ev ->
             if (ev.actionMasked == MotionEvent.ACTION_DOWN) onActivity(touch = true)
             false                                  // never consume: the page gets every touch
@@ -256,7 +257,7 @@ class KioskSession(
         container.addView(f, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         frame = f
         webView = wv
-        DebugLog.i(TAG, "interactive page: ${cfg.url} (idle ${cfg.idleTimeoutSec}s, domains ${cfg.allowedDomains}, zoom ${cfg.zoomPct}%" +
+        DebugLog.i(TAG, "interactive page: ${LogUrl.redact(cfg.url)} (idle ${cfg.idleTimeoutSec}s, domains ${cfg.allowedDomains}, zoom ${cfg.zoomPct}%" +
             (if (cfg.keepConsent) ", keeps consent cookies" else "") + (if (!cfg.wipeSiteData) ", keeps site data" else "") + ")")
         wv.loadUrl(cfg.url)
         handler.post(tickRunnable)
@@ -405,7 +406,7 @@ class KioskSession(
             // Top-level only: subframes and subresources are not filtered, or most shops break.
             if (request != null && !request.isForMainFrame) return false
             if (KioskNav.isAllowed(url, cfg.allowedDomains)) return false
-            DebugLog.w(TAG, "navigation blocked: $url")
+            DebugLog.w(TAG, "navigation blocked: ${LogUrl.redact(url)}")
             return true
         }
 
@@ -420,7 +421,7 @@ class KioskSession(
         }
 
         override fun onPageFinished(view: WebView?, url: String?) {
-            DebugLog.i(TAG, "page loaded: $url")
+            DebugLog.i(TAG, "page loaded: ${LogUrl.redact(url)}")
             // onPageFinished also fires for Chrome's error page; only a clean load counts.
             if (!failedThisLoad) {
                 if (retryAttempt > 0) DebugLog.i(TAG, "interactive page recovered after $retryAttempt retry(s)")

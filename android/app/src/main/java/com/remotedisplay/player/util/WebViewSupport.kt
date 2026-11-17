@@ -98,7 +98,7 @@ object WebViewSupport {
             if (!reloadDocument && !WebViewRetryPolicy.isRetryableUrl(url)) return
             retryAttempt += 1
             val delay = WebViewRetryPolicy.delayMsFor(retryAttempt)
-            DebugLog.w(tag, "load failed ($why) — retry #$retryAttempt in ${delay}ms url=$url")
+            DebugLog.w(tag, "load failed ($why) — retry #$retryAttempt in ${delay}ms url=${LogUrl.redact(url)}")
             cancelRetry(view)
             val r = Runnable {
                 pendingRetry = null
@@ -136,7 +136,7 @@ object WebViewSupport {
                 // Not for the YouTube wrapper (see below): it "finishes" even while its embed fails.
                 val wrapper = url?.startsWith(EMBED_BASE) == true
                 if (WebViewRetryPolicy.isRetryableUrl(url) && retryAttempt > 0 && !wrapper && !failedThisLoad) {
-                    DebugLog.i(tag, "load recovered after $retryAttempt retry(s) url=$url")
+                    DebugLog.i(tag, "load recovered after $retryAttempt retry(s) url=${LogUrl.redact(url)}")
                 }
                 // Nor is the backoff reset for it: resetting here would pin an offline embed to the
                 // 2s first retry forever. Its reset waits for the settled success below.
@@ -175,7 +175,7 @@ object WebViewSupport {
                 // one subframe, a failure is the item failing.
                 val embed = !request.isForMainFrame && isYoutubeEmbed(request.url?.toString())
                 if (!request.isForMainFrame && !embed) return
-                DebugLog.e(tag, "WebView load error $code ${error?.description} url=${request.url}${if (embed) " (embed)" else ""}")
+                DebugLog.e(tag, "WebView load error $code ${error?.description} url=${LogUrl.redact(request.url?.toString())}${if (embed) " (embed)" else ""}")
                 if (WebViewRetryPolicy.shouldRetryError(code)) {
                     markFailed(view)
                     scheduleRetry(view, request.url?.toString(), "error $code", reloadDocument = embed)
@@ -185,7 +185,7 @@ object WebViewSupport {
             override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
                 if (request?.isForMainFrame != true) return
                 val status = errorResponse?.statusCode ?: 0
-                DebugLog.e(tag, "WebView HTTP $status url=${request.url}")
+                DebugLog.e(tag, "WebView HTTP $status url=${LogUrl.redact(request.url?.toString())}")
                 if (WebViewRetryPolicy.shouldRetryHttp(status)) {
                     // A 502/503 here is a gateway or a server that is not up: as broken to a viewer
                     // as no network at all, so hidden the same way.
@@ -197,7 +197,7 @@ object WebViewSupport {
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(msg: ConsoleMessage?): Boolean {
                 if (msg?.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
-                    DebugLog.w(tag, "JS error: ${msg.message()} @${msg.sourceId()}:${msg.lineNumber()}")
+                    DebugLog.w(tag, "JS error: ${msg.message()} @${LogUrl.redact(msg.sourceId())}:${msg.lineNumber()}")
                 }
                 return super.onConsoleMessage(msg)
             }

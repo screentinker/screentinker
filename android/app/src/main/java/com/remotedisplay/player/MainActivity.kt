@@ -976,7 +976,10 @@ class MainActivity : AppCompatActivity() {
             screen = rect("screen_rect"),
             player = rect("player_rect"),
             isLeader = wc.optBoolean("is_leader", false),
-            rotation = wc.optInt("rotation", 0)
+            rotation = wc.optInt("rotation", 0),
+            // GHSA-rvxj 3.7: absent on servers that do not send it; see WallController.acceptsSyncFrom.
+            leaderDeviceId = if (wc.isNull("leader_device_id")) null
+                             else wc.optString("leader_device_id", "").ifEmpty { null }
         )
     }
 
