@@ -1,5 +1,73 @@
 # Changelog
 
+## 3.2.4
+
+### ⚠️ Security
+
+Upgrade if people outside your own team can edit kiosks, widgets or schedules, and on any hosted or
+multi-tenant install.
+
+- **Kiosk "page" buttons could run `javascript:` on the dashboard's origin** (GHSA-g46x-g9mc-g2hp,
+  reported by bigcrushes; GHSA-c3qc-939f-j4f4, reported by orshih6). Any kiosk editor could store a
+  button that ran with a visitor's dashboard session when tapped. The render only follows http(s)
+  or same-server paths (including pages saved before the fix), the API refuses other schemes
+  (`KIOSK_BAD_ADDRESS`), and the render is a sandboxed null origin.
+- **The widget sandbox opt-out could expose other tenants' sessions on a shared server** (found in
+  an internal review). It is now self-hosted only: hosted orgs that had turned isolation off are
+  isolated again, and a text widget never renders same-origin, whatever the setting.
+- **Fingerprint reclaim could take over another tenant's offline screen** with a shared per-model
+  fingerprint. Only per-install (salted) fingerprints reclaim a claimed screen, and the removed-screens
+  list no longer returns raw fingerprints (re-adopt uses an opaque reference).
+- **A valid decoy code reset the pairing-code lockout.** A successful pair now forgives one failed
+  guess, and failures expire after the lockout window.
+- **Editors could publish without review:** changing a schedule's content and editing a live kiosk
+  page now go through approval like creating them, and kiosk edits honour the head-office lock.
+- **The admin-only playlist lock (#714)** is enforced on the assignment, reorder, copy-to and
+  revision-restore paths, not only in the playlist editor.
+- **`http_request`, `kiosk_unlock`, `unblock_uninstall`, `status_bar`, `set_time`, `update` and Wi-Fi
+  changes are admin-only**, like `shell` in 3.2.3, and `http_request` results go only to people who
+  may run commands (viewers received them).
+- **A local `docker build` copied live databases, backups and secrets into the image:** `.dockerignore`
+  now matches them anywhere in the tree. Release images were not affected.
+
+### ⚠️ Behaviour changes
+
+- Editors no longer get Kiosk off, Force update / Update firmware or Wi-Fi edits; workspace admins do.
+- On hosted, the widget isolation switch is gone; an org that had it off is isolated again.
+- A web player with no storage (private mode, kiosk browsers that wipe storage) re-pairs after a
+  reload instead of reclaiming its old screen.
+- With approval required, changing a scheduled playlist's content or a live kiosk page waits for a
+  reviewer (`approval_pending: true` / `review_required`).
+- Android: turning off a wall mute restores the item's sound straight away.
+
+### Fixed
+
+- **Stability:** an error in the heartbeat tick (a busy SQLite, one bad device row) no longer exits the
+  server; one connection entry per socket, and stale entries are reaped, so a flood of unpaired
+  connections can't grow memory and usage rows forever.
+- **Roku and Tizen unpaired after an outage:** heartbeats queued while the server was down reached
+  it before register, and the "register first" reply wiped the pairing. The server marks that reply
+  retryable, both players keep their identity, and Roku drops stale heartbeats.
+- **Android:**
+  - reconnects wait out a server throttle instead of retrying in 3 s (#314);
+  - a WebView renderer crash no longer kills the app;
+  - muted content stays muted across triggers, talk sessions and wall mutes;
+  - zone WebViews are destroyed when replaced;
+  - a failed silent update install falls back to the install prompt;
+  - the offline plan is parsed and saved off the main thread, and only when it changes.
+- **Web player:**
+  - a YouTube item no longer stalls the playlist when the YouTube API or embed can't load;
+  - a slow image can no longer replace newer content such as an emergency alert;
+  - a play that started offline and ended online no longer produces a fake proof-of-play record with
+    the wrong content and hours of duration.
+- **webOS:** a failed or interrupted self-update is retried (5 h back-off, 4 attempts per version)
+  instead of being skipped for good.
+- **Schedules:** a recurring 24-hour window (00:00 to 00:00, or 09:00 to 09:00) now plays all day, as
+  the calendar shows it.
+- **Guides:** the tutorial videos for slides, QR codes, social feeds, widgets, kiosk, data sources,
+  triggers, emergency alerts, alerts, automation, head office, content requests and reports are
+  embedded in their guide pages.
+
 ## 3.2.3
 
 ### ⚠️ Security (GHSA-rvxj-33gm-crwp, reported by bold-media-group)
