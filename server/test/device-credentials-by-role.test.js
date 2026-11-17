@@ -34,7 +34,8 @@ const ioClient = require('../node_modules/socket.io-client');
 
 const { freePort } = require('./helpers/free-port');
 
-const CREDS = ['settings_pin', 'trigger_secret', 'local_api_secret', 'enrol_key'];
+// GHSA-rvxj (B): trigger_clear_all_token joined the four — it was the one trigger credential left out.
+const CREDS = ['settings_pin', 'trigger_secret', 'local_api_secret', 'enrol_key', 'trigger_clear_all_token'];
 const PW = 'Passw0rd123';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -74,11 +75,11 @@ async function member(role) {
 function claimedDevice() {
   const id = crypto.randomUUID();
   db.prepare(`INSERT INTO devices (id, name, status, workspace_id, user_id, device_token, client_type, created_at,
-                                   settings_pin, trigger_secret, local_api_secret, enrol_key)
-              VALUES (?, 'Lobby', 'offline', ?, ?, ?, 'apk', strftime('%s','now'), '424242', ?, ?, ?)`)
+                                   settings_pin, trigger_secret, local_api_secret, enrol_key, trigger_clear_all_token)
+              VALUES (?, 'Lobby', 'offline', ?, ?, ?, 'apk', strftime('%s','now'), '424242', ?, ?, ?, ?)`)
     .run(id, U.admin.wsId, U.admin.userId, crypto.randomBytes(32).toString('hex'),
       'trig-' + crypto.randomBytes(8).toString('hex'), 'lapi-' + crypto.randomBytes(8).toString('hex'),
-      crypto.randomBytes(20).toString('hex'));
+      crypto.randomBytes(20).toString('hex'), 'CLR-' + crypto.randomBytes(4).toString('hex'));
   return id;
 }
 
@@ -88,9 +89,9 @@ function unclaimedDevice() {
   const now = Math.floor(Date.now() / 1000);
   // A screen that was reset and re-registered can still carry these from its last life.
   db.prepare(`INSERT INTO devices (id, pairing_code, status, app_version, created_at, last_heartbeat,
-                                   trigger_secret, local_api_secret, enrol_key)
-              VALUES (?, ?, 'provisioning', '1.1.0-web', ?, ?, ?, ?, ?)`)
-    .run(id, code, now, now, 'trig-old', 'lapi-old', crypto.randomBytes(20).toString('hex'));
+                                   trigger_secret, local_api_secret, enrol_key, trigger_clear_all_token)
+              VALUES (?, ?, 'provisioning', '1.1.0-web', ?, ?, ?, ?, ?, ?)`)
+    .run(id, code, now, now, 'trig-old', 'lapi-old', crypto.randomBytes(20).toString('hex'), 'CLR-old');
   return { id, code };
 }
 
@@ -174,4 +175,18 @@ test('every broadcast of a device row goes through the list sanitiser', () => {
         `${f}:${i + 1} broadcasts a device row that did not pass through stripDeviceSecretsForList`);
     });
   }
+});
+
+/*
+ * ⚠️ GHSA-rvxj (B): a viewer is not sent the credentials, so the detail page cannot tell "not set"
+ * from "hidden" for them. It used to guess "not set" ("no web player link", "triggers cannot fire"),
+ * which is false whenever they exist. It must say they are hidden instead.
+ */
+test('the device page tells a viewer the credentials are hidden, not missing', () => {
+  const view = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'views', 'device-detail.js'), 'utf8');
+  const en = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'i18n', 'en.js'), 'utf8');
+  assert.match(en, /'device\.creds_hidden':/);
+  assert.ok(!/t\('device\.enrol\.none'\)/.test(view), 'a viewer must not be told there is no web player link');
+  assert.match(view, /credsHidden \? esc\(t\('device\.creds_hidden'\)\) : t\('device\.trigcfg\.secret_unset'\)/,
+    'the trigger secret must read "hidden" for a viewer, not "not set"');
 });

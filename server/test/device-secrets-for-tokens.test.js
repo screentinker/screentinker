@@ -34,12 +34,15 @@ const row = () => ({
   settings_pin: '123456',
   trigger_secret: 'shhh',
   enrol_key: 'kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk',
+  trigger_clear_all_token: 'ALLSTOP',
 });
 
 test('an API token gets neither remote credential', () => {
   const out = S.stripSecretsForTokens(row(), true);
   assert.equal(out.trigger_secret, undefined, 'the trigger secret escalates read into control');
   assert.equal(out.enrol_key, undefined, 'the enrolment key lets the holder become the display');
+  // GHSA-rvxj (B): the clear-all token is a trigger credential too, and was the one left behind.
+  assert.equal(out.trigger_clear_all_token, undefined, 'the clear-all token travels with the trigger secret');
   // ...and it is not a blanket wipe: the token still gets a usable device.
   assert.equal(out.id, 'd1');
   assert.equal(out.name, 'Lobby');
@@ -49,13 +52,22 @@ test('a dashboard session keeps both, because the operator screens are the only 
   const out = S.stripSecretsForTokens(row(), false);
   assert.equal(out.trigger_secret, 'shhh', 'a human configuring a panel has to read it somewhere');
   assert.equal(out.enrol_key.length, 40, 'the operator has to read the player URL to paste it into vMix');
+  assert.equal(out.trigger_clear_all_token, 'ALLSTOP', 'the trigger panel shows it to the operator');
 });
 
 test('the list drops every secret with a single consumer, for every caller', () => {
   const out = S.stripDeviceSecretsForList(row());
-  for (const k of ['device_token', 'settings_pin', 'trigger_secret', 'enrol_key']) {
+  for (const k of ['device_token', 'settings_pin', 'trigger_secret', 'enrol_key', 'trigger_clear_all_token']) {
     assert.equal(out[k], undefined, `${k} must not ride on the collection endpoint`);
   }
+});
+
+test('a read-only member gets no trigger credential, the clear-all token included', () => {
+  const out = S.stripSecretsForReadOnly(row(), true);
+  for (const k of ['settings_pin', 'trigger_secret', 'enrol_key', 'trigger_clear_all_token']) {
+    assert.equal(out[k], undefined, `a viewer must not receive ${k}`);
+  }
+  assert.equal(S.stripSecretsForReadOnly(row(), false).trigger_clear_all_token, 'ALLSTOP', 'editors keep it');
 });
 
 test('device_token leaves on every path, session or token', () => {
