@@ -1212,7 +1212,10 @@ router.post('/:id/trigger-config', requireScope('full'), (req, res) => {
       http_port: updated.trigger_http_port,
       udp_port: updated.trigger_udp_port,
       multicast_group: updated.trigger_multicast_group,
-      clear_all_token: updated.trigger_clear_all_token,
+      // GHSA-rvxj (B): the clear-all token is a trigger credential, withheld from API tokens on every
+      // path like the secret. A dashboard session still reads it back (the trigger panel shows it).
+      clear_all_token: req.viaToken ? undefined : updated.trigger_clear_all_token,
+      clear_all_token_set: !!updated.trigger_clear_all_token,
       // ⚠️ Deliberately NOT the secret. It is written and read back only through the dedicated
       // rotate route below, and never leaves the server to an API token at all.
       secret_set: !!updated.trigger_secret,
@@ -1447,7 +1450,25 @@ router.post('/:id/settings-pin', (req, res) => {
  * is gated for the mirror reason — it is the vMix display's only way back, and taking it away is a
  * denial of service on a screen the token was never given control of.
  */
+/*
+ * ⚠️ AND NEVER FROM AN API TOKEN, even a full-scope one (GHSA-rvxj 2.3).
+ *
+ * This route hands back the raw key and the player URL, i.e. a transferable "be this screen"
+ * credential for an EXISTING display — one a human may have paired and configured, which the token
+ * never created. lib/device-sanitize.js withholds enrol_key from every token read for exactly that
+ * reason; this was the one route that still returned it. #827 deliberately lets a full token CREATE
+ * a web player (POST /api/devices/web-player) and get that new display's URL once, at creation — a
+ * provisioning flow for a screen the integration itself brings into being. Re-fetching or rolling an
+ * existing screen's credential is a dashboard action. Refused before the device lookup, so it does
+ * not confirm which ids exist. Revoking (DELETE below) hands nothing out and stays available.
+ */
 router.post('/:id/enrol-key', requireScope('full'), (req, res) => {
+  if (req.viaToken) {
+    return res.status(403).json({
+      error: 'An API token cannot mint or roll a display link for an existing screen. Use the dashboard, or create a new web player with POST /api/devices/web-player.',
+      code: 'ENROL_KEY_DASHBOARD_ONLY',
+    });
+  }
   const device = checkDeviceOwnership(req, res);
   if (!device) return;
   // 3.0 mirrors: a link always names the ORIGINAL; a mirror is what a second opening of it becomes.

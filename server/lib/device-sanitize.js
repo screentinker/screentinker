@@ -54,8 +54,18 @@ function stripDeviceSecretsForList(d) {
 }
 
 /*
- * ⚠️ NONE OF THESE REMOTE CREDENTIALS IS EVER GIVEN TO AN API TOKEN, even a full-scope one, and
- * this is a stronger rule than the one applied to settings_pin.
+ * ⚠️ NONE OF THESE REMOTE CREDENTIALS IS EVER READ OFF AN EXISTING DEVICE BY AN API TOKEN, even a
+ * full-scope one, and this is a stronger rule than the one applied to settings_pin.
+ *
+ * Exactly what a token may get, and nothing more (GHSA-rvxj 2.3):
+ *   - a FULL-scope token may SET trigger_secret, trigger_clear_all_token and the enrolment key's
+ *     absence (POST /:id/trigger-secret, POST /:id/trigger-config, DELETE /:id/enrol-key), and is
+ *     answered without the values (secret_set / clear_all_token_set);
+ *   - a FULL-scope token that CREATES a web player (POST /api/devices/web-player, #827) gets that new
+ *     display's enrol_key + player_url once, in the creation response — the integration brought the
+ *     screen into being and has to hand the URL to it;
+ *   - it may NOT re-fetch or roll the enrolment key of an existing display (POST /:id/enrol-key
+ *     refuses req.viaToken), and no read path (detail, list, broadcast) carries any of these.
  *
  * The PIN unlocks a menu for someone already standing at the panel. These are remote credentials,
  * and each converts a read into a write that no scope on that token ever granted:
