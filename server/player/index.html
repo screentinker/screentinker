@@ -8384,10 +8384,17 @@
     function renderImageBuffered(item) {
       const src = imgSrcFor(item);
       const cached = imgPreloadCache[src];
+      // A newer render (alert, cut_now, stage change, skip) or teardown moves renderSeq while this
+      // image loads/decodes; a late swap or skip must then leave the newer content and its timer alone.
+      const mySeq = renderSeq;
+      const stale = () => renderSeq !== mySeq;
+      // A still-loading widget swap belongs to the item being left; it must not reveal over this one.
+      discardPendingSwap();
       let done = false, watchdog = null;
       const swap = (img) => {
         if (done) return; done = true;
         if (watchdog) clearTimeout(watchdog);
+        if (stale()) return;                      // superseded while loading: don't clobber the newer render
         delete imgPreloadCache[src];
         if (glTxAbort) glTxAbort(); // settle any in-flight wipe first — one transition at a time on the shared renderer
         const from = currentTexturableFrame(); // may be an outgoing <video> snapshot -> video→image wipes
@@ -8402,6 +8409,7 @@
       const fail = () => {
         if (done) return; done = true;
         if (watchdog) clearTimeout(watchdog);
+        if (stale()) return;                      // superseded: the newer item owns the advance timer
         // No element to inspect here: this is the load/watchdog failure path, so nothing decoded.
         // `fail` is already `done`-guarded, so it runs at most once per render.
         mediaFailureSkip(null, 'image', src);             // skip broken item; hold prior frame
