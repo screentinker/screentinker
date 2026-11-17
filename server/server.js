@@ -3272,9 +3272,18 @@ const DEVICE_ADMIN_COMPONENT = 'com.remotedisplay.player/.admin.STDeviceAdminRec
 // only when the APK is absent/unparseable. Env override wins over the baked-in default.
 const DEVICE_ADMIN_SIGNATURE_CHECKSUM =
   process.env.DEVICE_ADMIN_SIGNATURE_CHECKSUM || 's9ZOWAvn3qFYJxaaR0j41ZttQK1r6_XgaTMcB7rIqqI';
-app.get('/api/provision/device-owner-qr', requireAuth, async (req, res) => {
+/*
+ * GHSA-rvxj 10.1: ⚠️ the origin baked into this QR is the server a factory-fresh panel will enrol
+ * against and download its device-owner APK from, so it is built like an emailed link
+ * (lib/public-origin.js): APP_URL, else only a PUBLIC_HOSTS / loopback Host (or, self-hosted, the
+ * LAN address it was reached on — the same residual risk publicOrigin documents). The raw Host
+ * header it used to trust let a request with a forged Host get a QR that enrols panels elsewhere.
+ * And it needs write access to the workspace: the dashboard offers it from Add Display, which is
+ * an editor action (canWrite), so editors keep it; viewers, who cannot add a display, do not.
+ */
+app.get('/api/provision/device-owner-qr', requireAuth, require('./lib/permissions').requireWorkspaceWrite, async (req, res) => {
   try {
-    const base = trimTrailing(process.env.APP_URL || `${req.protocol}://${req.get('host')}`, '/');
+    const base = trimTrailing(require('./lib/public-origin').publicOrigin(req), '/');
     const apkUrl = `${base}/download/apk`;
     // Derive the signature checksum from the APK the device will actually download, so it can
     // never drift from the served build. Fall back to the configured constant if the APK isn't
