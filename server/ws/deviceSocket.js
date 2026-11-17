@@ -1179,6 +1179,9 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
         screen_rect: screenRect,
         player_rect: playerRect,
         is_leader: wall.leader_device_id === deviceId,
+        // The leader's id, so a follower can check the server-stamped sender of a wall:sync against
+        // it (the server already refuses a sync from anyone else). Additive: is_leader stays.
+        leader_device_id: wall.leader_device_id || null,
         // #236: how far this panel's own image has to be turned to come out upright on the wall.
         // Normalised here so a junk column value can never reach a player and stand one panel of a
         // live wall on its side — a bad rotation degrades to "as drawn", not to "sideways".
@@ -3896,6 +3899,14 @@ module.exports = function setupDeviceSocket(io) {
         'SELECT 1 FROM video_wall_devices WHERE wall_id = ? AND device_id = ?'
       ).get(data.wall_id, currentDeviceId);
       if (!isMember) return;
+      /*
+       * ⚠️ ONLY THE LEADER SETS THE WALL'S POSITION. Membership alone let any panel of the wall —
+       * one whose device token leaked, say — broadcast its own index and position, and every
+       * follower jumped to it. Players only send when wall_config.is_leader, so a real wall loses
+       * nothing; the sync-request handler below already looks the leader up the same way.
+       */
+      const leader = db.prepare('SELECT leader_device_id FROM video_walls WHERE id = ?').get(data.wall_id);
+      if (!leader || leader.leader_device_id !== currentDeviceId) return;
       const wallDevices = db.prepare(
         'SELECT device_id FROM video_wall_devices WHERE wall_id = ? AND device_id != ?'
       ).all(data.wall_id, currentDeviceId);
