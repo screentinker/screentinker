@@ -432,10 +432,19 @@ function showsChange(config, slugLower, changed) {
 function scalarFieldDeltas(slug, keys, data) {
   const slugLower = (slug || '').toLowerCase();
   const out = {};
-  for (const k of keys || []) {
+  /*
+   * ⚠️ ALL OR NOTHING. A patch is not additive to the reload: the player adopts the new widget_rev
+   * the moment any field acks, so the playlist-update that follows is a no-op. A patch that left a
+   * changed key out (an array/object, a key that became null or was removed, or a list cut short at
+   * MAX_CHANGED_KEYS) therefore left that part of the slide stale until a cold reload. Any change we
+   * cannot patch means no patch at all — the widgets take the normal rev reload.
+   */
+  if (!keys || keys.length >= MAX_CHANGED_KEYS) return null;
+  for (const k of keys) {
     const v = data ? data[k] : undefined;
-    if (v === null || v === undefined || typeof v === 'object') continue;
-    out[`${slugLower}.${k}`] = String(v);
+    if (v === null || v === undefined || typeof v === 'object') return null;
+    // Same per-field cap the slide applies at render (slide-render MAX_FIELD_CHARS).
+    out[`${slugLower}.${k}`] = String(v).slice(0, 2000);
   }
   return Object.keys(out).length ? out : null;
 }

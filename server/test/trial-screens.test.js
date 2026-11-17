@@ -406,3 +406,63 @@ test('a Discord-only delivery does not mark flags reported (it carries the count
   assert.equal(r.discord, true);
   assert.equal(!!db.prepare('SELECT 1 FROM trial_reuse_flags WHERE user_id = ?').get(me), false);
 });
+
+/* ───────────── loopholes: a past payment, and a move after pairing ───────────── */
+
+test('ONE OLD PAYMENT IS NOT A PAID TEAM: an owner who paid once and cancelled exempts nobody', () => {
+  const prior = user('lapsed'), me = user('trial');
+  // The owner paid one month (checkout_complete on record) and cancelled: no subscription now.
+  const owner = user('free');
+  db.prepare("INSERT INTO conversion_events (user_id, event) VALUES (?, 'checkout_complete')").run(owner);
+  const o = org(owner); orgMember(o, owner, 'org_owner'); orgMember(o, prior); orgMember(o, me);
+  for (let i = 0; i < 2; i++) claim(me, burnedScreen(prior));
+  assert.equal(check(me, burnedScreen(prior)).allowed, false,
+    'a cancelled one-off payment made the organization a "paid team" forever, so trials hopped freely inside it');
+
+  // Still a paid team while that owner IS paying.
+  db.prepare("UPDATE users SET stripe_subscription_id = 'sub_live' WHERE id = ?").run(owner);
+  assert.equal(check(me, burnedScreen(prior)).allowed, true, 'a currently paying owner is a paid team');
+  // And an invoiced owner counts until the renewal date passes.
+  db.prepare('UPDATE users SET stripe_subscription_id = NULL, renewal_at = ? WHERE id = ?').run(NOW + 30 * DAY, owner);
+  assert.equal(check(me, burnedScreen(prior)).allowed, true, 'an invoiced owner inside the paid period is a paid team');
+  db.prepare('UPDATE users SET renewal_at = ? WHERE id = ?').run(NOW - DAY, owner);
+  assert.equal(check(me, burnedScreen(prior)).allowed, false, 'an invoice period that has ended no longer exempts');
+});
+
+test('PAIR ELSEWHERE, THEN MOVE: moving re-used screens into a workspace is counted like pairing them there', () => {
+  const prior = user('lapsed');
+  const i1 = user('trial'), i2 = user('trial');
+  const o = org(i1);
+  const shared = wsIn(o, i1, i2);
+  const scratch1 = wsIn(o, i1), scratch2 = wsIn(o, i2);
+  const into = (u, ws, dev) => db.prepare('UPDATE devices SET user_id = ?, workspace_id = ? WHERE id = ?').run(u, ws, dev.id);
+  // Each invitee pairs two of prior's screens in a scratch workspace of their own: allowed (count 2).
+  const s1 = [burnedScreen(prior), burnedScreen(prior)]; s1.forEach((d) => into(i1, scratch1, d));
+  const s2 = [burnedScreen(prior), burnedScreen(prior)]; s2.forEach((d) => into(i2, scratch2, d));
+  const rows = (ids) => ids.map((d) => db.prepare('SELECT * FROM devices WHERE id = ?').get(d.id));
+
+  // i1 moves its two into the shared workspace: still only two of prior's screens there.
+  assert.equal(ts.checkTrialMove(db, { devices: rows(s1), toWorkspaceId: shared, now: NOW }).allowed, true);
+  s1.forEach((d) => into(i1, shared, d));
+  // i2 moving its two in would make four — the case the per-workspace count exists for.
+  const v = ts.checkTrialMove(db, { devices: rows(s2), toWorkspaceId: shared, now: NOW });
+  assert.equal(v.allowed, false, 'moving after pairing dodged the per-workspace count');
+  assert.equal(v.priorUserId, prior);
+
+  // And one batch is counted as it lands: three of prior's screens moved together into an empty workspace.
+  const fresh = wsIn(o, i1);
+  const i3 = user('trial'); const scratch3 = wsIn(o, i3);
+  const s3 = [burnedScreen(prior), burnedScreen(prior)]; s3.forEach((d) => into(i3, scratch3, d));
+  const batch = rows([s2[0], ...s3]);
+  assert.equal(ts.checkTrialMove(db, { devices: batch, toWorkspaceId: fresh, now: NOW }).allowed, false,
+    'a single move of three re-used screens into one workspace must be refused');
+});
+
+test('the move route runs the trial check before anything moves (hosted only)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'devices.js'), 'utf8');
+  const route = src.slice(src.indexOf("router.post('/move-workspace'"));
+  const at = route.indexOf('checkTrialMove(');
+  assert.ok(at > 0, 'POST /move-workspace must call checkTrialMove');
+  assert.ok(at < route.indexOf('moveLib.moveDevices('), 'the check must run before the move is written');
+  assert.match(route.slice(0, at), /if \(!config\.selfHosted\)/, 'hosted only, like pairing');
+});

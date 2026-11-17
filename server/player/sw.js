@@ -181,7 +181,13 @@ async function shellNetworkFirst(request) {
   const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve('timeout'), SHELL_NETWORK_MS); });
   try {
     const winner = await Promise.race([fromNetwork.then((r) => r, () => 'failed'), timeout]);
-    if (winner !== 'timeout' && winner !== 'failed') return winner;
+    if (winner !== 'timeout' && winner !== 'failed') {
+      // A 5xx is the origin (or the proxy/CDN in front of it) being down mid-deploy or in an outage,
+      // not a newer shell: boot from the cached one if we have it, rather than mounting the error
+      // page and letting the shell watchdog remount into it on a loop.
+      if (winner.status >= 500) { const c = await fromCache(); if (c) return c; }
+      return winner;
+    }
     const cached = await fromCache();
     if (cached) return cached;
     if (winner === 'timeout') {

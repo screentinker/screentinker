@@ -413,6 +413,56 @@ test('COPYING a device playlist carries the reference — and refuses to build d
   const refused = await api(`/api/assignments/device/${src}/copy-to/${deep}`, J(jwt, { replace: true }));
   assert.equal(refused.status, 400, 'the copy built a two-level chain the add path would have refused');
   assert.match(refused.body.error, /copy-holder/, 'the refusal must name the playlist that blocks it');
+  assert.equal(rawItems(deepPl).length, 1,
+    'a REFUSED replace-copy still emptied the target playlist — the DELETE ran before the guard');
+});
+
+test('copy-to keeps each item\'s dayparting, enabled and muted state, and copies from an inheriting screen', async () => {
+  const raw = dbHandle();
+  const u = raw.prepare('SELECT id FROM users LIMIT 1').get();
+  const mk = (name) => {
+    const id = crypto.randomUUID();
+    raw.prepare('INSERT INTO devices (id, user_id, workspace_id, name, pairing_code) VALUES (?, ?, ?, ?, ?)')
+      .run(id, u.id, workspaceId, name, crypto.randomUUID().slice(0, 6));
+    return id;
+  };
+  const src = mk('cols-src'); const dst = mk('cols-dst');
+  raw.close();
+  await api(`/api/assignments/device/${src}`, J(jwt, { content_id: contentId, duration_sec: 10 }));
+  const plOf = (d) => { const r = dbHandle(); const v = r.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(d); r.close(); return v.playlist_id; };
+  const srcPl = plOf(src);
+  {
+    const r = dbHandle();
+    const it = r.prepare('SELECT id FROM playlist_items WHERE playlist_id = ?').get(srcPl);
+    r.prepare("UPDATE playlist_items SET muted = 1, enabled = 0, play_from = '2026-01-01', play_until = '2026-10-31' WHERE id = ?").run(it.id);
+    r.prepare("INSERT INTO playlist_item_schedules (id, playlist_item_id, active_days, start_time, end_time, sort_order) VALUES (?, ?, '1,2,3', '06:00', '11:00', 0)")
+      .run(crypto.randomUUID(), it.id);
+    r.close();
+  }
+  assert.equal((await api(`/api/assignments/device/${src}/copy-to/${dst}`, J(jwt, { replace: true }))).status, 200);
+  const [c] = rawItems(plOf(dst));
+  assert.equal(c.muted, 1, 'copy un-muted the item');
+  assert.equal(c.enabled, 0, 'copy re-enabled a disabled item');
+  assert.equal(c.play_from, '2026-01-01'); assert.equal(c.play_until, '2026-10-31', 'copy dropped the expiry');
+  const r = dbHandle();
+  const n = r.prepare('SELECT COUNT(*) AS n FROM playlist_item_schedules WHERE playlist_item_id = ?').get(c.id).n;
+  r.close();
+  assert.equal(n, 1, 'copy dropped the per-item daypart schedule');
+
+  // A screen with no own playlist_id that inherits through a group is still a valid copy source.
+  const group = (await api('/api/groups', J(jwt, { name: 'cols-group' }))).body;
+  const shared = await newPlaylist('cols-shared');
+  await addContent(shared.id); await publish(shared.id);
+  const inh = (() => { const rr = dbHandle(); const id = crypto.randomUUID();
+    rr.prepare('INSERT INTO devices (id, user_id, workspace_id, name, pairing_code) VALUES (?, ?, ?, ?, ?)')
+      .run(id, u.id, workspaceId, 'cols-inh', crypto.randomUUID().slice(0, 6)); rr.close(); return id; })();
+  assert.ok((await api(`/api/groups/${group.id}/devices`, J(jwt, { device_id: inh }))).status < 300);
+  assert.ok((await api(`/api/groups/${group.id}/assign-playlist`, J(jwt, { playlist_id: shared.id }))).status < 300);
+  assert.equal(plOf(inh), null, 'precondition: the screen inherits and has no playlist_id of its own');
+  const listed = await api(`/api/assignments/device/${inh}`, { headers: { Authorization: `Bearer ${jwt}` } });
+  assert.equal(listed.body.length, 1, 'an inheriting screen listed no items');
+  assert.equal((await api(`/api/assignments/device/${inh}/copy-to/${dst}`, J(jwt, { replace: true }))).status, 200,
+    'an inheriting screen could not be copied from');
 });
 
 test('⚠️ an unchanged SNAPSHOT still records changed STRUCTURE, or undo resurrects the reference', async () => {

@@ -122,3 +122,29 @@ test('the device-added broadcast is sanitised like a list, not like a detail row
   assert.match(src, /stripDeviceSecretsForList\(\{ \.\.\.created \}\)/,
     'the broadcast payload must go through the LIST sanitiser');
 });
+
+/*
+ * ⚠️ EVERY device-added broadcast, not just the web-player one. The /pair claim, the
+ * move-workspace route and both provisioning registers sent detail-shaped (or entirely raw, with
+ * device_token) rows — the provisioning ones to UNCLAIMED_ROOM, which every platform-role socket
+ * joins.
+ */
+test('every dashboard:device-added emit goes through the list sanitiser', () => {
+  const files = ['server.js', 'routes/devices.js', 'ws/deviceSocket.js'];
+  let seen = 0;
+  for (const f of files) {
+    const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+    const re = /'dashboard:device-added',([\s\S]{0,200}?)\);/g;
+    let m;
+    while ((m = re.exec(src))) {
+      seen++;
+      const arg = m[1].trim();
+      // A bare variable counts only when this same file assigns it from the list sanitiser.
+      const v = /^([A-Za-z_$][\w$]*)$/.exec(arg);
+      const viaVar = v && new RegExp(`\\b${v[1]}\\s*=\\s*[^;]*stripDeviceSecretsForList\\(`).test(src);
+      assert.ok(/stripDeviceSecretsForList/.test(arg) || viaVar,
+        `${f}: a device-added broadcast is not list-sanitised: ${arg.trim().slice(0, 120)}`);
+    }
+  }
+  assert.ok(seen >= 5, `expected at least 5 device-added emits, found ${seen}`);
+});
