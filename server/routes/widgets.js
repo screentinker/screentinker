@@ -683,6 +683,13 @@ router.delete('/:id', (req, res) => {
   const widget = checkWidgetWrite(req, res);
   if (!widget) return;
   if (corpMediaRefused(req, res, widget)) return;
+  /*
+   * GHSA-rvxj 9.1: as for content (routes/content.js liveDeleteRefusal). Under review, a widget a
+   * published playlist plays is live playback: deleting it blanks that slot on every screen with no
+   * reviewer. Only a reviewer or workspace admin may; an editor unpublishes it through review first.
+   */
+  const refusal = require('../lib/release-policy').liveDeleteRefusal(db, { workspaceId: widget.workspace_id, kind: 'widget', id: widget.id, label: widget.name, user: req.user });
+  if (refusal) return res.status(403).json({ error: refusal, code: 'review_required' });
   db.prepare('DELETE FROM widgets WHERE id = ?').run(req.params.id);
   require('../lib/library-folders').forget(db, 'widget', req.params.id);   // #796: where it was filed
   res.json({ success: true });

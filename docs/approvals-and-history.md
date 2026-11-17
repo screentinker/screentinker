@@ -21,6 +21,7 @@ Everything is enforced on the server. The dashboard only reflects what `/api/app
 | Content playback fields (remote URL, MIME type, captions, subtitle settings, quality ceiling) | `routes/content.js` PUT parks them in `content.draft_json` |
 | Playlist item add, edit, remove, duplicate, reorder, schedule | recorded as revisions with their author (the no-self-approval check reads these); the playlist publishes through the gate |
 | Agency auto-publish | `routes/agency.js` publishes directly when allowed, otherwise leaves a draft and opens a submission on the token's behalf |
+| Deleting content or a widget that a published playlist plays (`DELETE /api/content/:id`, `POST /api/content/batch/delete`, `DELETE /api/widgets/:id`) | `lib/release-policy.liveDeleteRefusal`: only a reviewer or a workspace admin may; anyone else gets 403 `review_required` before anything is deleted (a batch is refused whole). "Plays" means the published copy (snapshot, or a corporate playlist's composable) names it, or, for content, names a widget whose live config does. Items nothing published plays delete as before |
 
 With approval **off**, `assertReleasable` returns `{ mode: 'direct' }` and every path behaves exactly as before. With approval **on**, it returns the approved submission or throws a `ReleaseError` with one of these codes, which the routes send as HTTP 409:
 
@@ -41,6 +42,8 @@ These are deliberately outside the approval workflow and are listed so nobody as
 
 - **Organisational edits** on content (name, folder, expiry) and playlist renames apply live. They are recorded in history. Fields that change what a screen shows (remote URL, MIME type, captions, subtitle settings, quality ceiling) are gated.
 - **Subtitle file uploads** (`POST /api/content/:id/subtitle`) attach live. Clearing or relabelling a subtitle through the details route is gated.
+- **Visitor audio tracks** (`/api/content/:id/audio-tracks`, per-language narration and its captions) attach live, like subtitle files.
+- **Deleting a layout, a slide deck (with its published slides) or a playlist** applies live. A layout delete republishes the campaigns that showed it; a deck delete with `with_published` removes its slide widgets; a playlist delete takes it off its screens. Content and widget deletes are gated (above); these are not yet.
 - **Assignments and schedules**: assigning an already-published playlist to a screen, or changing a schedule slot, is a device operation, not a content release. The playlist itself had to be approved to be published.
 - **Mute sync, device settings, triggers**: device control, not content.
 - **External URLs and live data sources**: the URL or data-source binding is the authored state and is versioned. The page or feed behind it is live data and is not.

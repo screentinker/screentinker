@@ -14,6 +14,9 @@
  * content-only schedule's generated playlist, and the draft publish for widgets, layouts and
  * content (routes/revisions.js). Ancestor republish inside publishPlaylist() is not a separate
  * release: it re-flattens an already-published parent with a child that just passed this gate.
+ *
+ * Deletes are a release too: deleting content or a widget scrubs it out of every published copy
+ * that plays it. Those routes ask liveReferences() and mayChangeLiveUnreviewed() below (GHSA-rvxj 9.1).
  */
 
 const revisions = require('./revisions');
@@ -138,4 +141,61 @@ function afterRelease(db, { type, id, gate, actor, summary = 'Published' }) {
   return rev;
 }
 
-module.exports = { ReleaseError, approvalRequired, depsOf, depsChanged, assertReleasable, afterRelease };
+/*
+ * GHSA-rvxj 9.1: may this user change what screens show WITHOUT a review, in a workspace that
+ * requires one? Yes when approval is off; otherwise only the people who could have signed the change
+ * off anyway: an assigned reviewer (approvals.isReviewer, which also rechecks they still hold write
+ * access) or an admin of the workspace (canAdminWorkspace: they can switch approval off, so refusing
+ * them protects nothing). The same set ai-private's translation approve admits. Operators are not
+ * admins here, as everywhere else canAdminWorkspace is used.
+ */
+function mayChangeLiveUnreviewed(db, workspaceId, user) {
+  if (!approvalRequired(db, workspaceId)) return true;
+  if (!user) return false;
+  const ws = db.prepare('SELECT id, organization_id FROM workspaces WHERE id = ?').get(workspaceId);
+  if (require('./permissions').canAdminWorkspace(db, user, ws)) return true;
+  return require('./approvals').isReviewer(db, workspaceId, user.id);
+}
+
+/*
+ * GHSA-rvxj 9.1: the published playlists in a workspace whose LIVE copy plays this content or widget
+ * (names, for the refusal message). The published snapshot (and a corporate playlist's composable)
+ * is what screens play, and it is exactly what the content delete scrubs, so that is what's read:
+ * nested and smart playlists are flattened into it, and a draft edit that already removed the item
+ * doesn't count until it's published. For content, a widget whose live config names the file
+ * (a published slide, a template background) counts when that widget is itself in a published copy.
+ * ⚠️ LIKE on the id, the way purgeContentRow scrubs; `%`, `_` and `\` are escaped so an odd id can
+ * only ever match itself.
+ */
+function liveReferences(db, workspaceId, kind, id) {
+  if (!workspaceId || !id) return [];
+  const like = (v) => `%${String(v).replace(/[\\%_]/g, (c) => '\\' + c)}%`;
+  let hasComposable = false;
+  try { hasComposable = require('./corporate/schema-probe').hasColumn(db, 'playlists', 'published_composable'); } catch (_) { /* old schema */ }
+  const playlistsNaming = (v) => db.prepare(`SELECT name FROM playlists WHERE workspace_id = ?
+      AND (published_snapshot LIKE ? ESCAPE '\\'${hasComposable ? " OR published_composable LIKE ? ESCAPE '\\'" : ''})`)
+    .all(workspaceId, like(v), ...(hasComposable ? [like(v)] : [])).map((r) => r.name);
+  const names = new Set(playlistsNaming(id));
+  if (kind === 'content') {
+    for (const w of db.prepare("SELECT id FROM widgets WHERE workspace_id = ? AND config LIKE ? ESCAPE '\\'").all(workspaceId, like(id))) {
+      for (const n of playlistsNaming(w.id)) names.add(n);
+    }
+  }
+  return [...names];
+}
+
+/*
+ * GHSA-rvxj 9.1: the refusal for deleting something live without review, or null when the delete
+ * may go ahead (approval off, a reviewer/admin, or nothing published plays it). Callers send it as
+ * 403 code 'review_required' BEFORE any side effect.
+ */
+function liveDeleteRefusal(db, { workspaceId, kind, id, label, user }) {
+  if (!workspaceId || mayChangeLiveUnreviewed(db, workspaceId, user)) return null;
+  const live = liveReferences(db, workspaceId, kind, id);
+  if (!live.length) return null;
+  const names = live.slice(0, 3).map((n) => `"${n}"`).join(', ') + (live.length > 3 ? ` and ${live.length - 3} more` : '');
+  return `"${label || id}" is live in published ${live.length === 1 ? 'playlist' : 'playlists'} ${names}, and this workspace requires review before what screens show changes. `
+    + 'Remove it from the playlist and publish that for review, or ask a reviewer or admin to delete it.';
+}
+
+module.exports = { ReleaseError, approvalRequired, mayChangeLiveUnreviewed, liveReferences, liveDeleteRefusal, depsOf, depsChanged, assertReleasable, afterRelease };
