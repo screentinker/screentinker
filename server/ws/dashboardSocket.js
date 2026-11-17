@@ -253,7 +253,29 @@ module.exports = function setupDashboardSocket(io) {
       if (typeof ack === 'function') ack({ delivered: !!conn, reason: conn ? undefined : 'offline' });
     });
 
+    /*
+     * ⚠️ REMOTE INPUT IS RATE-LIMITED PER SOCKET (advisory 7.7). Every remote-key / remote-touch
+     * was forwarded, and the Android player starts a thread and an `input keyevent` process per key,
+     * so a script holding a write session could flood a panel until it stalled. A token bucket
+     * shared by both events: a burst of REMOTE_INPUT_BURST, refilled at REMOTE_INPUT_PER_SEC. A
+     * person typing or tapping fast is a handful per second (a swipe is ONE event carrying its end
+     * point), so real use never meets it. Checked before the session re-check, so a flood costs
+     * nothing past the bucket. Over the limit: dropped, and the optional ack says why.
+     */
+    const REMOTE_INPUT_BURST = 40;
+    const REMOTE_INPUT_PER_SEC = 20;
+    const inputBucket = { tokens: REMOTE_INPUT_BURST, at: Date.now() };
+    function remoteInputLimited(ack) {
+      const now = Date.now();
+      inputBucket.tokens = Math.min(REMOTE_INPUT_BURST, inputBucket.tokens + ((now - inputBucket.at) / 1000) * REMOTE_INPUT_PER_SEC);
+      inputBucket.at = now;
+      if (inputBucket.tokens >= 1) { inputBucket.tokens -= 1; return false; }
+      if (typeof ack === 'function') ack({ delivered: false, reason: 'rate_limited' });
+      return true;
+    }
+
     socket.on('dashboard:remote-touch', (data, ack) => {
+      if (remoteInputLimited(ack)) return;
       const { device_id, x, y, x2, y2, duration, action } = data;
       if (!canActOnDevice(socket, device_id, 'write')) return;
       if (capabilityRefused(device_id, 'remote.input', ack)) return;
@@ -265,6 +287,7 @@ module.exports = function setupDashboardSocket(io) {
     });
 
     socket.on('dashboard:remote-key', (data, ack) => {
+      if (remoteInputLimited(ack)) return;
       const { device_id, keycode } = data;
       if (!canActOnDevice(socket, device_id, 'write')) return;
       if (capabilityRefused(device_id, 'remote.input', ack)) return;
