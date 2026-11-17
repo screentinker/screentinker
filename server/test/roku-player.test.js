@@ -255,3 +255,36 @@ test('finalize-release.sh builds, checks and ships the Roku sideload zip', () =>
   assert.match(expected, /^screentinker-roku\.zip$/m, 'the zip is in the completeness list');
   assert.match(fin, /\[ "\$ROKU_TITLE" != "ScreenTinker" \]/, 'a zip without the app manifest is refused');
 });
+
+// ------------------------------------------------------------------ an outage must not unpair
+
+test('a heartbeat that beats register to a fresh session gets a retryable auth-error, not a revocation', async () => {
+  const s = ioClient(`${base}/device`, { transports: ['polling'], upgrade: false, reconnection: false, forceNew: true });
+  try {
+    const err = await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('no auth-error')), 5000);
+      s.on('connect', () => s.emit('device:heartbeat', { device_id: 'queued-during-outage' }));
+      s.on('device:auth-error', (e) => { clearTimeout(t); resolve(e); });
+    });
+    assert.equal(err.retry, true);
+    assert.equal(err.reason, 'not_registered');
+  } finally { try { s.close(); } catch { /* */ } }
+});
+
+test('the Roku keeps its pairing over a "register first" auth-error, and does not heartbeat before register', () => {
+  const fs = require('node:fs');
+  const R = path.join(__dirname, '..', '..', 'roku');
+  const scene = fs.readFileSync(path.join(R, 'components', 'MainScene.brs'), 'utf8');
+  const task = fs.readFileSync(path.join(R, 'components', 'tasks', 'SocketTask.brs'), 'utf8');
+  const util = fs.readFileSync(path.join(R, 'source', 'lib', 'util.brs'), 'utf8');
+  const handler = scene.slice(scene.indexOf('else if name = "device:auth-error" then'), scene.indexOf('else if name = "device:playlist-update"'));
+  assert.ok(handler.indexOf('ST_AuthErrorIsTransient(data)') >= 0 && handler.indexOf('ST_AuthErrorIsTransient(data)') < handler.indexOf('forgetIdentity()'),
+    'a transient auth-error is handled before anything forgets the identity');
+  assert.match(util, /function ST_AuthErrorIsTransient[\s\S]*?ST_IsTrue\(data\.retry\)[\s\S]*?"Not authenticated"[\s\S]*?end function/);
+  const beat = scene.slice(scene.indexOf('sub onHeartbeat()'), scene.indexOf('end sub', scene.indexOf('sub onHeartbeat()')));
+  assert.match(beat, /if not m\.registered then return/);
+  assert.match(scene, /sub init\(\)\s*\n\s*m\.registered = false/, 'initialised: comparing invalid to a boolean is a runtime error');
+  assert.match(scene, /sub onRegistered\(data as object\)\s*\n\s*if not ST_IsAA\(data\) then return\s*\n\s*m\.registered = true/);
+  const close = task.slice(task.indexOf('a CONNECT queued for the old session'), task.indexOf('m.queue = keep'));
+  assert.match(close, /device:heartbeat/, 'heartbeats queued during the outage are dropped with the dead session');
+});

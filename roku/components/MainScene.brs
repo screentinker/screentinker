@@ -1,6 +1,7 @@
 ' MainScene — the player: setup -> pairing -> playing, and everything the server says over the socket.
 
 sub init()
+    m.registered = false   ' this session has had device:registered; heartbeats wait for it
     m.stage = m.top.findNode("stage")
     m.pairing = m.top.findNode("pairing")
     m.blackout = m.top.findNode("blackout")
@@ -223,6 +224,7 @@ sub onInbound()
     else if name = "__disconnect" then
         ' keep playing what we have; say so only on the info overlay
         m.offline = true
+        m.registered = false
     else if name = "device:registered" then
         onRegistered(data)
     else if name = "device:paired" then
@@ -233,6 +235,14 @@ sub onInbound()
         clearStage()
         register()
     else if name = "device:auth-error" then
+        ' A heartbeat or event that reached the server before our register (a fresh session after an
+        ' outage) is answered "Not authenticated. Send device:register first." That says nothing about
+        ' our identity: register again and keep the pairing. Only a real rejection unpairs.
+        if ST_AuthErrorIsTransient(data) then
+            m.registered = false
+            register()
+            return
+        end if
         forgetIdentity()
         m.signature = ""
         clearStage()
@@ -275,6 +285,7 @@ end sub
 
 sub onRegistered(data as object)
     if not ST_IsAA(data) then return
+    m.registered = true
     id = ST_Str(data, "device_id")
     if id <> "" then
         m.cfg.deviceId = id
@@ -333,6 +344,8 @@ end sub
 
 sub onHeartbeat()
     if m.cfg.deviceId = "" then return
+    ' Not until this session has registered: a beat sent ahead of register is refused.
+    if not m.registered then return
     emit("device:heartbeat", { device_id: m.cfg.deviceId, client_ms: ST_NowMs(), telemetry: ST_Telemetry() })
 end sub
 

@@ -391,6 +391,18 @@ test('an auth revocation clears the plan', async () => {
   assert.equal(h.store.get('st_offline_plan'), undefined);
 });
 
+test('a "register first" auth-error keeps the pairing: it is about the socket, not the identity', async () => {
+  for (const data of [{ error: 'Not authenticated. Send device:register first.' },
+    { error: 'Not authenticated. Send device:register first.', reason: 'not_registered', retry: true },
+    { error: 'Registration failed, please retry.' }]) {
+    const h = boot({ storage: SEEDED });
+    h.connect();
+    h.socket.handlers['device:auth-error'](data);
+    for (const k of Object.keys(PAIRED)) assert.equal(h.store.get(k), PAIRED[k], `${k} kept for ${JSON.stringify(data)}`);
+    assert.ok(h.store.get('st_offline_plan'), 'the plan is kept');
+  }
+});
+
 test('a factory reset clears the plan', () => {
   const h = boot({ storage: SEEDED });
   h.sandbox.__st.reset();

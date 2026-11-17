@@ -3692,7 +3692,7 @@ module.exports = function setupDeviceSocket(io) {
           applyCapabilities(id, data);
         } catch (e) {
           console.warn(`Provisioning rejected for pairing_code ${pairing_code} from ${getClientIp(socket)}: ${e.message}`);
-          socket.emit('device:auth-error', { error: 'Registration failed, please retry.' });
+          socket.emit('device:auth-error', { error: 'Registration failed, please retry.', reason: 'register_failed', retry: true });
           return;
         }
         currentDeviceId = id;
@@ -3733,7 +3733,9 @@ module.exports = function setupDeviceSocket(io) {
     // Require authentication for all events after register
     function requireDeviceAuth() {
       if (!authenticated || !currentDeviceId) {
-        socket.emit('device:auth-error', { error: 'Not authenticated. Send device:register first.' });
+        // retry:true says "register again", not "your identity is bad": a client must not forget its
+        // pairing over this. Queued events reaching a fresh socket ahead of register land here.
+        socket.emit('device:auth-error', { error: 'Not authenticated. Send device:register first.', reason: 'not_registered', retry: true });
         return false;
       }
       return true;
