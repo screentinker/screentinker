@@ -364,7 +364,8 @@ class MainActivity : AppCompatActivity() {
         wallZones = WallZoneRenderer(
             context = this,
             root = rootView as FrameLayout,
-            stageIndex = { (rootView as ViewGroup).indexOfChild(youtubeWebView) + 1 },
+            // Looked up by id each time: the fullscreen WebView is replaced if its renderer dies.
+            stageIndex = { (rootView as ViewGroup).indexOfChild(findViewById<android.webkit.WebView>(R.id.youtubeWebView)) + 1 },
             syncedNow = { syncedNowMs() },
             report = { msg -> wsService?.sendLog("sync", "info", msg) },
             mayBeHeard = { !::mediaPlayer.isInitialized || mediaPlayer.mayBeHeard() },

@@ -1,6 +1,8 @@
 package com.remotedisplay.player.util
 
+import android.view.ViewGroup
 import android.webkit.ConsoleMessage
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -36,8 +38,17 @@ object WebViewSupport {
      * [onLoadState] hears whether the frame the viewer would SEE loaded (true) or failed (false):
      * the main frame, or for the YouTube wrapper the embed iframe inside it. Null for callers that
      * only want the retry behaviour.
+     *
+     * [onRendererGone] hears that this WebView's renderer process died (it is unusable from then on).
+     * The owner must swap in a fresh WebView and recover the item; with no handler the dead view is
+     * simply detached and destroyed ([discardDead]). Either way the app process survives.
      */
-    fun configure(webView: WebView, tag: String, onLoadState: ((ok: Boolean) -> Unit)? = null) {
+    fun configure(
+        webView: WebView,
+        tag: String,
+        onLoadState: ((ok: Boolean) -> Unit)? = null,
+        onRendererGone: ((dead: WebView) -> Unit)? = null,
+    ) {
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -193,6 +204,26 @@ object WebViewSupport {
                     scheduleRetry(view, request.url?.toString(), "HTTP $status")
                 }
             }
+
+            /*
+             * ⚠️ RENDERER DEATH MUST NOT KILL THE APP (API 26+). Without this override the default
+             * returns false and Android kills the whole player process when a page's renderer
+             * crashes or is reclaimed (WebView 83 does this on heavy sites). Returning true keeps the
+             * process; the dead WebView must never be used again, so it is handed to its owner to
+             * replace (or detached and destroyed here). Same contract as KioskSession.
+             */
+            override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                DebugLog.e(tag, "WebView renderer gone (crash=${detail?.didCrash()}) — recovering")
+                cancelRetry(view)
+                if (view == null) return true
+                try {
+                    if (onRendererGone != null) onRendererGone(view) else discardDead(view)
+                } catch (t: Throwable) {
+                    DebugLog.e(tag, "renderer-gone recovery threw: ${t.message}")
+                    discardDead(view)
+                }
+                return true
+            }
         }
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(msg: ConsoleMessage?): Boolean {
@@ -202,6 +233,12 @@ object WebViewSupport {
                 return super.onConsoleMessage(msg)
             }
         }
+    }
+
+    /** Detach a WebView whose renderer died and destroy it. Never load anything into it first. */
+    fun discardDead(view: WebView) {
+        try { (view.parent as? ViewGroup)?.removeView(view) } catch (_: Throwable) {}
+        try { view.destroy() } catch (_: Throwable) {}
     }
 
     /** The embed iframe youtubeEmbedHtml builds: https://www.youtube.com/embed/<id>. */
