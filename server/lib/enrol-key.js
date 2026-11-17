@@ -137,7 +137,42 @@ function playerUrl(origin, key) {
   return `${trimTrailing(origin, '/')}/player?k=${encodeURIComponent(key)}`;
 }
 
+/*
+ * GHSA-rvxj 2.2: a player URL minted over plain HTTP on a PUBLIC host travels — and is then used,
+ * every time the player loads — in cleartext, and the key in it lets its holder become the display.
+ * HTTP enrolment is NOT refused: LAN installs on http://192.168.x.x are supported and common, and on
+ * them there is no public path to observe. So this only says so, as a `warning` on the response,
+ * when the effective protocol (req.protocol, which honours a trusted proxy's X-Forwarded-Proto) is
+ * http AND the host is not loopback, private, link-local or a LAN-only name.
+ *
+ * @returns {string|null}
+ */
+function cleartextWarning(req) {
+  if (!req || req.protocol !== 'http') return null;
+  const host = String(req.hostname || '').replace(/^\[|\]$/g, '').toLowerCase();
+  if (!host || isLanHost(host)) return null;
+  return 'This player URL was created over plain HTTP on a public address. The key in it lets anyone who sees it become this display: serve the dashboard over HTTPS, or create the link from the server\'s LAN address.';
+}
+
+function isLanHost(host) {
+  const net = require('net');
+  if (host === 'localhost' || host.endsWith('.localhost') || !host.includes('.') && !net.isIP(host)) return true;
+  if (/\.(local|lan|internal|home\.arpa)$/.test(host)) return true;
+  if (net.isIPv4(host)) {
+    const [a, b] = host.split('.').map(Number);
+    return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+      || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);   // last: CGNAT / Tailscale
+  }
+  if (net.isIPv6(host)) {
+    const v4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(host);
+    if (v4) return isLanHost(v4[1]);
+    return host === '::1' || /^f[cd]/.test(host) || /^fe[89ab]/.test(host);
+  }
+  return false;
+}
+
 module.exports = {
+  cleartextWarning,
   generateEnrolKey,
   looksLikeEnrolKey,
   resolveEnrolKey,

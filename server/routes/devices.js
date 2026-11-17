@@ -1502,6 +1502,8 @@ router.post('/:id/enrol-key', requireScope('full'), (req, res) => {
     // Built from the request's own origin so it is right on a LAN address, a tunnel or a domain,
     // without the operator having to know which one this instance answers on.
     player_url: enrolKey.playerUrl(`${req.protocol}://${req.get('host')}`, key),
+    // GHSA-rvxj 2.2: said, not refused — LAN installs over HTTP are supported.
+    ...(enrolKey.cleartextWarning(req) ? { warning: enrolKey.cleartextWarning(req) } : {}),
   });
 });
 

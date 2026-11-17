@@ -3420,6 +3420,8 @@ app.post('/api/devices/web-player', bearerAuth, resolveTenancy, requireTokenScop
     device: created,
     enrol_key: key,
     player_url: enrolKey.playerUrl(`${req.protocol}://${req.get('host')}`, key),
+    // GHSA-rvxj 2.2: said, not refused — LAN installs over HTTP are supported.
+    ...(enrolKey.cleartextWarning(req) ? { warning: enrolKey.cleartextWarning(req) } : {}),
   });
 });
 
