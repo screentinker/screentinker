@@ -314,6 +314,16 @@ function emitToDeviceWorkspace(dashboardNs, deviceId, event, payload) {
   emitToWorkspace(dashboardNs, deviceRoom(deviceId), event, payload);
 }
 
+/*
+ * ⚠️ dashboard:shell-result and dashboard:device-log are NOT workspace broadcasts: they go only to
+ * the sockets that could have run the shell themselves (ws/dashboardSocket.js emitToShellUsers —
+ * see there for why). Required lazily: dashboardSocket requires this module.
+ */
+function emitToShellUsers(dashboardNs, deviceId, event, payload) {
+  if (!dashboardNs) return;
+  require('./dashboardSocket').emitToShellUsers(dashboardNs, deviceId, event, payload);
+}
+
 // In-memory store for latest screenshot per device (avoids disk writes during streaming)
 let lastScreenshots = {};
 
@@ -1169,6 +1179,9 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
         screen_rect: screenRect,
         player_rect: playerRect,
         is_leader: wall.leader_device_id === deviceId,
+        // The leader's id, so a follower can check the server-stamped sender of a wall:sync against
+        // it (the server already refuses a sync from anyone else). Additive: is_leader stays.
+        leader_device_id: wall.leader_device_id || null,
         // #236: how far this panel's own image has to be turned to come out upright on the wall.
         // Normalised here so a junk column value can never reach a player and stand one panel of a
         // live wall on its side — a bad rotation degrades to "as drawn", not to "sideways".
@@ -2116,7 +2129,7 @@ const EVENT_APPLIERS = Object.freeze({
   'shell-result'(deviceId, data, ctx) {
     const { device_id, cmd, output, exit } = data || {};
     if (!device_id || device_id !== deviceId) return;
-    emitToDeviceWorkspace(_dashboardNsRef, device_id, 'dashboard:shell-result', {
+    emitToShellUsers(_dashboardNsRef, device_id, 'dashboard:shell-result', {
       device_id, cmd: String(cmd || '').slice(0, 500), output: String(output || '').slice(0, 8000), exit,
     });
   },
@@ -2154,7 +2167,7 @@ const EVENT_APPLIERS = Object.freeze({
   'log'(deviceId, data, ctx) {
     const message = typeof data?.message === 'string' ? data.message.slice(0, 2000) : '';
     if (!message) return;
-    emitToDeviceWorkspace(_dashboardNsRef, deviceId, 'dashboard:device-log', {
+    emitToShellUsers(_dashboardNsRef, deviceId, 'dashboard:device-log', {
       device_id: deviceId,
       tag: typeof data?.tag === 'string' ? data.tag.slice(0, 64) : '',
       level: typeof data?.level === 'string' ? data.level.slice(0, 8) : 'd',
@@ -3712,8 +3725,8 @@ module.exports = function setupDeviceSocket(io) {
       }
       if (kind === 'playback-state') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:playback-state', { ...(data || {}), device_id: deviceId });
       if (kind === 'content-ack') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:content-ack', { device_id: deviceId, content_id: data && data.content_id, status: data && data.status });
-      if (kind === 'shell-result') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:shell-result', { device_id: deviceId, cmd: String((data && data.cmd) || '').slice(0, 500), output: String((data && data.output) || '').slice(0, 8000), exit: data && data.exit });
-      if (kind === 'log') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:device-log', { device_id: deviceId, tag: String((data && data.tag) || '').slice(0, 64), level: String((data && data.level) || 'd').slice(0, 8), message: String((data && data.message) || '').slice(0, 2000), ts: Date.now() });
+      if (kind === 'shell-result') return emitToShellUsers(dashboardNs, deviceId, 'dashboard:shell-result', { device_id: deviceId, cmd: String((data && data.cmd) || '').slice(0, 500), output: String((data && data.output) || '').slice(0, 8000), exit: data && data.exit });
+      if (kind === 'log') return emitToShellUsers(dashboardNs, deviceId, 'dashboard:device-log', { device_id: deviceId, tag: String((data && data.tag) || '').slice(0, 64), level: String((data && data.level) || 'd').slice(0, 8), message: String((data && data.message) || '').slice(0, 2000), ts: Date.now() });
       if (kind === 'screenshot' && data && data.image_b64) return ingestScreenshot(deviceId, data.image_b64);
       if (kind === 'play-event' && data && data.event === 'play_start') {
         return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:playback-progress', {
@@ -3886,6 +3899,14 @@ module.exports = function setupDeviceSocket(io) {
         'SELECT 1 FROM video_wall_devices WHERE wall_id = ? AND device_id = ?'
       ).get(data.wall_id, currentDeviceId);
       if (!isMember) return;
+      /*
+       * ⚠️ ONLY THE LEADER SETS THE WALL'S POSITION. Membership alone let any panel of the wall —
+       * one whose device token leaked, say — broadcast its own index and position, and every
+       * follower jumped to it. Players only send when wall_config.is_leader, so a real wall loses
+       * nothing; the sync-request handler below already looks the leader up the same way.
+       */
+      const leader = db.prepare('SELECT leader_device_id FROM video_walls WHERE id = ?').get(data.wall_id);
+      if (!leader || leader.leader_device_id !== currentDeviceId) return;
       const wallDevices = db.prepare(
         'SELECT device_id FROM video_wall_devices WHERE wall_id = ? AND device_id != ?'
       ).all(data.wall_id, currentDeviceId);

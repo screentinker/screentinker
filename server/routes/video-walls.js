@@ -406,6 +406,7 @@ router.get('/:id/device-config/:deviceId', requireWallRead, (req, res) => {
     bezel_v_px: wall.bezel_v_mm,
     sync_mode: wall.sync_mode,
     is_leader: wall.leader_device_id === req.params.deviceId,
+    leader_device_id: wall.leader_device_id || null,   // additive: a follower checks wall:sync's stamped sender against it
   });
 });
 

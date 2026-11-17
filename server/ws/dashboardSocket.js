@@ -5,7 +5,7 @@ const { accessContext, accessibleWorkspaceIds } = require('../lib/tenancy');
 const { roomsForDashboard, deviceRoom } = require('../lib/socket-rooms');
 const { protectSocket } = require('../lib/safe-socket');
 const playerCapabilities = require('../lib/player-capabilities');
-const { ALLOWED_COMMANDS, deliverCommand, validateCommand } = require('../lib/device-command');
+const { ALLOWED_COMMANDS, deliverCommand, validateCommand, canRunAdminCommands } = require('../lib/device-command');
 const replicaProxy = require('../lib/replica-proxy');   // scale-out: copied devices are commanded on the primary
 const bsSnapshotQueue = require('../lib/brightsign-snapshot-queue');
 // Server-side framebuffer capture, for a BrightSign whose player cannot capture itself.
@@ -82,6 +82,20 @@ function canActOnDevice(socket, deviceId, tier /* 'read' | 'write' */) {
   return ctx.workspaceRole === 'workspace_editor' || ctx.workspaceRole === 'workspace_admin';
 }
 
+/*
+ * ⚠️ MAY THIS SOCKET RUN A SHELL ON THIS SCREEN — the one definition, used by the PTY authoriser.
+ * Every rule a `shell` command meets in deliverCommand, in the same order: write tier on the
+ * device's workspace, the corporate rule (on a screen head office drives, the organization's admins
+ * only), and the admin-only rule (lib/device-command.js ADMIN_ONLY_COMMANDS). The actor is built
+ * explicitly: this socket never passes resolveTenancy.
+ */
+function canRunShell(socket, deviceId) {
+  if (!canActOnDevice(socket, deviceId, 'write')) return false;
+  const actor = socketActor(socket);
+  if (corpGuard.isControlledFor(actor, deviceId)) return false;
+  return canRunAdminCommands(actor, { id: deviceId });
+}
+
 // The /dashboard namespace once setupDashboardSocket has run (null before, e.g. in unit tests).
 let _dashboardNs = null;
 function userRoom(userId) { return `user-sock:${userId}`; }
@@ -91,18 +105,13 @@ module.exports = function setupDashboardSocket(io) {
   _dashboardNs = dashboardNs;
   const deviceNs = io.of('/device');
   /*
-   * The PTY relay authorises an open with EXACTLY the gate a `shell` command passes through below:
-   * write tier on the device's workspace (canActOnDevice). A PTY is at least as powerful as a
-   * one-shot shell, so it must never be reachable by anyone the shell command would refuse.
+   * The PTY relay authorises an open with EXACTLY the gate a `shell` command passes through:
+   * canRunShell above (write tier, the corporate rule, and the admin-only rule). A PTY is at least
+   * as powerful as a one-shot shell, so it must never be reachable by anyone the shell command
+   * would refuse.
    */
   ptyRelay.bind(io);
-  /*
-   * ⚠️ CORPORATE (D13): a PTY is `shell` with a keyboard, so on a screen head office's playlist
-   * plays on it is the organization's admins' only — the same rule deliverCommand applies to shell.
-   * The actor is built explicitly: this socket never passes resolveTenancy.
-   */
-  ptyRelay.setAuthorizer((socket, deviceId) => canActOnDevice(socket, deviceId, 'write')
-    && !corpGuard.isControlledFor(socketActor(socket), deviceId));
+  ptyRelay.setAuthorizer(canRunShell);
   const pty = ptyRelay.relay();
 
   dashboardNs.use((socket, next) => {
@@ -244,7 +253,29 @@ module.exports = function setupDashboardSocket(io) {
       if (typeof ack === 'function') ack({ delivered: !!conn, reason: conn ? undefined : 'offline' });
     });
 
+    /*
+     * ⚠️ REMOTE INPUT IS RATE-LIMITED PER SOCKET (advisory 7.7). Every remote-key / remote-touch
+     * was forwarded, and the Android player starts a thread and an `input keyevent` process per key,
+     * so a script holding a write session could flood a panel until it stalled. A token bucket
+     * shared by both events: a burst of REMOTE_INPUT_BURST, refilled at REMOTE_INPUT_PER_SEC. A
+     * person typing or tapping fast is a handful per second (a swipe is ONE event carrying its end
+     * point), so real use never meets it. Checked before the session re-check, so a flood costs
+     * nothing past the bucket. Over the limit: dropped, and the optional ack says why.
+     */
+    const REMOTE_INPUT_BURST = 40;
+    const REMOTE_INPUT_PER_SEC = 20;
+    const inputBucket = { tokens: REMOTE_INPUT_BURST, at: Date.now() };
+    function remoteInputLimited(ack) {
+      const now = Date.now();
+      inputBucket.tokens = Math.min(REMOTE_INPUT_BURST, inputBucket.tokens + ((now - inputBucket.at) / 1000) * REMOTE_INPUT_PER_SEC);
+      inputBucket.at = now;
+      if (inputBucket.tokens >= 1) { inputBucket.tokens -= 1; return false; }
+      if (typeof ack === 'function') ack({ delivered: false, reason: 'rate_limited' });
+      return true;
+    }
+
     socket.on('dashboard:remote-touch', (data, ack) => {
+      if (remoteInputLimited(ack)) return;
       const { device_id, x, y, x2, y2, duration, action } = data;
       if (!canActOnDevice(socket, device_id, 'write')) return;
       if (capabilityRefused(device_id, 'remote.input', ack)) return;
@@ -256,6 +287,7 @@ module.exports = function setupDashboardSocket(io) {
     });
 
     socket.on('dashboard:remote-key', (data, ack) => {
+      if (remoteInputLimited(ack)) return;
       const { device_id, keycode } = data;
       if (!canActOnDevice(socket, device_id, 'write')) return;
       if (capabilityRefused(device_id, 'remote.input', ack)) return;
@@ -489,7 +521,10 @@ module.exports = function setupDashboardSocket(io) {
       const r = deliverCommand(deviceNs, devRow, type, payload, { actor: socketActor(socket) });
 
       if (r.status === 'refused') {
-        if (typeof ack === 'function') ack({ delivered: false, reason: 'corporate', code: r.code, error: r.error });
+        // Two refusals share this branch; `reason` tells the page which one it is (the admin-only
+        // rule is not a head office lock, and must not be shown as one).
+        const reason = r.code === 'ADMIN_ONLY_COMMAND' ? 'forbidden' : 'corporate';
+        if (typeof ack === 'function') ack({ delivered: false, reason, code: r.code, error: r.error });
         return;
       }
       if (r.status === 'rejected') {
@@ -607,3 +642,35 @@ module.exports.tellAccessChanged = function tellAccessChanged(userId) {
   try { _dashboardNs.to(userRoom(userId)).emit('dashboard:access-changed', {}); } catch (_) { /* best-effort */ }
 };
 module.exports.revalidateSocket = revalidateSocket;
+module.exports.canRunShell = canRunShell;
+
+/*
+ * ⚠️ SHELL OUTPUT AND THE LIVE DEBUG LOG GO ONLY TO THOSE WHO COULD HAVE RUN THE SHELL.
+ *
+ * dashboard:shell-result and dashboard:device-log went to the whole workspace room, viewers
+ * included (they join it, and dashboard:watch-device lets them join another device's). The page
+ * filters by device id, but a member's own client can simply listen — so every viewer read every
+ * admin's `cat` of a config file, and every credential-bearing URL a WebView logged while debug
+ * logging was on. Now each socket in the room is judged by canRunShell, the rule the PTY uses.
+ *
+ * A device with NO workspace keeps the unclaimed room: only platform roles join it, and
+ * canActOnDevice cannot answer for a device with no workspace (see lib/socket-rooms UNCLAIMED_ROOM).
+ *
+ * Cost: one session check and a few indexed lookups per socket per line while a debug log streams.
+ * Workspace rooms are small; a broadcast is still one emit for the common, unclaimed-free case.
+ */
+module.exports.emitToShellUsers = function emitToShellUsers(dashboardNs, deviceId, event, payload) {
+  if (!dashboardNs) return;
+  const { UNCLAIMED_ROOM } = require('../lib/socket-rooms');
+  const room = deviceRoom(deviceId);
+  if (!room) return;
+  if (room === UNCLAIMED_ROOM) { dashboardNs.to(room).emit(event, payload); return; }
+  const ids = dashboardNs.adapter && dashboardNs.adapter.rooms && dashboardNs.adapter.rooms.get(room);
+  for (const id of ids ? [...ids] : []) {
+    const socket = dashboardNs.sockets.get(id);
+    if (!socket || !socket.connected) continue;
+    let ok = false;
+    try { ok = canRunShell(socket, deviceId); } catch (_) { ok = false; }   // fail closed
+    if (ok && socket.connected) socket.emit(event, payload);
+  }
+};
