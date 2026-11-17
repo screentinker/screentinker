@@ -84,6 +84,10 @@ class PowerAccessibilityService : AccessibilityService() {
         // on kiosk screens (no one is there to tap "Update"). Scoped to the package
         // installer only, so this never touches anything else.
         if (!pkg.contains("packageinstaller", ignoreCase = true)) return
+        // GHSA-rvxj 3.2: and only while UpdateChecker has an install of our OWN verified OTA in
+        // flight. Any other installer prompt (another app, a sideload, a pushed install_apk off
+        // device-owner) is left for a person to accept or dismiss. See OtaInstallWindow.
+        if (!OtaInstallWindow.isOpen()) return
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
         autoConfirmInstall()
@@ -334,13 +338,14 @@ class PowerAccessibilityService : AccessibilityService() {
      */
     fun injectKey(keyCode: Int) {
         Log.i(TAG, "Key: $keyCode")
-        Thread {
+        // GHSA-rvxj 7.7: the same bounded worker as the remote-key path, never a thread per key.
+        KeyInjectQueue.shared.submit {
             try {
                 Runtime.getRuntime().exec(arrayOf("input", "keyevent", "$keyCode")).waitFor()
             } catch (e: Exception) {
                 Log.w(TAG, "Key inject failed: ${e.message}")
             }
-        }.start()
+        }
     }
 
     private fun getScreenMetrics(): DisplayMetrics {

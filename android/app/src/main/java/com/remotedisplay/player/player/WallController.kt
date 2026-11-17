@@ -47,7 +47,10 @@ class WallController(
         // Wall zones (WallZoneRenderer): the wall has a layout and every zone runs on the shared
         // clock. The transform still applies; the leader/follower relay does NOT — it carries ONE
         // index and ONE position, and a layout has a timeline per zone.
-        val canvasLayout: Boolean = false
+        val canvasLayout: Boolean = false,
+        // GHSA-rvxj 3.7: the wall's leader as the server knows it (wall_config.leader_device_id),
+        // when the server sends it. null = unknown, and then no sender check is possible.
+        val leaderDeviceId: String? = null
     )
     private val WallConfig.isGroup: Boolean get() = mode == Mode.GROUP
 
@@ -148,6 +151,7 @@ class WallController(
         if (c.isLeader) return
         if (c.canvasLayout) return                  // each zone keeps its own place on the shared clock
         if (data.optString(c.idField()) != c.wallId) return
+        if (!acceptsSyncFrom(c.leaderDeviceId, data)) return
 
         val leaderIdx = data.optInt("current_index", -1)
         if (leaderIdx >= 0 && leaderIdx != playlist.getIndex()) playlist.gotoIndex(leaderIdx)
@@ -186,5 +190,25 @@ class WallController(
     private fun stopTimer() {
         tick?.let { handler.removeCallbacks(it) }
         tick = null
+    }
+
+    companion object {
+        /*
+         * GHSA-rvxj 3.7 (follower half): only the configured leader drives a follower.
+         *
+         * The server stamps `device_id` on every relayed wall:sync with the AUTHENTICATED sender (never
+         * the client's own field), so it can be trusted; but it relays from any wall MEMBER, so a
+         * second member (or a stolen member token) could jerk the whole wall around. When the payload
+         * told us who the leader is, a sync from anyone else is ignored.
+         *
+         * ⚠️ When leader_device_id is absent (every server before this field, and group sync), the
+         * check is skipped rather than failing closed: refusing every sync would freeze the wall on
+         * a server that never sends the id. Leader failover is safe because the server re-pushes the
+         * payload (and with it the new leader id) to every member when it reassigns leadership.
+         */
+        internal fun acceptsSyncFrom(leaderDeviceId: String?, data: JSONObject): Boolean {
+            if (leaderDeviceId.isNullOrEmpty()) return true
+            return data.optString("device_id", "") == leaderDeviceId
+        }
     }
 }

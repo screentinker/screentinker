@@ -405,36 +405,39 @@ class TriggerListeners(
                 stats.httpPort = port
                 onState(stats)
                 Log.i(TAG, "[trigger] HTTP trigger listener on :$port")
+                // GHSA-rvxj 7.3: one permit per in-flight request, see HttpRequestLimits.
+                val slots = java.util.concurrent.Semaphore(HttpRequestLimits.MAX_CLIENTS)
                 while (running.get() && !srv.isClosed) {
                     val client = try { srv.accept() } catch (e: Throwable) { if (running.get()) Log.w(TAG, "accept: ${e.message}"); continue }
+                    if (!slots.tryAcquire()) {
+                        // Full: drop it rather than queue. A real panel resends; a flood gets nothing.
+                        Log.w(TAG, "[trigger] http: ${HttpRequestLimits.MAX_CLIENTS} requests in flight, dropping ${client.inetAddress?.hostAddress}")
+                        try { client.close() } catch (e: Throwable) { }
+                        continue
+                    }
                     Thread({
                         try {
                             client.soTimeout = 5000
-                            val reader = client.getInputStream().bufferedReader()
-                            val requestLine = reader.readLine() ?: return@Thread
-                            var contentLength = 0
-                            // Headers are KEPT now, lowercased, because the control door reads
-                            // Authorization. Bounded at 32: an endless header list on an
-                            // unauthenticated socket is memory pressure on a player, and no real
-                            // sender is anywhere near it.
-                            val headers = HashMap<String, String>()
-                            while (true) {
-                                val h = reader.readLine() ?: break
-                                if (h.isEmpty()) break
-                                if (h.startsWith("Content-Length:", true)) {
-                                    contentLength = h.substringAfter(':').trim().toIntOrNull() ?: 0
-                                }
-                                val c = h.indexOf(':')
-                                if (c > 0 && headers.size < 32) {
-                                    headers[h.substring(0, c).trim().lowercase()] = h.substring(c + 1).trim()
-                                }
-                            }
+                            // ⚠️ ONE buffered stream for head AND body: a second reader would lose
+                            // whatever the first one had already buffered past the blank line.
+                            val input = java.io.BufferedInputStream(client.getInputStream())
+                            // Line length, header count and a deadline for the whole head are all
+                            // bounded there; any of them aborts the request (caught below).
+                            // Headers are KEPT, lowercased, because the control door reads
+                            // Authorization; the first 32 are kept, as before.
+                            val head = HttpRequestLimits.readHead(
+                                input, System.currentTimeMillis() + HttpRequestLimits.REQUEST_DEADLINE_MS,
+                                { System.currentTimeMillis() }
+                            ) ?: return@Thread
+                            val requestLine = head.requestLine
+                            val headers = head.headers
+                            val contentLength = head.contentLength
                             // Bound the read: an endless body must not become memory pressure on a
                             // player. The wire format is one short line either way.
                             val cap = minOf(contentLength, 4096)
                             val body = if (cap > 0) {
-                                val chars = CharArray(cap); val n = reader.read(chars, 0, cap)
-                                if (n > 0) String(chars, 0, n) else ""
+                                val bytes = ByteArray(cap); val n = input.read(bytes, 0, cap)
+                                if (n > 0) String(bytes, 0, n, Charsets.UTF_8) else ""
                             } else ""
 
                             val method = requestLine.substringBefore(' ').uppercase()
@@ -581,6 +584,7 @@ class TriggerListeners(
                             Log.w(TAG, "[trigger] http client: ${e.message}")
                         } finally {
                             try { client.close() } catch (e: Throwable) { }
+                            slots.release()
                         }
                     }, "trigger-http-client").apply { isDaemon = true }.start()
                 }

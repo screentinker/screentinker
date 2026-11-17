@@ -5,6 +5,17 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 
+/*
+ * ⚠️ EXPORTED, AND THE QUICKBOOT ACTIONS ARE SPOOFABLE — ON PURPOSE (GHSA-rvxj 3.10, reviewed).
+ *
+ * BOOT_COMPLETED is a protected broadcast only the system can send, but the two QUICKBOOT_POWERON
+ * actions are not: any app on the panel can send them and bring the player to the front. That is
+ * accepted: relaunching the signage player is what a kiosk panel should do anyway, it needs a hostile
+ * app already installed on the panel, and those actions are the only boot signal some HTC-derived
+ * TV boxes give after a fast-boot (no BOOT_COMPLETED, and a resume from fast-boot need not reset
+ * uptime, so an uptime check is no reliable way to tell it from a spoof). Gating it would risk
+ * stranding those boxes on the launcher after a power cycle. Nothing here acts on extras or data from the intent; keep it that way.
+ */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action

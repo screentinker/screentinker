@@ -19,6 +19,7 @@ import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.remotedisplay.player.util.DebugLog
+import com.remotedisplay.player.util.LogUrl
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -472,7 +473,7 @@ class WallZoneRenderer(
                     handler.post {
                         if (m.released) return@post
                         if (bmp != null) try { iv.setImageBitmap(bmp) } catch (_: Throwable) {}
-                        else DebugLog.w(TAG, "'${zs.z.name}': unloadable image ${cid ?: url}")
+                        else DebugLog.w(TAG, "'${zs.z.name}': unloadable image ${cid ?: LogUrl.redact(url)}")
                         revealers[m]?.invoke()
                     }
                 }.start()
