@@ -314,6 +314,16 @@ function emitToDeviceWorkspace(dashboardNs, deviceId, event, payload) {
   emitToWorkspace(dashboardNs, deviceRoom(deviceId), event, payload);
 }
 
+/*
+ * ⚠️ dashboard:shell-result and dashboard:device-log are NOT workspace broadcasts: they go only to
+ * the sockets that could have run the shell themselves (ws/dashboardSocket.js emitToShellUsers —
+ * see there for why). Required lazily: dashboardSocket requires this module.
+ */
+function emitToShellUsers(dashboardNs, deviceId, event, payload) {
+  if (!dashboardNs) return;
+  require('./dashboardSocket').emitToShellUsers(dashboardNs, deviceId, event, payload);
+}
+
 // In-memory store for latest screenshot per device (avoids disk writes during streaming)
 let lastScreenshots = {};
 
@@ -2116,7 +2126,7 @@ const EVENT_APPLIERS = Object.freeze({
   'shell-result'(deviceId, data, ctx) {
     const { device_id, cmd, output, exit } = data || {};
     if (!device_id || device_id !== deviceId) return;
-    emitToDeviceWorkspace(_dashboardNsRef, device_id, 'dashboard:shell-result', {
+    emitToShellUsers(_dashboardNsRef, device_id, 'dashboard:shell-result', {
       device_id, cmd: String(cmd || '').slice(0, 500), output: String(output || '').slice(0, 8000), exit,
     });
   },
@@ -2154,7 +2164,7 @@ const EVENT_APPLIERS = Object.freeze({
   'log'(deviceId, data, ctx) {
     const message = typeof data?.message === 'string' ? data.message.slice(0, 2000) : '';
     if (!message) return;
-    emitToDeviceWorkspace(_dashboardNsRef, deviceId, 'dashboard:device-log', {
+    emitToShellUsers(_dashboardNsRef, deviceId, 'dashboard:device-log', {
       device_id: deviceId,
       tag: typeof data?.tag === 'string' ? data.tag.slice(0, 64) : '',
       level: typeof data?.level === 'string' ? data.level.slice(0, 8) : 'd',
@@ -3712,8 +3722,8 @@ module.exports = function setupDeviceSocket(io) {
       }
       if (kind === 'playback-state') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:playback-state', { ...(data || {}), device_id: deviceId });
       if (kind === 'content-ack') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:content-ack', { device_id: deviceId, content_id: data && data.content_id, status: data && data.status });
-      if (kind === 'shell-result') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:shell-result', { device_id: deviceId, cmd: String((data && data.cmd) || '').slice(0, 500), output: String((data && data.output) || '').slice(0, 8000), exit: data && data.exit });
-      if (kind === 'log') return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:device-log', { device_id: deviceId, tag: String((data && data.tag) || '').slice(0, 64), level: String((data && data.level) || 'd').slice(0, 8), message: String((data && data.message) || '').slice(0, 2000), ts: Date.now() });
+      if (kind === 'shell-result') return emitToShellUsers(dashboardNs, deviceId, 'dashboard:shell-result', { device_id: deviceId, cmd: String((data && data.cmd) || '').slice(0, 500), output: String((data && data.output) || '').slice(0, 8000), exit: data && data.exit });
+      if (kind === 'log') return emitToShellUsers(dashboardNs, deviceId, 'dashboard:device-log', { device_id: deviceId, tag: String((data && data.tag) || '').slice(0, 64), level: String((data && data.level) || 'd').slice(0, 8), message: String((data && data.message) || '').slice(0, 2000), ts: Date.now() });
       if (kind === 'screenshot' && data && data.image_b64) return ingestScreenshot(deviceId, data.image_b64);
       if (kind === 'play-event' && data && data.event === 'play_start') {
         return emitToDeviceWorkspace(dashboardNs, deviceId, 'dashboard:playback-progress', {

@@ -619,3 +619,35 @@ module.exports.tellAccessChanged = function tellAccessChanged(userId) {
   try { _dashboardNs.to(userRoom(userId)).emit('dashboard:access-changed', {}); } catch (_) { /* best-effort */ }
 };
 module.exports.revalidateSocket = revalidateSocket;
+module.exports.canRunShell = canRunShell;
+
+/*
+ * ⚠️ SHELL OUTPUT AND THE LIVE DEBUG LOG GO ONLY TO THOSE WHO COULD HAVE RUN THE SHELL.
+ *
+ * dashboard:shell-result and dashboard:device-log went to the whole workspace room, viewers
+ * included (they join it, and dashboard:watch-device lets them join another device's). The page
+ * filters by device id, but a member's own client can simply listen — so every viewer read every
+ * admin's `cat` of a config file, and every credential-bearing URL a WebView logged while debug
+ * logging was on. Now each socket in the room is judged by canRunShell, the rule the PTY uses.
+ *
+ * A device with NO workspace keeps the unclaimed room: only platform roles join it, and
+ * canActOnDevice cannot answer for a device with no workspace (see lib/socket-rooms UNCLAIMED_ROOM).
+ *
+ * Cost: one session check and a few indexed lookups per socket per line while a debug log streams.
+ * Workspace rooms are small; a broadcast is still one emit for the common, unclaimed-free case.
+ */
+module.exports.emitToShellUsers = function emitToShellUsers(dashboardNs, deviceId, event, payload) {
+  if (!dashboardNs) return;
+  const { UNCLAIMED_ROOM } = require('../lib/socket-rooms');
+  const room = deviceRoom(deviceId);
+  if (!room) return;
+  if (room === UNCLAIMED_ROOM) { dashboardNs.to(room).emit(event, payload); return; }
+  const ids = dashboardNs.adapter && dashboardNs.adapter.rooms && dashboardNs.adapter.rooms.get(room);
+  for (const id of ids ? [...ids] : []) {
+    const socket = dashboardNs.sockets.get(id);
+    if (!socket || !socket.connected) continue;
+    let ok = false;
+    try { ok = canRunShell(socket, deviceId); } catch (_) { ok = false; }   // fail closed
+    if (ok && socket.connected) socket.emit(event, payload);
+  }
+};
