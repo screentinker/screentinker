@@ -194,6 +194,16 @@ router.get('/', (req, res) => {
   res.json(widgets.map(redactWidgetRow));
 });
 
+// GHSA-rvxj 13.1: a news widget's feed address may not carry a user name or password. It is stored
+// in a config every workspace member reads and, before the widget-id reference, was put on the
+// public render page; the feed reader refuses such an address anyway, so the widget would only
+// ever show nothing. Said at save time instead. Other bad addresses still save as before.
+function rssFeedCredentialsError(type, config) {
+  if (type !== 'rss' || !config || typeof config.feed_url !== 'string') return null;
+  const news = require('../lib/news-feed');
+  return news.hasCredentials(config.feed_url) ? news.CREDENTIALS_MESSAGE : null;
+}
+
 // Create widget in the caller's current workspace.
 router.post('/', (req, res) => {
   if (!req.workspaceId) return res.status(403).json({ error: 'No workspace context. Switch to a workspace before creating widgets.' });
@@ -210,6 +220,8 @@ router.post('/', (req, res) => {
   }
   const tzErr = validateTimezone(config);
   if (tzErr) return res.status(400).json({ error: tzErr });
+  const feedErr = rssFeedCredentialsError(widget_type, config);
+  if (feedErr) return res.status(400).json({ error: feedErr });
   let storedConfig = config;
   if (widget_type === 'cloud-doc') {
     const cd = cloudDocConfig(config);
@@ -384,6 +396,8 @@ router.put('/:id', (req, res) => {
   }
   const tzErr = validateTimezone(config);
   if (tzErr) return res.status(400).json({ error: tzErr });
+  const feedErr = rssFeedCredentialsError(widget.widget_type, config);
+  if (feedErr) return res.status(400).json({ error: feedErr });
   if (widget.widget_type === 'cloud-doc' && config) {
     const cd = cloudDocConfig(config);
     if (cd.error) return res.status(400).json({ error: cd.error });
@@ -1133,7 +1147,7 @@ router.get('/:id/render', (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     if (req.query.compat === 'sssp1228') return legacyRssSnapshot(config).then((snapshot) => res.send(renderLegacyRSS(config, snapshot)));
-    return res.send(renderRSS(config));
+    return res.send(renderRSS(config, { widgetId: widget.id }));
   }
   if (widget.widget_type === 'template') {
     const out = require('../lib/templates/widget').renderTemplateWidget(widget, {
@@ -1695,7 +1709,11 @@ function renderRSS(c, opts = {}) {
   const images = r.layout === 'headlines' ? r.showImages : c && c.show_images === true;
   // Relative: the page is served by this server, and a moved server must not leave cached pages
   // pointing at the old address. The embedded renderer sets a <base>, so it resolves there too.
-  const itemsUrl = r.feedUrl ? news.itemsPath(r.feedUrl, r.mode) : '';
+  // GHSA-rvxj 13.1: a saved widget's public /render page names the widget, never the feed (whose
+  // query string can carry a key): the items handler looks the feed up server-side. The feed form is
+  // still checked first, so an address the server would refuse gives no URL either way.
+  const feedItemsUrl = r.feedUrl ? news.itemsPath(r.feedUrl, r.mode) : '';
+  const itemsUrl = feedItemsUrl && opts.widgetId ? news.widgetItemsPath(opts.widgetId) : feedItemsUrl;
   const seedData = itemsUrl && opts.seed !== false ? news.peek(r.feedUrl, r.mode) : null;
   const seed = seedData ? news.screenPayload(seedData, { max: r.maxItems, images }) : null;
   const cfg = {

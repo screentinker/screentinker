@@ -118,13 +118,18 @@ address it in `robots.txt` as `User-agent: ScreenTinker-FeedReader`.
 |---|---|---|
 | `POST /api/news-feeds/discover` `{ url }` | Workspace editors (not view-only) | What an address offers. 20 a minute per address |
 | `POST /api/news-feeds/preview` `{ url, mode }` | Workspace editors | A feed's items. 60 a minute per address |
-| `GET /api/news-feeds/items?m=&u=&s=` | Public | A feed's items for a widget page |
+| `GET /api/news-feeds/items?w=&s=` | Public | A saved news widget's items, by widget id. The server reads the feed address from the widget, so the page never contains it |
+| `GET /api/news-feeds/items?m=&u=&s=` | Public | A feed's items, by address (the editor's preview, offline bundles, designer HTML) |
 | `GET /api/news-feeds/image?u=&s=` | Public | An item's picture |
 
 The two public endpoints need the server's signature (`s`), which the server adds when it renders a
 widget. They serve only feeds and pictures that some widget was rendered with, so a leaked address
 cannot make the server read anything else. They are limited per caller address (600 and 3000 a
 minute).
+
+A feed address may not carry a user name or password (`https://user:pass@...`): saving such a news
+widget is refused. A key in the query string is allowed, and stays on the server: a saved widget's
+public page reads its items by widget id.
 
 - **Data sources.** The **RSS / Atom feed** data source (for slide variables) is separate and
   unchanged. It already read feeds on the server.

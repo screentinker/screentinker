@@ -112,13 +112,15 @@ test('rss widget: an ARRAY feed_url cannot break out of the JS string (non-strin
   assert.match(html, /"url":""/, 'no feed to read');
 });
 
-test('rss widget: a feed URL with quotes and markup reaches the page only as an encoded, signed path', async () => {
+test('rss widget: a feed URL with quotes and markup never reaches the page; it reads by widget id', async () => {
   seed('rss3', 'rss', { feed_url: 'https://example.com/feed?x=\'</script><script>alert(1)</script>' });
   const html = await render('rss3');
   assert.ok(!/<script>alert\(1\)/.test(html), 'no markup breakout');
   assert.ok(!html.includes("x='"), 'no raw quote from the URL');
+  // GHSA-rvxj 13.1: the saved widget's page names the widget, not the feed (which could carry a key).
   // In the page's JSON block, so `&` is written \u0026.
-  assert.match(html, /\/api\/news-feeds\/items\?m=feed\\u0026u=https%3A%2F%2Fexample\.com%2Ffeed/);
+  assert.match(html, /\/api\/news-feeds\/items\?w=rss3\\u0026s=/);
+  assert.ok(!html.includes('example.com'), 'the feed address is not in the public page');
   assert.ok(!html.includes('rss2json'), 'no third-party converter');
 });
 
