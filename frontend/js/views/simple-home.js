@@ -218,7 +218,7 @@ async function renderHome(container) {
   host.innerHTML = devices.filter((d) => !(d.mirror_of && originals.has(d.mirror_of))).map((d) => {
     const card = `
     <${tag} class="simple-screen" ${canChange ? `href="#/simple/change?device=${encodeURIComponent(d.id)}" title="${esc(t('simple.task.change'))}"` : ''}>
-      <span class="simple-screen-shot" data-shot="${esc(d.id)}">${d.screenshot_path ? `<img src="${screenshotUrl(d.id, d.screenshot_at || '')}" alt="">` : '&#128250;'}</span>
+      <span class="simple-screen-shot" data-shot="${esc(d.id)}">${d.screenshot_path ? `<img data-auth-src="${esc(screenshotUrl(d.id, d.screenshot_at || ''))}" alt="">` : '&#128250;'}</span>
       <span class="simple-screen-name">${esc(d.name)}</span>
       <span class="simple-screen-status ${online(d) ? 'on' : 'off'}" data-sv-plain="${esc(d.id)}">${esc(d.plan_paused ? t('simple.status.paused') : online(d) ? t('simple.status.online') : t('simple.status.offline'))}</span>
     </${tag}>`;
@@ -229,6 +229,8 @@ async function renderHome(container) {
     <details class="simple-coming" data-coming="${esc(d.id)}"><summary>${esc(t('simple.coming.title'))}</summary><div class="simple-coming-body"></div></details>
     </div>`;
   }).join('');
+  // GHSA-rvxj (D): the stored screenshots are data-auth-src — a Bearer fetch, no token in the URL.
+  hydrateAuthImages(host);
   // 3.0.1: a screenshot that arrives while the page is open replaces the card's picture — the server
   // asks for one after pairing and after new content (server/lib/preview-refresh.js), so a card no
   // longer shows the pairing code under "Playing" until somebody presses Screenshot.
@@ -338,11 +340,12 @@ async function renderShare(container, presetId) {
         <div class="simple-pick">${devices.map((d) => `
         <button type="button" class="simple-screen${picked.has(d.id) ? ' is-picked' : ''}" data-pick="${esc(d.id)}" aria-pressed="${picked.has(d.id) ? 'true' : 'false'}" ${online(d) ? '' : 'disabled'}
           style="${picked.has(d.id) ? 'outline:3px solid var(--accent, #3b82f6);outline-offset:2px' : ''}">
-          <span class="simple-screen-shot">${d.screenshot_path ? `<img src="${screenshotUrl(d.id, d.screenshot_at || '')}" alt="">` : '&#128250;'}</span>
+          <span class="simple-screen-shot">${d.screenshot_path ? `<img data-auth-src="${esc(screenshotUrl(d.id, d.screenshot_at || ''))}" alt="">` : '&#128250;'}</span>
           <span class="simple-screen-name">${picked.has(d.id) ? '&#10003; ' : ''}${esc(d.name)}</span>
           <span class="simple-screen-status ${online(d) ? 'on' : 'off'}">${esc(online(d) ? t('simple.status.online') : t('simple.status.offline'))}</span>
         </button>`).join('')}</div>
         <div class="simple-done-actions"><button type="button" class="btn btn-primary simple-share-go" data-pick-next ${picked.size ? '' : 'disabled'}>${esc(t('screen_share.simple.next'))}</button></div>` }));
+    hydrateAuthImages(container, { eager: true });
     container.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => {
       const id = b.dataset.pick;
       if (picked.has(id)) picked.delete(id);
@@ -829,10 +832,11 @@ async function renderChange(container, presetId) {
     shell(container, guideFrame({ step: 0, total, icon: '&#128250;', title: t('simple.change.pick_title'), back: false,
       body: `<div class="simple-pick">${devices.map((d) => `
         <button type="button" class="simple-screen" data-pick="${esc(d.id)}">
-          <span class="simple-screen-shot">${d.screenshot_path ? `<img src="${screenshotUrl(d.id, d.screenshot_at || '')}" alt="">` : '&#128250;'}</span>
+          <span class="simple-screen-shot">${d.screenshot_path ? `<img data-auth-src="${esc(screenshotUrl(d.id, d.screenshot_at || ''))}" alt="">` : '&#128250;'}</span>
           <span class="simple-screen-name">${esc(d.name)}</span>
           <span class="simple-screen-status ${online(d) ? 'on' : 'off'}">${esc(online(d) ? t('simple.status.online') : t('simple.status.offline'))}</span>
         </button>`).join('')}</div>` }));
+    hydrateAuthImages(container, { eager: true });
     container.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => {
       device = devices.find((d) => d.id === b.dataset.pick);
       contentStep();

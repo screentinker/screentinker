@@ -67,15 +67,63 @@ function resolveEnrolKey(db, key) {
   }
 }
 
-/** Mint (or roll) the key for a display. Returns the new key. */
+/*
+ * ⚠️ GHSA-rvxj 5.2: ROLLING THE URL MUST ALSO CUT OFF WHOEVER ALREADY REDEEMED IT.
+ *
+ * Redeeming a key hands back the display's device_token (ws/deviceSocket.js, the key exchange), and
+ * that token is what every later register proves itself with. Rolling only the key left a leaked
+ * URL's holder with a working token — and, through the fingerprint link the exchange recorded, a
+ * way to be minted a fresh one by the reinstall path — so "New URL" did not do what the page says.
+ *
+ * So the exchange marks the row whose token it handed out (`enrol_redeemed`), and a roll or clear
+ * re-issues the token of every marked row — the display and any mirror made from its link — and
+ * unlinks their fingerprints, so the reinstall-reclaim path cannot hand the old holder a new one.
+ * The caller disconnects their live sockets (routes/devices.js); this module has no socket access.
+ *
+ * ⚠️ ONLY MARKED ROWS. A screen paired by code that was given a link nobody ever opened never had
+ * its token leave through the URL, and keeps working untouched — a code-paired Android panel must
+ * not be knocked off and made to re-pair because someone pressed "New URL" on its page. A display
+ * whose link WAS opened is the case where the token may be out, and there the cost is the point:
+ * every opening needs the new URL (it gets the new token through it), which is what the page tells
+ * the operator. Idempotent: a second call finds nothing marked.
+ *
+ * @returns {string[]} the ids whose token was re-issued (for the caller to disconnect)
+ */
+function revokeRedeemedCredentials(db, deviceId) {
+  let rows;
+  try {
+    rows = db.prepare('SELECT id FROM devices WHERE (id = ? OR mirror_of = ?) AND enrol_redeemed = 1').all(deviceId, deviceId);
+  } catch {
+    return [];   // column missing on a half-migrated database: nothing was ever marked
+  }
+  const rotate = db.prepare("UPDATE devices SET device_token = ?, enrol_redeemed = 0, updated_at = strftime('%s','now') WHERE id = ?");
+  const unlink = db.prepare('UPDATE device_fingerprints SET device_id = NULL WHERE device_id = ?');
+  for (const r of rows) {
+    rotate.run(crypto.randomBytes(32).toString('hex'), r.id);
+    try { unlink.run(r.id); } catch { /* no fingerprint table on a minimal schema */ }
+  }
+  return rows.map((r) => r.id);
+}
+
+/** Called by the key exchange on the row whose device_token it is about to hand to the key holder. */
+function markRedeemed(db, deviceId) {
+  try {
+    db.prepare('UPDATE devices SET enrol_redeemed = 1 WHERE id = ? AND enrol_redeemed = 0').run(deviceId);
+  } catch { /* column missing on a half-migrated database */ }
+}
+
+/** Mint (or roll) the key for a display. Returns the new key. Re-issues any token the old key gave out. */
 function setEnrolKey(db, deviceId) {
+  revokeRedeemedCredentials(db, deviceId);
   const key = generateEnrolKey();
   db.prepare("UPDATE devices SET enrol_key = ?, updated_at = strftime('%s','now') WHERE id = ?").run(key, deviceId);
   return key;
 }
 
-/** Withdraw the key. Any URL carrying it stops working on the display's next connect. */
+/** Withdraw the key. Any URL carrying it stops working on the display's next connect, and any token
+ *  it handed out is re-issued (see revokeRedeemedCredentials). */
 function clearEnrolKey(db, deviceId) {
+  revokeRedeemedCredentials(db, deviceId);
   db.prepare("UPDATE devices SET enrol_key = NULL, updated_at = strftime('%s','now') WHERE id = ?").run(deviceId);
 }
 
@@ -89,11 +137,48 @@ function playerUrl(origin, key) {
   return `${trimTrailing(origin, '/')}/player?k=${encodeURIComponent(key)}`;
 }
 
+/*
+ * GHSA-rvxj 2.2: a player URL minted over plain HTTP on a PUBLIC host travels — and is then used,
+ * every time the player loads — in cleartext, and the key in it lets its holder become the display.
+ * HTTP enrolment is NOT refused: LAN installs on http://192.168.x.x are supported and common, and on
+ * them there is no public path to observe. So this only says so, as a `warning` on the response,
+ * when the effective protocol (req.protocol, which honours a trusted proxy's X-Forwarded-Proto) is
+ * http AND the host is not loopback, private, link-local or a LAN-only name.
+ *
+ * @returns {string|null}
+ */
+function cleartextWarning(req) {
+  if (!req || req.protocol !== 'http') return null;
+  const host = String(req.hostname || '').replace(/^\[|\]$/g, '').toLowerCase();
+  if (!host || isLanHost(host)) return null;
+  return 'This player URL was created over plain HTTP on a public address. The key in it lets anyone who sees it become this display: serve the dashboard over HTTPS, or create the link from the server\'s LAN address.';
+}
+
+function isLanHost(host) {
+  const net = require('net');
+  if (host === 'localhost' || host.endsWith('.localhost') || !host.includes('.') && !net.isIP(host)) return true;
+  if (/\.(local|lan|internal|home\.arpa)$/.test(host)) return true;
+  if (net.isIPv4(host)) {
+    const [a, b] = host.split('.').map(Number);
+    return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+      || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);   // last: CGNAT / Tailscale
+  }
+  if (net.isIPv6(host)) {
+    const v4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(host);
+    if (v4) return isLanHost(v4[1]);
+    return host === '::1' || /^f[cd]/.test(host) || /^fe[89ab]/.test(host);
+  }
+  return false;
+}
+
 module.exports = {
+  cleartextWarning,
   generateEnrolKey,
   looksLikeEnrolKey,
   resolveEnrolKey,
   setEnrolKey,
   clearEnrolKey,
+  revokeRedeemedCredentials,
+  markRedeemed,
   playerUrl,
 };

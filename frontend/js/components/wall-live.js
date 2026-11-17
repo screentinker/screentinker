@@ -8,7 +8,7 @@
  * so a panel hung sideways sends its picture turned by its mounting rotation; it is turned back here
  * (by -rotation), exactly as the panel's own mount does in the room.
  */
-import { esc, screenshotUrl } from '../utils.js';
+import { esc, screenshotUrl, hydrateAuthImages } from '../utils.js';
 import { t } from '../i18n.js';
 import { on, off, requestScreenshot } from '../socket.js';
 
@@ -62,19 +62,23 @@ export function mountWallLive(container, { wall, devices = [], live = false, ref
         return `
         <div class="wall-live-panel" data-device-id="${esc(r.id)}" title="${esc(r.name)}"
              style="position:absolute;overflow:hidden;background:#111;left:${(r.x - b.x) / b.w * 100}%;top:${(r.y - b.y) / b.h * 100}%;width:${r.w / b.w * 100}%;height:${r.h / b.h * 100}%;outline:1px solid rgba(255,255,255,0.08)">
-          <img alt="" ${src ? `src="${src}"` : ''} style="position:absolute;left:50%;top:50%;width:${iw}%;height:${ih}%;object-fit:fill;transform:translate(-50%,-50%) rotate(${-r.rotation}deg);${src ? '' : 'display:none'}">
+          <img alt="" ${src ? `data-auth-src="${esc(src)}"` : ''} style="position:absolute;left:50%;top:50%;width:${iw}%;height:${ih}%;object-fit:fill;transform:translate(-50%,-50%) rotate(${-r.rotation}deg);${src ? '' : 'display:none'}">
           ${online ? '' : `<div style="position:absolute;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;color:#f87171;font-size:${compact ? 9 : 12}px;text-align:center;padding:4px">${compact ? '' : esc(r.name) + '<br>'}offline</div>`}
           ${compact ? '' : `<span style="position:absolute;left:4px;bottom:3px;font-size:10px;color:rgba(255,255,255,0.75);text-shadow:0 1px 2px #000">${esc(r.name)}</span>`}
         </div>`;
       }).join('')}
     </div>`;
+  // GHSA-rvxj (D): stored panel screenshots load through a Bearer fetch, not a token in the URL.
+  hydrateAuthImages(container);
 
   const ids = new Set(rects.map((r) => r.id));
   const handler = (data) => {
     if (!data || !ids.has(data.device_id)) return;
     const img = container.querySelector(`.wall-live-panel[data-device-id="${CSS.escape(data.device_id)}"] img`);
     if (!img) return;
-    img.src = data.image_data || (data.url + '&token=' + localStorage.getItem('token'));
+    // image_data is the only shape the server sends; the old URL-plus-session-token fallback was dead.
+    if (!data.image_data) return;
+    img.src = data.image_data;
     img.style.display = '';
   };
   on('screenshot-ready', handler);

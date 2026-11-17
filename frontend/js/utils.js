@@ -127,10 +127,14 @@ export function loadAuthImage(img) {
   const url = img.dataset.authSrc;
   if (!url) return;
   delete img.dataset.authSrc;
+  // A live screenshot frame (inline data: URL from the socket) can land while this fetch is in
+  // flight; the stored image must not then paint over the newer frame.
+  const srcAtStart = img.getAttribute('src');
   fetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
     .then(r => (r.ok ? r.blob() : Promise.reject(r.status)))
     .then(blob => {
       const obj = URL.createObjectURL(blob);
+      if (img.getAttribute('src') !== srcAtStart) { URL.revokeObjectURL(obj); return; }
       img.addEventListener('load', () => URL.revokeObjectURL(obj), { once: true });
       img.src = obj;
     })
@@ -170,16 +174,21 @@ export function hydrateAuthImages(root, { eager = false } = {}) {
  *
  * The mesh proxy fetches the bytes from the machine that owns them; the child still applies the
  * display-capture grant, so this is a different route to the same permission, never around it.
+ *
+ * ⚠️ GHSA-rvxj (D): THE URL CARRIES NO CREDENTIAL. It used to end in `&token=<session JWT>` so a
+ * plain <img src> could load it — which put a 7-day full session into reverse-proxy access logs,
+ * browser history and every copied image link. Both routes now take the Authorization header only,
+ * so callers render `<img data-auth-src="${screenshotUrl(...)}">` and run hydrateAuthImages(), which
+ * fetches with the Bearer header and swaps in a blob URL.
  */
 export function screenshotUrl(deviceId, stamp) {
-  const token = localStorage.getItem('token');
   let org = null;
   try { org = JSON.parse(localStorage.getItem('st_remote_org') || 'null'); } catch (e) { org = null; }
   if (org && org.nodeId) {
     return `/api/mesh/screenshot/${encodeURIComponent(org.nodeId)}/${encodeURIComponent(deviceId)}` +
-           `?t=${stamp || ''}&token=${token}`;
+           `?t=${encodeURIComponent(stamp || '')}`;
   }
-  return `/api/devices/${deviceId}/screenshot?t=${stamp || ''}&token=${token}`;
+  return `/api/devices/${encodeURIComponent(deviceId)}/screenshot?t=${encodeURIComponent(stamp || '')}`;
 }
 
 /**

@@ -8660,6 +8660,9 @@ export default {
   'device.enrol.create': 'Create a web player link',
   'device.enrol.create_hint': 'Gives this display a link you can open in any browser to show it there. The player it already has keeps working, unchanged. Opening the link in a second place while the display is on adds a mirror that shows the same thing.',
   'device.enrol.none': 'This display has no web player link yet. An editor can create one.',
+  // GHSA-rvxj (B): a view-only member is not sent the screen's credentials, so the page cannot tell
+  // "not set" from "hidden" for them — it says the true thing instead of guessing "not set".
+  'device.creds_hidden': 'Only editors can see this.',
   'device.mirror.banner_prefix': 'This screen is a mirror of',
   'device.mirror.banner_body': 'It always shows what that display shows: change its content, layout and schedules there. Status, screenshots and proof-of-play here are this screen\'s own.',
   'device.mirror.location': 'Showing in {location}',

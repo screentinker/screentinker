@@ -1268,6 +1268,15 @@ if (config.triggerIngress) {
   // The same four shapes the player's door accepts (docs/triggers-design.md §11) — a control system
   // should not have to know which kind of box is behind the address.
   app.post('/api/trigger', express.text({ type: '*/*', limit: '2kb' }), (req, res) => handleIngress(req, res, 'http'));
+  /*
+   * ⚠️ GET CARRIES THE SECRET AND TOKEN IN THE QUERY STRING, on purpose (GHSA-rvxj 8.2): Extron
+   * Global Scripter and AMX NetLinx can build a URL but cannot set a header or open a socket. Do not
+   * remove it. What keeps the credential out of THIS server's logs: the access logger records only
+   * the route template, never the URL (lib/http-logging.js), the API error handler strips the query
+   * (lib/api-errors.js), and handleIngress logs nothing about the request. A reverse proxy in front
+   * logs whatever it is configured to — docs/triggers-design.md tells operators to drop the query.
+   * Pinned by test/trigger-get-not-logged.test.js.
+   */
   app.get('/api/trigger', (req, res) => handleIngress(req, res, 'http'));
 
   /*
@@ -1819,13 +1828,18 @@ app.get('/api/branding', (req, res) => {
 app.use('/api/stripe', stripeRouter);
 
 
-// Screenshot route (before protected routes - needs custom auth for img tags)
+// Screenshot route (before protected routes; its own session check).
+//
+// ⚠️ GHSA-rvxj (D): AUTHORIZATION HEADER ONLY. It used to accept `?token=<session JWT>` so a plain
+// <img src> could load it, which wrote a 7-day full session into reverse-proxy access logs, browser
+// history and every copied image link. The dashboard now loads it with a Bearer fetch into a blob
+// URL (frontend/js/utils.js hydrateAuthImages), and nothing else ever used the query form — players,
+// mesh children and native apps don't call this route. Do not bring the query parameter back.
 const { resolveSessionUser } = require('./middleware/auth');
 app.get('/api/devices/:id/screenshot', (req, res) => {
   let user = null;
   const authHeader = req.headers.authorization;
-  const tokenParam = req.query.token;
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : tokenParam;
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
   if (!token) return res.status(401).json({ error: 'Authentication required' });
   // resolveSessionUser is the same resolver requireAuth uses, so this route inherits the
   // pre-TOTP refusal, the live-user check and the forced-password-change gate.
@@ -3415,6 +3429,8 @@ app.post('/api/devices/web-player', bearerAuth, resolveTenancy, requireTokenScop
     device: created,
     enrol_key: key,
     player_url: enrolKey.playerUrl(`${req.protocol}://${req.get('host')}`, key),
+    // GHSA-rvxj 2.2: said, not refused — LAN installs over HTTP are supported.
+    ...(enrolKey.cleartextWarning(req) ? { warning: enrolKey.cleartextWarning(req) } : {}),
   });
 });
 

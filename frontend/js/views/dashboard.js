@@ -4,7 +4,7 @@ import { plansVisible } from '../components/plan-nudges.js';
 import { on, off, requestScreenshot, startGroupTalk, stopGroupTalk } from '../socket.js';
 import { BroadcastTalkClient } from '../lib/talk-client.js';
 import { showToast } from '../components/toast.js';
-import { esc, livenessBadge, isPlatformAdmin, screenshotUrl, compareVersions, canWrite } from '../utils.js';
+import { esc, livenessBadge, isPlatformAdmin, screenshotUrl, compareVersions, canWrite, hydrateAuthImages } from '../utils.js';
 import { mountWallLive } from '../components/wall-live.js';
 import { t, tn } from '../i18n.js';
 import * as gettingStarted from '../components/getting-started.js';
@@ -132,6 +132,9 @@ function frameCard(stage) {
 
 function frameCardScreenshots(root) {
   (root || document).querySelectorAll('.device-card-preview[data-orientation]').forEach(frameCard);
+  // GHSA-rvxj (D): card screenshots are data-auth-src (Bearer fetch), never a token in the URL.
+  // Every render that replaces card markup already comes through here.
+  hydrateAuthImages(root || document);
 }
 
 /*
@@ -230,7 +233,6 @@ function isEmbeddedCard(device) {
 }
 
 function renderDeviceCard(device) {
-  const token = localStorage.getItem('token');
   // ⚠️ NOT named screenshotUrl: that is the imported helper, and a const of the same name shadows
   // it in this scope — the call below would hit the temporal dead zone and throw before rendering
   // a single card. The same class of crash as the boot TDZ that took production down.
@@ -256,7 +258,7 @@ function renderDeviceCard(device) {
       </label>
       <div class="device-card-preview" id="preview-${device.id}" data-orientation="${esc(device.orientation || 'landscape')}">
         ${shotSrc
-          ? `<img src="${shotSrc}" alt="Screenshot" loading="lazy">`
+          ? `<img data-auth-src="${esc(shotSrc)}" alt="Screenshot">`
           : `<div class="no-preview">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                 <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
@@ -994,7 +996,10 @@ export function render(container) {
 
   screenshotHandler = (data) => {
     document.querySelectorAll(`#preview-${data.device_id}`).forEach(preview => {
-      const imgSrc = data.image_data || (data.url + '&token=' + localStorage.getItem('token'));
+      // The server only ever sends image_data inline (ws/deviceSocket.js); the old `data.url +
+      // '&token='` fallback was dead code that would have put the session JWT in a URL.
+      const imgSrc = data.image_data;
+      if (!imgSrc) return;
       const img = preview.querySelector('img');
       if (img) {
         img.src = imgSrc;

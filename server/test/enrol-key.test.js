@@ -270,3 +270,24 @@ test('showing the new URL does not destroy the Add Display form', () => {
   assert.match(dash, /resetAddDeviceDialog\(\)/, 'the dialog must be reset when it opens');
   assert.match(dash, /function resetAddDeviceDialog/, 'and that reset has to exist');
 });
+
+/*
+ * GHSA-rvxj 2.2: a player URL minted over plain HTTP on a PUBLIC host is a "become this display"
+ * credential sent in cleartext. HTTP is not refused (LAN installs are supported); the response says
+ * so with a `warning`, and only when the host is reachable from outside a LAN.
+ */
+test('2.2: a cleartext warning only for http on a public host', () => {
+  const w = (protocol, hostname) => enrolKey.cleartextWarning({ protocol, hostname });
+  assert.match(String(w('http', 'signage.example.com')), /HTTPS/);
+  assert.ok(w('http', '203.0.113.10'), 'a public IPv4 over http');
+  assert.ok(w('http', '2001:db8::1'), 'a public IPv6 over http');
+  for (const lan of ['localhost', '127.0.0.1', '10.0.0.5', '172.16.4.2', '192.168.1.20', '169.254.3.3',
+    '100.101.102.103', 'signage.local', 'nas.lan', 'cms', '::1', 'fd12::5', 'fe80::1', '::ffff:192.168.1.2']) {
+    assert.equal(w('http', lan), null, `${lan} is a LAN address; HTTP there is supported`);
+  }
+  assert.equal(w('https', 'signage.example.com'), null, 'https is fine');
+  const routes = fs.readFileSync(path.join(__dirname, '..', 'routes', 'devices.js'), 'utf8');
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  assert.match(routes, /warning: enrolKey\.cleartextWarning\(req\)/, 'POST /:id/enrol-key says so');
+  assert.match(server, /warning: enrolKey\.cleartextWarning\(req\)/, 'POST /api/devices/web-player says so');
+});

@@ -148,6 +148,40 @@ test('a full token creates a web player, audited', async () => {
   assert.match(audit.details, /kiosk script/);
 });
 
+/*
+ * ⚠️ GHSA-rvxj 2.3: creating a web player hands the new display's URL out ONCE, at creation. That
+ * does not make a full token a way to re-fetch (or roll) the enrolment key of a screen that already
+ * exists — that is a transferable "be this screen" credential, which no token read path carries.
+ */
+test('a full token cannot mint or roll the display link of an existing screen; a session still can', async () => {
+  const owner = U.A;
+  const tok = mint(owner, 'full', 'kiosk script');
+  const created = await jfetch('/api/devices/web-player', post(tok, { name: 'Kiosk 2' }));
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const id = created.body.device.id;
+  const keyBefore = db.prepare('SELECT enrol_key FROM devices WHERE id = ?').get(id).enrol_key;
+
+  const r = await jfetch(`/api/devices/${id}/enrol-key`, post(tok, {}));
+  assert.equal(r.status, 403, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'ENROL_KEY_DASHBOARD_ONLY');
+  assert.equal(r.body.enrol_key, undefined);
+  assert.equal(r.body.player_url, undefined);
+  assert.equal(db.prepare('SELECT enrol_key FROM devices WHERE id = ?').get(id).enrol_key, keyBefore, 'and nothing was rolled');
+
+  // The dashboard's "New URL" keeps working.
+  const s = await jfetch(`/api/devices/${id}/enrol-key`, post(owner.jwt, {}));
+  assert.equal(s.status, 200, JSON.stringify(s.body));
+  assert.ok(s.body.enrol_key && s.body.player_url && s.body.rolled);
+
+  // GHSA-rvxj (B): and the trigger-config echo does not hand a token the clear-all token either.
+  const tc = await jfetch(`/api/devices/${id}/trigger-config`, post(tok, { clear_all_token: 'ALLSTOP827' }));
+  assert.equal(tc.status, 200, JSON.stringify(tc.body));
+  assert.equal(tc.body.trigger_config.clear_all_token, undefined);
+  assert.equal(tc.body.trigger_config.clear_all_token_set, true);
+  const tcs = await jfetch(`/api/devices/${id}/trigger-config`, post(owner.jwt, { accept_http: false }));
+  assert.equal(tcs.body.trigger_config.clear_all_token, 'ALLSTOP827', 'a dashboard session still reads it back');
+});
+
 test('failed codes lock out the OWNER across tokens; another owner and the per-IP sessions are unaffected', async () => {
   const owner = U.C;
   const a = mint(owner); const b = mint(owner);

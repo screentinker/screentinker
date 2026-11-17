@@ -137,6 +137,8 @@ function frameNowPlaying() {
   const stage = document.getElementById('screenshotStage');
   const img = document.getElementById('currentScreenshot');
   if (stage && img && img.tagName === 'IMG') frameDeviceOutput(stage, img, currentDevice?.orientation);
+  // GHSA-rvxj (D): the stored screenshot loads through a Bearer fetch, not a token in its URL.
+  if (stage) hydrateAuthImages(stage, { eager: true });
 }
 
 // #go2rtc — put a live WebRTC feed in the Now Playing tile when the server, workspace and device
@@ -755,11 +757,10 @@ export function render(container, deviceId) {
 
   screenshotHandler = (data) => {
     if (data.device_id !== deviceId) return;
-    // Use inline base64 data if available, otherwise fall back to URL
-    const imgSrc = data.image_data || (() => {
-      const token = localStorage.getItem('token');
-      return data.url + (data.url.includes('?') ? '&' : '?') + 'token=' + token;
-    })();
+    // The server only ever sends image_data inline (ws/deviceSocket.js). The old URL fallback
+    // appended the session JWT to it and was never reached — removed (GHSA-rvxj D).
+    const imgSrc = data.image_data;
+    if (!imgSrc) return;
     // Update screenshot in Now Playing tab
     const screenshotEl = document.getElementById('currentScreenshot');
     if (screenshotEl) {
@@ -1051,7 +1052,7 @@ async function loadDevice(deviceId, activeTab = null) {
           <video id="liveVideo" class="live-video" hidden autoplay playsinline muted></video>
           <span id="liveBadge" class="live-badge" hidden>${t('device.live_badge')}</span>
           ${device.screenshot
-            ? `<img id="currentScreenshot" src="${screenshotUrl(device.id, Date.now())}" alt="Current screen">`
+            ? `<img id="currentScreenshot" data-auth-src="${esc(screenshotUrl(device.id, Date.now()))}" alt="Current screen">`
             : `<div class="no-screenshot" id="currentScreenshot">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                   <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
@@ -2076,6 +2077,9 @@ async function loadDevice(deviceId, activeTab = null) {
  */
 function renderTriggerConfig(device) {
   const secretSet = !!device.trigger_secret;
+  // ⚠️ A viewer is never sent trigger_secret / trigger_clear_all_token (stripSecretsForReadOnly),
+  // so for them an empty value means "hidden", not "not set — triggers cannot fire".
+  const credsHidden = !canEditWorkspace();
   const box = 'padding:6px 8px;background:#0b0f1a;border:1px solid var(--border);border-radius:6px;color:var(--text)';
   return `
       <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
@@ -2101,7 +2105,7 @@ function renderTriggerConfig(device) {
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
           <input id="trigGroup" type="text" placeholder="${t('device.trigcfg.group_ph')}"
                  value="${esc(device.trigger_multicast_group || '')}" style="width:180px;${box}">
-          <input id="trigClearAll" type="text" placeholder="${t('device.trigcfg.clear_all_ph')}"
+          <input id="trigClearAll" type="text" placeholder="${credsHidden ? esc(t('device.creds_hidden')) : t('device.trigcfg.clear_all_ph')}"
                  value="${esc(device.trigger_clear_all_token || '')}" style="width:180px;${box}">
           <button class="btn btn-primary btn-sm" id="saveTrigCfgBtn">${t('device.trigcfg.save')}</button>
         </div>
@@ -2109,7 +2113,7 @@ function renderTriggerConfig(device) {
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
           <span style="font-size:13px">${t('device.trigcfg.secret')}:</span>
           <code id="trigSecretVal" style="font-size:12px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);
-                border-radius:6px;padding:4px 8px">${secretSet ? esc(device.trigger_secret) : t('device.trigcfg.secret_unset')}</code>
+                border-radius:6px;padding:4px 8px">${secretSet ? esc(device.trigger_secret) : credsHidden ? esc(t('device.creds_hidden')) : t('device.trigcfg.secret_unset')}</code>
           <button class="btn btn-secondary btn-sm" id="rotateTrigSecretBtn">
             ${secretSet ? t('device.trigcfg.rotate') : t('device.trigcfg.generate')}</button>
         </div>
@@ -2574,14 +2578,16 @@ function setupEnrolKey(device) {
     /*
      * 3.0: a display paired by code (or any display without a link) can be given one here. The
      * key is just another way to identify the same display — its player keeps its own token and is
-     * not disturbed — so this is safe to offer on every original. Editors and up; a view-only
-     * member sees that there is no link yet.
+     * not disturbed — so this is safe to offer on every original. Editors and up.
+     *
+     * ⚠️ A view-only member is never sent enrol_key (stripSecretsForReadOnly), so an empty key tells
+     * them nothing — saying "no link yet" was wrong whenever a link existed. Say it is hidden.
      */
     if (!device.enrol_key) {
       host.innerHTML = canEditWorkspace()
         ? `<button class="btn btn-primary btn-sm" id="enrolCreateBtn">${esc(t('device.enrol.create'))}</button>
            <div style="font-size:12px;color:var(--text-muted);margin-top:6px;max-width:70ch">${esc(t('device.enrol.create_hint'))}</div>`
-        : `<div style="font-size:13px;color:var(--text-muted)">${esc(t('device.enrol.none'))}</div>`;
+        : `<div style="font-size:13px;color:var(--text-muted)">${esc(t('device.creds_hidden'))}</div>`;
       host.querySelector('#enrolCreateBtn')?.addEventListener('click', () => mint(false));
       return;
     }
