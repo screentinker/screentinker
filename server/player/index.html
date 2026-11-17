@@ -7416,6 +7416,10 @@
       // backfill duplicates of what the leader already recorded.
       // Preview never records proof-of-play. The shared offline queue also serves cached
       // startup playback before connect() has run, and playback during a network outage.
+      // A record left open by the previous item (its start was offline, its end was not) must never
+      // survive into this one, or a later offline end would queue it with the wrong content and a
+      // start time from hours ago.
+      offlinePlayOpen = null;
       if (!PREVIEW_MODE && !socket?.connected && (!wallConfig || wallConfig.is_leader) && shouldLogPlay(item)) {
         offlinePlayOpen = {
           content_id: item.content_id || null,
@@ -7484,8 +7488,18 @@
         const open = offlinePlayOpen; offlinePlayOpen = null;
         queueOfflinePlay(open, true);
       }
+      // Started offline, ended online: the server never saw the start, so a bare play_end would
+      // close nothing (or some older row). Queue it whole, as offline plays are, and flush now.
+      let endedViaQueue = false;
+      if (!bySkip && !PREVIEW_MODE && playlist[currentIndex] && socket?.connected && offlinePlayOpen) {
+        const open = offlinePlayOpen; offlinePlayOpen = null;
+        queueOfflinePlay(open, true);
+        flushOfflinePlays();
+        endedViaQueue = true;
+      }
+      offlinePlayOpen = null;
       // Send play_end for current (a skipped bundle's was already sent, as a retraction)
-      if (!bySkip && playlist[currentIndex] && socket?.connected) {
+      if (!bySkip && !endedViaQueue && playlist[currentIndex] && socket?.connected) {
         socket.emit('device:play-event', {
           device_id: config.deviceId,
           event: 'play_end',

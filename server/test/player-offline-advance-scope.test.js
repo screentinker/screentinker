@@ -140,3 +140,26 @@ test('a missing offline-play-queue.js cannot stop the player: playback advances,
   p.run('flushOfflinePlays();');
   assert.equal(p.events.length, 0);
 });
+
+test('a play that started offline and ended online is queued once, never replayed by a later offline end', () => {
+  const p = player();
+  const fire = (ms) => {
+    const [key, timer] = [...p.timers.entries()].find(([, t]) => t.ms === ms) || [];
+    assert.ok(timer, `a ${ms}ms timer is pending`);
+    p.timers.delete(key); timer.fn();
+  };
+  p.run('connectQueue(); playCurrentItem();');           // cached boot: "welcome" opens offline
+  p.scope.socket.connected = true;                        // the socket comes up mid-item
+  fire(5000);                                             // welcome ends online
+  const flushed = p.events.filter(([, d]) => d.event === 'play_offline').flatMap(([, d]) => d.plays);
+  assert.equal(flushed.length, 1, 'the offline-started play goes up whole');
+  assert.equal(flushed[0].widget_id, 'welcome');
+  assert.equal(p.events.filter(([, d]) => d.event === 'play_end').length, 0,
+    'no bare play_end for a start the server never saw');
+  fire(4000);                                             // server ack clears the queue
+  p.scope.socket.connected = false;                       // outage while slide-2 (started online) plays
+  fire(8000);
+  const queued = JSON.parse(p.stored.get('st_offline_plays') || '[]');
+  assert.deepEqual(queued.filter(q => q.widget_id === 'welcome'), [],
+    'the welcome record from boot must not be replayed as a fabricated play');
+});
