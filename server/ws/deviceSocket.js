@@ -642,7 +642,7 @@ function refreshWidgetRevs(assignments, deviceId = null) {
       else if (a.widget_media) delete a.widget_media;
       // A cloud document is framed same-origin too: Google's embed breaks in an opaque origin, and its
       // render document runs no script at all (lib/cloud-docs.js, enforced by its CSP).
-      a.widget_allow_same_origin = Number(facts.same_origin || 0) === 1 || facts.widget_type === 'cloud-doc';
+      a.widget_allow_same_origin = (config.selfHosted && Number(facts.same_origin || 0) === 1) || facts.widget_type === 'cloud-doc';
       // #473: an interactive webpage is configured by its widget_config ON THE PLAYER (start URL,
       // idle timeout, allowed domains), so the config must be as fresh as the rev that tells the
       // player to remount — otherwise an edit reloads the page with the settings from the last

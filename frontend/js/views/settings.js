@@ -40,6 +40,8 @@ export async function render(container) {
   // an Enterprise customer's own admins never saw it and only the platform team could brand them.
   const canBrandWorkspace = isSuperAdmin || (!!user.current_workspace_id
     && (user.current_org_role === 'org_owner' || user.current_org_role === 'org_admin' || user.current_workspace_role === 'workspace_admin'));
+  // The opt-out is self-hosted only (the server refuses it on hosted). A hosted org that turned it off
+  // before 3.2.4 still sees the switch, so it can turn isolation back on.
   const widgetIsolationDisabled = !!user.current_organization?.widget_sandbox_isolation_disabled;
   const WIDGET_ISOLATION_CONFIRM_PHRASE = 'I understand I am enabling a security hole';
   const liveFieldPatchOn = !!user.current_organization?.live_field_patch;
@@ -270,7 +272,7 @@ export async function render(container) {
       </div>
     </div>` : ''}
 
-    ${canManageOrgSecurity ? `
+    ${canManageOrgSecurity && (user.self_hosted === true || widgetIsolationDisabled) ? `
     <div class="settings-section">
       <h3>Security</h3>
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">

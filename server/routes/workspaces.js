@@ -269,6 +269,15 @@ router.put('/:id/security-settings', (req, res) => {
     return res.status(400).json({ error: 'widgetSandboxIsolationDisabled must be boolean' });
   }
   const next = req.body.widgetSandboxIsolationDisabled ? 1 : 0;
+  /*
+   * Self-hosted only. With isolation off, a widget runs as THIS server's origin, the origin whose
+   * localStorage holds every dashboard session. On a hosted instance that origin is shared by every
+   * tenant, so one org switching it off could lift another org's (or a platform admin's) session by
+   * getting them to open a widget's /render link. A self-hosted operator owns the whole origin.
+   */
+  if (next === 1 && !appConfig.selfHosted) {
+    return res.status(403).json({ error: 'Turning off widget sandbox isolation is only available on self-hosted installs', code: 'WIDGET_ISOLATION_SELF_HOSTED_ONLY' });
+  }
   if (next === 1) {
     const typed = String(req.body?.confirmationPhrase || '').trim();
     if (typed !== WIDGET_SANDBOX_CONFIRM_PHRASE) {
