@@ -255,6 +255,7 @@ const ALLOWED = {
   'lib/forwarded-client-ip.js': 'inbound', // net.isIP only
   'lib/http-logging.js': 'inbound',        // net.isIP only
   'lib/view-access.js': 'inbound',         // net.isIP only
+  'lib/enrol-key.js': 'inbound',          // net.isIP only (GHSA-rvxj 2.2 cleartext warning host check)
   'lib/private-ai.js': 'inbound',          // net.isIP only; its requests go through lib/ai-fetch
   'lib/site-cache/node.js': 'feature',     // the cache BOX (its own process): pulls from the origin it is enrolled with
 };
