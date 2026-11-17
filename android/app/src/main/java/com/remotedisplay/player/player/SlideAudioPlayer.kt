@@ -32,11 +32,13 @@ class SlideAudioPlayer(private val context: Context) {
     // The item's own volumes, kept so an unmute restores what was authored rather than full blast.
     private var voVolume = 1f
     private var bedVolume = 0.4f
-    // Two independent silencers, kept apart so lifting one cannot un-silence the other: the item's
-    // own verdict (item.muted / wall follower) and a transient overlay mute. Effective = either.
+    // Independent silencers, kept apart so lifting one cannot un-silence another: the item's own
+    // verdict (item.muted / wall follower), a trigger overlay, and a talk/share duck. A trigger that
+    // ends mid-call must not unmute (and vice versa), so they are separate flags (EffectiveMute).
     private var itemMuted = false
-    private var externalMuted = false
-    private val silent: Boolean get() = itemMuted || externalMuted
+    private var triggerMuted = false
+    private var talkMuted = false
+    private val silent: Boolean get() = EffectiveMute.of(itemMuted, false, triggerMuted, talkMuted)
 
     /**
      * Apply this item's audio.
@@ -101,8 +103,12 @@ class SlideAudioPlayer(private val context: Context) {
      * MediaPlayerManager.setTriggerMute. Restoring re-derives from the item's own volumes rather
      * than forcing 1f, for the reason recorded there: an item the operator muted stays muted.
      */
-    fun setMuted(muted: Boolean) {
-        externalMuted = muted
+    fun setTriggerMuted(muted: Boolean) { triggerMuted = muted; applyVolumes() }
+
+    /** The talk/PA call or screen-share duck; independent of [setTriggerMuted]. */
+    fun setTalkMuted(muted: Boolean) { talkMuted = muted; applyVolumes() }
+
+    private fun applyVolumes() {
         try { vo?.volume = if (silent) 0f else voVolume } catch (_: Throwable) {}
         try { bed?.volume = if (silent) 0f else bedVolume } catch (_: Throwable) {}
     }

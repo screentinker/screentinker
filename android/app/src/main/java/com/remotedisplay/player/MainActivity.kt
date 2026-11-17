@@ -306,7 +306,7 @@ class MainActivity : AppCompatActivity() {
             this, pipLayout, contentCache,
             setBaseAudioSuppressed = { on ->
                 try { if (::mediaPlayer.isInitialized) mediaPlayer.setTriggerMute(on) } catch (e: Throwable) { }
-                try { slideAudioPlayer?.setMuted(on) } catch (e: Throwable) { }
+                try { slideAudioPlayer?.setTriggerMuted(on) } catch (e: Throwable) { }
             },
             log = { level, message -> wsService?.sendLog("trigger", level, message) },
             // #845: an alert outranks a screen share. While any trigger is on screen every share tile,
@@ -1588,7 +1588,7 @@ class MainActivity : AppCompatActivity() {
         val applyDuck = {
             val on = talkDucked || shareDucked
             try { if (::mediaPlayer.isInitialized) mediaPlayer.setTalkMute(on) } catch (e: Throwable) { }
-            try { slideAudioPlayer?.setMuted(on) } catch (e: Throwable) { }
+            try { slideAudioPlayer?.setTalkMuted(on) } catch (e: Throwable) { }
         }
         wsService?.onTalkDuck = { on -> talkDucked = on; applyDuck() }
         wsService?.onShareDuck = { on -> shareDucked = on; applyDuck() }
