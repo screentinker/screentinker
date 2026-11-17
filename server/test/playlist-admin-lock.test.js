@@ -38,7 +38,7 @@ const app = express();
 app.use(express.json());
 const nsp = { adapter: { rooms: new Map() }, to: () => ({ emit: () => {} }), emit: () => {} };
 app.set('io', { of: () => nsp });
-for (const p of ['playlists', 'widgets']) {
+for (const p of ['playlists', 'widgets', 'assignments', 'revisions']) {
   app.use(`/api/${p}`, requireAuth, resolveTenancy, require(`../routes/${p}`));
 }
 const server = app.listen(0);
@@ -102,6 +102,28 @@ test('#714: an editor can still ASSIGN a locked playlist to a screen (using it i
   assert.notEqual(r.json && r.json.code, 'PLAYLIST_ADMIN_LOCKED', 'the admin-lock must not block assignment');
   // A read-only viewer still cannot assign (the viewer block is unchanged).
   assert.equal((await call('POST', `/api/playlists/${S.locked}/assign`, 'viewer', { device_id: DEV })).status, 403);
+});
+
+// The lock was enforced only by routes/playlists.js loadPlaylistAccess; these routes change the same
+// playlist's contents without passing through it.
+test('#714: the lock also holds on the item, screen and restore routes outside the playlist editor', async () => {
+  const lockedErr = (r) => { assert.equal(r.status, 403, JSON.stringify(r.json)); assert.equal(r.json.code, 'PLAYLIST_ADMIN_LOCKED'); };
+  const items = () => db.prepare('SELECT id, duration_sec, sort_order FROM playlist_items WHERE playlist_id = ? ORDER BY id').all(S.locked);
+  const before = JSON.stringify(items());
+  lockedErr(await call('PUT', `/api/assignments/${S.lockedItem}`, 'editor', { duration_sec: 99 }));
+  lockedErr(await call('DELETE', `/api/assignments/${S.lockedItem}`, 'editor'));
+  // The screen was assigned the locked playlist above, so its own playlist IS the locked one.
+  assert.equal(db.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(DEV).playlist_id, S.locked);
+  lockedErr(await call('POST', `/api/assignments/device/${DEV}`, 'editor', { widget_id: S.widget }));
+  lockedErr(await call('POST', `/api/assignments/device/${DEV}/reorder`, 'editor', { order: [S.lockedItem] }));
+  const SRC = 'd-al-source';
+  db.prepare('INSERT OR IGNORE INTO devices (id,name,workspace_id,user_id) VALUES (?,?,?,?)').run(SRC, 'Source screen', WS, users.admin);
+  lockedErr(await call('POST', `/api/assignments/device/${SRC}/copy-to/${DEV}`, 'editor'));
+  const rev = db.prepare("SELECT id FROM revisions WHERE resource_type = 'playlist' AND resource_id = ? ORDER BY rowid LIMIT 1").get(S.locked);
+  if (rev) lockedErr(await call('POST', `/api/revisions/playlist/${S.locked}/${rev.id}/restore`, 'editor'));
+  assert.equal(JSON.stringify(items()), before, 'the locked playlist is untouched');
+  // An admin still can.
+  assert.equal((await call('PUT', `/api/assignments/${S.lockedItem}`, 'admin', { duration_sec: 12 })).status, 200);
 });
 
 test('an admin is unaffected by the lock', async () => {
