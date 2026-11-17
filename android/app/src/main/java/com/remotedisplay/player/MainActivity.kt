@@ -81,12 +81,10 @@ class MainActivity : AppCompatActivity() {
      * plan, a cacheDir lookup per dependency, and EncryptedSharedPreferences writes. All of it used to
      * run on the main thread. One background thread does it now, in payload order; only applying the
      * result touches main. `offlinePlanGen` (main thread) drops a result a newer payload superseded.
-     * The last-written strings (executor thread only) skip an encrypted rewrite of unchanged data.
+     * Writes compare against the stored value (read on the executor) and skip an unchanged rewrite.
      */
     private val offlinePersistExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     private var offlinePlanGen = 0
-    private var lastWrittenOfflinePlan: String? = null
-    private var lastWrittenPlaylist: String? = null
     private val webHealth = com.remotedisplay.player.player.OfflineGate.WebHealth()
     private lateinit var screenshotCapture: ScreenshotCapture
     private lateinit var touchInjector: TouchInjector
@@ -857,11 +855,14 @@ class MainActivity : AppCompatActivity() {
     /** offlinePersistExecutor: parse once, check dependencies, persist if changed; then apply on main. */
     private fun prepareOfflinePlan(raw: String?, gen: Int) {
         val parsed = com.remotedisplay.player.player.OfflinePlan.read(raw)
-        if (lastWrittenOfflinePlan == null) lastWrittenOfflinePlan = config.cachedOfflinePlan
+        // Compared with what is actually stored (read here, off the main thread), not an in-memory
+        // memo: other paths clear these prefs (unpair, cache clear), and a memo would then skip a
+        // rewrite of an unchanged plan and leave the offline copy empty.
+        val stored = config.cachedOfflinePlan
         if (parsed == null) {
             // Null / unusable: no plan applies (an override, a corporate mandate, or no schedules).
             // Drop any committed plan so it cannot be resurrected offline, and stop driving.
-            if (lastWrittenOfflinePlan!!.isNotEmpty()) { config.cachedOfflinePlan = ""; lastWrittenOfflinePlan = "" }
+            if (stored.isNotEmpty()) config.cachedOfflinePlan = ""
             handler.post {
                 if (gen != offlinePlanGen) return@post
                 offlinePlanJson = null
@@ -886,10 +887,7 @@ class MainActivity : AppCompatActivity() {
         // Commit only a COMPLETE plan: a future interval must never roll in to missing media. Until
         // every dependency is on disk, keep the previously committed plan (itself complete) and let
         // the downloads finish; the next payload re-checks and commits when they are ready.
-        if (missing.isEmpty() && raw != lastWrittenOfflinePlan) {
-            config.cachedOfflinePlan = raw!!
-            lastWrittenOfflinePlan = raw
-        }
+        if (missing.isEmpty() && raw != stored) config.cachedOfflinePlan = raw!!
         handler.post {
             if (::downloadCoordinator.isInitialized) {
                 for (item in missing) {
@@ -916,7 +914,8 @@ class MainActivity : AppCompatActivity() {
     private fun persistCachedPlaylist(json: String) {
         try {
             offlinePersistExecutor.execute {
-                if (json != lastWrittenPlaylist) { config.cachedPlaylist = json; lastWrittenPlaylist = json }
+                // Against the stored value, not a memo (see prepareOfflinePlan).
+                if (json != config.cachedPlaylist) config.cachedPlaylist = json
             }
         } catch (e: Throwable) { config.cachedPlaylist = json }
     }
@@ -1592,7 +1591,6 @@ class MainActivity : AppCompatActivity() {
                         cached.put("assignments", filtered)
                         val json = cached.toString()
                         config.cachedPlaylist = json
-                        lastWrittenPlaylist = json
                     }
                 } catch (_: Exception) {}
             }
