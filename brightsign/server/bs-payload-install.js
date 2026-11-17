@@ -42,25 +42,120 @@ const ZIP64_EOCD_LOCATOR_SIG = 0x07064b50;
 /* ------------------------------------------------------------------------------------------- */
 
 /*
+ * ⚠️ WHICH URLS THIS IS ALLOWED TO RUN CODE FROM (GHSA-rvxj 1.2).
+ *
+ * What this downloads is unpacked and then require()d — it IS the server. Over plain HTTP anyone on
+ * the path can swap the archive, and the manifest that carries its checksum comes over the same
+ * connection, so they swap that too and the checksum proves nothing. HTTPS is the only thing that
+ * ties those bytes to the host the operator named.
+ *
+ * ⚠️ BUT PLAIN HTTP ON THE LAN IS A REAL, SUPPORTED SETUP, and refusing it would brick it. A
+ * self-hosted site points payloadUrl at its own server, which is often `http://192.168.1.20:3001`
+ * with no certificate at all — and an attacker who can already sit on that LAN segment owns the
+ * screens a dozen easier ways. So plain HTTP is allowed only where the host CANNOT be on the public
+ * internet: loopback, RFC 1918 / link-local / CGNAT / IPv6 ULA literals, `localhost`, a single-label
+ * name, and the reserved LAN suffixes. Anything else needs HTTPS, or the operator saying, in
+ * st-config.json, that they accept the risk (allowInsecurePayloadUrl: true).
+ *
+ * Returns null when the URL is acceptable, otherwise the reason it is not. Never throws.
+ */
+const LAN_SUFFIXES = ['.local', '.lan', '.internal', '.home.arpa', '.localdomain'];
+function isPrivateHost(hostname) {
+  let h = String(hostname || '').toLowerCase().replace(/\.$/, '');
+  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
+  if (!h) return false;
+  if (h === 'localhost' || h.endsWith('.localhost')) return true;
+  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+           (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
+  }
+  if (h.includes(':')) {
+    // IPv6 literal: loopback, unique-local fc00::/7, link-local fe80::/10, or a v4-mapped private one.
+    if (h === '::1') return true;
+    const mapped = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (mapped) return isPrivateHost(mapped[1]);
+    return /^f[cd][0-9a-f]{0,2}:/.test(h) || /^fe[89ab][0-9a-f]?:/.test(h);
+  }
+  // A name with no dot can only resolve through local search domains / mDNS, never public DNS.
+  if (!h.includes('.')) return true;
+  return LAN_SUFFIXES.some((s) => h.endsWith(s));
+}
+
+function urlRefusal(url, opts) {
+  let u;
+  try { u = new URL(String(url)); } catch (e) { return 'not a valid URL'; }
+  if (u.protocol === 'https:') return null;
+  if (u.protocol !== 'http:') return 'unsupported scheme ' + u.protocol;
+  if (opts && opts.allowInsecure) return null;
+  if (isPrivateHost(u.hostname)) return null;
+  return 'plain http:// to a public host (' + u.hostname + ') - use https://, or set ' +
+         'allowInsecurePayloadUrl: true in st-config.json to accept the risk';
+}
+
+/*
+ * ⚠️ A REDIRECT MAY NEVER DOWNGRADE. https -> http is refused outright, even to a LAN address and
+ * even with allowInsecure: the operator chose HTTPS, and a redirect is exactly what an attacker on
+ * the path (or a compromised CDN edge) would use to take it away. Every hop must also pass the same
+ * test as the URL that was configured.
+ */
+function redirectRefusal(from, to, opts) {
+  try {
+    if (new URL(String(from)).protocol === 'https:' && new URL(String(to)).protocol !== 'https:') {
+      return 'refusing redirect from https to ' + new URL(String(to)).protocol.replace(/:$/, '');
+    }
+  } catch (e) { return 'invalid redirect target'; }
+  return urlRefusal(to, opts);
+}
+
+/*
+ * ⚠️ WHAT A URL LOOKS LIKE ANYWHERE IT IS SHOWN OR STORED (GHSA-rvxj 15.1).
+ *
+ * A payload URL can carry a credential — `https://user:pass@host/...` or a signed `?token=...` —
+ * and every place this file and the launcher print it ends up somewhere readable without auth: the
+ * on-disk install log (served by the device's own web server, deliberately), installState and the
+ * log ring (the loopback status listener, which answers any page on the box with CORS *). Origin
+ * and path are what a technician needs; the secret parts never are.
+ */
+function redactUrl(url) {
+  try {
+    const u = new URL(String(url));
+    const hadQuery = !!(u.search || u.hash);
+    return u.protocol + '//' + (u.username || u.password ? '***@' : '') + u.host + u.pathname +
+           (hadQuery ? '?…' : '');
+  } catch (e) {
+    // Not parseable: still never echo something that might be a credential.
+    return String(url || '').replace(/\/\/[^/@]*@/, '//***@').replace(/[?#].*$/, '?…');
+  }
+}
+
+/*
  * Straight to a file, never into memory. The payload is ~71MB on a player with other things to do;
  * buffering it whole would work today and stop working the first time the bundle grows.
  *
  * Downloads to a .part and renames on completion, so an interrupted transfer — a reboot mid-fetch is
  * entirely normal on a device someone can unplug — can never be mistaken for a finished one.
  */
-function download(url, dest, onProgress, redirectsLeft = 5) {
+function download(url, dest, onProgress, redirectsLeft = 5, policy = {}) {
   return new Promise((resolve, reject) => {
+    const refused = urlRefusal(url, policy);
+    if (refused) return reject(new Error('refusing to download ' + redactUrl(url) + ': ' + refused));
     const mod = url.startsWith('https:') ? https : http;
     const req = mod.get(url, { timeout: 60000 }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
         if (redirectsLeft <= 0) return reject(new Error('too many redirects'));
-        const next = new URL(res.headers.location, url).toString();
-        return resolve(download(next, dest, onProgress, redirectsLeft - 1));
+        let next;
+        try { next = new URL(res.headers.location, url).toString(); }
+        catch (e) { return reject(new Error('invalid redirect from ' + redactUrl(url))); }
+        const bad = redirectRefusal(url, next, policy);
+        if (bad) return reject(new Error(bad + ' (' + redactUrl(url) + ' -> ' + redactUrl(next) + ')'));
+        return resolve(download(next, dest, onProgress, redirectsLeft - 1, policy));
       }
       if (res.statusCode !== 200) {
         res.resume();
-        return reject(new Error('HTTP ' + res.statusCode + ' fetching ' + url));
+        return reject(new Error('HTTP ' + res.statusCode + ' fetching ' + redactUrl(url)));
       }
 
       const total = parseInt(res.headers['content-length'] || '0', 10) || null;
@@ -88,7 +183,7 @@ function download(url, dest, onProgress, redirectsLeft = 5) {
         } catch (e) { reject(e); }
       });
     });
-    req.on('timeout', () => req.destroy(new Error('timed out fetching ' + url)));
+    req.on('timeout', () => req.destroy(new Error('timed out fetching ' + redactUrl(url))));
     req.on('error', reject);
   });
 }
@@ -269,7 +364,12 @@ async function install(opts) {
 }
 
 async function installInner(opts) {
-  const { url, installDir, onState, expectSha256 } = opts;
+  const { url, installDir, onState } = opts;
+  // Normalised, so a manifest that spells its digest in capitals is not a "mismatch".
+  const expectSha256 = typeof opts.expectSha256 === 'string' && opts.expectSha256.trim()
+    ? opts.expectSha256.trim().toLowerCase() : null;
+  const policy = { allowInsecure: !!opts.allowInsecureUrl };
+  const shownUrl = redactUrl(url);
   const say = (phase, detail, pct) => { if (onState) onState({ phase, detail, pct }); };
 
   const zipPath = path.join(installDir, 'server-payload.zip');
@@ -298,17 +398,29 @@ async function installInner(opts) {
     try { fs.writeFileSync(logPath, lines.join('\n') + '\n'); } catch (e) { /* never fatal */ }
   };
   const msgOf = (e) => String((e && e.message) ? e.message : e);
-  note('install starting from ' + url + (expectSha256 ? ' (checksum supplied)' : ' (NO checksum supplied)'));
+  note('install starting from ' + shownUrl + (expectSha256 ? ' (checksum supplied)' : ' (NO checksum supplied)'));
+  /*
+   * ⚠️ NO CHECKSUM, NO INSTALL — when the caller says there is something to lose (GHSA-rvxj 1.1).
+   *
+   * The launcher sets requireChecksum whenever a server is already on disk. Replacing a working
+   * server with bytes nobody can vouch for is never the right trade: the box loses nothing by
+   * staying where it is. The one install allowed to go in unverified is the very first, which has
+   * nothing to fall back to — see bs-server-boot.js.
+   */
+  if (opts.requireChecksum && !expectSha256) {
+    note('no checksum to verify against and a server is already installed — refusing to replace it');
+    throw new Error('refusing to replace the installed server with an unverified payload (no checksum)');
+  }
   const staging = path.join(installDir, '.payload-staging');
   const entry = path.join(installDir, 'server', 'server.js');
 
-  say('downloading', url, 0);
+  say('downloading', shownUrl, 0);
   const { bytes } = await download(url, zipPath, (got, total) => {
     const mb = (n) => Math.round(n / 1048576);
     say('downloading',
         total ? `${mb(got)}MB of ${mb(total)}MB` : `${mb(got)}MB`,
         total ? Math.round((got / total) * 100) : null);
-  });
+  }, 5, policy);
 
   /*
    * ⚠️ THE DIGEST IS COMPUTED FOR EVERY INSTALL, verified when there is something to verify against,
@@ -479,4 +591,4 @@ async function installInner(opts) {
   return result;
 }
 
-module.exports = { install, unzip, download };
+module.exports = { install, unzip, download, urlRefusal, redirectRefusal, redactUrl, isPrivateHost };

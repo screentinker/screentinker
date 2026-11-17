@@ -2,8 +2,13 @@
   "_comment": "Copy to st-config.json on the player's storage root. Absent or 0 means this device does NOT run a server - which is the default, because exactly one box per site should host one.",
   "server": 0,
 
-  "_payloadUrl": "Where the server package comes from. Defaults to alpha.screentinker.com, which is right for our boxes and wrong for yours: point this at your own host so a site does not reach across the internet to us to update software running on its own hardware. The launcher reads <payloadUrl with .zip swapped for .json> to learn what version is published, so both files must sit together.",
+  "_payloadUrl": "Where the server package comes from. Point this at your own host (normally <your server>/scripts/server-payload.zip) so a site does not reach across the internet to us to update software running on its own hardware. If unset, the launcher uses serverUrl below, or the server_url in a screentinker.json on this storage root, and only then alpha.screentinker.com. The launcher reads <payloadUrl with .zip swapped for .json> to learn what version is published and its sha256, so both files must sit together. Do not put credentials in this URL; if you must, they are redacted from logs and the status screen.",
   "payloadUrl": "https://alpha.screentinker.com/scripts/server-payload.zip",
+
+  "_serverUrl": "Optional. The ScreenTinker server this box belongs to; used to build the payload URL when payloadUrl is not set.",
+
+  "_allowInsecurePayloadUrl": "The payload is code this box runs, so it must come over https://. Plain http:// is accepted only for LAN hosts (private/loopback IPs, single-label names, .local/.lan/.internal/.home.arpa). Set true ONLY if you accept that anyone on the network path can replace the server this box runs. Redirects from https to http are refused regardless.",
+  "allowInsecurePayloadUrl": false,
 
   "_autoUpdate": "true (default) checks that manifest on every boot and installs a different version. Set false to pin this box to whatever it already has. A failed check or a failed update NEVER stops the installed server from starting.",
   "autoUpdate": true,
