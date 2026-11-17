@@ -6,7 +6,7 @@ import { TalkClient } from '../lib/talk-client.js';
 import { renderScreenShareCard, startScreenShare } from '../components/screen-share.js';   // 3.0 screen share
 import { showToast } from '../components/toast.js';
 import { openContentPicker } from '../components/content-picker.js';
-import { esc, livenessBadge, hydrateAuthImages, screenshotUrl, compareVersions } from '../utils.js';
+import { esc, livenessBadge, hydrateAuthImages, screenshotUrl, compareVersions, canWrite } from '../utils.js';
 import { t, tn } from '../i18n.js';
 import { showDeviceOwnerQRModal } from '../components/device-owner-qr-modal.js';
 import { frameDeviceOutput, displayAspectRatio } from '../lib/device-frame.js';
@@ -1012,7 +1012,7 @@ async function loadDevice(deviceId, activeTab = null) {
         <div class="tab" data-tab="info">${t('device.tab.info')} <span class="help-tip" data-tip="${t('device.tab.info_tip')}">?</span></div>
         ${(can('remote.stream') || can('remote.input') || can('remote.screenshot')) ? `<div class="tab" data-tab="remote" data-advanced-ui>${t('device.tab.remote')} <span class="help-tip" data-tip="${t('device.tab.remote_tip')}">?</span></div>` : ''}
         ${((can('audio.volume') || can('display.brightness') || can('system.brightness') || can('system.screen_timeout') || can('net.wifi')) || isEmbeddedDevice(device)) ? `<div class="tab" data-tab="controls" data-advanced-ui>${t('device.tab.controls')} <span class="help-tip" data-tip="${t('device.tab.controls_tip')}">?</span></div>` : ''}
-        ${(device.tier === 2 || can('system.shell') || can('system.pty')) ? `<div class="tab" data-tab="terminal" data-advanced-ui>${t('device.tab.terminal')} <span class="help-tip" data-tip="${t('device.tab.terminal_tip')}">?</span></div>` : ''}
+        ${canUseAdminTools() && (device.tier === 2 || can('system.shell') || can('system.pty')) ? `<div class="tab" data-tab="terminal" data-advanced-ui>${t('device.tab.terminal')} <span class="help-tip" data-tip="${t('device.tab.terminal_tip')}">?</span></div>` : ''}
         <!--
           #313 — only for a display that actually HAS an enrolment key, i.e. one created for a
           player that cannot stay paired. Every other display keeps its own credentials and would
@@ -1200,7 +1200,7 @@ async function loadDevice(deviceId, activeTab = null) {
             </svg>
             ${t('device.ctl.shutdown')}
           </button>` : ''}
-          ${can('remote.set_server_url') ? `
+          ${canUseAdminTools() && can('remote.set_server_url') ? `
           <button class="btn btn-secondary btn-sm" id="setServerUrlBtn" title="${t('device.ctl.set_server_url_tip')}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
@@ -1863,8 +1863,8 @@ async function loadDevice(deviceId, activeTab = null) {
         </div>
       </div>` : ''}
 
-      ${(device.tier === 2 || can('system.shell') || can('system.pty')) ? `
-      <!-- Terminal Tab. Android: the device-owner app-UID shell (tier 2). Linux: a one-shot shell
+      ${canUseAdminTools() && (device.tier === 2 || can('system.shell') || can('system.pty')) ? `
+      <!-- Terminal Tab. Admin-only, like the commands behind it (server/lib/device-command.js ADMIN_ONLY_COMMANDS). Android: the device-owner app-UID shell (tier 2). Linux: a one-shot shell
            (system.shell) and, where the player declares system.pty, an Interactive mode that is a
            real PTY relayed by server/lib/pty-relay.js into xterm.js. Each half is gated on its own
            capability, so a player may offer either without the other. -->
@@ -1947,7 +1947,7 @@ async function loadDevice(deviceId, activeTab = null) {
     // Terminal tab: #161 device-owner shell on Android (tier 2), or the Linux player's one-shot shell
     // (system.shell), plus push-a-package; and the Interactive PTY where system.pty is declared.
     const native = isNativeDevice(device);
-    if (device.tier === 2 || can('system.shell') || can('system.install_apk')) {
+    if (canUseAdminTools() && (device.tier === 2 || can('system.shell') || can('system.install_apk'))) {
       const termOut = document.getElementById('termOut');
       const append = (text) => { if (!termOut) return; termOut.textContent += text; termOut.scrollTop = termOut.scrollHeight; };
       const runCmd = (cmd) => { if (!cmd) return; append('\n$ ' + cmd + '\n'); sendCommand(device.id, 'shell', { cmd }); };
@@ -1973,7 +1973,7 @@ async function loadDevice(deviceId, activeTab = null) {
       };
       on('shell-result', shellHandler);
     }
-    if (can('system.pty')) setupInteractiveTerminal(device);
+    if (canUseAdminTools() && can('system.pty')) setupInteractiveTerminal(device);
 
     // Render uptime timeline
     renderUptimeTimeline(device.uptimeData || [], device.statusLog || []);
@@ -2512,6 +2512,14 @@ function renderPlaylist(assignments) {
  * none of this. A key created for all of them would be a durable secret sitting on rows that never
  * use one, for no benefit. So the operator asks for it on the screen that needs it.
  */
+/*
+ * The Terminal tab (one-shot shell, interactive PTY, package install) and "Change server URL" are
+ * for a workspace admin, an org admin or platform staff acting-as: the server refuses them to
+ * everyone else (server/lib/device-command.js ADMIN_ONLY_COMMANDS), so an editor is not offered a
+ * button that only ever answers "forbidden". utils.canWrite('admin') is that rule.
+ */
+function canUseAdminTools() { return canWrite('admin'); }
+
 /* A view-only member (workspace_viewer) can look but not change. The server enforces it. */
 function canEditWorkspace() {
   try { const u = JSON.parse(localStorage.getItem('user') || 'null'); return !(u && u.current_workspace_role === 'workspace_viewer' && !u.acting_as); } catch { return true; }
@@ -3508,6 +3516,7 @@ function setupActions(device) {
       if (ack?.delivered) showToast(t('device.ctl.set_server_url_dispatched', { url }), 'success');
       else if (ack?.reason === 'unsupported') showToast(t('device.toast.command_unsupported', { cmd: 'Set server URL', cap: ack.capability || '' }), 'error');
       else if (ack?.reason === 'invalid') showToast(ack.error || t('device.ctl.set_server_url_bad'), 'error');
+      else if (ack?.reason === 'forbidden') showToast(ack.error || t('device.toast.command_undeliverable', { cmd: 'Set server URL' }), 'error');
       else if (ack?.queued) showToast(t('device.toast.command_queued', { cmd: 'Set server URL' }), 'warning');
       else showToast(t('device.toast.command_undeliverable', { cmd: 'Set server URL' }), 'error');
     });
