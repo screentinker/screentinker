@@ -305,3 +305,31 @@ test('webos: an SI server in Local mode is sent to com.lg.app.signage.ipk by its
   assert.doesNotMatch(rows.find((e) => e.id === 'webos').what, /or an SI server\./);
   assert.match(rows.find((e) => e.id === 'webos-local').what, /SI server/);
 });
+
+test('webos: a failed or interrupted self-update is retried after a back-off, a bounded number of times', () => {
+  const shell = fs.readFileSync(path.join(WEBOS, 'js', 'app.js'), 'utf8');
+  const grab = (name) => {
+    const start = shell.indexOf(`function ${name}(`);
+    let depth = 0;
+    for (let i = shell.indexOf('{', start); i < shell.length; i++) {
+      if (shell[i] === '{') depth++;
+      if (shell[i] === '}' && --depth === 0) return shell.slice(start, i + 1);
+    }
+    throw new Error(name);
+  };
+  const consts = shell.match(/var UPDATE_RETRY_MS = [^;]+;\s*var UPDATE_MAX_ATTEMPTS = [^;]+;/);
+  assert.ok(consts, 'retry constants are declared');
+  const sb = {};
+  vm.runInNewContext(`${consts[0]}\n${grab('updateAttempt')}\nthis.updateAttempt = updateAttempt; this.RETRY = UPDATE_RETRY_MS;`, sb);
+  const H = sb.RETRY, t0 = 1e12;
+  let rec = sb.updateAttempt('', '3.2.4', t0);
+  assert.equal(rec.n, 1, 'a new version is tried');
+  assert.equal(sb.updateAttempt(JSON.stringify(rec), '3.2.4', t0 + 60000), null, 'not again straight away');
+  rec = sb.updateAttempt(JSON.stringify(rec), '3.2.4', t0 + H);
+  assert.equal(rec.n, 2, 'tried again after the back-off: the install failed or was cut short');
+  for (let i = 3; i <= 4; i++) rec = sb.updateAttempt(JSON.stringify(rec), '3.2.4', t0 + H * i);
+  assert.equal(sb.updateAttempt(JSON.stringify(rec), '3.2.4', t0 + H * 99), null, 'bounded: no endless reinstall loop');
+  assert.equal(sb.updateAttempt(JSON.stringify(rec), '3.2.5', t0 + H * 99).n, 1, 'a newer version starts over');
+  assert.equal(sb.updateAttempt('3.2.4', '3.2.4', t0).n, 2, 'a panel stuck on the old bare-version marker is un-stuck');
+  assert.doesNotMatch(shell, /tried === published/);
+});

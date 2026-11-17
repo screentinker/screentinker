@@ -186,6 +186,25 @@
     for (var i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0); }
     return false;
   }
+  /*
+   * Whether to try installing `published` now, and the record to store if so. The record used to be
+   * just the version, written before the install ran and never cleared, so a dropped download, a full
+   * disk or a power cut mid-copy meant that version was never tried again. Now a failed or
+   * interrupted attempt is retried after a back-off, a few times, and a version that keeps "installing"
+   * without changing what we run still cannot loop. A bare version left by an older shell counts as one
+   * attempt long ago, which un-sticks panels that are already stuck.
+   */
+  var UPDATE_RETRY_MS = 5 * 60 * 60 * 1000;
+  var UPDATE_MAX_ATTEMPTS = 4;
+  function updateAttempt(raw, published, now) {
+    var rec = null;
+    try { rec = raw ? JSON.parse(raw) : null; } catch (e) { rec = null; }
+    if (!rec || typeof rec !== 'object') rec = raw ? { v: String(raw), n: 1, at: 0 } : null;
+    if (!rec || rec.v !== published) return { v: published, n: 1, at: now };
+    var n = Number(rec.n) || 1, at = Number(rec.at) || 0;
+    if (n >= UPDATE_MAX_ATTEMPTS || now - at < UPDATE_RETRY_MS) return null;
+    return { v: published, n: n + 1, at: now };
+  }
   function checkUpdate() {
     // 'system.self_update' is what device-control.js announces. This used to ask for system.update,
     // which nothing announces, so a panel never updated itself on its own.
@@ -202,9 +221,11 @@
         if (!newer(published, APP_VERSION_FALLBACK)) return;
         var tried = '';
         try { tried = localStorage.getItem(KEY_UPDATE_TRIED) || ''; } catch (e) {}
-        if (tried === published) return;               // one attempt per published version
-        try { localStorage.setItem(KEY_UPDATE_TRIED, published); } catch (e) {}
-        log('update available: ' + published + ' (running ' + APP_VERSION_FALLBACK + ')');
+        var attempt = updateAttempt(tried, published, Date.now());
+        if (!attempt) return;                          // backing off, or out of attempts for this version
+        // Recorded before the install: upgradeApplication can relaunch us mid-way.
+        try { localStorage.setItem(KEY_UPDATE_TRIED, JSON.stringify(attempt)); } catch (e) {}
+        log('update available: ' + published + ' (running ' + APP_VERSION_FALLBACK + ', attempt ' + attempt.n + ')');
         STWebOS.run('update', { url: serverUrl + '/webos/' + IPK_FILE })
           .then(function () { log('update installed'); }, function (e) { log('update failed: ' + (e && e.message)); });
       })
