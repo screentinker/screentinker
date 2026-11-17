@@ -59,7 +59,7 @@ Upgrade if people other than you have **editor** or **viewer** logins in your wo
   payment counted as a paid team (#866).
 - Device secrets were left in some device-added broadcasts; one unpaired client could trip the
   reconnect limiter for a paired screen (#866).
-- Turning widget sandbox isolation off never reached screens already showing widgets (#864).
+- Turning widget sandbox isolation off never reached screens already showing widgets (#864, reported by Bette on Discord).
 - Dashboard language and theme now follow the account, not just the browser (#865).
 - Pricing cards showed a per-screen price that contradicted the sale price (#863); trial-to-paid
   funnel bars rendered empty since the 3.2 themes (#862).
