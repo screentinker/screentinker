@@ -45,8 +45,18 @@ test('a wrong current password is refused as before', async () => {
   assert.equal((await changePassword('guess-0')).status, 401);
 });
 
+test('a refused password change writes nothing else in the same request', async () => {
+  const r = await fetch(BASE + '/api/auth/me', { method: 'PUT',
+    headers: { Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ current_password: 'guess-x', password: 'attacker-chosen-456', name: 'renamed', email_alerts: false }) });
+  assert.equal(r.status, 401);
+  const me = await (await fetch(BASE + '/api/auth/me', { headers: { Authorization: 'Bearer ' + TOKEN } })).json();
+  const u = me.user || me;
+  assert.equal(u.name, 'me', 'the name is unchanged when the password check fails');
+});
+
 test('after repeated wrong guesses even the right current password is refused, and nothing changes', async () => {
-  for (let i = 1; i < MAX_FAILS; i++) assert.equal((await changePassword(`guess-${i}`)).status, 401);
+  for (let i = 2; i < MAX_FAILS; i++) assert.equal((await changePassword(`guess-${i}`)).status, 401);
   const r = await changePassword(PASSWORD);
   assert.equal(r.status, 429, 'locked: the right password does not get through');
   // The password is still the original one: signing in with the "new" one fails (the account is
