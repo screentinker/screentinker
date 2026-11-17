@@ -201,7 +201,18 @@ function isMeshCommand(type) {
  * The interactive terminal (lib/pty-relay.js) is `shell` with a keyboard and passes the same
  * check — see canRunShell in ws/dashboardSocket.js.
  */
-const ADMIN_ONLY_COMMANDS = Object.freeze(['shell', 'install_apk', 'set_server_url']);
+/*
+ * 3.2.4 adds the commands that reach past the player into the panel or the customer's network, for
+ * the same reason: `http_request` (the panel fetches from inside the customer's LAN and the response
+ * body comes back), `kiosk_unlock` and `unblock_uninstall` (lift the lock that keeps the player on
+ * screen and installed), `status_bar` (exposes the system UI), `set_time` (breaks TLS and schedules),
+ * and `update` (a forced app install). Editors keep everything an operator undoes by sending the
+ * opposite: power, volume, brightness, refresh, kiosk_lock, block_uninstall.
+ */
+const ADMIN_ONLY_COMMANDS = Object.freeze([
+  'shell', 'install_apk', 'set_server_url',
+  'http_request', 'kiosk_unlock', 'unblock_uninstall', 'status_bar', 'set_time', 'update',
+]);
 
 /**
  * May this actor send an ADMIN_ONLY_COMMANDS type to this screen?

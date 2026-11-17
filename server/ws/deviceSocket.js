@@ -2115,7 +2115,9 @@ const EVENT_APPLIERS = Object.freeze({
     const { device_id, id, ok, status, snippet, truncated, duration_ms, error } = data || {};
     data = data || {};
     if (!device_id || device_id !== deviceId) return;
-    emitToDeviceWorkspace(_dashboardNsRef, device_id, 'dashboard:http-result', {
+    // Only to the people who could have sent the request (http_request is admin-only, as shell is):
+    // the body comes from inside the customer's network, and a viewer of the workspace is not them.
+    emitToShellUsers(_dashboardNsRef, device_id, 'dashboard:http-result', {
       device_id,
       id: String(id || '').slice(0, 64),
       ok: !!ok,

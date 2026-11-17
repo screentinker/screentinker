@@ -55,7 +55,8 @@ test('a store editor cannot queue a firmware update for a head-office-controlled
   try {
     const r = deliverCommand(ns, panel, 'update', {}, { actor: A.store() });
     assert.equal(r.status, 'refused');
-    assert.equal(r.code, 'CORPORATE_DEVICE_CONTROL');
+    // 3.2.4: `update` is admin-only for everyone, so an editor is refused on that rule first.
+    assert.ok(['ADMIN_ONLY_COMMAND', 'CORPORATE_DEVICE_CONTROL'].includes(r.code), r.code);
     assert.deepEqual(queue.peekPendingCommands(d), [], 'nothing was queued');
 
     // The organization's admin still can.

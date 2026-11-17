@@ -41,6 +41,12 @@ function deviceForWrite(req, res) {
   if (!device._ctx.actingAs && device._ctx.workspaceRole === 'workspace_viewer') {
     res.status(403).json({ error: 'Read-only access' }); return null;
   }
+  // 3.2.4: pushing Wi-Fi credentials repoints the panel's network, so it is a workspace admin's
+  // change, like the other admin-only commands (lib/device-command.js ADMIN_ONLY_COMMANDS).
+  const { canRunAdminCommands } = require('../lib/device-command');
+  if (!canRunAdminCommands(require('../lib/corporate/actor').fromReq(req), device)) {
+    res.status(403).json({ error: 'Only a workspace admin can change a screen\'s Wi-Fi.', code: 'ADMIN_ONLY_COMMAND' }); return null;
+  }
   return device;
 }
 
