@@ -34,6 +34,11 @@ Thanks for your interest in contributing! Here's how to get started.
 - Don't add heavy frameworks or dependencies without discussion
 - Follow the existing code style
 - Test on at least one device type if changing player/device code
+- **Don't remove features by accident.** `server/test/feature-inventory.test.js` fails when a button,
+  link, dashboard route or API route appears or disappears. If that is what you meant, run
+  `node scripts/feature-inventory.js --write` and commit the updated
+  `server/test/fixtures/feature-inventory.json`, and say in the PR what was removed and why. (A
+  standalone "+ Group" button once went missing inside an unrelated PR and nobody noticed for months.)
 
 ## Reporting Issues
 
