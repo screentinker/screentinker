@@ -9,7 +9,7 @@
 # --- builder: install production deps (better-sqlite3 is the only native one left; image
 # decoding is pure JS + WASM since sharp was dropped, and sharp is now a devDependency that
 # --omit=dev leaves out entirely) ---
-FROM node:22-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da AS builder
+FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS builder
 WORKDIR /app/server
 # build toolchain in case a native prebuild is missing for the target arch
 RUN apt-get update \
@@ -22,7 +22,7 @@ RUN npm ci --omit=dev
 # --- pi-deb: the native Raspberry Pi player this server offers at /download/pi (#634). It is not in
 # git (native/dist/ is ignored), so an image without this stage answered 404 there. Architecture
 # "all" (Python + QML), so one build serves the amd64 and arm64 images alike.
-FROM node:22-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da AS pi-deb
+FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS pi-deb
 RUN apt-get update \
     && apt-get install -y --no-install-recommends rsync \
     && rm -rf /var/lib/apt/lists/*
@@ -32,7 +32,7 @@ COPY shared/Transitions/ /build/shared/Transitions/
 COPY native/ /build/native/
 RUN rm -rf native/dist && native/packaging/linux/build-deb.sh
 
-FROM node:22-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da
+FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
 # ffmpeg (ships ffprobe) powers video thumbnails + duration extraction at upload.
 # Without it videos still upload and play, but arrive with no thumbnail or duration.
 RUN apt-get update \
