@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed (server)
+
+- **Grafana dashboards on screens showed Grafana's sidebar, top bar and toolbar again on Grafana
+  13.3.** From 13.3, Grafana no longer treats the bare `kiosk` that ScreenTinker sent as kiosk
+  mode. ScreenTinker now sends `kiosk=1`, which is kiosk mode on Grafana 13.0 and 13.3
+  alike. Single-panel widgets were not affected.
+
 ## 3.2.4
 
 ### ⚠️ Security
