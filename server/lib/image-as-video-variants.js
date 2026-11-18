@@ -10,7 +10,8 @@
  * ONLY MAKE A COPY WHEN IT CAN HELP:
  *   - the source is a local image larger than FHD on either axis and no larger than 8192px per axis;
  *   - the device declares playback.image_as_video_variants, has a native video plane and a display
- *     larger than FHD; the item is full-screen, landscape and outside a wall or transition;
+ *     larger than FHD; its UI render surface is smaller than the source or its size is unreported;
+ *     the item is full-screen, landscape and outside a wall or transition;
  *   - queue lazily when a qualifying image is sent to such a device; a workspace with no use for
  *     the plane spends no encoding time.
  *
@@ -36,7 +37,7 @@ const CAPABILITY = 'playback.image_as_video_variants';
 const FILE_RE = /^saiv_[a-f0-9]{20}_[a-f0-9]{12}\.mp4$/;
 const MAX_SOURCE_DIMENSION = 8192;
 const IMAGE_CLIP_DURATION_SEC = 1;
-const ENCODER_REVISION = 4;
+const ENCODER_REVISION = 5;
 const jobs = new Set();
 const running = new Map();
 let timer = null;
@@ -118,6 +119,10 @@ function ensure(content, { now = new Date() } = {}) {
 function stampItems(items, device, { lazy = true } = {}) {
   if (!Array.isArray(items)) return;
   const outputPixels = Number(device && device.screen_width) * Number(device && device.screen_height);
+  const renderWidth = Number(device && device.render_width);
+  const renderHeight = Number(device && device.render_height);
+  const hasRenderSize = Number.isFinite(renderWidth) && renderWidth > 0 &&
+    Number.isFinite(renderHeight) && renderHeight > 0;
   const supports = !!device && Number(device.native_video) === 1 &&
     outputPixels > 1920 * 1080 && !device.wall_id &&
     (!device.orientation || device.orientation === 'landscape') &&
@@ -134,6 +139,8 @@ function stampItems(items, device, { lazy = true } = {}) {
           updated_at, created_at FROM content WHERE id = ?`);
       const content = select.get(item.content_id);
       if (!isEligibleImage(content)) continue;
+      if (hasRenderSize && renderWidth >= Number(content.width) &&
+          renderHeight >= Number(content.height)) continue;
       if (lazy) {
         ensure(content);
       } else {
@@ -227,13 +234,13 @@ async function tick() {
   jobs.add(promise);
 }
 
-/** Keep source dimensions, convert full-range stills to TV-range yuv420p, and round odd edges down. */
+/** Keep source dimensions and round odd edges down for yuv420p, matching video-variant color handling. */
 function ffmpegArgs(src, out) {
   return [
     '-hide_banner', '-nostdin', '-y', '-loglevel', 'error', '-threads', '2',
     '-loop', '1', '-framerate', '1', '-i', src, '-t', String(IMAGE_CLIP_DURATION_SEC),
     '-map', '0:v:0',
-    '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2:in_range=full:out_range=limited,format=yuv420p',
+    '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p',
     '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '10',
     '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-threads', '2',
     '-movflags', '+faststart', '-map_metadata', '-1', out,

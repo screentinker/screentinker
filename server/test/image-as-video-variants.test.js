@@ -94,6 +94,34 @@ test('only eligible, opted-in Android full-screen images are queued', () => {
   assert.equal(zoned.image_as_video_state, undefined);
 });
 
+test('skips variants when the known UI render surface can display the source at native size', () => {
+  imageAsVideoVariants.removeFor(CONTENT_ID);
+  const assignment = () => ({ content_id: CONTENT_ID, mime_type: 'image/jpeg' });
+
+  const fullResolution = assignment();
+  imageAsVideoVariants.stampItems(
+    [fullResolution],
+    device({ render_width: 3840, render_height: 2160 })
+  );
+  assert.equal(fullResolution.image_as_video_state, undefined);
+  assert.equal(
+    db.prepare('SELECT 1 FROM content_image_as_video_variants WHERE content_id = ?').get(CONTENT_ID),
+    undefined
+  );
+
+  const lowerResolution = assignment();
+  imageAsVideoVariants.stampItems(
+    [lowerResolution],
+    device({ render_width: 2560, render_height: 1440 })
+  );
+  assert.equal(lowerResolution.image_as_video_state, 'preparing');
+  assert.equal(
+    db.prepare('SELECT status FROM content_image_as_video_variants WHERE content_id = ?').get(CONTENT_ID).status,
+    'queued'
+  );
+  imageAsVideoVariants.removeFor(CONTENT_ID);
+});
+
 test('encoding revisions invalidate older cached variants without changing the source image', () => {
   const source = content();
   const previousRevision = Number(source.updated_at);
@@ -169,9 +197,9 @@ test('FFmpeg creates a short, high-quality H.264 MP4 that preserves 4K dimension
   assert.ok(args.includes('libx264'));
   assert.ok(args.includes('yuv420p'));
   const filter = args[args.indexOf('-vf') + 1];
-  assert.match(filter, /in_range=full:out_range=limited,format=yuv420p/);
-  const colorRange = args.indexOf('-color_range');
-  assert.deepEqual(args.slice(colorRange, colorRange + 2), ['-color_range', 'tv']);
+  assert.equal(filter, 'scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p');
+  assert.doesNotMatch(filter, /in_range|out_range/);
+  assert.equal(args.includes('-color_range'), false);
   assert.ok(args.includes('10'));
   assert.ok(args.includes('+faststart'));
   const framerate = args.indexOf('-framerate');
