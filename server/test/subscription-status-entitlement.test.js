@@ -186,3 +186,34 @@ test('a portal price change on an active subscription still reaches the plan', a
   await webhook('customer.subscription.updated', stripeSub({ id: subId, userId: id, price: 'price_starter_m', status: 'active' }));
   assert.equal(read(id).plan_id, 'starter');
 });
+
+/* ---- an active subscription the account does not track (the 2026 Black Friday plan switch) ---- */
+
+test('the old, still-active subscription winding down does not overwrite the one just bought', async () => {
+  const oldSub = uid('sub'), newSub = uid('sub'), yearEnd = nowSec() + 365 * DAY;
+  const id = mkUser({ plan: 'starter', subId: newSub, status: 'active', ends: yearEnd });   // checkout already stored the new one
+  await webhook('customer.subscription.updated', {
+    ...stripeSub({ id: oldSub, userId: id, price: 'price_pro_m', status: 'active' }),
+    cancel_at_period_end: true,
+    items: { data: [{ price: { id: 'price_pro_m' }, current_period_end: nowSec() + 5 * DAY }] },
+  });
+  const u = read(id);
+  assert.equal(u.plan_id, 'starter', 'still the plan they just paid for');
+  assert.equal(u.subscription_ends, yearEnd, 'and the end of the year they paid for, not the old one\'s');
+  assert.equal(u.stripe_subscription_id, newSub);
+});
+
+test('a new subscription whose webhook beats its checkout still gets its plan and period end', async () => {
+  const oldSub = uid('sub'), newSub = uid('sub');
+  const id = mkUser({ plan: 'pro', subId: oldSub, status: 'active', ends: nowSec() + 5 * DAY });
+  const sub = stripeSub({ id: newSub, userId: id, price: 'price_starter_y', status: 'active' });
+  sub.items.data[0].current_period_end = nowSec() + 365 * DAY;
+  stripeSubs.set(newSub, sub);
+  await webhook('customer.subscription.created', sub);
+  assert.equal(read(id).plan_id, 'pro', 'ignored until checkout says this is the subscription');
+  await webhook('checkout.session.completed', { id: uid('cs'), subscription: newSub, customer: `cus_${id}`, metadata: { user_id: id, plan_id: 'starter' } });
+  const u = read(id);
+  assert.equal(u.stripe_subscription_id, newSub);
+  assert.equal(u.plan_id, 'starter');
+  assert.equal(u.subscription_ends, sub.items.data[0].current_period_end, 'the period end is read at checkout');
+});

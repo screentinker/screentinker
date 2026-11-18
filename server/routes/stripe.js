@@ -298,6 +298,18 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           db.prepare(`UPDATE ${T()} SET stripe_subscription_id = ?, plan_id = ?, plan_comped = 0, subscription_status = 'active', trial_started = NULL, updated_at = strftime('%s','now') WHERE id = ?`)
             .run(session.subscription, planId || 'starter', userId);
           console.log(`User ${userId} subscribed to ${planId} (sub: ${session.subscription})`);
+          /*
+           * The period end. A subscription whose created/updated webhook arrived BEFORE this event,
+           * on an account still tracking an older subscription, was ignored by that handler (only
+           * the tracked subscription speaks for an account), so its end is read here. Best effort:
+           * the nightly reconcile fills it if Stripe cannot be reached now.
+           */
+          try {
+            const ends = periodEndOf(await stripe.subscriptions.retrieve(session.subscription));
+            if (ends) db.prepare(`UPDATE ${T()} SET subscription_ends = ? WHERE id = ? AND stripe_subscription_id = ?`).run(ends, userId, session.subscription);
+          } catch (e) {
+            console.warn(`Could not read the period end of ${session.subscription}: ${e && e.message}`);
+          }
           require('../lib/conversion-events').record(db, { userId: ownerOf(userId), event: 'checkout_complete', meta: { plan: planId || 'starter' } });
           pushIfPlanChanged(req, userId, planBefore);
         }
@@ -351,14 +363,26 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
          *                                  (the same rule customer.subscription.deleted applies);
          *                                  otherwise the status is recorded and the plan is left to
          *                                  the paths that own it (deletion, dunning, reconcile).
+         *
+         * ⚠️ AND AN ACTIVE SUBSCRIPTION THE ACCOUNT DOES NOT TRACK CHANGES NOTHING EITHER. A
+         * customer on Home bought Starter yearly in the 2026 Black Friday sale; checkout stored the
+         * new subscription, then the OLD one (still active, now set to cancel at period end) sent
+         * an update that wrote plan Home and its end, five days away, over the year just paid for.
+         * Once an account tracks a subscription, only that one speaks for it. The new one whose
+         * webhook beats its checkout event loses nothing: checkout.session.completed stores it and
+         * reads its period end (below), and the nightly reconcile is the backstop. An account that
+         * tracks nothing still takes an entitling subscription, as before.
          */
+        const acct = db.prepare(`SELECT stripe_subscription_id FROM ${T()} WHERE id = ?`).get(userId);   // the paying account: a person, or an organization
+        const tracked = acct ? acct.stripe_subscription_id : null;
+        if (tracked && tracked !== sub.id) {
+          console.log(`Subscription ${sub.id} is ${sub.status} for ${userId} and is not the tracked one (${tracked}) - account left as is`);
+          break;
+        }
         if (!ENTITLING_STATUSES.has(sub.status)) {
-          const acct = db.prepare(`SELECT stripe_subscription_id FROM ${T()} WHERE id = ?`).get(userId);   // the paying account: a person, or an organization
-          const tracked = acct ? acct.stripe_subscription_id : null;
           const neverPaid = sub.status === 'incomplete' || sub.status === 'incomplete_expired';
-          const mine = tracked ? tracked === sub.id : !neverPaid;
-          if (!mine) {
-            console.log(`Subscription ${sub.id} is ${sub.status} for ${userId} and is not the tracked one - account left as is`);
+          if (!tracked && neverPaid) {
+            console.log(`Subscription ${sub.id} is ${sub.status} for ${userId} and was never paid - account left as is`);
             break;
           }
           planId = null;   // COALESCE below keeps the plan the account has
