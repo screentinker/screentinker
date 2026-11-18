@@ -230,13 +230,42 @@ class PlaylistController(
      * would bounce into next() and loop; a REMOTE default streams and can't be cached.
      */
     private fun renderDefaultContent(): Boolean {
-        val item = buildDefaultItem() ?: return false
-        if (!item.isRemote && !contentReady(item) && !contentUsable(item)) return false
-        if (defaultShowing) return true   // already up — don't re-mount on every idle re-check
+        /*
+         * #871: every way out is logged. A cleared playlist that left the screen black or on its old
+         * content printed nothing between "No items, nothing to start" and silence, so a report could
+         * not say which check declined. Logged once per distinct reason, so the 30 s idle re-check
+         * does not flood logcat with the same line.
+         */
+        val item = buildDefaultItem()
+        if (item == null) {
+            val dc = defaultContent
+            logDefaultDecline(when {
+                dc == null -> "no default_content in the payload"
+                !dc.optString("mime_type", "").startsWith("image/") -> "default_content is ${dc.optString("mime_type", "?")}, not an image"
+                else -> "default_content has neither a remote_url nor a content_id"
+            })
+            return false
+        }
+        if (!item.isRemote && !contentReady(item) && !contentUsable(item)) {
+            logDefaultDecline("default_content ${item.contentId} (${item.filename}, rev ${item.contentRev}) is not in the content cache")
+            return false
+        }
+        if (defaultShowing) {   // already up — don't re-mount on every idle re-check
+            logDefaultDecline("standby already marked as showing (${item.filename}); not re-mounting")
+            return true
+        }
+        lastDefaultDecline = null
         Log.i("PlaylistController", "Rendering default/standby content: ${item.filename}")
         onItemChanged(item)
         defaultShowing = true
         return true
+    }
+
+    private var lastDefaultDecline: String? = null
+    private fun logDefaultDecline(reason: String) {
+        if (reason == lastDefaultDecline) return
+        lastDefaultDecline = reason
+        Log.i("PlaylistController", "Default/standby content not rendered: $reason")
     }
 
     /** Empty/no-playlist idle state (a): standby image if present, else the idle text. */
@@ -894,6 +923,7 @@ class PlaylistController(
         onItemChanged(item)
         hasContentOnScreen = true // a valid item is now rendered — protect it from being blanked
         defaultShowing = false    // real content is on screen; a later idle emit re-mounts the standby
+        lastDefaultDecline = null // and a later decline is news again
 
         // Proof-of-play (parity with the web player): close the outgoing item and open this one.
         // Wall followers don't log — the leader's single row represents the whole wall.

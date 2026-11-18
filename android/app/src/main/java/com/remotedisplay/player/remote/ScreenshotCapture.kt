@@ -67,7 +67,18 @@ class ScreenshotCapture {
                 // and a share hidden under a trigger (#845) sits in an INVISIBLE container whose
                 // TextureViews are themselves still VISIBLE.
                 if (tv is ShareVideoView) continue
-                if (tv.isAvailable && tv.visibility == View.VISIBLE) {
+                /*
+                 * ⚠️ isShown, NOT visibility (#870). An image or the standby screen hides the video
+                 * by setting its PlayerView container GONE; the TextureView inside it still reports
+                 * VISIBLE and still holds the last decoded frame. Checking only the view's own flag
+                 * pasted that stale frame over every capture, so the dashboard kept showing a video
+                 * the screen had long stopped playing. isShown is false when any ancestor is hidden.
+                 */
+                if (!tv.isShown) {
+                    Log.d("ScreenshotCapture", "Skipped hidden TextureView ${tv.width}x${tv.height}")
+                    continue
+                }
+                if (tv.isAvailable) {
                     val tvBitmap = tv.bitmap
                     if (tvBitmap != null) {
                         // Place the frame through the SAME transform chain the hierarchy was drawn

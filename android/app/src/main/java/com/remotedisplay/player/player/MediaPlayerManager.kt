@@ -1138,6 +1138,9 @@ class MediaPlayerManager(
     fun stop() {
         stall.reset()
         exoPlayer?.stop()
+        // #870: a stopped player's TextureView keeps its last frame. Left VISIBLE, it stayed on the
+        // idle screen and in every screenshot; every video mount sets it VISIBLE again.
+        playerView.visibility = android.view.View.GONE
         imageView.setImageBitmap(null)
         youtubeWebView?.loadUrl("about:blank")
         youtubeWebView?.visibility = android.view.View.GONE
