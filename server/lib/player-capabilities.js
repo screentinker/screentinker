@@ -79,6 +79,12 @@ const CAPABILITIES = [
    * makes the server spend CPU on those copies: a workspace with no screen declaring it never gets
    * one. In NO baseline — an older player would not know what to do with the copy. */
   'playback.video_variants',
+  /* High-resolution image-as-video copies (lib/image-as-video-variants.js): on a high-resolution
+   * Android display, play a server-made one-second H.264 variant of a large still through the
+   * native video plane, bypassing the 1080p UI layer. Declaring it lets the server queue variants
+   * only for full-screen images on a device with that plane. In NO baseline — an older player would
+   * not recognize the image-as-video payload and the server should not spend CPU making its copy. */
+  'playback.image_as_video_variants',
   'playback.sssp3_fit_renditions',
   /* Zones on a VIDEO WALL: the wall's layout, in percent of the wall's player rect, each zone paced
    * by the shared clock (lib/wall-layout.js). A wall member without it still plays the wall's

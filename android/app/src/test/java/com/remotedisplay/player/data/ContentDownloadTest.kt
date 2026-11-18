@@ -51,13 +51,14 @@ class ContentDownloadTest {
     }
 
     /** Accept ONE connection, drain the request, then let [respond] write a crafted response. */
-    private fun serveOnce(respond: (OutputStream) -> Unit): String {
+    private fun serveOnce(onRequest: (String) -> Unit = {}, respond: (OutputStream) -> Unit): String {
         val s = ServerSocket(0)
         server = s
         Thread {
             try {
                 s.accept().use { sock ->
                     val reader = sock.getInputStream().bufferedReader()
+                    onRequest(reader.readLine() ?: "")
                     while (true) { val line = reader.readLine() ?: break; if (line.isEmpty()) break }
                     respond(sock.getOutputStream())
                 }
@@ -328,6 +329,20 @@ class ContentDownloadTest {
         // revisioned fetch completes and records that revision.
         assertTrue(cache.isContentCached("cdn", 777L))
         assertTrue(!cache.isContentCached("cdn", 778L))
+    }
+
+    @Test fun `image as video variants are cached separately by revision`() {
+        var requestLine = ""
+        val url = serveOnce(onRequest = { requestLine = it }) { it.writeHttp(4, "rend".toByteArray()) }
+        val variantUrl = "$url/api/content/image-id/image-as-video?rev=17"
+
+        val result = cache.fetchImageAsVideoVariant(variantUrl, "image-id", 17L)
+
+        assertTrue(result is ContentCache.Result.Done)
+        assertEquals("GET /api/content/image-id/image-as-video?rev=17 HTTP/1.1", requestLine)
+        assertNotNull(cache.getCachedImageAsVideoVariant("image-id", 17L))
+        assertNull("a different variant revision is a cache miss", cache.getCachedImageAsVideoVariant("image-id", 18L))
+        assertNull("the variant must not be mistaken for the original content file", cache.getCachedFile("image-id"))
     }
 
     // ---- prefix cross-match guard: an id that prefixes another must not match ----

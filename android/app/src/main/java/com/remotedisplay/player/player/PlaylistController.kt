@@ -53,6 +53,8 @@ data class PlaylistItem(
     // 3.0 TV-safe video: the operator marked this file "already rotated for portrait screens", so a
     // portrait screen plays it as-is (MainActivity turns the video view back). Sent only when set.
     val videoPrerotated: Boolean = false,
+    // Revision of the optional server-generated image-as-video variant for a high-resolution still.
+    val imageAsVideoRevision: Long = 0L,
     // An rtsps:// camera whose certificate is self-signed: skip the certificate check (RtspSources).
     val tlsSelfSigned: Boolean = false,
     // A fisheye camera shown as a normal view, and its saved view (Fisheye, FisheyeGlView).
@@ -473,6 +475,7 @@ class PlaylistController(
                     playToEnd = obj.optInt("play_to_end", 0) == 1,
                     transparentBg = obj.optInt("transparent_bg", 0) == 1,
                     videoPrerotated = obj.optInt("video_prerotated", 0) == 1,
+                    imageAsVideoRevision = obj.optLong("image_as_video_revision", 0L),
                     transition = Transitions.parse(obj.optJSONObject("transition")),
                     slideAudio = parseSlideAudio(obj.optJSONObject("audio")),
                     interrupt = obj.optBoolean("interrupt", false)
@@ -514,7 +517,7 @@ class PlaylistController(
             (if (it.tlsSelfSigned) "|tls-self-signed" else "") +
             // A saved fisheye view or setting changed: appended only when set, like the flag above.
             (it.fisheye?.let { f -> "|fisheye:$f" } ?: "") +
-            (if (it.transparentBg) "|t" else "")
+            (if (it.transparentBg) "|t" else "") + "|imageAsVideo:${it.imageAsVideoRevision}"
         // Compared BEFORE items is replaced: an alert raised or cleared skips the deferral below.
         val interruptChanged = Interrupt.changed(Interrupt.keys(items), Interrupt.keys(newItems))
         val oldContentIds = items.map(::sig)
@@ -546,6 +549,7 @@ class PlaylistController(
         // changes without changing which item this is — see the re-render below.
         val currentlyPlayingId = currentItem?.itemKey
         val currentlyPlayingRev = currentItem?.widgetRev ?: 0L
+        val currentlyPlayingImageAsVideoRev = currentItem?.imageAsVideoRevision ?: 0L
         // How the playing item connects, if it is a live stream (see the in-place check below).
         val currentlyPlayingConnection = currentItem?.let { liveConnectionOf(it) }
 
@@ -620,6 +624,14 @@ class PlaylistController(
                         Log.i("PlaylistController",
                             "Same item at $newIndex but widgetRev ${currentlyPlayingRev} -> ${items[newIndex].widgetRev} — re-rendering in place")
                         playCurrentItem()
+                        return
+                    }
+                    // A payload can gain a ready variant without changing playlist identity. Refresh
+                    // this item now so Android can switch from the original to its native-plane copy.
+                    if (items[newIndex].imageAsVideoRevision != currentlyPlayingImageAsVideoRev &&
+                        items[newIndex].mimeType.startsWith("image/")) {
+                        Log.i("PlaylistController", "Same image item now has a ready image-as-video variant — updating in place")
+                        onItemChanged(items[newIndex])
                         return
                     }
                     /*

@@ -1508,6 +1508,10 @@ class MainActivity : AppCompatActivity() {
                     // downloads at most once. It acks ready/failed itself (deduped via onAck).
                     if (contentChanged) downloadCoordinator.resetBackoff(contentId) // #170: retry now, don't wait out a stale backoff
                     downloadCoordinator.ensure(contentId, filename, contentRev)
+                    val imageAsVideoRevision = item.optLong("image_as_video_revision", 0L)
+                    if (imageAsVideoRevision > 0L && item.optString("mime_type", "").startsWith("image/")) {
+                        requestImageAsVideoVariant(contentId, imageAsVideoRevision)
+                    }
 
                     /*
                      * ⚠️ A BUNDLE NEEDS A SECOND THING FETCHED, AND THE LOOP ABOVE CANNOT KNOW IT.
@@ -2071,7 +2075,18 @@ class MainActivity : AppCompatActivity() {
             // card. It used to land in the else below and be skipped.
             mediaPlayer.playAudio(file, item.muted, MediaKind.audioTitle(item.filename), item.transition)
         } else if (item.mimeType.startsWith("image/")) {
-            mediaPlayer.showImage(file, item.transition)
+            // The variant is optional: show the cached original immediately while its revision-
+            // pinned copy downloads, and switch only if that same item/revision is still current.
+            val variant = if (item.imageAsVideoRevision > 0L && item.transition == null) {
+                contentCache.getCachedImageAsVideoVariant(item.contentId, item.imageAsVideoRevision)
+            } else null
+            val usingVariant = variant?.let { playImageAsVideoVariant(item, file, it) } == true
+            if (!usingVariant) {
+                mediaPlayer.showImage(file, item.transition)
+                if (variant == null && item.imageAsVideoRevision > 0L && item.transition == null) {
+                    requestImageAsVideoVariant(item.contentId, item.imageAsVideoRevision)
+                }
+            }
         } else {
             /*
              * ⚠️ AN UNRECOGNISED MIME MUST ADVANCE, NOT SIT THERE.
@@ -2090,6 +2105,34 @@ class MainActivity : AppCompatActivity() {
 
         // Report playback state
         wsService?.sendPlaybackState(item.contentId, 0f)
+    }
+
+    private fun imageAsVideoVariantUrl(contentId: String, revision: Long): String =
+        "${config.serverUrl.trimEnd('/')}/api/content/${android.net.Uri.encode(contentId)}/image-as-video?rev=$revision"
+
+    private fun playImageAsVideoVariant(item: PlaylistItem, original: java.io.File, variant: java.io.File): Boolean =
+        mediaPlayer.playImageAsVideoVariantFromFile(variant, item.fitMode) {
+            Log.w("MainActivity", "Image-as-video variant failed; showing original ${item.filename}")
+            mediaPlayer.showImage(original)
+        }
+
+    private fun requestImageAsVideoVariant(contentId: String, revision: Long) {
+        if (!::downloadCoordinator.isInitialized) return
+        downloadCoordinator.ensureImageAsVideoVariant(
+            contentId,
+            revision,
+            imageAsVideoVariantUrl(contentId, revision)
+        ) { variant ->
+            handler.post {
+                val item = playlistController.currentItem ?: return@post
+                if (item.contentId != contentId || item.imageAsVideoRevision != revision ||
+                    !item.mimeType.startsWith("image/") || item.transition != null ||
+                    mediaPlayer.isPlayingImageAsVideo()
+                ) return@post
+                val original = contentCache.getCachedFile(contentId) ?: return@post
+                playImageAsVideoVariant(item, original, variant)
+            }
+        }
     }
 
     // ---- Multi-zone layout: shared by the live server update AND the cached cold-start restore ----
