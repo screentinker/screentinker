@@ -12,9 +12,10 @@ multi-tenant install.
   button that ran with a visitor's dashboard session when tapped. The render only follows http(s)
   or same-server paths (including pages saved before the fix), the API refuses other schemes
   (`KIOSK_BAD_ADDRESS`), and the render is a sandboxed null origin.
-- **The widget sandbox opt-out could expose other tenants' sessions on a shared server** (found in
-  an internal review). It is now self-hosted only: hosted orgs that had turned isolation off are
-  isolated again, and a text widget never renders same-origin, whatever the setting.
+- **The widget sandbox opt-out could expose other tenants' sessions on a shared server**
+  (GHSA-2cc7-p32g-q7f4, found in an internal review). It is now self-hosted only: hosted orgs that
+  had turned isolation off are isolated again, and a text widget never renders same-origin,
+  whatever the setting.
 - **Fingerprint reclaim could take over another tenant's offline screen** with a shared per-model
   fingerprint. Only per-install (salted) fingerprints reclaim a claimed screen, and the removed-screens
   list no longer returns raw fingerprints (re-adopt uses an opaque reference).
