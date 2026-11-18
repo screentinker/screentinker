@@ -48,6 +48,9 @@ class DownloadCoordinator(
     private val inFlight = Collections.synchronizedSet(HashSet<String>())
     private val attempts = ConcurrentHashMap<String, Int>()
     private val nextAttemptAt = ConcurrentHashMap<String, Long>()
+    private val imageAsVideoVariantInFlight = Collections.synchronizedSet(HashSet<String>())
+    private val imageAsVideoVariantAttempts = ConcurrentHashMap<String, Int>()
+    private val imageAsVideoVariantNextAttemptAt = ConcurrentHashMap<String, Long>()
 
     /**
      * Ensure [contentId] is (being) downloaded. Called for each local assignment on EVERY playlist
@@ -67,6 +70,63 @@ class DownloadCoordinator(
         } catch (e: Throwable) {
             inFlight.remove(contentId)                              // executor rejected (shut down) — don't leak the guard
         }
+    }
+
+    /**
+     * Cache an optional server-generated image-as-video variant. It has its own cache identity and
+     * failure state: it must neither replace the original image nor affect its content ack.
+     */
+    fun ensureImageAsVideoVariant(contentId: String, revision: Long, url: String, onReady: (java.io.File) -> Unit) {
+        if (contentId.isEmpty() || revision <= 0L) return
+        cache.getCachedImageAsVideoVariant(contentId, revision)?.let { onReady(it); return }
+        val key = "$contentId:$revision"
+        if (!socketAlive()) return
+        if (now() < (imageAsVideoVariantNextAttemptAt[key] ?: 0L)) return
+        if (!imageAsVideoVariantInFlight.add(key)) return
+        try {
+            executor.execute {
+                try {
+                    var link = 0
+                    while (link < MAX_RESUME_CHAIN) {
+                        link++
+                        when (val result = cache.fetchImageAsVideoVariant(url, contentId, revision)) {
+                            is ContentCache.Result.Done -> {
+                                imageAsVideoVariantAttempts.remove(key)
+                                imageAsVideoVariantNextAttemptAt.remove(key)
+                                onReady(result.file)
+                                return@execute
+                            }
+                            is ContentCache.Result.Partial -> {
+                                if (!result.progressed) {
+                                    backoffImageAsVideoVariant(key)
+                                    return@execute
+                                }
+                            }
+                            is ContentCache.Result.Failed -> {
+                                backoffImageAsVideoVariant(key)
+                                return@execute
+                            }
+                        }
+                    }
+                    imageAsVideoVariantNextAttemptAt[key] = now() + RESUME_HANDBACK_MS
+                } catch (e: Exception) {
+                    Log.w("DownloadCoordinator", "image-as-video variant download $contentId@$revision failed: ${e.message}")
+                    backoffImageAsVideoVariant(key)
+                } finally {
+                    imageAsVideoVariantInFlight.remove(key)
+                }
+            }
+        } catch (e: Exception) {
+            imageAsVideoVariantInFlight.remove(key)
+            Log.w("DownloadCoordinator", "could not schedule image-as-video variant download $contentId@$revision: ${e.message}")
+        }
+    }
+
+    private fun backoffImageAsVideoVariant(key: String) {
+        val n = (imageAsVideoVariantAttempts[key] ?: 0) + 1
+        imageAsVideoVariantAttempts[key] = n
+        val delay = minOf(BACKOFF_BASE_MS shl (n - 1).coerceIn(0, 20), BACKOFF_MAX_MS)
+        imageAsVideoVariantNextAttemptAt[key] = now() + delay
     }
 
     /**
@@ -146,6 +206,9 @@ class DownloadCoordinator(
     /** Content deleted server-side — drop download/backoff state so a re-add downloads fresh. */
     fun forget(contentId: String) {
         inFlight.remove(contentId); attempts.remove(contentId); nextAttemptAt.remove(contentId)
+        val prefix = "$contentId:"
+        imageAsVideoVariantAttempts.keys.removeAll { it.startsWith(prefix) }
+        imageAsVideoVariantNextAttemptAt.keys.removeAll { it.startsWith(prefix) }
     }
 
     /**
@@ -162,12 +225,14 @@ class DownloadCoordinator(
      *  item that backed off while the link was settling should re-attempt on the next sweep. */
     fun resetAllBackoff() {
         attempts.clear(); nextAttemptAt.clear()
+        imageAsVideoVariantAttempts.clear(); imageAsVideoVariantNextAttemptAt.clear()
     }
 
     /** Teardown (onDestroy): cancel in-flight downloads so none orphan or pin the Activity. */
     fun shutdown() {
         try { executor.shutdownNow() } catch (_: Throwable) {}
         inFlight.clear()
+        imageAsVideoVariantInFlight.clear()
     }
 
     // test visibility

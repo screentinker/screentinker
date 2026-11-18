@@ -89,7 +89,7 @@ Each Platform setting has an environment default; a value saved in Platform → 
 | `VIDEO_VARIANTS_WINDOW` | empty (any time) | Hours to encode in, e.g. `22-6`. |
 | `VIDEO_VARIANTS_CONCURRENCY` | `1` | Encodes at the same time (1–4). |
 | `VIDEO_VARIANTS_MAX_CPU` | `70` | Pause while host CPU over the last minute is above this %. |
-| `VIDEO_VARIANTS_ORG_MONTHLY_MINUTES` | `600` hosted, `0` self-hosted | Per-organization monthly allowance in minutes of source video (0 = no limit). |
+| `VIDEO_VARIANTS_ORG_MONTHLY_MINUTES` | `600` hosted, `0` self-hosted | Per-organization monthly allowance in minutes of encoded source duration: video duration plus 1 second per generated image-as-video variant (0 = no limit). |
 | `VIDEO_VARIANTS_HWACCEL` | `auto` | `off` for libx264 only, or `nvenc` / `qsv` / `vaapi` to try just that one. |
 
 Self-hosting: the copies need `ffmpeg` and `ffprobe` on the server's `PATH` (the Docker images

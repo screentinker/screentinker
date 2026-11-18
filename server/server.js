@@ -2184,6 +2184,32 @@ app.get('/api/content/:id/variant/:kind', (req, res) => {
   res.sendFile(safePath);
 });
 
+/*
+ * Image-as-video copies are revision-bound MP4 cache files for Android's native video plane. Use
+ * the original content access gate and serve only the ready copy for the requested image revision;
+ * a missing or stale copy is a 404 so the player keeps the still instead.
+ */
+app.get('/api/content/:id/image-as-video', (req, res) => {
+  const { db } = require('./db/database');
+  const content = db.prepare('SELECT * FROM content WHERE id = ?').get(req.params.id);
+  if (!content || !content.filepath) return res.status(404).json({ error: 'Content not found' });
+  if (!isReferencedForPlayers(db, content) && !requesterCanAccessContent(req, content)) {
+    return res.status(403).json({ error: 'Content not assigned to any playlist or widget' });
+  }
+  const revision = Number(req.query.rev);
+  if (!Number.isSafeInteger(revision) || revision < 1) {
+    return res.status(400).json({ error: 'A valid image-as-video variant revision is required' });
+  }
+  const file = require('./lib/image-as-video-variants').servePath(content, revision);
+  if (!file) return res.status(404).json({ error: 'Image-as-video variant is not ready' });
+  hardenUploadResponse(res, file);
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.sendFile(file);
+});
+
 // Protected API Routes.
 // Phase 2.1: resolveTenancy runs right after requireAuth on every resource
 // route. It attaches req.workspaceId, req.workspaceRole, req.orgRole,
@@ -3100,6 +3126,14 @@ require('./lib/cloud-folders').start(io);   // SharePoint/OneDrive folder syncs
 // 3.0 TV-safe video copies: resume the queue (lib/video-variants.js). A finished copy re-sends the
 // payload of every screen playing that video, so it switches to the copy without a reboot.
 require('./lib/video-variants').start({
+  push: (deviceIds) => {
+    const { buildPlaylistPayload } = require('./ws/deviceSocket');
+    const commandQueue = require('./lib/command-queue');
+    for (const id of new Set(deviceIds || [])) commandQueue.queueOrEmitPlaylistUpdate(io.of('/device'), id, buildPlaylistPayload);
+  },
+});
+// Resume image-as-video jobs; completion pushes fresh payloads so Android can fetch and use a ready copy.
+require('./lib/image-as-video-variants').start({
   push: (deviceIds) => {
     const { buildPlaylistPayload } = require('./ws/deviceSocket');
     const commandQueue = require('./lib/command-queue');

@@ -3520,6 +3520,27 @@ const migrations = [
   // Every path that deletes content takes the copies' rows with it; the files go in the orphan sweep.
   `CREATE TRIGGER IF NOT EXISTS trg_content_video_variants_content_del AFTER DELETE ON content
      BEGIN DELETE FROM content_video_variants WHERE content_id = OLD.id; END`,
+  /*
+   * High-resolution stills for Android's native video plane. One row per source image; source_file
+   * and source_revision prevent a clip made from old bytes from being served after an edit. The
+   * generated MP4 is a local cache, rebuilt on demand; a monthly quota refusal is retried next month.
+   */
+  `CREATE TABLE IF NOT EXISTS content_image_as_video_variants (
+     content_id TEXT PRIMARY KEY,
+     workspace_id TEXT,
+     source_file TEXT NOT NULL,
+     source_revision INTEGER NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('queued','running','ready','failed')),
+     filepath TEXT,
+     file_size INTEGER,
+     error TEXT,
+     attempts INTEGER NOT NULL DEFAULT 0,
+     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+     updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_image_as_video_variants_status ON content_image_as_video_variants(status, created_at)',
+  `CREATE TRIGGER IF NOT EXISTS trg_image_as_video_variants_content_del AFTER DELETE ON content
+     BEGIN DELETE FROM content_image_as_video_variants WHERE content_id = OLD.id; END`,
   /* Server-approved intrinsic-size copies for legacy SSSP3 media planes. */
   `CREATE TABLE IF NOT EXISTS sssp3_fit_renditions (
      id TEXT PRIMARY KEY,

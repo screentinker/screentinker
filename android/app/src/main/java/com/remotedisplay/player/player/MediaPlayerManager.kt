@@ -68,11 +68,19 @@ class MediaPlayerManager(
     private var playerView: PlayerView = texturePlayerView
     private var nativeVideo = false
     private var counterTurnDeg = 0f
+    private var imageAsVideoActive = false
+    private var imageAsVideoFallback: (() -> Unit)? = null
+
+    private fun clearImageAsVideoState() {
+        imageAsVideoActive = false
+        imageAsVideoFallback = null
+    }
 
     /** The display's "native 4K video" setting, from the playlist payload. Applies from the next clip. */
     fun setNativeVideo(enabled: Boolean) {
         if (nativeVideo == enabled) return
         nativeVideo = enabled
+        if (!enabled) fallbackFromImageAsVideo("native video plane disabled")
         Log.i("MediaPlayerManager", "native video plane ${if (enabled) "ON" else "off"}${if (enabled && nativePlayerView == null) " (no native view: ignored)" else ""}")
         // A clip playing now moves over at once: a single looping 4K clip never remounts, so "from
         // the next clip" would mean never. ExoPlayer follows its PlayerView to the new surface.
@@ -266,6 +274,10 @@ class MediaPlayerManager(
             // (mirrors the web/.wgt onerror -> advance), a follower re-mounts instead.
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 if (player === exoPlayer) {
+                    if (imageAsVideoActive) {
+                        fallbackFromImageAsVideo("image-as-video variant playback error (${error.errorCodeName})")
+                        return
+                    }
                     Log.e("MediaPlayerManager", "Playback error (${error.errorCodeName}) — recovering: ${error.message}")
                     onVideoFault()
                     return
@@ -607,6 +619,7 @@ class MediaPlayerManager(
     // no-transition hard cut.
     private fun mountImageBitmap(bitmap: Bitmap) {
         mountGeneration++
+        clearImageAsVideoState()
         stopYoutubeIfPlaying()
         stopLiveInputIfPlaying()
         currentType = MediaType.IMAGE
@@ -661,6 +674,7 @@ class MediaPlayerManager(
 
     /** Play the screen's HDMI input (hdmi://<port>). False when this device has no such input. */
     fun playLiveInput(url: String, muted: Boolean = false): Boolean {
+        clearImageAsVideoState()
         Log.i("MediaPlayerManager", "Playing live input: $url")
         mountGeneration++
         stopYoutubeIfPlaying()
@@ -683,6 +697,7 @@ class MediaPlayerManager(
     }
 
     fun playYoutube(embedUrl: String, durationSec: Int = 0, muted: Boolean = false, playToEnd: Boolean = false) {
+        clearImageAsVideoState()
         Log.i("MediaPlayerManager", "Playing YouTube: $embedUrl (muted=$muted, playToEnd=$playToEnd)")
         mountGeneration++
         stopLiveInputIfPlaying()
@@ -754,6 +769,7 @@ class MediaPlayerManager(
     // Fullscreen widget render (single-zone / "fullscreen" layouts). Reuses the
     // full-screen WebView; ZoneManager handles widgets in multi-zone layouts.
     fun showWidget(url: String, muted: Boolean = widgetMuted) {
+        clearImageAsVideoState()
         widgetMuted = muted
         // A solo-widget playlist re-shows the SAME item every duration_sec, and a playlist refresh
         // re-issues the current item too. Re-navigating the WebView for a URL it already has is a
@@ -807,6 +823,7 @@ class MediaPlayerManager(
      * animation or state it was holding.
      */
     fun showBundle(html: String, key: String) {
+        clearImageAsVideoState()
         if (currentType == MediaType.WIDGET && key == currentWidgetUrl && youtubeWebView != null) {
             Log.i("MediaPlayerManager", "Bundle already showing, not reloading: $key")
             youtubeWebView?.visibility = android.view.View.VISIBLE
@@ -884,6 +901,7 @@ class MediaPlayerManager(
 
     fun playVideoFromUrl(url: String, muted: Boolean = false, tlsSelfSigned: Boolean = false, fisheye: Fisheye.View? = null,
                          audioCard: Bitmap? = null) {
+        clearImageAsVideoState()
         // Redacted: a camera URL can carry its password (rtsp://user:pass@cam).
         Log.i("MediaPlayerManager", "Streaming ${if (audioCard != null) "audio" else "video"} from URL: ${RtspUrl.redact(url)} (muted=$muted${if (fisheye != null) ", fisheye" else ""})")
         mountGeneration++
@@ -903,6 +921,7 @@ class MediaPlayerManager(
 
         exoPlayer?.apply {
             volume = if (mountMuted(muted)) 0f else 1f
+            repeatMode = if (videoLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
             val item = MediaItem.fromUri(Uri.parse(url))
             if (url.startsWith("rtsp://", ignoreCase = true) || url.startsWith("rtsps://", ignoreCase = true)) {
                 // RTSP/RTSPS camera: TCP-interleaved, TLS for rtsps (RtspSources). A dead camera lands
@@ -932,6 +951,7 @@ class MediaPlayerManager(
     private var mountGeneration: Long = 0L
 
     fun showImageFromUrl(url: String, transition: TransitionSpec? = null) {
+        clearImageAsVideoState()
         Log.i("MediaPlayerManager", "Loading remote image: $url")
         // Capture the outgoing frame NOW, on the main thread, before the decode thread swaps it out.
         val from = if (transition != null) captureCurrentFrame() else null
@@ -1040,6 +1060,7 @@ class MediaPlayerManager(
     }
 
     private fun mountVideo(file: File, muted: Boolean = false, audioCard: Bitmap? = null) {
+        clearImageAsVideoState()
         val myGeneration = ++mountGeneration
         // #298: grab the outgoing frame BEFORE currentType moves — captureCurrentFrame() reads it.
         // Not for audio: it shows its card at once and never renders a frame to take a cover down.
@@ -1097,6 +1118,7 @@ class MediaPlayerManager(
         Log.i("MediaPlayerManager", "Playing ${if (audioCard != null) "audio" else "video"}: ${file.absolutePath} (muted=$muted)")
         exoPlayer?.apply {
             volume = if (mountMuted(muted)) 0f else 1f
+            repeatMode = if (videoLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
             setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
             prepare()
             playWhenReady = true
@@ -1104,6 +1126,7 @@ class MediaPlayerManager(
     }
 
     fun showImage(file: File, transition: TransitionSpec? = null) {
+        clearImageAsVideoState()
         Log.i("MediaPlayerManager", "Showing image: ${file.absolutePath}")
         val bitmap = decodeBox().let { (w, h) -> ImageLoader.decodeFile(file, w, h) }
         if (bitmap == null) {
@@ -1149,6 +1172,7 @@ class MediaPlayerManager(
 
     fun stop() {
         stall.reset()
+        clearImageAsVideoState()
         exoPlayer?.stop()
         // #870: a stopped player's TextureView keeps its last frame. Left VISIBLE, it stayed on the
         // idle screen and in every screenshot; every video mount sets it VISIBLE again.
@@ -1175,7 +1199,46 @@ class MediaPlayerManager(
         warmTexture?.release(); warmTexture = null
     }
 
-    fun isPlayingVideo(): Boolean = currentType == MediaType.VIDEO && (exoPlayer?.isPlaying == true)
+    fun isPlayingVideo(): Boolean = currentType == MediaType.VIDEO && !imageAsVideoActive && (exoPlayer?.isPlaying == true)
+    fun isPlayingImageAsVideo(): Boolean = imageAsVideoActive
+
+    private fun fallbackFromImageAsVideo(reason: String) {
+        if (!imageAsVideoActive) return
+        imageAsVideoActive = false
+        val fallback = imageAsVideoFallback
+        imageAsVideoFallback = null
+        Log.w("MediaPlayerManager", "$reason; showing original image")
+        fallback?.invoke()
+    }
+
+    /**
+     * Play a server-generated still through the native video surface. The playlist continues to own
+     * image timing; this short clip loops until the next item is mounted.
+     */
+    fun playImageAsVideoVariantFromFile(file: java.io.File, fitMode: String?, onFallback: () -> Unit): Boolean {
+        if (!nativeEligible(fisheye = false, audio = false)) return false
+        imageAsVideoFallback = onFallback
+        setItemFit(fitMode)
+        val myGeneration = ++mountGeneration
+        coverSwitchGap(myGeneration)
+        stopYoutubeIfPlaying()
+        stopLiveInputIfPlaying()
+        currentType = MediaType.VIDEO
+        imageAsVideoActive = true
+        selectVideoView(native = true)
+        playerView.visibility = android.view.View.VISIBLE
+        if (coverGeneration != myGeneration) imageView.visibility = android.view.View.GONE
+        youtubeWebView?.visibility = android.view.View.GONE
+        exoPlayer?.apply {
+            volume = 0f
+            repeatMode = Player.REPEAT_MODE_ONE
+            setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
+            prepare()
+            playWhenReady = true
+        }
+        Log.i("MediaPlayerManager", "Playing cached image as video on native video plane")
+        return true
+    }
 
     // #129: live per-item mute. Applies a dashboard mute toggle to the CURRENTLY playing
     // item in real time (decoupled from a playlist reload). Native video -> ExoPlayer

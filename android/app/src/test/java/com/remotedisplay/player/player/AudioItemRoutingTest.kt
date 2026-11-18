@@ -75,6 +75,14 @@ class AudioItemRoutingTest {
         assertTrue(s.contains("if (audioCard != null) showAudioCard(audioCard)"))
     }
 
+    @Test fun `normal cold video mounts restore configured repeat mode`() {
+        val s = src("player/MediaPlayerManager.kt")
+        val repeatMode = "repeatMode = if (videoLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF"
+        assertTrue("remote video mount resets repeat mode", s.contains(repeatMode))
+        val localMount = s.substringAfter("private fun mountVideo(").substringBefore("fun showImage(")
+        assertTrue("cold local video mount resets repeat mode", localMount.contains(repeatMode))
+    }
+
     @Test fun `zones and wall zones play audio with no picture and no first-frame wait`() {
         val z = src("player/ZoneManager.kt")
         assertTrue(z.contains("MediaKind.playsAsClip(mimeType) ->"))

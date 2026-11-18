@@ -41,4 +41,25 @@ class NativeVideoPlaneTest {
         assertTrue("it uses surface_view", xml.substring(native, end).contains("app:surface_type=\"surface_view\""))
         assertTrue("and starts hidden", xml.substring(native, end).contains("android:visibility=\"gone\""))
     }
+
+    @Test
+    fun cachedPlaylistRestoresNativeVideoBeforeStartingCachedItems() {
+        val source = File("src/main/java/com/remotedisplay/player/MainActivity.kt").readText()
+        val restore = source.indexOf("val cached = JSONObject(cachedJson)")
+        val setting = source.indexOf("mediaPlayer.setNativeVideo(cached.optBoolean(\"native_video\", false))", restore)
+        val playlistStart = source.indexOf("playlistController.updatePlaylist(assignments, cachedOrder)", restore)
+        assertTrue("cached native-video setting is restored", setting > restore)
+        assertTrue("setting is restored before cached items start", playlistStart < 0 || setting < playlistStart)
+    }
+
+    @Test
+    fun imageAsVideoKeepsTheOutgoingImageUntilTheNewVideoFrameRenders() {
+        val source = File("src/main/java/com/remotedisplay/player/player/MediaPlayerManager.kt").readText()
+        val mount = source.substringAfter("fun playImageAsVideoVariantFromFile(").substringBefore("// #129: live per-item mute")
+        val cover = mount.indexOf("coverSwitchGap(myGeneration)")
+        val typeChange = mount.indexOf("currentType = MediaType.VIDEO")
+        assertTrue("captures/retains the outgoing frame before changing media type", cover >= 0 && typeChange > cover)
+        assertTrue("keeps the cover when this mount owns it", mount.contains("if (coverGeneration != myGeneration) imageView.visibility = android.view.View.GONE"))
+        assertTrue("removes the cover after a real video frame renders", source.contains("override fun onRenderedFirstFrame()") && source.contains("if (player === exoPlayer) clearSwitchCover()"))
+    }
 }
