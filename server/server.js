@@ -3485,7 +3485,7 @@ app.post('/api/provision/pair', bearerAuth, resolveTenancy, requireTokenScope('f
   if (pairLockout.isCodeExpired(lastSeen)) {
     return res.status(410).json({ error: pairLockout.CODE_EXPIRED_MESSAGE });
   }
-  pairLockout.reset(ip); // a valid claim forgives prior failed attempts from this IP
+  pairLockout.noteSuccess(ip); // forgives one earlier typo, never the whole count (lib/pair-lockout.js)
 
   // One free trial per screen (lib/trial-screens.js): a trialing account claiming the third screen
   // that another, unpaid trial already used is refused. Hosted only; paying / Free accounts never.

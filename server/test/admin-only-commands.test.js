@@ -32,7 +32,10 @@ const { freePort } = require('./helpers/free-port');
 const PW = 'Passw0rd123';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ADMIN_ONLY = [['shell', { cmd: 'id' }], ['install_apk', { url: 'https://example.com/x.apk' }],
-  ['set_server_url', { url: 'https://elsewhere.example.com' }]];
+  ['set_server_url', { url: 'https://elsewhere.example.com' }],
+  // 3.2.4: reach past the player into the panel or the customer's network.
+  ['http_request', { url: 'https://example.com/' }], ['kiosk_unlock', {}], ['unblock_uninstall', {}],
+  ['status_bar', { visible: true }], ['set_time', { time: Date.now() }], ['update', {}]];
 
 let proc, db, BASE;
 const DATA_DIR = path.join(os.tmpdir(), 'st-adminonly-' + crypto.randomBytes(4).toString('hex'));
@@ -72,7 +75,8 @@ function device() {
   db.prepare(`INSERT INTO devices (id, name, status, workspace_id, user_id, device_token, client_type, platform, capabilities, created_at)
               VALUES (?, 'Lobby', 'offline', ?, ?, ?, 'pi', 'Linux/Debian 12', ?, strftime('%s','now'))`)
     .run(id, U.owner.wsId, U.owner.userId, crypto.randomBytes(32).toString('hex'),
-      JSON.stringify(['system.shell', 'system.pty', 'system.install_apk', 'remote.set_server_url', 'system.reboot', 'audio.volume']));
+      JSON.stringify(['system.shell', 'system.pty', 'system.install_apk', 'remote.set_server_url', 'system.reboot', 'audio.volume',
+        'net.http_request', 'system.kiosk', 'system.device_owner', 'system.time', 'system.self_update']));
   return id;
 }
 

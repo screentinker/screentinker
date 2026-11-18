@@ -27,12 +27,24 @@ test('lockout: the block lifts after LOCKOUT_MS', () => {
   assert.equal(lk.isLocked(a, 1000 + lk.LOCKOUT_MS + 1), false, 'unlocked after the window');
 });
 
-test('lockout: reset() (a successful pair) forgives prior failures', () => {
+test('lockout: a successful pair forgives ONE failure, not the whole count (decoy bypass)', () => {
+  // The bypass: claim a code of your own between guesses. Four guesses + one decoy success, over
+  // and over, used to never lock because a success wiped the count.
+  const a = ip();
+  let guesses = 0;
+  for (let round = 0; round < 10 && !lk.isLocked(a, 1000); round++) {
+    for (let i = 0; i < lk.MAX_FAILS - 1 && !lk.isLocked(a, 1000); i++) { lk.recordFailure(a, 1000); guesses++; }
+    lk.noteSuccess(a);
+  }
+  assert.equal(lk.isLocked(a, 1000), true, 'decoy successes no longer keep the IP open');
+  assert.ok(guesses < 2 * lk.MAX_FAILS + 2, `locked after ${guesses} guesses`);
+});
+
+test('lockout: failures older than the window are forgotten', () => {
   const a = ip();
   for (let i = 0; i < lk.MAX_FAILS - 1; i++) lk.recordFailure(a, 1000);
-  lk.reset(a);
-  for (let i = 0; i < lk.MAX_FAILS - 1; i++) lk.recordFailure(a, 1000);
-  assert.equal(lk.isLocked(a, 1000), false, 'reset cleared the earlier fails, so no lockout');
+  lk.recordFailure(a, 1000 + lk.LOCKOUT_MS + 1);
+  assert.equal(lk.isLocked(a, 1000 + lk.LOCKOUT_MS + 1), false);
 });
 
 test('expiry: a code is claimable inside the TTL and expired after it', () => {
@@ -43,15 +55,15 @@ test('expiry: a code is claimable inside the TTL and expired after it', () => {
   assert.equal(lk.isCodeExpired(nowSec - (lk.PAIRING_TTL_SEC + 5), now), true, 'expired just past the TTL');
 });
 
-test('lockout: a bulk rollout from one IP never locks (each successful pair resets)', () => {
-  // The roofing-office scenario: many displays paired from one shared-NAT IP, even with the
-  // odd fat-fingered code, never trips the 5-fail lockout because each success resets the
-  // counter. (Expired codes don't count toward the lockout at all - see the /pair handler.)
+test('lockout: a bulk rollout from one IP never locks (each successful pair forgives a typo)', () => {
+  // The roofing-office scenario: many displays paired from one shared-NAT IP, with a fat-fingered
+  // code before each, never trips the 5-fail lockout because each success forgives one failure.
+  // (Expired codes don't count toward the lockout at all - see the /pair handler.)
   const office = ip();
   for (let i = 0; i < 20; i++) {
-    lk.recordFailure(office, 1000); lk.recordFailure(office, 1000); // two mistypes before this display
-    assert.equal(lk.isLocked(office, 1000), false, `display ${i}: still open after a couple of mistypes`);
-    lk.reset(office); // the correct code pairs -> reset
+    lk.recordFailure(office, 1000); // a mistype before this display
+    assert.equal(lk.isLocked(office, 1000), false, `display ${i}: still open after a mistype`);
+    lk.noteSuccess(office); // the correct code pairs
   }
   assert.equal(lk.isLocked(office, 1000), false, 'all 20 displays paired, the IP never locked');
 });

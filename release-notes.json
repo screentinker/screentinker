@@ -14,6 +14,17 @@
   ],
   "releases": [
     {
+      "version": "3.2.4",
+      "date": "2026-11-17",
+      "notes": [
+        "Security update: please upgrade. Kiosk buttons can no longer run scripts, and on the hosted service widget isolation is always on.",
+        "Kiosk unlock, forced updates and Wi-Fi changes on screens are now for workspace admins, like the Terminal. Editors no longer see those buttons.",
+        "With approval on, changing a schedule's content or a live kiosk page now waits for a reviewer.",
+        "Roku and Samsung (Tizen) screens stay paired after a network or server outage, and Android, webOS and web players recover better from crashes, failed updates and YouTube outages.",
+        "Schedules that repeat for a full 24 hours now play all day, and 13 more guide pages now have their tutorial video."
+      ]
+    },
+    {
       "version": "3.2.3",
       "date": "2026-11-17",
       "notes": [

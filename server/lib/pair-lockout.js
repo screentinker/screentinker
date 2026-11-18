@@ -18,17 +18,28 @@ function isLocked(ip, now = Date.now()) {
   return !!(rec && rec.lockedUntil > now);
 }
 
-// Record one failed claim from an IP; trip the lockout once MAX_FAILS is reached.
+// Record one failed claim from an IP; trip the lockout once MAX_FAILS is reached. Failures older
+// than LOCKOUT_MS are forgotten, so a long rollout's occasional typo never adds up to a lockout.
 function recordFailure(ip, now = Date.now()) {
-  const rec = failures.get(ip) || { count: 0, lockedUntil: 0 };
+  const rec = failures.get(ip) || { count: 0, lockedUntil: 0, firstAt: now };
+  if (!rec.firstAt || now - rec.firstAt > LOCKOUT_MS) { rec.count = 0; rec.firstAt = now; }
   rec.count += 1;
   if (rec.count >= MAX_FAILS) { rec.lockedUntil = now + LOCKOUT_MS; rec.count = 0; }
   failures.set(ip, rec);
   return rec;
 }
 
-// A successful pair (or any reason to forgive an IP) clears its failure record.
+// Clears an IP's record outright. Tests and operator tooling only: a successful claim must NOT call
+// this. Pairing a code of one's own is free (provision a code, claim it), so a success that wiped the
+// count let a guesser interleave one decoy claim per four guesses and never lock.
 function reset(ip) { failures.delete(ip); }
+
+// A successful claim forgives ONE earlier failure: a person who mistyped and then got it right is
+// even again, but a decoy success buys a guesser one extra try, not a clean slate.
+function noteSuccess(ip) {
+  const rec = failures.get(ip);
+  if (rec && rec.count > 0) rec.count -= 1;
+}
 
 // A provisioning code is stale once the device has not been seen for longer than the TTL.
 //
@@ -48,4 +59,4 @@ function isCodeExpired(lastSeenSec, now = Date.now()) {
 const CODE_EXPIRED_MESSAGE = 'Pairing code expired - this screen has not been online for over 15 minutes. '
   + 'Make sure it is on and connected to the internet, then type the code again';
 
-module.exports = { isLocked, recordFailure, reset, isCodeExpired, MAX_FAILS, LOCKOUT_MS, PAIRING_TTL_SEC, CODE_EXPIRED_MESSAGE };
+module.exports = { isLocked, recordFailure, reset, noteSuccess, isCodeExpired, MAX_FAILS, LOCKOUT_MS, PAIRING_TTL_SEC, CODE_EXPIRED_MESSAGE };

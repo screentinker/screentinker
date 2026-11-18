@@ -642,7 +642,7 @@ function refreshWidgetRevs(assignments, deviceId = null) {
       else if (a.widget_media) delete a.widget_media;
       // A cloud document is framed same-origin too: Google's embed breaks in an opaque origin, and its
       // render document runs no script at all (lib/cloud-docs.js, enforced by its CSP).
-      a.widget_allow_same_origin = Number(facts.same_origin || 0) === 1 || facts.widget_type === 'cloud-doc';
+      a.widget_allow_same_origin = (config.selfHosted && Number(facts.same_origin || 0) === 1) || facts.widget_type === 'cloud-doc';
       // #473: an interactive webpage is configured by its widget_config ON THE PLAYER (start URL,
       // idle timeout, allowed domains), so the config must be as fresh as the rev that tells the
       // player to remount — otherwise an edit reloads the page with the settings from the last
@@ -2115,7 +2115,9 @@ const EVENT_APPLIERS = Object.freeze({
     const { device_id, id, ok, status, snippet, truncated, duration_ms, error } = data || {};
     data = data || {};
     if (!device_id || device_id !== deviceId) return;
-    emitToDeviceWorkspace(_dashboardNsRef, device_id, 'dashboard:http-result', {
+    // Only to the people who could have sent the request (http_request is admin-only, as shell is):
+    // the body comes from inside the customer's network, and a viewer of the workspace is not them.
+    emitToShellUsers(_dashboardNsRef, device_id, 'dashboard:http-result', {
       device_id,
       id: String(id || '').slice(0, 64),
       ok: !!ok,
@@ -3296,7 +3298,17 @@ module.exports = function setupDeviceSocket(io) {
                 }
                 // No live socket from here on — the old connection is gone.
                 lastReclaimRejectLogAt.delete(existing.device_id);
-                if (oldDevice.user_id) {
+                /*
+                 * ⚠️ A MODEL-LEVEL fingerprint never reclaims a claimed screen. A web player with no
+                 * storage sends its bare hardware value (web-<hash>-<len>), which every unit of that
+                 * model shares, so "it matched" says nothing about WHICH screen this is: the next
+                 * identical panel anywhere, in any tenant, would be handed this one's new token,
+                 * settings PIN, queued commands and content. Per-unit ids (Android/Tizen/Roku/native)
+                 * and the salted web value (web-<hash>-<len>-<install id>) still reclaim. This caller
+                 * falls through and is provisioned a fresh row with its on-screen code instead.
+                 */
+                const modelLevelFp = fingerprint === hw_fingerprint || /^web-[0-9a-z]+-[0-9a-z]+$/.test(String(fingerprint));
+                if (oldDevice.user_id && !modelLevelFp) {
                   // The old row is CLAIMED. A reinstalled panel (MDM wiped its data, so it presents
                   // only its stable fingerprint — no device_id, no token) must REMATCH to this row —
                   // preserving the claim, name, playlist, and content — instead of provisioning a
@@ -3680,7 +3692,7 @@ module.exports = function setupDeviceSocket(io) {
           applyCapabilities(id, data);
         } catch (e) {
           console.warn(`Provisioning rejected for pairing_code ${pairing_code} from ${getClientIp(socket)}: ${e.message}`);
-          socket.emit('device:auth-error', { error: 'Registration failed, please retry.' });
+          socket.emit('device:auth-error', { error: 'Registration failed, please retry.', reason: 'register_failed', retry: true });
           return;
         }
         currentDeviceId = id;
@@ -3721,7 +3733,9 @@ module.exports = function setupDeviceSocket(io) {
     // Require authentication for all events after register
     function requireDeviceAuth() {
       if (!authenticated || !currentDeviceId) {
-        socket.emit('device:auth-error', { error: 'Not authenticated. Send device:register first.' });
+        // retry:true says "register again", not "your identity is bad": a client must not forget its
+        // pairing over this. Queued events reaching a fresh socket ahead of register land here.
+        socket.emit('device:auth-error', { error: 'Not authenticated. Send device:register first.', reason: 'not_registered', retry: true });
         return false;
       }
       return true;

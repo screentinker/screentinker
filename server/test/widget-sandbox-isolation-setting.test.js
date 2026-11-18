@@ -21,7 +21,7 @@ test('backend keeps safe default sandbox and only opts into allow-same-origin vi
   assert.match(WIDGETS, /if \(!workspaceId\) return 'allow-scripts'/);
   assert.match(WIDGETS, /\? 'allow-scripts allow-same-origin'/);
   assert.match(DEVICE_SOCKET, /COALESCE\(o\.widget_sandbox_isolation_disabled, 0\)/);
-  assert.match(DEVICE_SOCKET, /a\.widget_allow_same_origin = Number\(facts\.same_origin \|\| 0\) === 1/);
+  assert.match(DEVICE_SOCKET, /a\.widget_allow_same_origin = \(config\.selfHosted && Number\(facts\.same_origin \|\| 0\) === 1\)/);
 });
 
 // Flipping the setting must reach screens that already hold the widgets: the render page is cached

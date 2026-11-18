@@ -193,6 +193,23 @@ function loadPlaylistAccess(req, res, requireWrite, opts = {}) {
   return playlist;
 }
 
+/*
+ * #714 for routes OUTSIDE this file that change a playlist's contents (routes/assignments.js item
+ * edits, adds/reorders on a screen's own playlist, copy-to; routes/revisions.js restore). They do not
+ * pass through loadPlaylistAccess, so the lock was only enforced in the playlist editor. Sends 403
+ * PLAYLIST_ADMIN_LOCKED and returns true when the playlist is locked and the caller is not an admin
+ * of its workspace.
+ */
+function adminLockRefused(req, res, playlistId) {
+  if (!playlistId) return false;
+  const pl = db.prepare('SELECT workspace_id, admin_locked FROM playlists WHERE id = ?').get(playlistId);
+  if (!pl || !pl.admin_locked) return false;
+  const ws = pl.workspace_id && db.prepare('SELECT * FROM workspaces WHERE id = ?').get(pl.workspace_id);
+  if (ws && isPlaylistAdmin(resourceAccess(req, ws))) return false;
+  res.status(403).json({ error: 'This playlist is admin-only. Ask a workspace admin to make this change.', code: 'PLAYLIST_ADMIN_LOCKED' });
+  return true;
+}
+
 function requirePlaylistRead(req, res, next) {
   if (!loadPlaylistAccess(req, res, false)) return;
   next();
@@ -2749,6 +2766,7 @@ module.exports = router;
  * published_snapshot itself would have neither, and would look correct until the first nested deck
  * or the first no-op republish.
  */
+module.exports.adminLockRefused = adminLockRefused;
 module.exports.publishPlaylist = publishPlaylist; // #73: shared with the agency auto-publish path
 module.exports.buildSnapshotItems = buildSnapshotItems;
 module.exports.previewPayload = previewPayload;

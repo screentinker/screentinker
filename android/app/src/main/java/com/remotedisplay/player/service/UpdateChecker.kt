@@ -555,13 +555,10 @@ class UpdateChecker(private val context: Context) {
      */
     private fun installApk(apkFile: File, ownOta: Boolean) {
         if (ownOta) OtaInstallWindow.arm() else OtaInstallWindow.disarm()
-        // Try silent session install first (no Play Protect dialog)
-        try {
-            tryPackageInstaller(apkFile)
-            return
-        } catch (e: Exception) {
-            Log.w(TAG, "Session install failed: ${e.message}, falling back to intent")
-        }
+        // Try silent session install first (no Play Protect dialog). It reports failure rather than
+        // throwing (it swallowed every error before, so this fallback below could never run).
+        if (tryPackageInstaller(apkFile)) return
+        Log.w(TAG, "Session install failed, falling back to intent")
 
         // Fallback: intent-based install (shows dialog)
         try {
@@ -587,7 +584,9 @@ class UpdateChecker(private val context: Context) {
         }
     }
 
-    private fun tryPackageInstaller(apkFile: File) {
+    /** True once the session is committed; false on any failure, so the caller can fall back. */
+    private fun tryPackageInstaller(apkFile: File): Boolean {
+        var sessionId = -1
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 val installer = context.packageManager.packageInstaller
@@ -616,7 +615,7 @@ class UpdateChecker(private val context: Context) {
                     )
                     Log.i(TAG, "Silent install (device owner / delegated scope): USER_ACTION_NOT_REQUIRED")
                 }
-                val sessionId = installer.createSession(params)
+                sessionId = installer.createSession(params)
                 val session = installer.openSession(sessionId)
 
                 apkFile.inputStream().use { input ->
@@ -639,10 +638,14 @@ class UpdateChecker(private val context: Context) {
                 )
                 session.commit(pendingIntent.intentSender)
                 Log.i(TAG, "Package installer session committed")
+                return true
             }
         } catch (e: Exception) {
             Log.e(TAG, "Package installer failed: ${e.message}")
+            // Do not leave a half-written session holding a full APK copy behind.
+            if (sessionId >= 0) try { context.packageManager.packageInstaller.abandonSession(sessionId) } catch (_: Throwable) {}
         }
+        return false
     }
 
     // True only if the downloaded APK is this same package and shares a signing

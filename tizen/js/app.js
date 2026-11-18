@@ -398,7 +398,15 @@
       // can't sustain a reject -> auth-error loop.
       authenticated = false;
       stopHeartbeat();
-      toast((data && data.error) ? data.error : 'Auth error', false);
+      // "Send device:register first" / "Registration failed, please retry" are about this socket,
+      // not our identity (an event that beat register to a fresh socket). Register again and keep
+      // the pairing; wiping it here put a paired screen back on the pairing code.
+      var err = (data && data.error) ? String(data.error) : '';
+      if ((data && data.retry === true) || /^(Not authenticated|Registration failed)/.test(err)) {
+        scheduleRegister(3000);
+        return;
+      }
+      toast(err || 'Auth error', false);
       // Bad/stale token or fingerprint-reclaim block: drop creds and re-pair.
       del(LS.id); del(LS.token); del(LS.payload); // A2: clear cached content when identity is lost
       clearOfflinePlan();                         // #825: and the schedule plan with it

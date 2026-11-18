@@ -55,6 +55,28 @@ class OfflinePlanTest {
         assertTrue("a complete envelope is accepted", OfflinePlan.read(base) != null)
     }
 
+    /*
+     * The driver calls select / nextTransitionAfter / dependencies on the committed plan every
+     * payload and every tick, on the main thread. They must work on the plan they are given, not on
+     * a toString()+reparse copy of it each call: the returned rows are the plan's OWN objects.
+     */
+    @Test fun `select and dependencies work on the given plan without reparsing it`() {
+        val plan = planAGapB()
+        val sel = OfflinePlan.select(plan, at(9) + 1)
+        assertTrue(sel.valid)
+        assertTrue("interval is the plan's own row", sel.interval === plan.getJSONArray("intervals").getJSONObject(0))
+        assertTrue("state is the plan's own row", sel.state === plan.getJSONArray("states").getJSONObject(0))
+        val deps = OfflinePlan.dependencies(plan)
+        val a1 = plan.getJSONArray("states").getJSONObject(0).getJSONObject("payload").getJSONArray("assignments").getJSONObject(0)
+        assertTrue("dependency is the plan's own item", deps.any { it === a1 })
+    }
+
+    @Test fun `select still rejects an invalid envelope passed as an object`() {
+        assertFalse(OfflinePlan.select(planAGapB().put("protocol_version", 2), at(9) + 1).valid)
+        assertNull(OfflinePlan.nextTransitionAfter(planAGapB().apply { remove("intervals") }, at(9)))
+        assertTrue(OfflinePlan.dependencies(planAGapB().apply { remove("states") }).isEmpty())
+    }
+
     @Test fun `a time outside the plan validity is not usable - fall back to the plain cache`() {
         val plan = planAGapB()
         assertFalse("before it was generated", OfflinePlan.select(plan, at(8)).valid)

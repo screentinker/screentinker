@@ -50,6 +50,9 @@ class WebSocketService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     // #314: pending hold from a server device:throttled, so we do not reconnect into the refusal.
     private var throttleHold: Runnable? = null
+    // elapsedRealtime deadline of that hold (0 = none). Every reopen path (eviction reopen, the
+    // silence backstop) checks it via ThrottleHold, not just the throttle's own resume runnable.
+    @Volatile private var throttleHoldUntilMs: Long = 0L
     private var heartbeatRunnable: Runnable? = null
     private val binder = LocalBinder()
 
@@ -311,7 +314,8 @@ class WebSocketService : Service() {
                 try {
                     val connected = socket?.connected() == true
                     val silenceMs = SystemClock.elapsedRealtime() - lastServerMessageAt
-                    if (!connected && silenceMs > RECONNECT_WATCHDOG_STALL_MS && config.serverUrl.isNotEmpty()) {
+                    val held = ThrottleHold.remainingMs(throttleHoldUntilMs, SystemClock.elapsedRealtime()) > 0L
+                    if (!connected && !held && silenceMs > RECONNECT_WATCHDOG_STALL_MS && config.serverUrl.isNotEmpty()) {
                         Log.w("WebSocketService", "reconnect backstop: disconnected+silent ${silenceMs}ms — forcing a fresh socket")
                         socketActive = false        // let ConnectionGuard permit a new socket over the wedged one
                         connect()
@@ -556,8 +560,10 @@ class WebSocketService : Service() {
                     val why = payload?.optString("reason", "") ?: ""
                     Log.w("WebSocketService", "throttled by server: holding off ${waitMs}ms ($why)")
                     throttleHold?.let { handler.removeCallbacks(it) }
+                    throttleHoldUntilMs = SystemClock.elapsedRealtime() + waitMs
                     val resume = Runnable {
                         throttleHold = null
+                        throttleHoldUntilMs = 0L
                         try { if (socket?.connected() != true) connect() } catch (e: Throwable) {
                             Log.w("WebSocketService", "throttle resume failed: ${e.message}")
                         }
@@ -2042,11 +2048,22 @@ class WebSocketService : Service() {
     // backoff, and only one pending at a time — so a server eviction can't trigger a blind
     // re-open loop. connect() itself is idempotent, so this is safe even if an activity rebind
     // races it.
+    // #314: the reopen also waits out any device:throttled hold — the server throttles and THEN
+    // disconnects ("io server disconnect"), so a plain 3 s reopen would walk straight back into the
+    // limiter. The hold is re-checked when the runnable fires, since the throttle notice may land
+    // after the reopen was already scheduled.
     private fun scheduleReopen(delayMs: Long) {
         if (reopenRunnable != null) return
-        val r = Runnable { reopenRunnable = null; connect() }
+        val r = object : Runnable {
+            override fun run() {
+                val wait = ThrottleHold.remainingMs(throttleHoldUntilMs, SystemClock.elapsedRealtime())
+                if (wait > 0L) { handler.postDelayed(this, wait); return }
+                reopenRunnable = null
+                connect()
+            }
+        }
         reopenRunnable = r
-        handler.postDelayed(r, delayMs)
+        handler.postDelayed(r, ThrottleHold.reopenDelayMs(delayMs, throttleHoldUntilMs, SystemClock.elapsedRealtime()))
     }
     private fun cancelReopen() {
         reopenRunnable?.let { handler.removeCallbacks(it) }

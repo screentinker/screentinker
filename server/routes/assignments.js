@@ -189,6 +189,9 @@ router.post('/device/:deviceId', (req, res) => {
     if (bad) return res.status(bad.status).json({ error: bad.error });
   }
 
+  // #714: adding to a screen whose own playlist is admin-only is editing that playlist.
+  { const own = db.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(req.params.deviceId);
+    if (own && require('./playlists').adminLockRefused(req, res, own.playlist_id)) return; }
   const playlistId = ensureDevicePlaylist(req.params.deviceId, req.user.id);
   { const smartErr = require('../lib/smart-playlist').smartAddError(db, playlistId); if (smartErr) return res.status(400).json({ error: smartErr }); }
   if (child_playlist_id) {
@@ -321,6 +324,8 @@ function checkItemWrite(req, res) {
     if (corpGuard.send(res, e, req)) return null;
     throw e;
   }
+  // #714: an item of an admin-only playlist is the playlist's contents.
+  if (require('./playlists').adminLockRefused(req, res, item.playlist_id)) return null;
   return item;
 }
 
@@ -490,6 +495,9 @@ router.post('/device/:deviceId/reorder', (req, res) => {
    * translation the UPDATE would match nothing (they are in a different playlist) and the reorder
    * would appear to succeed while changing nothing at all.
    */
+  // #714: reordering a screen's own admin-only playlist is editing it (an inherited one forks first).
+  { const own = db.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(req.params.deviceId);
+    if (own && require('./playlists').adminLockRefused(req, res, own.playlist_id)) return; }
   const forked = forkInheritedPlaylist(req.params.deviceId, req.user.id);
   const playlistId = forked ? forked.playlistId : resolveDevicePlaylistId(req.params.deviceId);
   if (!playlistId) return res.json([]);
@@ -526,6 +534,9 @@ router.post('/device/:deviceId/copy-to/:targetDeviceId', (req, res) => {
   }
   // A mandated target plays head office's playlist; a copy onto it would never show.
   if (mandateRefusal(req, res, req.params.targetDeviceId)) return;
+  // #714: copying onto a screen whose own playlist is admin-only replaces that playlist's contents.
+  { const own = db.prepare('SELECT playlist_id FROM devices WHERE id = ?').get(req.params.targetDeviceId);
+    if (own && require('./playlists').adminLockRefused(req, res, own.playlist_id)) return; }
 
   // Resolved, so a screen that inherits from a group or wall can be copied from. Head office's
   // mandated playlist is never copied into a store's own (same rule as forkInheritedPlaylist);

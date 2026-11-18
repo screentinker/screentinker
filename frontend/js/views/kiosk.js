@@ -128,7 +128,7 @@ async function renderEditor(container, rawPageId) {
         <!-- Drawn at 1920x1080 and scaled down, so the preview lays out like the screen. At the box's own
              size the page's fixed paddings and font sizes pushed the lower rows of buttons out of view. -->
         <div id="kioskPreviewBox" style="position:relative;width:100%;aspect-ratio:16/9;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-lg)">
-          <iframe id="kioskPreview" src="/api/kiosk/${pageId}/render" style="position:absolute;top:0;left:0;width:1920px;height:1080px;border:0;transform-origin:0 0"></iframe>
+          <iframe id="kioskPreview" src="/api/kiosk/${pageId}/render" sandbox="allow-scripts" style="position:absolute;top:0;left:0;width:1920px;height:1080px;border:0;transform-origin:0 0"></iframe>
         </div>
       </div>
       <div style="width:320px;max-height:calc(100vh - 140px);overflow-y:auto;display:flex;flex-direction:column;gap:12px">

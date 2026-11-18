@@ -129,6 +129,8 @@ function sendCorporate(res, e, req) {
 
 router.post('/:type/:id/:rev/restore', requireWorkspaceWrite, async (req, res) => {
   if (!loadResource(req, res)) return;
+  // #714: restoring an admin-only playlist's revision rewrites its contents.
+  if (req.params.type === 'playlist' && require('./playlists').adminLockRefused(req, res, req.params.id)) return;
   let materialized = null;
   try {
     assertCorporateWritable(req);

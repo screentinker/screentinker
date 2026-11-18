@@ -7416,6 +7416,10 @@
       // backfill duplicates of what the leader already recorded.
       // Preview never records proof-of-play. The shared offline queue also serves cached
       // startup playback before connect() has run, and playback during a network outage.
+      // A record left open by the previous item (its start was offline, its end was not) must never
+      // survive into this one, or a later offline end would queue it with the wrong content and a
+      // start time from hours ago.
+      offlinePlayOpen = null;
       if (!PREVIEW_MODE && !socket?.connected && (!wallConfig || wallConfig.is_leader) && shouldLogPlay(item)) {
         offlinePlayOpen = {
           content_id: item.content_id || null,
@@ -7484,8 +7488,18 @@
         const open = offlinePlayOpen; offlinePlayOpen = null;
         queueOfflinePlay(open, true);
       }
+      // Started offline, ended online: the server never saw the start, so a bare play_end would
+      // close nothing (or some older row). Queue it whole, as offline plays are, and flush now.
+      let endedViaQueue = false;
+      if (!bySkip && !PREVIEW_MODE && playlist[currentIndex] && socket?.connected && offlinePlayOpen) {
+        const open = offlinePlayOpen; offlinePlayOpen = null;
+        queueOfflinePlay(open, true);
+        flushOfflinePlays();
+        endedViaQueue = true;
+      }
+      offlinePlayOpen = null;
       // Send play_end for current (a skipped bundle's was already sent, as a retraction)
-      if (!bySkip && playlist[currentIndex] && socket?.connected) {
+      if (!bySkip && !endedViaQueue && playlist[currentIndex] && socket?.connected) {
         socket.emit('device:play-event', {
           device_id: config.deviceId,
           event: 'play_end',
@@ -7520,19 +7534,37 @@
 
     // Load YouTube IFrame API once. (ytApiReady / ytApiCallbacks are declared at the
     // top of the script alongside the other player state.)
-    function loadYoutubeApi(cb) {
+    // onFail runs if the script errors or is not ready within 20 s (offline, blocked). The failed
+    // tag is removed so the next YouTube item tries again instead of waiting on a script that
+    // will never arrive.
+    function loadYoutubeApi(cb, onFail) {
       if (ytApiReady) { cb(); return; }
-      ytApiCallbacks.push(cb);
+      ytApiCallbacks.push({ ok: cb, fail: onFail });
       if (!document.getElementById('yt-api-script')) {
         const tag = document.createElement('script');
         tag.id = 'yt-api-script';
         tag.src = 'https://www.youtube.com/iframe_api';
-        document.head.appendChild(tag);
+        let timer = null;
+        const settle = (ok) => {
+          clearTimeout(timer);
+          tag.onerror = null;
+          const pending = ytApiCallbacks;
+          ytApiCallbacks = [];
+          if (!ok) {
+            console.warn('YouTube IFrame API failed to load');
+            try { tag.remove(); } catch (e) {}
+            // A half-loaded API leaves YT.loading set, which stops a re-added iframe_api from fetching again.
+            try { if (window.YT && !window.YT.loaded) window.YT = undefined; } catch (e) {}
+          }
+          pending.forEach(p => { try { const fn = ok ? p.ok : p.fail; if (fn) fn(); } catch (e) { console.error(e); } });
+        };
+        tag.onerror = () => { if (!ytApiReady) settle(false); };
+        timer = setTimeout(() => { if (!ytApiReady) settle(false); }, 20000);
         window.onYouTubeIframeAPIReady = () => {
           ytApiReady = true;
-          ytApiCallbacks.forEach(fn => fn());
-          ytApiCallbacks = [];
+          settle(true);
         };
+        document.head.appendChild(tag);
       }
     }
 
@@ -7631,21 +7663,28 @@
         container.appendChild(overlay);
       }
 
+      const shouldLoop = zoneMode ? !!opts.loop : playlist.length <= 1;
+      const itemMs = () => Math.max(1, Number(item.duration_sec) || 10) * 1000;
+      // Without "Play to end" the item's duration is its length, fullscreen as in zones and on Android:
+      // the clip loops until the timer moves the playlist on. Fullscreen used to ignore the duration and
+      // always wait for the video to end, so the same playlist ran differently on a web player.
+      const byDuration = !zoneMode && !shouldLoop && !!done && !item.play_to_end;
+      const loops = shouldLoop || byDuration;
+      // Armed BEFORE the API load: renderContent cleared advanceTimer, so if the IFrame API or the
+      // embed iframe never loads (offline) nothing else would ever move the playlist on. A duration
+      // item counts from its start, like an image. A play-to-end item gets a generous cap that
+      // onReady replaces with the real length + 3 s.
+      if (byDuration) setSafety(itemMs());
+      else if (!loops && done) setSafety(Math.max(itemMs(), 60000));
+
       loadYoutubeApi(() => {
         // Bail if a newer player was created while we waited for the API
         if (!alive()) return;
 
-        const shouldLoop = zoneMode ? !!opts.loop : playlist.length <= 1;
         let playStartTime = 0;
         let liveArmed = false;
-        const itemMs = () => Math.max(1, Number(item.duration_sec) || 10) * 1000;
         // getVideoData() is undocumented but long-standing; any throw or a missing field means "not live".
         const ytIsLive = (t) => { try { const d = t && t.getVideoData && t.getVideoData(); return !!(d && d.isLive); } catch { return false; } };
-        // Without "Play to end" the item's duration is its length, fullscreen as in zones and on Android:
-        // the clip loops until the timer moves the playlist on. Fullscreen used to ignore the duration and
-        // always wait for the video to end, so the same playlist ran differently on a web player.
-        const byDuration = !zoneMode && !shouldLoop && !!done && !item.play_to_end;
-        const loops = shouldLoop || byDuration;
         activeYtPlayer = new YT.Player(playerDiv.id, {
           videoId: videoId,
           width: '100%',
@@ -7746,8 +7785,12 @@
             },
           },
         });
-        // Counted from the item's start, like an image. Torn down with the player (clearSafety / generation).
-        if (byDuration) setSafety(itemMs());
+      }, () => {
+        // The API could not load: skip the item like an unplayable video (onError). Fires only
+        // where an advance was armed above, so a one-item playlist or a sync follower stays put.
+        if (!alive() || !done || shouldLoop) return;
+        console.warn('YouTube API unavailable, skipping:', item.filename);
+        setSafety(2000);
       });
 
       // Advancement: with "Play to end" the video's ENDED (length + 3 s as the safety net); without it
@@ -8341,10 +8384,17 @@
     function renderImageBuffered(item) {
       const src = imgSrcFor(item);
       const cached = imgPreloadCache[src];
+      // A newer render (alert, cut_now, stage change, skip) or teardown moves renderSeq while this
+      // image loads/decodes; a late swap or skip must then leave the newer content and its timer alone.
+      const mySeq = renderSeq;
+      const stale = () => renderSeq !== mySeq;
+      // A still-loading widget swap belongs to the item being left; it must not reveal over this one.
+      discardPendingSwap();
       let done = false, watchdog = null;
       const swap = (img) => {
         if (done) return; done = true;
         if (watchdog) clearTimeout(watchdog);
+        if (stale()) return;                      // superseded while loading: don't clobber the newer render
         delete imgPreloadCache[src];
         if (glTxAbort) glTxAbort(); // settle any in-flight wipe first — one transition at a time on the shared renderer
         const from = currentTexturableFrame(); // may be an outgoing <video> snapshot -> video→image wipes
@@ -8359,6 +8409,7 @@
       const fail = () => {
         if (done) return; done = true;
         if (watchdog) clearTimeout(watchdog);
+        if (stale()) return;                      // superseded: the newer item owns the advance timer
         // No element to inspect here: this is the load/watchdog failure path, so nothing decoded.
         // `fail` is already `done`-guarded, so it runs at most once per render.
         mediaFailureSkip(null, 'image', src);             // skip broken item; hold prior frame

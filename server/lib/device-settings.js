@@ -134,6 +134,15 @@ function restoreOnClaim(deviceId) {
 }
 
 // The "previously removed devices" browser — snapshots for the given workspace(s).
+/*
+ * A fingerprint is a device credential: presented on register with no token, it is what the
+ * reinstall reclaim keys on. So the removed-devices list (readable by any workspace member,
+ * viewers included) names a snapshot by an opaque ref, never by its fingerprint.
+ */
+function snapshotRef(fingerprint) {
+  return require('crypto').createHash('sha256').update('st-removed-snapshot:' + String(fingerprint)).digest('hex').slice(0, 32);
+}
+
 function listRemoved(workspaceIds) {
   const ids = (Array.isArray(workspaceIds) ? workspaceIds : [workspaceIds]).filter(Boolean);
   if (!ids.length) return [];
@@ -142,7 +151,15 @@ function listRemoved(workspaceIds) {
     `SELECT fingerprint, workspace_id, device_name, orientation, playlist_id, layout_id,
             timezone, blocked, last_seen, removed_at
        FROM device_settings WHERE workspace_id IN (${ph}) ORDER BY removed_at DESC`
-  ).all(...ids);
+  ).all(...ids).map(({ fingerprint, ...row }) => ({ ref: snapshotRef(fingerprint), ...row }));
+}
+
+// The fingerprint a ref names, among one workspace's snapshots (null when none matches).
+function fingerprintForRef(workspaceId, ref) {
+  if (!workspaceId || typeof ref !== 'string' || !/^[0-9a-f]{32}$/.test(ref)) return null;
+  const rows = db.prepare('SELECT fingerprint FROM device_settings WHERE workspace_id = ?').all(workspaceId);
+  const hit = rows.find((r) => snapshotRef(r.fingerprint) === ref);
+  return hit ? hit.fingerprint : null;
 }
 
 function getByFingerprint(fingerprint) {
@@ -177,4 +194,4 @@ function setBlockedByDevice(deviceId, blocked) {
   return r.changes > 0;
 }
 
-module.exports = { snapshot, applyToDevice, restoreOnClaim, listRemoved, getByFingerprint, purgeWorkspaces, setBlockedByDevice, validOrientation, ORIENTATIONS };
+module.exports = { snapshot, applyToDevice, restoreOnClaim, listRemoved, getByFingerprint, fingerprintForRef, snapshotRef, purgeWorkspaces, setBlockedByDevice, validOrientation, ORIENTATIONS };

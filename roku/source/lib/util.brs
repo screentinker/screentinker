@@ -39,6 +39,15 @@ function ST_IsTrue(v as dynamic) as boolean
     return false
 end function
 
+' True for an auth-error that means "register again", not "your identity is bad". Newer servers say
+' so with retry:true; older ones only by the wording of these two messages.
+function ST_AuthErrorIsTransient(data as dynamic) as boolean
+    if not ST_IsAA(data) then return false
+    if ST_IsTrue(data.retry) then return true
+    e = ST_Str(data, "error")
+    return Left(e, 17) = "Not authenticated" or Left(e, 19) = "Registration failed"
+end function
+
 ' A string field, or a default when it is missing / not a string.
 function ST_Str(aa as dynamic, key as string, dflt = "" as string) as string
     if not ST_IsAA(aa) then return dflt

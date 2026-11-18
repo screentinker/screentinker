@@ -957,6 +957,9 @@ const PREVIEW_IFRAME_SANDBOX = 'allow-scripts';
 
 function widgetIframeSandboxForWorkspace(workspaceId) {
   if (!workspaceId) return 'allow-scripts';
+  // Hosted: always isolated, whatever an org row says (a flag set before 3.2.4 is ignored). See
+  // routes/workspaces.js PUT /:id/security-settings for why the opt-out is self-hosted only.
+  if (!appConfig.selfHosted) return 'allow-scripts';
   try {
     const row = db.prepare(`
       SELECT COALESCE(o.widget_sandbox_isolation_disabled, 0) AS disabled
@@ -1184,6 +1187,9 @@ router.get('/:id/render', (req, res) => {
       iframeSandbox, legacyDataFrame: true, weatherSnapshot: snapshot,
     })));
   }
+  // A text widget is author HTML: the whole render is a null origin wherever it is opened (top-level
+  // in an Android WebView, or a link someone clicks), not only when a player frames it.
+  if (widget.widget_type === 'text') res.setHeader('Content-Security-Policy', 'sandbox allow-scripts');
   res.send(renderWidgetHtml(widget.widget_type, config, {
     iframeSandbox,
     // SSSP3's old WebKit does not paint nested documents reliably from the
@@ -1906,7 +1912,11 @@ function legacyPlainText(value) {
   return chunks.join('').replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function renderText(c, iframeSandbox = 'allow-scripts', legacyDataFrame = false) {
+// A text widget's HTML is the author's own markup, framed by srcdoc, and a srcdoc frame with
+// allow-same-origin INHERITS the parent's origin: this server's. So it is always 'allow-scripts',
+// whatever the org's isolation setting; that setting exists for third-party sites (webpage widgets),
+// which keep their own origin. The /render response adds a CSP sandbox on top.
+function renderText(c, _iframeSandbox = 'allow-scripts', legacyDataFrame = false) {
   let html = rewriteFeedFetches(c.html ? String(c.html) : '<p style="color:white;padding:20px">Empty text widget</p>');
 
   // LEGACY DESIGNER RESCUE — deliberately narrow.
@@ -2024,7 +2034,7 @@ function renderText(c, iframeSandbox = 'allow-scripts', legacyDataFrame = false)
   * { margin:0; padding:0; }
   html, body { width:100vw; height:100vh; overflow:hidden; background:${safeCss(c.background, 'transparent')}; }
   iframe { width:100%; height:100%; border:0; display:block; }
-</style></head><body><iframe sandbox="${escapeHtml(iframeSandbox)}" srcdoc="${escapeHtml(inner)}"></iframe></body></html>`;
+</style></head><body><iframe sandbox="allow-scripts" srcdoc="${escapeHtml(inner)}"></iframe></body></html>`;
 }
 
 function renderWebpage(c, iframeSandbox = 'allow-scripts', origin, legacy = false) {

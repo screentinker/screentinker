@@ -177,7 +177,7 @@ class ZoneManager(
             // removeAllViews() here would detach those and black the screen on switch-back.
             cancelAllRotations()
             cancelAllTransitions()
-            zoneViews.values.forEach { container.removeView(it) }
+            zoneViews.values.forEach { dropZoneView(it) }
             zoneViews.clear()
             zoneFaces.clear()
             zoneLastIdx.clear()
@@ -330,7 +330,7 @@ class ZoneManager(
             if (Hold.mode(remote) == Hold.Mode.FREEZE) {
                 zoneExoPlayers[zone.id]?.let { try { it.playWhenReady = false } catch (_: Throwable) {} }
             } else {
-                zoneViews.remove(zone.id)?.let { container.removeView(it) }
+                zoneViews.remove(zone.id)?.let { dropZoneView(it) }
                 zoneExoPlayers.remove(zone.id)?.release()
                 zoneLiveInputs.remove(zone.id)?.release()
                 zoneFaces[zone.id] = ZoneFace.NONE
@@ -353,7 +353,7 @@ class ZoneManager(
      * already decoded as [preDecoded] so the picture is not decoded twice.
      */
     private fun mountZoneItem(zone: Zone, assignments: List<JSONObject>, activeIdx: Int, params: FrameLayout.LayoutParams, gen: Int, preDecoded: Bitmap?, txStartedAt: Long = 0L) {
-        zoneViews.remove(zone.id)?.let { container.removeView(it) }
+        zoneViews.remove(zone.id)?.let { dropZoneView(it) }
         forgetZoneHealth(zone.id)
         zoneExoPlayers.remove(zone.id)?.release()
         zoneLiveInputs.remove(zone.id)?.release()
@@ -979,7 +979,7 @@ class ZoneManager(
         zoneGeneration[zoneId] = (zoneGeneration[zoneId] ?: 0) + 1   // stale callbacks are ignored
         cancelZoneRotation(zoneId)
         cancelZoneTransition(zoneId)
-        zoneViews.remove(zoneId)?.let { container.removeView(it) }
+        zoneViews.remove(zoneId)?.let { dropZoneView(it) }
         forgetZoneHealth(zoneId)
         zoneExoPlayers.remove(zoneId)?.release()
         zoneLiveInputs.remove(zoneId)?.release()
@@ -1011,6 +1011,16 @@ class ZoneManager(
      * input, whose surface punches a hole through whatever is drawn beneath it: re-rendered on top,
      * it would erase the logo it was meant to carry.
      */
+    /*
+     * Take a zone's view off the screen. A WebView is also stopped, blanked and destroyed
+     * (WebViewSupport.release, as WallZoneRenderer/PipOverlay do): removeView alone left every
+     * replaced widget/bundle/YouTube zone's renderer, timers and audio alive until the process died.
+     */
+    private fun dropZoneView(view: View) {
+        try { container.removeView(view) } catch (_: Throwable) {}
+        if (view is WebView) com.remotedisplay.player.util.WebViewSupport.release(view)
+    }
+
     private fun addZoneView(zone: Zone, view: View) {
         // A transition overlay for this zone stays ON TOP of the view mounted under it until it is
         // removed (it is holding the wipe's last frame while the new view gets its first one).
@@ -1049,7 +1059,7 @@ class ZoneManager(
         // Remove ONLY the views we added for zones; the activity's static views live
         // in this same container and must NOT be removed (else single-zone/fullscreen
         // playback, which reuses them, renders black).
-        zoneViews.values.forEach { container.removeView(it) }
+        zoneViews.values.forEach { dropZoneView(it) }
         zoneViews.clear()
         zoneItemSigs.clear()
         zones = listOf()

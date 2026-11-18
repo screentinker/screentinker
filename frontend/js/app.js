@@ -1176,7 +1176,8 @@ function updateBillingBanner(user) {
 
 function updateWidgetSandboxWarningBanner(user) {
   const existing = document.getElementById('widgetSandboxWarningBanner');
-  const disabled = !!user?.current_organization?.widget_sandbox_isolation_disabled;
+  // Hosted ignores the flag (always isolated), so the warning is only true on a self-hosted install.
+  const disabled = user?.self_hosted === true && !!user?.current_organization?.widget_sandbox_isolation_disabled;
   if (!disabled) { if (existing) existing.remove(); return; }
   if (existing) return;
   const bannersEl = document.getElementById('banners');

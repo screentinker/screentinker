@@ -298,10 +298,12 @@ sub closeSession(reason as string)
     end for
     wasConnected = m.connected
     resetSession()
-    ' a CONNECT queued for the old session must not ride the new one twice
+    ' a CONNECT queued for the old session must not ride the new one twice. Nor may the heartbeats
+    ' that piled up during the outage: they would reach the new session ahead of register and be
+    ' refused, and they are stale anyway.
     keep = []
     for each p in m.queue
-        if Left(p, 2) <> "40" and Left(p, 1) <> "3" then keep.Push(p)
+        if Left(p, 2) <> "40" and Left(p, 1) <> "3" and Instr(1, p, Chr(34) + "device:heartbeat" + Chr(34)) = 0 then keep.Push(p)
     end for
     m.queue = keep
     m.top.state = "connecting"

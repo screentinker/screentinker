@@ -118,6 +118,14 @@ sub Main()
     check(t, "date medium", ST_ClockDate(am, "medium") = "Jan 2, 2026")
     check(t, "date short", ST_ClockDate(am, "short") = "01/02/26")
 
+    ' an auth-error that means "register again" must not unpair the Roku
+    check(t, "auth-error retry flag is transient", ST_AuthErrorIsTransient({ error: "x", retry: true }))
+    check(t, "auth-error register-first text is transient (older server)", ST_AuthErrorIsTransient({ error: "Not authenticated. Send device:register first." }))
+    check(t, "auth-error registration-failed is transient", ST_AuthErrorIsTransient({ error: "Registration failed, please retry." }))
+    check(t, "auth-error invalid token is not transient", not ST_AuthErrorIsTransient({ error: "Invalid device token" }))
+    check(t, "auth-error blocked is not transient", not ST_AuthErrorIsTransient({ error: "Device blocked" }))
+    check(t, "auth-error without payload is not transient", not ST_AuthErrorIsTransient(invalid))
+
     print "DONE " + t.pass.ToStr() + " " + t.fail.ToStr()
 end sub
 

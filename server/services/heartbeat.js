@@ -64,7 +64,21 @@ function startHeartbeatChecker(io) {
 
   const deviceNs = io.of('/device');
 
+  /*
+   * ⚠️ THE TICK NEVER THROWS OUT OF THE INTERVAL. An exception escaping a timer callback is an
+   * uncaughtException, which this server answers with logFatalAndExit: one SQLITE_BUSY on the
+   * offline sweep restarted the process and dropped every screen's socket. The whole tick is
+   * guarded, and so is each device, so one bad row cannot stop the sweep for the rest.
+   */
   setInterval(() => {
+    try { heartbeatTick(io, deviceNs); } catch (e) {
+      console.error(`[heartbeat] tick failed: ${e && e.message}`);
+    }
+  }, config.heartbeatInterval);
+}
+
+function heartbeatTick(io, deviceNs) {
+  {
     const now = Date.now();
     const dashboardNs = io.of('/dashboard');
 
@@ -77,6 +91,12 @@ function startHeartbeatChecker(io) {
     const onlineDevices = db.prepare(`SELECT id, last_heartbeat, heartbeat_expected_by FROM devices WHERE status = 'online' AND ${LOCAL_ROWS_SQL('devices')}`).all();
 
     for (const device of onlineDevices) {
+      try { sweepDevice(device); } catch (e) {
+        console.error(`[heartbeat] offline check for ${device.id} failed: ${e && e.message}`);
+      }
+    }
+
+    function sweepDevice(device) {
       const conn = deviceConnections.get(device.id);
 
       // #146: a device with a live, still-connected socket is UP, even if its last
@@ -87,7 +107,7 @@ function startHeartbeatChecker(io) {
       // (possibly queued) heartbeat clock. If the socket is genuinely gone, conn is
       // either absent or points at a socket no longer in the namespace, and we fall
       // through to the timeout below.
-      if (conn && deviceNs.sockets.has(conn.socketId)) continue;
+      if (conn && deviceNs.sockets.has(conn.socketId)) return;
 
       let lastBeat = conn ? conn.lastHeartbeat : (device.last_heartbeat ? device.last_heartbeat * 1000 : 0);
       // An embedded display that was told to sleep until T is not late until T. Timing out from
@@ -110,7 +130,7 @@ function startHeartbeatChecker(io) {
         // this session (e.g. a crash emit that beat the freeze). Pure annotation; detection unchanged.
         db.prepare("UPDATE devices SET status = 'offline', updated_at = strftime('%s','now'), offline_reason = COALESCE(offline_reason, 'silent'), offline_reason_at = COALESCE(offline_reason_at, strftime('%s','now')) WHERE id = ?")
           .run(device.id);
-        deviceConnections.delete(device.id);
+        removeConnection(device.id);
 
         const _off = db.prepare("SELECT offline_reason, offline_detail, client_type FROM devices WHERE id = ?").get(device.id) || {};
         // Notify dashboard (workspace-scoped via the device's room).
@@ -141,9 +161,9 @@ function startHeartbeatChecker(io) {
     // #146: all table-growth maintenance runs OFF the interval body — async, chunked,
     // band-gated, re-entrancy-guarded — so a sweep can never block the loop or stack.
     // The offline-marking above stays synchronous (it's the core heartbeat function).
-    runMaintenance();
-
-  }, config.heartbeatInterval);
+    try { reapStaleConnections(deviceNs, now); } catch (e) { console.error(`[heartbeat] connection reap failed: ${e && e.message}`); }
+    try { runMaintenance(); } catch (e) { console.error(`[heartbeat] maintenance failed to start: ${e && e.message}`); }
+  }
 }
 
 // #146: batched play-log prune (idx_play_logs_time), chunked so a 90-day backlog
@@ -372,8 +392,43 @@ async function runMaintenance() {
   } catch (_) { /* maintenance must never crash the interval */ } finally { _maintRunning = false; }
 }
 
+/*
+ * ⚠️ ONE DEVICE PER SOCKET. device:register is unauthenticated for a new screen, and each one with a
+ * fresh pairing code provisions a row and registers a connection. Only the LAST id on a socket is
+ * removed on disconnect, so a loop of registers on one socket left an entry per row here forever, and
+ * accrueUsage wrote a usage row for every one of them on every tick. A socket's earlier entry is
+ * dropped when it registers another id.
+ */
+const socketOwner = new Map(); // socketId -> deviceId
+// A mesh replica's screens share one pseudo-socket id (`mesh:<node>`, ws/deviceSocket.js), so the
+// one-per-socket rule and the reaper apply only to real local sockets.
+const isMeshConn = (socketId) => typeof socketId === 'string' && socketId.startsWith('mesh:');
 function registerConnection(deviceId, socketId) {
+  if (isMeshConn(socketId)) { deviceConnections.set(deviceId, { socketId, lastHeartbeat: Date.now() }); return; }
+  const prior = socketOwner.get(socketId);
+  if (prior && prior !== deviceId) {
+    const c = deviceConnections.get(prior);
+    if (c && c.socketId === socketId) deviceConnections.delete(prior);
+  }
+  const old = deviceConnections.get(deviceId);
+  if (old && old.socketId !== socketId && socketOwner.get(old.socketId) === deviceId) socketOwner.delete(old.socketId);
+  socketOwner.set(socketId, deviceId);
   deviceConnections.set(deviceId, { socketId, lastHeartbeat: Date.now() });
+}
+
+// Entries whose socket is gone and that have not beaten for a full timeout: a row never marked
+// online (provisioning) is not in the offline sweep's query, so nothing else would ever drop them.
+function reapStaleConnections(deviceNs, now = Date.now()) {
+  let reaped = 0;
+  for (const [id, conn] of deviceConnections) {
+    if (isMeshConn(conn.socketId)) continue;
+    if (deviceNs && deviceNs.sockets && deviceNs.sockets.has(conn.socketId)) continue;
+    if (now - (conn.lastHeartbeat || 0) <= config.heartbeatTimeout) continue;
+    deviceConnections.delete(id);
+    if (socketOwner.get(conn.socketId) === id) socketOwner.delete(conn.socketId);
+    reaped++;
+  }
+  return reaped;
 }
 
 function updateHeartbeat(deviceId) {
@@ -382,6 +437,8 @@ function updateHeartbeat(deviceId) {
 }
 
 function removeConnection(deviceId) {
+  const c = deviceConnections.get(deviceId);
+  if (c && socketOwner.get(c.socketId) === deviceId) socketOwner.delete(c.socketId);
   deviceConnections.delete(deviceId);
 }
 
@@ -467,6 +524,8 @@ async function pruneProvisioningDevices() {
 
 module.exports = {
   startHeartbeatChecker,
+  reapStaleConnections,
+  _heartbeatTickForTests: (io, deviceNs) => heartbeatTick(io, deviceNs),
   registerConnection,
   updateHeartbeat,
   removeConnection,

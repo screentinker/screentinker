@@ -76,6 +76,15 @@ class MainActivity : AppCompatActivity() {
     private var offlinePlanJson: org.json.JSONObject? = null
     private var offlinePlanAppliedKey: String? = null
     private var offlinePlanTick: Runnable? = null
+    /*
+     * The offline plan / playlist cache work that rides every live payload (~every 60 s): parsing the
+     * plan, a cacheDir lookup per dependency, and EncryptedSharedPreferences writes. All of it used to
+     * run on the main thread. One background thread does it now, in payload order; only applying the
+     * result touches main. `offlinePlanGen` (main thread) drops a result a newer payload superseded.
+     * Writes compare against the stored value (read on the executor) and skip an unchanged rewrite.
+     */
+    private val offlinePersistExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var offlinePlanGen = 0
     private val webHealth = com.remotedisplay.player.player.OfflineGate.WebHealth()
     private lateinit var screenshotCapture: ScreenshotCapture
     private lateinit var touchInjector: TouchInjector
@@ -306,7 +315,7 @@ class MainActivity : AppCompatActivity() {
             this, pipLayout, contentCache,
             setBaseAudioSuppressed = { on ->
                 try { if (::mediaPlayer.isInitialized) mediaPlayer.setTriggerMute(on) } catch (e: Throwable) { }
-                try { slideAudioPlayer?.setMuted(on) } catch (e: Throwable) { }
+                try { slideAudioPlayer?.setTriggerMuted(on) } catch (e: Throwable) { }
             },
             log = { level, message -> wsService?.sendLog("trigger", level, message) },
             // #845: an alert outranks a screen share. While any trigger is on screen every share tile,
@@ -364,7 +373,8 @@ class MainActivity : AppCompatActivity() {
         wallZones = WallZoneRenderer(
             context = this,
             root = rootView as FrameLayout,
-            stageIndex = { (rootView as ViewGroup).indexOfChild(youtubeWebView) + 1 },
+            // Looked up by id each time: the fullscreen WebView is replaced if its renderer dies.
+            stageIndex = { (rootView as ViewGroup).indexOfChild(findViewById<android.webkit.WebView>(R.id.youtubeWebView)) + 1 },
             syncedNow = { syncedNowMs() },
             report = { msg -> wsService?.sendLog("sync", "info", msg) },
             mayBeHeard = { !::mediaPlayer.isInitialized || mediaPlayer.mayBeHeard() },
@@ -833,20 +843,38 @@ class MainActivity : AppCompatActivity() {
 
     /** Adopt (or clear) the plan from a live payload. Commits only a fully-cached plan. */
     private fun onLiveOfflinePlan(plan: org.json.JSONObject?) {
-        val parsed = com.remotedisplay.player.player.OfflinePlan.read(plan)
+        // Snapshot on main (the payload object stays the main thread's); everything else runs on
+        // offlinePersistExecutor: one parse, the dependency check, and the prefs write.
+        val raw = plan?.toString()
+        val gen = ++offlinePlanGen
+        try {
+            offlinePersistExecutor.execute { prepareOfflinePlan(raw, gen) }
+        } catch (e: Throwable) { Log.w("MainActivity", "offline plan: executor rejected: ${e.message}") }
+    }
+
+    /** offlinePersistExecutor: parse once, check dependencies, persist if changed; then apply on main. */
+    private fun prepareOfflinePlan(raw: String?, gen: Int) {
+        val parsed = com.remotedisplay.player.player.OfflinePlan.read(raw)
+        // Compared with what is actually stored (read here, off the main thread), not an in-memory
+        // memo: other paths clear these prefs (unpair, cache clear), and a memo would then skip a
+        // rewrite of an unchanged plan and leave the offline copy empty.
+        val stored = config.cachedOfflinePlan
         if (parsed == null) {
             // Null / unusable: no plan applies (an override, a corporate mandate, or no schedules).
             // Drop any committed plan so it cannot be resurrected offline, and stop driving.
-            if (config.cachedOfflinePlan.isNotEmpty()) config.cachedOfflinePlan = ""
-            offlinePlanJson = null
-            offlinePlanAppliedKey = null
-            cancelOfflinePlanTick()
+            if (stored.isNotEmpty()) config.cachedOfflinePlan = ""
+            handler.post {
+                if (gen != offlinePlanGen) return@post
+                offlinePlanJson = null
+                offlinePlanAppliedKey = null
+                cancelOfflinePlanTick()
+            }
             return
         }
         // Pre-cache every state's file media (current AND future intervals). ensure() is idempotent
         // and single-flight, so this is safe to run on every payload. Widgets/remote/streams need the
         // network regardless and are not file dependencies, so they never block a commit.
-        var allCached = true
+        val missing = ArrayList<org.json.JSONObject>()
         for (item in com.remotedisplay.player.player.OfflinePlan.dependencies(parsed)) {
             val widgetId = if (item.isNull("widget_id")) "" else item.optString("widget_id", "")
             if (widgetId.isNotEmpty()) continue
@@ -854,30 +882,42 @@ class MainActivity : AppCompatActivity() {
             if (contentId.isEmpty()) continue
             val remoteUrl = if (item.isNull("remote_url")) null else item.optString("remote_url", null)
             if (!remoteUrl.isNullOrEmpty()) continue
-            val rev = item.optLong("content_rev", 0L)
-            if (!contentCache.isContentCached(contentId, rev)) {
-                allCached = false
-                if (::downloadCoordinator.isInitialized) {
-                    downloadCoordinator.ensure(contentId, item.optString("filename", "content"), rev)
-                }
-            }
+            if (!contentCache.isContentCached(contentId, item.optLong("content_rev", 0L))) missing.add(item)
         }
         // Commit only a COMPLETE plan: a future interval must never roll in to missing media. Until
         // every dependency is on disk, keep the previously committed plan (itself complete) and let
-        // the downloads above finish; the next payload re-checks and commits when they are ready.
-        if (!allCached) {
-            Log.i("MainActivity", "Offline plan incomplete (caching future media); retaining prior plan")
-            return
+        // the downloads finish; the next payload re-checks and commits when they are ready.
+        if (missing.isEmpty() && raw != stored) config.cachedOfflinePlan = raw!!
+        handler.post {
+            if (::downloadCoordinator.isInitialized) {
+                for (item in missing) {
+                    downloadCoordinator.ensure(item.optString("content_id", ""), item.optString("filename", "content"), item.optLong("content_rev", 0L))
+                }
+            }
+            if (gen != offlinePlanGen) return@post
+            if (missing.isNotEmpty()) {
+                Log.i("MainActivity", "Offline plan incomplete (caching future media); retaining prior plan")
+                return@post
+            }
+            offlinePlanJson = parsed
+            // Reconcile the on-screen state to the plan on the next tick (a reconnecting panel that just
+            // got a fresh plan should honour its boundaries), but let the live payload we are handling
+            // paint the current instant.
+            offlinePlanAppliedKey = intervalKey(
+                com.remotedisplay.player.player.OfflinePlan.select(parsed, System.currentTimeMillis()).interval
+            )
+            armOfflinePlanDriver(applyNow = false)
         }
-        config.cachedOfflinePlan = parsed.toString()
-        offlinePlanJson = parsed
-        // Reconcile the on-screen state to the plan on the next tick (a reconnecting panel that just
-        // got a fresh plan should honour its boundaries), but let the live payload we are handling
-        // paint the current instant.
-        offlinePlanAppliedKey = intervalKey(
-            com.remotedisplay.player.player.OfflinePlan.select(parsed, System.currentTimeMillis()).interval
-        )
-        armOfflinePlanDriver(applyNow = false)
+    }
+
+    /** Cache the playlist for offline cold start: off the main thread, and only when it changed. */
+    private fun persistCachedPlaylist(json: String) {
+        try {
+            offlinePersistExecutor.execute {
+                // Against the stored value, not a memo (see prepareOfflinePlan).
+                if (json != config.cachedPlaylist) config.cachedPlaylist = json
+            }
+        } catch (e: Throwable) { config.cachedPlaylist = json }
     }
 
     private fun armOfflinePlanDriver(applyNow: Boolean) {
@@ -1250,7 +1290,7 @@ class MainActivity : AppCompatActivity() {
             if (data.optBoolean(OFFLINE_REPLAY_KEY, false)) {
                 // A replayed plan state (mergeOfflineState) is not a live answer: keep the live cache.
             } else if (assignments.length() > 0) {
-                config.cachedPlaylist = data.toString()
+                persistCachedPlaylist(data.toString())
             } else {
                 Log.i("MainActivity", "Empty playlist payload — keeping the previous offline cache")
             }
@@ -1536,20 +1576,25 @@ class MainActivity : AppCompatActivity() {
             contentCache.deleteContent(contentId)
             bundleCache.delete(contentId)          // its render lives in a separate store, so it needs saying
             playlistController.removeContent(contentId)
-            // Update cached playlist to reflect deletion
-            try {
-                val cached = JSONObject(config.cachedPlaylist)
-                val arr = cached.optJSONArray("assignments")
-                if (arr != null) {
-                    val filtered = org.json.JSONArray()
-                    for (i in 0 until arr.length()) {
-                        val item = arr.getJSONObject(i)
-                        if (item.optString("content_id") != contentId) filtered.put(item)
+            // Update cached playlist to reflect deletion. Read-modify-write on the persist thread, so
+            // it lands after (and filters) any playlist write still queued there.
+            val updateCache = Runnable {
+                try {
+                    val cached = JSONObject(config.cachedPlaylist)
+                    val arr = cached.optJSONArray("assignments")
+                    if (arr != null) {
+                        val filtered = org.json.JSONArray()
+                        for (i in 0 until arr.length()) {
+                            val item = arr.getJSONObject(i)
+                            if (item.optString("content_id") != contentId) filtered.put(item)
+                        }
+                        cached.put("assignments", filtered)
+                        val json = cached.toString()
+                        config.cachedPlaylist = json
                     }
-                    cached.put("assignments", filtered)
-                    config.cachedPlaylist = cached.toString()
-                }
-            } catch (_: Exception) {}
+                } catch (_: Exception) {}
+            }
+            try { offlinePersistExecutor.execute(updateCache) } catch (_: Throwable) { updateCache.run() }
         }
 
         wsService?.onScreenshotRequest = {
@@ -1587,7 +1632,7 @@ class MainActivity : AppCompatActivity() {
         val applyDuck = {
             val on = talkDucked || shareDucked
             try { if (::mediaPlayer.isInitialized) mediaPlayer.setTalkMute(on) } catch (e: Throwable) { }
-            try { slideAudioPlayer?.setMuted(on) } catch (e: Throwable) { }
+            try { slideAudioPlayer?.setTalkMuted(on) } catch (e: Throwable) { }
         }
         wsService?.onTalkDuck = { on -> talkDucked = on; applyDuck() }
         wsService?.onShareDuck = { on -> shareDucked = on; applyDuck() }
@@ -2724,6 +2769,7 @@ class MainActivity : AppCompatActivity() {
         // which presents as "triggers stopped working after an app restart".
         try { triggerSweep?.let { handler.removeCallbacks(it) } } catch (e: Throwable) { }
         try { cancelOfflinePlanTick() } catch (e: Throwable) { } // #818: the self-re-arming plan tick
+        try { offlinePersistExecutor.shutdown() } catch (e: Throwable) { } // queued writes still finish
         try { triggerManager?.stop() } catch (e: Throwable) { }
         triggerManager = null
         try { audience?.onDestroy() } catch (e: Throwable) { }

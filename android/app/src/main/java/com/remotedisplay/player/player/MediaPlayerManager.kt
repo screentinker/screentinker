@@ -31,7 +31,7 @@ class MediaPlayerManager(
     /** The usual video view (TextureView): part of the UI layer, so it rotates, wipes and screenshots. */
     private val texturePlayerView: PlayerView,
     private val imageView: ImageView,
-    private val youtubeWebView: WebView? = null,
+    youtubeWebView: WebView? = null,
     private val onVideoComplete: () -> Unit,
     /*
      * #333: a video that FAILED (playback error, wedged decoder), as opposed to one that finished.
@@ -55,6 +55,10 @@ class MediaPlayerManager(
     private val nativePlayerView: PlayerView? = null
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    // The fullscreen web surface. A var: if its renderer dies it is replaced by a fresh WebView in
+    // the same slot (replaceDeadWebView), because a WebView whose renderer is gone is unusable.
+    private var youtubeWebView: WebView? = youtubeWebView
 
     /*
      * The video view the current clip plays in: [texturePlayerView], or [nativePlayerView] when the
@@ -168,6 +172,34 @@ class MediaPlayerManager(
      * the playlist has already left must not be read as news about the one on screen now.
      */
     var onWebLoadState: ((ok: Boolean) -> Unit)? = null
+    /*
+     * The fullscreen WebView's renderer died (WebViewSupport.onRenderProcessGone). Put a fresh WebView
+     * in its place in the layout (same id, params, visibility), destroy the dead one, forget what the
+     * old one had installed/loaded, and treat the item as faulted so the playlist recovers (advance,
+     * or back off and retry when it is the only playable item) instead of the process dying.
+     */
+    private val webRendererGone: (WebView) -> Unit = { dead -> replaceDeadWebView(dead) }
+
+    private fun replaceDeadWebView(dead: WebView) {
+        if (dead !== youtubeWebView) { com.remotedisplay.player.util.WebViewSupport.discardDead(dead); return }
+        val parent = dead.parent as? android.view.ViewGroup
+        val fresh = try { WebView(context) } catch (t: Throwable) { Log.e("MediaPlayerManager", "replacement WebView failed: ${t.message}"); null }
+        if (parent != null && fresh != null) {
+            fresh.id = dead.id
+            fresh.visibility = dead.visibility
+            parent.addView(fresh, parent.indexOfChild(dead), dead.layoutParams)
+        }
+        com.remotedisplay.player.util.WebViewSupport.discardDead(dead)
+        youtubeWebView = if (parent != null) fresh else null
+        youtubeBridgeInstalled = false
+        bundleBridgeInstalled = false
+        chimeBridgeInstalled = false
+        currentWidgetUrl = null
+        val web = currentType == MediaType.YOUTUBE || currentType == MediaType.WIDGET
+        Log.w("MediaPlayerManager", "fullscreen WebView renderer gone — replaced (onScreen=$web)")
+        if (web) { val gen = mountGeneration; mainHandler.post { if (gen == mountGeneration) onVideoFault() } }
+    }
+
     private val webLoadState: (Boolean) -> Unit = { ok ->
         val gen = mountGeneration
         if (currentType == MediaType.YOUTUBE || currentType == MediaType.WIDGET) {
@@ -420,6 +452,28 @@ class MediaPlayerManager(
     // state and the IFrame API bridge can flip it without reloading the embed.
     private var youtubeMuted = false
 
+    /*
+     * The CURRENT item's own mute (its payload flag, or the live dashboard toggle), kept apart from
+     * the wall/trigger/talk silencers. Every volume decision goes through effectiveMuted(), so a
+     * silencer clearing re-derives from this rather than forcing full volume, and a derived mute is
+     * never written back into it.
+     */
+    private var itemMuted = false
+    private fun effectiveMuted(): Boolean = EffectiveMute.of(itemMuted, wallMute, triggerMute, talkMute)
+    /** A mount records the item's own mute and returns the effective verdict for its volume. */
+    private fun mountMuted(muted: Boolean): Boolean { itemMuted = muted; return effectiveMuted() }
+
+    /** Re-apply the effective mute to whatever is playing now (a silencer or the item's mute changed). */
+    private fun applyEffectiveMute() {
+        val m = effectiveMuted()
+        exoPlayer?.volume = if (m) 0f else 1f
+        when (currentType) {
+            MediaType.YOUTUBE -> setYoutubeMuted(m)
+            MediaType.LIVE_INPUT -> liveInput?.setMuted(m)
+            else -> {}
+        }
+    }
+
     // ---- feat/transition-engine: GL wipe helpers. Every failure path returns false/null so the caller
     // hard-cuts (never a blank frame). Solo fullscreen only — suppressed for wall followers and group/
     // loop sync (they own their own frame timing). ----
@@ -605,7 +659,7 @@ class MediaPlayerManager(
         youtubeWebView?.visibility = android.view.View.GONE
         currentType = MediaType.LIVE_INPUT
         currentWidgetUrl = null
-        return player.play(url, muted || wallMute || triggerMute)
+        return player.play(url, mountMuted(muted))
     }
 
     /** True while the HDMI input is on screen — screenshots show a placeholder (it is not capturable). */
@@ -622,7 +676,7 @@ class MediaPlayerManager(
         stopLiveInputIfPlaying()
         currentType = MediaType.YOUTUBE
         currentWidgetUrl = null   // surface reused - a later widget show must reload
-        youtubeMuted = muted || wallMute || triggerMute
+        youtubeMuted = mountMuted(muted)
 
         playerView.visibility = android.view.View.GONE
         imageView.visibility = android.view.View.GONE
@@ -632,7 +686,7 @@ class MediaPlayerManager(
 
         youtubeWebView?.apply {
             // configure() leaves it transparent (#660): the letterbox shows what is behind it.
-            com.remotedisplay.player.util.WebViewSupport.configure(this, "YouTube", webLoadState)
+            com.remotedisplay.player.util.WebViewSupport.configure(this, "YouTube", webLoadState, webRendererGone)
             // Installed once; it takes effect from the next page load, which is the one below.
             if (!youtubeBridgeInstalled) { addJavascriptInterface(YoutubeBridge(), PlayToEnd.BRIDGE); youtubeBridgeInstalled = true }
             // Load via an embed wrapper with a valid youtube.com origin (Error 153 fix).
@@ -713,7 +767,7 @@ class MediaPlayerManager(
         exoPlayer?.stop()
 
         youtubeWebView?.apply {
-            com.remotedisplay.player.util.WebViewSupport.configure(this, "Widget", webLoadState)
+            com.remotedisplay.player.util.WebViewSupport.configure(this, "Widget", webLoadState, webRendererGone)
             if (!chimeBridgeInstalled) {
                 // Asked at the moment of each call: only a widget render page on screen now, on a
                 // screen that may be heard (QueueChimeBridge: this WebView also shows YouTube and bundles).
@@ -761,7 +815,7 @@ class MediaPlayerManager(
         // #649: this mount's token; the bridge is installed once and applies from this load on.
         val token = bundleMount.mount(mountGeneration)
         youtubeWebView?.apply {
-            com.remotedisplay.player.util.WebViewSupport.configure(this, "Bundle", webLoadState)
+            com.remotedisplay.player.util.WebViewSupport.configure(this, "Bundle", webLoadState, webRendererGone)
             if (!bundleBridgeInstalled) { addJavascriptInterface(BundleSkipBridge(), BundleSkip.BRIDGE); bundleBridgeInstalled = true }
             loadDataWithBaseURL(null, BundleSkip.inject(html, token), "text/html", "UTF-8", null)
         }
@@ -836,7 +890,7 @@ class MediaPlayerManager(
         youtubeWebView?.visibility = android.view.View.GONE
 
         exoPlayer?.apply {
-            volume = if (muted || wallMute || triggerMute) 0f else 1f
+            volume = if (mountMuted(muted)) 0f else 1f
             val item = MediaItem.fromUri(Uri.parse(url))
             if (url.startsWith("rtsp://", ignoreCase = true) || url.startsWith("rtsps://", ignoreCase = true)) {
                 // RTSP/RTSPS camera: TCP-interleaved, TLS for rtsps (RtspSources). A dead camera lands
@@ -1006,7 +1060,7 @@ class MediaPlayerManager(
             exoPlayer = pp
             preloadPlayer = old
             pp.apply {
-                volume = if (muted || wallMute || triggerMute) 0f else 1f
+                volume = if (mountMuted(muted)) 0f else 1f
                 repeatMode = if (videoLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
                 // #333: a parked player that is still IDLE was never prepared (or lost its
                 // prepare); playWhenReady alone would leave it sitting on 0:00 forever.
@@ -1030,7 +1084,7 @@ class MediaPlayerManager(
 
         Log.i("MediaPlayerManager", "Playing ${if (audioCard != null) "audio" else "video"}: ${file.absolutePath} (muted=$muted)")
         exoPlayer?.apply {
-            volume = if (muted || wallMute || triggerMute) 0f else 1f
+            volume = if (mountMuted(muted)) 0f else 1f
             setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
             prepare()
             playWhenReady = true
@@ -1114,12 +1168,13 @@ class MediaPlayerManager(
     // previously this method ignored so YouTube could never be un/muted live. Images/
     // widgets are silent. Persistence across the next play comes from the playlist
     // payload's per-item `muted` (honored in playVideo/playYoutube). Main thread only.
+    // The toggle changes only the item's OWN mute; wall/trigger/talk still hold (effectiveMuted).
     fun setVideoMuted(muted: Boolean) {
+        itemMuted = muted
+        if (currentType == MediaType.WIDGET) widgetMuted = muted   // the queue chime (QueueChimeBridge)
         when (currentType) {
-            MediaType.VIDEO -> exoPlayer?.volume = if (muted) 0f else 1f
-            MediaType.YOUTUBE -> setYoutubeMuted(muted)   // #129: was a no-op for YouTube
-            MediaType.LIVE_INPUT -> liveInput?.setMuted(muted)
-            MediaType.WIDGET -> widgetMuted = muted   // the queue chime (QueueChimeBridge)
+            // #129: YouTube was a no-op here once; it goes through the same derivation now.
+            MediaType.VIDEO, MediaType.YOUTUBE, MediaType.LIVE_INPUT -> applyEffectiveMute()
             else -> {}
         }
     }
@@ -1153,7 +1208,7 @@ class MediaPlayerManager(
      */
     fun setWallMute(mute: Boolean) {
         wallMute = mute
-        if (mute) exoPlayer?.volume = 0f
+        applyEffectiveMute()
     }
 
     /**
@@ -1166,8 +1221,7 @@ class MediaPlayerManager(
     fun setTriggerMute(mute: Boolean) {
         if (triggerMute == mute) return
         triggerMute = mute
-        exoPlayer?.volume = if (triggerMute || talkMute || wallMute) 0f else 1f
-        setYoutubeMuted(youtubeMuted || triggerMute || talkMute)
+        applyEffectiveMute()
     }
 
     /**
@@ -1188,8 +1242,7 @@ class MediaPlayerManager(
     fun setTalkMute(mute: Boolean) {
         if (talkMute == mute) return
         talkMute = mute
-        exoPlayer?.volume = if (triggerMute || talkMute || wallMute) 0f else 1f
-        setYoutubeMuted(youtubeMuted || triggerMute || talkMute)
+        applyEffectiveMute()
         // Pause the video for a clear "announcement in progress" cue; only resume what WE paused, so
         // a player parked for another reason (group-sync buffering) is left alone.
         try {

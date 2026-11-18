@@ -20,10 +20,13 @@ function startDate(value) {
   if (!y || date.getUTCFullYear() !== y || date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== day) return null;
   return { y, mo, day, dow: date.getUTCDay(), min: 0 };
 }
-function occurrenceAnchor(local, startHM, endHM) {
+function occurrenceAnchor(local, startHM, endHM, fullDay) {
   const nowHM = stamp(local).slice(11);
   if (endHM > startHM) return nowHM >= startHM && nowHM <= endHM ? local : false;
-  if (endHM === startHM) return false;
+  // Same time of day at both ends. A real 24-hour window (00:00 to the next day's 00:00, or
+  // 09:00 to 09:00 tomorrow) runs all day, which is how the calendar draws it; an occurrence
+  // starts at startHM and owns everything up to the next one. A zero-length window never runs.
+  if (endHM === startHM) return fullDay ? (nowHM >= startHM ? local : shift(local, -1)) : false;
   if (nowHM >= startHM) return local;
   return nowHM <= endHM ? shift(local, -1) : false;
 }
@@ -50,7 +53,7 @@ function evaluateKnown(schedule, local, rule) {
   const endStamp = String(schedule.end_time || '').slice(0, 16);
   const first = startDate(startStamp);
   if (!first) return false;
-  const anchor = occurrenceAnchor(local, startStamp.slice(11), endStamp.slice(11));
+  const anchor = occurrenceAnchor(local, startStamp.slice(11), endStamp.slice(11), endStamp > startStamp);
   if (!anchor) return false;
   const date = stamp(anchor).slice(0, 10);
   if (date < startStamp.slice(0, 10)) return false;

@@ -995,7 +995,8 @@ router.get('/pair/status', (req, res) => {
   // Once claimed into a workspace, return token and burn claim_secret
   if (device.workspace_id && device.status !== 'provisioning') {
     db.prepare("UPDATE devices SET claim_secret = NULL WHERE id = ?").run(device_id);
-    pairLockout.reset(ip);
+    // No lockout reset: this map also counts pairing-code guesses from the IP, and a device's own
+    // successful poll must not wipe them (lib/pair-lockout.js).
 
     return res.json({
       paired: true,
