@@ -7,6 +7,11 @@
  * The native video plane can reach the panel's full resolution, so this module makes a short H.264
  * clip from a still and lets the player show it there instead of scaling the image in the UI.
  *
+ * HOW, CHEAPLY AND SAFELY. ./still-video encodes the clip with our own still-picture H.264 encoder
+ * (no ffmpeg, no GPL code), fitted to 3840x2160 at most, in a separate process at the lowest CPU
+ * priority with a heap cap and a timeout. A failed or killed conversion marks the row failed; it never
+ * reaches the server process. One conversion runs at a time.
+ *
  * ONLY MAKE A COPY WHEN IT CAN HELP:
  *   - the source is a local image larger than FHD on either axis and no larger than 8192px per axis;
  *   - the device declares playback.image_as_video_variants, has a native video plane and a display
@@ -28,7 +33,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { spawn } = require('node:child_process');
 const { db } = require('../db/database');
 const config = require('../config');
 const videoVariants = require('./video-variants');
@@ -37,7 +41,7 @@ const CAPABILITY = 'playback.image_as_video_variants';
 const FILE_RE = /^saiv_[a-f0-9]{20}_[a-f0-9]{12}\.mp4$/;
 const MAX_SOURCE_DIMENSION = 8192;
 const IMAGE_CLIP_DURATION_SEC = 1;
-const ENCODER_REVISION = 5;
+const ENCODER_REVISION = 6; // 6: own still encoder, fitted to 3840x2160 (5 and earlier: ffmpeg x264 at source size)
 const jobs = new Set();
 const running = new Map();
 let timer = null;
@@ -208,14 +212,6 @@ async function tick() {
     schedule(0);
     return;
   }
-  const tools = encodeFn ? { ffmpeg: true } : await require('./media-tools').mediaToolStatus();
-  if (!tools.ffmpeg) {
-    db.prepare("UPDATE content_image_as_video_variants SET status = 'failed', error = ?, updated_at = strftime('%s','now') WHERE content_id = ?")
-      .run('ffmpeg is unavailable on the server', job.content_id);
-    pushFor(job.content_id);
-    schedule(0);
-    return;
-  }
   db.prepare("UPDATE content_image_as_video_variants SET status = 'running', attempts = attempts + 1, updated_at = strftime('%s','now') WHERE content_id = ? AND status = 'queued'")
     .run(job.content_id);
   const entry = {
@@ -234,32 +230,17 @@ async function tick() {
   jobs.add(promise);
 }
 
-/** Keep source dimensions and round odd edges down for yuv420p, matching video-variant color handling. */
-function ffmpegArgs(src, out) {
-  return [
-    '-hide_banner', '-nostdin', '-y', '-loglevel', 'error', '-threads', '2',
-    '-loop', '1', '-framerate', '1', '-i', src, '-t', String(IMAGE_CLIP_DURATION_SEC),
-    '-map', '0:v:0',
-    '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p',
-    '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '10',
-    '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-threads', '2',
-    '-movflags', '+faststart', '-map_metadata', '-1', out,
-  ];
-}
+// The clip fits inside this box (keeping the aspect ratio): the panel resolution these boxes reach on
+// their video plane. Larger sources are scaled down, which also keeps the stream inside H.264 Level 5.1,
+// the most a TV box's hardware decoder is specified for.
+const MAX_OUTPUT = { width: 3840, height: 2160 };
+// One intra frame plus "unchanged" frames at 1 fps. The player loops it for as long as the image
+// shows, so the length only sets how often it restarts; the extra frames cost a few bytes each.
+const CLIP_SECONDS = 60;
 
-function runFfmpeg({ src, out }) {
-  return new Promise((resolve, reject) => {
-    const child = spawn('ffmpeg', ffmpegArgs(src, out), { stdio: ['ignore', 'ignore', 'pipe'] });
-    let stderr = '';
-    child.stderr.on('data', (data) => { if (stderr.length < 4000) stderr += data; });
-    const timeout = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} }, 15 * 60 * 1000);
-    child.on('error', (error) => { clearTimeout(timeout); reject(error); });
-    child.on('close', (code, signal) => {
-      clearTimeout(timeout);
-      if (code === 0) resolve();
-      else reject(new Error(signal ? `ffmpeg stopped (${signal})` :
-        (stderr.trim().split('\n').pop() || `ffmpeg exit ${code}`)));
-    });
+function runEncode({ src, out }) {
+  return require('./still-video').makeStillVideo({
+    src, out, maxWidth: MAX_OUTPUT.width, maxHeight: MAX_OUTPUT.height, seconds: CLIP_SECONDS,
   });
 }
 
@@ -276,7 +257,7 @@ async function runJob(entry, temporaryName) {
     const src = await require('./storage/locations').ensureLocalFile(content, 'asset');
     if (!src) throw new Error('the original image is not available on this server');
     fs.mkdirSync(config.contentDir, { recursive: true });
-    await (encodeFn || runFfmpeg)({ src, out: temporary });
+    await (encodeFn || runEncode)({ src, out: temporary });
     fs.renameSync(temporary, output);
     const size = fs.statSync(output).size;
     const updated = db.transaction(() => {
@@ -351,6 +332,7 @@ function start({ push = null } = {}) {
   if (started) return;
   started = true;
   pushFn = push;
+  // Rows the earlier ffmpeg-based encoder failed for want of ffmpeg: the encoder no longer needs it.
   db.prepare(`UPDATE content_image_as_video_variants
       SET status = 'queued', error = NULL, attempts = 0, updated_at = strftime('%s','now')
       WHERE status = 'failed' AND error = 'ffmpeg is unavailable on the server'`).run();
@@ -375,7 +357,7 @@ function resetForTest({ encode = null } = {}) {
 }
 
 module.exports = {
-  CAPABILITY, FILE_RE, isEligibleImage, ensure, stampItems, ffmpegArgs, runFfmpeg,
+  CAPABILITY, FILE_RE, MAX_OUTPUT, CLIP_SECONDS, isEligibleImage, ensure, stampItems,
   servePath, removeFor, sweepOrphans, start,
   _resetForTest: resetForTest,
   _tick: tick,

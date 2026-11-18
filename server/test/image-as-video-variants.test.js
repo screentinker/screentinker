@@ -192,20 +192,9 @@ test('image variants share the monthly video-variant allowance and retry next mo
   assert.equal(imageAsVideoVariants.ensure(content(), { now }), 'queued');
 });
 
-test('FFmpeg creates a short, high-quality H.264 MP4 that preserves 4K dimensions', () => {
-  const args = imageAsVideoVariants.ffmpegArgs('source.jpg', 'output.mp4');
-  assert.ok(args.includes('libx264'));
-  assert.ok(args.includes('yuv420p'));
-  const filter = args[args.indexOf('-vf') + 1];
-  assert.equal(filter, 'scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p');
-  assert.doesNotMatch(filter, /in_range|out_range/);
-  assert.equal(args.includes('-color_range'), false);
-  assert.ok(args.includes('10'));
-  assert.ok(args.includes('+faststart'));
-  const framerate = args.indexOf('-framerate');
-  assert.deepEqual(args.slice(framerate, framerate + 2), ['-framerate', '1']);
-  const duration = args.indexOf('-t');
-  assert.deepEqual(args.slice(duration, duration + 2), ['-t', '1']);
-  assert.ok(args.includes('source.jpg'));
-  assert.ok(args.includes('output.mp4'));
+test('the clip is fitted to 3840x2160 and encoded by lib/still-video, not ffmpeg', () => {
+  assert.deepEqual(imageAsVideoVariants.MAX_OUTPUT, { width: 3840, height: 2160 });
+  assert.ok(imageAsVideoVariants.CLIP_SECONDS >= 1);
+  const source = require('fs').readFileSync(require.resolve('../lib/image-as-video-variants'), 'utf8');
+  assert.doesNotMatch(source, /libx264|spawn\(/, 'encoding goes through lib/still-video, which runs it in its own process');
 });
