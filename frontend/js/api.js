@@ -1010,6 +1010,8 @@ export const api = {
   adminDeleteOrg: (id, opts = {}) => request(`/admin/orgs/${id}`, { method: 'DELETE', ...(opts.acknowledge_stripe ? { body: JSON.stringify({ acknowledge_stripe: true }) } : {}) }),
   // #talk: per-org talk flag + optional per-org ICE (STUN/TURN) override. data = { talk_enabled, ice_servers }.
   adminSetOrgTalk: (id, data) => request(`/admin/orgs/${id}/talk`, { method: 'PUT', body: JSON.stringify(data) }),
+  adminRenameOrg: (id, name) => request(`/admin/orgs/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  adminEditUser: (id, data) => request(`/admin/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) }),
   adminDeleteWorkspace: (id) => request(`/admin/workspaces/${id}`, { method: 'DELETE' }),
   // 3.0 screen share (docs/screen-share.md). start returns a single-use ticket for the signalling socket.
   getScreenShare: (deviceId) => request(`/screen-share/devices/${encodeURIComponent(deviceId)}`),

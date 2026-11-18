@@ -303,6 +303,89 @@ router.delete('/orgs/:id', requirePlatformAdmin, async (req, res) => {
   res.json({ deleted: true, id: org.id, stripe_subscriptions_left: pay.subscriptions.map((x) => x.id) });
 });
 
+// PATCH /api/admin/orgs/:id - rename an organization. There was no way to do this at all (only
+// workspaces could be renamed), so a typo at signup or a company rename meant editing the database.
+// Same name rules as POST /orgs.
+router.patch('/orgs/:id', requirePlatformAdmin, (req, res) => {
+  const org = db.prepare('SELECT id, name FROM organizations WHERE id = ?').get(req.params.id);
+  if (!org) return res.status(404).json({ error: 'Organization not found' });
+  const name = String(req.body?.name ?? '').trim();
+  if (!name) return res.status(400).json({ error: 'Organization name required' });
+  if (name.length > 120) return res.status(400).json({ error: 'Organization name must be 120 characters or fewer' });
+  if (name !== org.name) {
+    db.prepare('UPDATE organizations SET name = ? WHERE id = ?').run(name, org.id);
+    logActivity(req.user.id, 'admin_rename_org', `org: ${org.id}; "${org.name}" -> "${name}"`, null, getClientIp(req), null);
+  }
+  res.json({ id: org.id, name });
+});
+
+// PATCH /api/admin/users/:id - a platform admin corrects a user's name and/or sign-in email.
+//
+// The case this exists for: someone has lost the mailbox their account is on, so they cannot reset
+// their password or confirm anything, and only an administrator can move the account to an address
+// they can use.
+//
+// ⚠️ Email changes are for password (local) accounts only. An SSO or SCIM account's address comes
+// from the identity provider, which would overwrite it (or stop matching the sign-in), so that is
+// changed at the provider.
+//
+// ⚠️ Moving the email cancels any password-reset or confirmation link already sent: those went to the
+// OLD mailbox, which is exactly the one that may no longer belong to this person. The new address is
+// marked verified (an administrator chose it, as in POST /users) but not proven, so invites addressed
+// to it are not listed to the account until a mailed link has been used (see POST /users).
+router.patch('/users/:id', requirePlatformAdmin, (req, res) => {
+  const target = db.prepare('SELECT id, email, name, auth_provider FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  const body = req.body || {};
+  const changes = [];
+
+  let name = null;
+  if (body.name !== undefined) {
+    name = String(body.name ?? '').trim();
+    if (!name) return res.status(400).json({ error: 'Name cannot be empty' });
+    if (name.length > 120) return res.status(400).json({ error: 'Name must be 120 characters or fewer' });
+    if (name === target.name) name = null;
+  }
+
+  let email = null;
+  if (body.email !== undefined) {
+    email = String(body.email ?? '').trim().toLowerCase();
+    if (!email || !EMAIL_RE.test(email)) return res.status(400).json({ error: 'Valid email required' });
+    if (email === String(target.email).toLowerCase()) {
+      email = null;
+    } else {
+      if (target.auth_provider && target.auth_provider !== 'local') {
+        return res.status(409).json({
+          error: `This account signs in with ${target.auth_provider}; change its email at the identity provider.`,
+          code: 'EMAIL_MANAGED_BY_PROVIDER',
+        });
+      }
+      const taken = db.prepare('SELECT id FROM users WHERE lower(email) = ? AND id != ?').get(email, target.id);
+      if (taken) return res.status(409).json({ error: 'Another account already uses that email', code: 'EMAIL_TAKEN' });
+    }
+  }
+
+  if (name === null && email === null) {
+    return res.json({ id: target.id, name: target.name, email: target.email, changed: false });
+  }
+  db.transaction(() => {
+    if (name !== null) {
+      db.prepare("UPDATE users SET name = ?, updated_at = strftime('%s','now') WHERE id = ?").run(name, target.id);
+      changes.push(`name "${target.name}" -> "${name}"`);
+    }
+    if (email !== null) {
+      db.prepare(`UPDATE users SET email = ?, email_verified = 1, email_proven = 0,
+          password_reset_hash = NULL, password_reset_expires = NULL,
+          email_verify_hash = NULL, email_verify_expires = NULL,
+          updated_at = strftime('%s','now') WHERE id = ?`).run(email, target.id);
+      changes.push(`email ${target.email} -> ${email} (pending reset and confirmation links cancelled)`);
+    }
+  })();
+  logActivity(req.user.id, 'admin_edit_user', `target: ${target.id}; ${changes.join('; ')}`, null, getClientIp(req), null);
+  const after = db.prepare('SELECT id, name, email FROM users WHERE id = ?').get(target.id);
+  res.json({ ...after, changed: true });
+});
+
 // PUT /api/admin/orgs/:id/talk - platform-admin toggle for the per-org #talk feature and an
 // optional per-org ICE (STUN/TURN) override. talk_enabled gates the voice intercom / PA on top of
 // the global TALK_ENABLED master switch; ice_servers (a JSON array of {urls, username?, credential?})

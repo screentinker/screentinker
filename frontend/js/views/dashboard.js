@@ -629,6 +629,10 @@ export function render(container) {
              a workspace admin (server also enforces it); opens a warning + type-to-commit modal.
              Each panel verifies-then-commits and rolls back an unreachable address. -->
         ${currentWorkspaceCanAdmin() ? `<button class="btn btn-secondary" id="wsSetServerUrlBtn" data-advanced-ui title="${t('dashboard.ws_set_server_url_tip')}">🔗 ${t('dashboard.ws_set_server_url')}</button>` : ''}
+        <!-- A standalone way to make a group. 2.0 folded this into the selection bar ("Add to group" >
+             "Create and add to group"), which only exists once an ungrouped display is selected: with
+             every display already grouped there was no way to create one at all. -->
+        ${canWrite() ? `<button class="btn btn-secondary" id="createGroupBtn">${t('dashboard.create_group')}</button>` : ''}
         <button class="btn btn-primary" id="addDeviceBtn" ${canWrite() ? '' : 'hidden'}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -688,6 +692,16 @@ export function render(container) {
         showToast(msg, r.unsupported > 0 || r.offline > 0 ? 'warning' : 'success');
       },
     });
+  });
+
+  container.querySelector('#createGroupBtn')?.addEventListener('click', async () => {
+    const name = prompt(t('dashboard.prompt_group_name'))?.trim();
+    if (!name) return;
+    try {
+      await api.createGroup(name);
+      showToast(t('dashboard.toast.group_created'), 'success');
+      loadDashboard();
+    } catch (e) { showToast(e.message, 'error'); }
   });
 
   const addBtn = container.querySelector('#addDeviceBtn');

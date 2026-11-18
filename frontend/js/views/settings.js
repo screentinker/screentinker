@@ -66,6 +66,14 @@ export async function render(container) {
       <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">${t('appearance.intro')}</p>
       <div id="appearanceBody"></div>
     </div>
+    <!-- Language sits beside the theme because both follow the account (#865), not just this browser.
+         It used to be near the bottom of the page, under AI credits, where people did not find it. -->
+    <div class="settings-section" id="languageCard">
+      <h3>${t('settings.language')}</h3>
+      <select id="langSelect" class="input" style="width:200px;background:var(--bg-input)">
+        ${getAvailableLanguages().map(l => `<option value="${l.code}" ${l.code === getLanguage() ? 'selected' : ''}>${l.name}</option>`).join('')}
+      </select>
+    </div>
     <div class="settings-section">
       <h3>${t('settings.account')}</h3>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
@@ -455,13 +463,6 @@ export async function render(container) {
     <div class="settings-section" id="aiCreditsSection" style="display:none">
       <h3>AI credits</h3>
       <div id="aiCreditsBody"><p style="color:var(--text-muted);font-size:13px">Loading…</p></div>
-    </div>
-
-    <div class="settings-section">
-      <h3>${t('settings.language')}</h3>
-      <select id="langSelect" class="input" style="width:200px;background:var(--bg-input)">
-        ${getAvailableLanguages().map(l => `<option value="${l.code}" ${l.code === getLanguage() ? 'selected' : ''}>${l.name}</option>`).join('')}
-      </select>
     </div>
 
     <div class="settings-section">

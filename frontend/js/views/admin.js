@@ -741,7 +741,10 @@ async function loadOrgs() {
               ${o.workspace_count} ${t('admin.orgs.workspaces')} · ${o.device_count} ${t('admin.orgs.devices')} · ${o.member_count} ${t('admin.orgs.members')}
             </div>
           </div>
-          <button class="btn btn-danger btn-sm" data-del-org="${esc(o.id)}" data-org-name="${esc(o.name)}">${t('admin.orgs.delete_org')}</button>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-secondary btn-sm" data-rename-org="${esc(o.id)}" data-org-name="${esc(o.name)}">${t('admin.orgs.rename')}</button>
+            <button class="btn btn-danger btn-sm" data-del-org="${esc(o.id)}" data-org-name="${esc(o.name)}">${t('admin.orgs.delete_org')}</button>
+          </div>
         </div>
         ${talkMaster ? `
         <div style="padding:10px 12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px">
@@ -767,6 +770,17 @@ async function loadOrgs() {
       await api.adminSetOrgTalk(id, { talk_enabled: enabled, ice_servers: ice || null });
       showToast(t('admin.orgs.talk_saved'), 'success');
     } catch (e) { showToast((e && e.message) || t('admin.orgs.talk_save_failed'), 'error'); }
+  }));
+
+  el.querySelectorAll('[data-rename-org]').forEach(btn => btn.addEventListener('click', async () => {
+    const current = btn.dataset.orgName;
+    const name = prompt(t('admin.orgs.rename_prompt', { name: current }), current)?.trim();
+    if (!name || name === current) return;
+    try {
+      await api.adminRenameOrg(btn.dataset.renameOrg, name);
+      showToast(t('admin.orgs.renamed', { name }), 'success');
+      loadOrgs(); loadUsers();
+    } catch (e) { showToast((e && e.message) || t('admin.orgs.rename_failed'), 'error'); }
   }));
 
   el.querySelectorAll('[data-del-org]').forEach(btn => btn.addEventListener('click', () => {
@@ -917,6 +931,7 @@ async function loadUsers() {
               </td>
               ${workspaceCell(u)}
               <td style="padding:8px;white-space:nowrap">
+                ${isPlatformAdmin(currentUser) ? `<button class="btn btn-secondary btn-sm" data-edit-user="${esc(u.id)}" style="margin-right:4px">${t('admin.users.edit')}</button>` : ''}
                 ${u.auth_provider === 'local' && u.id !== currentUser.id ? `<button class="btn btn-secondary btn-sm" data-reset-pw-user="${esc(u.id)}" data-user-email="${esc(u.email)}" style="margin-right:4px">${t('admin.reset_password')}</button>` : ''}
                 ${!isPlatformAdmin(u) ? `<button class="btn btn-danger btn-sm" data-delete-user="${u.id}">${t('admin.remove')}</button>` : `<span style="color:var(--text-muted);font-size:11px">${t('admin.owner')}</span>`}
               </td>
@@ -955,6 +970,33 @@ async function loadUsers() {
         const u = users.find(x => x.id === btn.dataset.wsManage);
         if (!u) return;
         openManageWorkspacesModal(u, { onClose: () => loadUsers() });
+      };
+    });
+
+    // Correct a user's name or sign-in email (platform admins). Email only for password accounts: an
+    // SSO/SCIM address belongs to the identity provider, and the server refuses it there too.
+    el.querySelectorAll('[data-edit-user]').forEach(btn => {
+      btn.onclick = async () => {
+        const u = users.find(x => x.id === btn.dataset.editUser);
+        if (!u) return;
+        const name = prompt(t('admin.users.edit_name_prompt', { email: u.email }), u.name || '');
+        if (name === null) return;
+        let email = u.email;
+        if (u.auth_provider === 'local') {
+          const next = prompt(t('admin.users.edit_email_prompt'), u.email);
+          if (next === null) return;
+          email = next.trim();
+        }
+        const data = {};
+        if (name.trim() && name.trim() !== u.name) data.name = name.trim();
+        if (email && email.toLowerCase() !== String(u.email).toLowerCase()) data.email = email;
+        if (!Object.keys(data).length) return;
+        if (data.email && !confirm(t('admin.users.edit_email_confirm', { from: u.email, to: data.email }))) return;
+        try {
+          await api.adminEditUser(u.id, data);
+          showToast(t('admin.users.edited'), 'success');
+          loadUsers();
+        } catch (err) { showToast(err.message, 'error'); }
       };
     });
 
