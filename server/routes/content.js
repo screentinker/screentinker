@@ -1124,6 +1124,13 @@ router.get('/:id/tv-copies', (req, res) => {
   res.json({ ...vv.describe(content), enabled: vv.getSettings().enabled });
 });
 
+// Status of the optional high-resolution still variant; reading it does not queue an encode.
+router.get('/:id/image-as-video-status', (req, res) => {
+  const content = checkContentRead(req, res);
+  if (!content) return;
+  res.json(require('../lib/image-as-video-variants').describe(content));
+});
+
 // Try the failed (or allowance-refused) copies again. Write access: it spends server CPU.
 router.post('/:id/tv-copies/retry', (req, res) => {
   const content = checkContentWrite(req, res);

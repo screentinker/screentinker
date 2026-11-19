@@ -78,6 +78,23 @@ function rowFor(contentId) {
   return db.prepare('SELECT * FROM content_image_as_video_variants WHERE content_id = ?').get(contentId) || null;
 }
 
+/** Status for the content editor; inspecting an image never queues a new encode. */
+function describe(content) {
+  if (!isEligibleImage(content)) return { eligible: false, status: 'ineligible' };
+  const row = rowFor(content.id);
+  if (!row || row.source_file !== path.basename(content.filepath) ||
+      Number(row.source_revision) !== sourceRevision(content)) {
+    return { eligible: true, status: 'not_generated' };
+  }
+  if (row.status === 'ready') {
+    return servePath(content)
+      ? { eligible: true, status: 'ready', file_size: row.file_size, updated_at: row.updated_at }
+      : { eligible: true, status: 'not_generated' };
+  }
+  if (row.status === 'queued' || row.status === 'running') return { eligible: true, status: 'preparing' };
+  return { eligible: true, status: 'unavailable', error: row.error || null };
+}
+
 // ---------------------------------------------------------------- queue rows and payload
 
 /**
@@ -357,7 +374,7 @@ function resetForTest({ encode = null } = {}) {
 }
 
 module.exports = {
-  CAPABILITY, FILE_RE, MAX_OUTPUT, CLIP_SECONDS, isEligibleImage, ensure, stampItems,
+  CAPABILITY, FILE_RE, MAX_OUTPUT, CLIP_SECONDS, isEligibleImage, describe, ensure, stampItems,
   servePath, removeFor, sweepOrphans, start,
   _resetForTest: resetForTest,
   _tick: tick,

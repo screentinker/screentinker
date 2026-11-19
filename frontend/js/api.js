@@ -610,6 +610,8 @@ export const api = {
   // 3.0 TV-safe video copies (server/lib/video-variants.js)
   getContentTvCopies: (id) => request(`/content/${id}/tv-copies`),
   retryContentTvCopies: (id) => request(`/content/${id}/tv-copies/retry`, { method: 'POST' }),
+  // Optional high-resolution image-as-video variant status.
+  getContentImageAsVideoStatus: (id) => request(`/content/${id}/image-as-video-status`),
   setContentPrerotated: (id, on) => request(`/content/${id}`, { method: 'PUT', body: JSON.stringify({ video_prerotated: on ? 1 : 0 }) }),
   batchTagContent: (ids, add, remove) => request('/content/batch/tags', {
     method: 'POST',

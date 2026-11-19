@@ -122,6 +122,27 @@ test('skips variants when the known UI render surface can display the source at 
   imageAsVideoVariants.removeFor(CONTENT_ID);
 });
 
+test('describes image-variant status without queueing work', () => {
+  imageAsVideoVariants.removeFor(CONTENT_ID);
+  assert.deepEqual(imageAsVideoVariants.describe(content()), { eligible: true, status: 'not_generated' });
+  assert.deepEqual(
+    imageAsVideoVariants.describe({ ...content(), width: 1920, height: 1080 }),
+    { eligible: false, status: 'ineligible' }
+  );
+  imageAsVideoVariants.ensure(content());
+  assert.deepEqual(imageAsVideoVariants.describe(content()), { eligible: true, status: 'preparing' });
+  imageAsVideoVariants.removeFor(CONTENT_ID);
+});
+
+test('content status endpoint uses the normal content-read access check', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'routes', 'content.js'), 'utf8');
+  const route = source.slice(source.indexOf("router.get('/:id/image-as-video-status'"));
+  const body = route.slice(0, route.indexOf('\n});'));
+  assert.match(body, /checkContentRead\(req, res\)/);
+  assert.match(body, /image-as-video-variants'\)\.describe\(content\)/);
+  assert.doesNotMatch(body, /\.ensure\(/, 'status reads do not queue encodes');
+});
+
 test('encoding revisions invalidate older cached variants without changing the source image', () => {
   const source = content();
   const previousRevision = Number(source.updated_at);
@@ -155,6 +176,7 @@ test('worker creates a revision-bound video and exposes it only when ready', asy
   assert.equal(imageAsVideoVariants.servePath(content()), path.join(config.contentDir, row.filepath));
   assert.equal(imageAsVideoVariants.servePath(content(), row.updated_at), path.join(config.contentDir, row.filepath));
   assert.equal(imageAsVideoVariants.servePath(content(), row.updated_at - 1), null);
+  assert.equal(imageAsVideoVariants.describe(content()).status, 'ready');
 
   const item = { content_id: CONTENT_ID, mime_type: 'image/jpeg' };
   imageAsVideoVariants.stampItems([item], device());
