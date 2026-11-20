@@ -25,6 +25,13 @@ updates:
     groups:
       server-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      # ⚠️ HELD at 13.0.x. 13.1.1 and 13.2.0 both make the corporate resolver-view single-device
+      # lookup about 40x slower (same query plan) and fail the PERFORMANCE tests in
+      # corporate-resolver-view.test.js (PR #875). 13.0.x patches still come through. Remove this
+      # once a newer release passes those tests.
+      - dependency-name: "better-sqlite3"
+        versions: [">=13.1.0"]
 
   # Base images are pinned by digest (Dockerfile, Dockerfile.embedded, docker/updater). Without this
   # a pinned digest would never pick up a patched node:22-slim.
