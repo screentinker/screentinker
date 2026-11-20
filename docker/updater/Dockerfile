@@ -4,7 +4,7 @@
 # docker:cli is alpine + busybox + the docker CLI with the compose plugin — everything
 # scripts/updater/st-updater.sh needs in docker mode. It holds docker.sock, so it does nothing but
 # watch for requests the app writes; it never pulls anything it was not asked to.
-FROM docker:29-cli@sha256:2357639ad1ea7d0194134bf3292622fd4e562483966ed674e5d7c945b5f3b28d
+FROM docker:29-cli@sha256:34507eb5069d8be82c95dd3b6987d4250fd5fee49b82e2509b7d7a7030740d6d
 RUN apk add --no-cache curl
 COPY scripts/updater/st-updater.sh /usr/local/bin/st-updater.sh
 RUN chmod 755 /usr/local/bin/st-updater.sh
