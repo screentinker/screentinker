@@ -16,9 +16,9 @@
     "node": ">=22.14.0"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1164.0",
-    "@aws-sdk/s3-request-presigner": "^3.1164.0",
-    "@azure/msal-node": "^7.2.1",
+    "@aws-sdk/client-s3": "^3.1170.0",
+    "@aws-sdk/s3-request-presigner": "^3.1170.0",
+    "@azure/msal-node": "^7.2.2",
     "@azure/storage-blob": "^12.34.0",
     "@jsquash/avif": "^2.1.1",
     "@jsquash/webp": "^1.5.0",
@@ -29,14 +29,14 @@
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "express": "^5.3.0",
-    "express-rate-limit": "^8.7.3",
+    "express-rate-limit": "^8.7.4",
     "helmet": "^8.3.0",
     "htmlparser2": "^12.0.0",
     "jimp": "^1.6.1",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.4.0",
     "node-ical": "^0.27.6",
-    "nodemailer": "^10.4.0",
+    "nodemailer": "^10.6.0",
     "omggif": "^1.0.10",
     "otplib": "^13.6.0",
     "qrcode": "^1.5.4",
@@ -48,7 +48,7 @@
   },
   "optionalDependencies": {
     "better-sqlite3": "13.0.3",
-    "puppeteer-core": "^25.16.0"
+    "puppeteer-core": "^25.17.0"
   },
   "devDependencies": {
     "esbuild": "0.28.2",
