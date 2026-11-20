@@ -126,7 +126,20 @@ function create(db, body, ip) {
 }
 
 /**
- * Act on an emailed link. Single use: the token is cleared whichever way the decision goes, so the
+ * The pending submission an emailed link points at, WITHOUT changing anything (safe on GET, #876).
+ * Null for an unknown, expired or already-used link.
+ */
+function peek(db, token) {
+  if (!token || typeof token !== 'string') return null;
+  const now = Math.floor(Date.now() / 1000);
+  const row = db.prepare('SELECT * FROM hardware_submissions WHERE decision_token_hash = ?')
+    .get(hashToken(token));
+  if (!row || !row.decision_token_expires || row.decision_token_expires < now) return null;
+  return row;
+}
+
+/**
+ * Act on an emailed link (POST only: the link's GET shows a button, see routes/hardware-submissions.js). Single use: the token is cleared whichever way the decision goes, so the
  * link in an inbox (or a forwarded copy of it) cannot be replayed to flip an entry back.
  */
 function decide(db, token, decision) {
@@ -184,6 +197,6 @@ function publishedDevices(db) {
 }
 
 module.exports = {
-  create, decide, publishedDevices, normalise, slugify, containsLink, hashToken,
+  create, peek, decide, publishedDevices, normalise, slugify, containsLink, hashToken,
   SubmissionError, CATEGORIES, TOKEN_TTL_SEC, LIMITS,
 };

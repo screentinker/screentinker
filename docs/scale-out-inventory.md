@@ -160,8 +160,9 @@ Inline in `server.js` (not routers): `POST /api/provision/pair`, `/api/devices/w
 `/api/admin/plugins/submissions`.
 
 **Rule that falls out:** the method is the write signal. There is no GET that writes except
-`GET /api/auth/verify-email` (token redemption) and the OTA check (stamps `ota_channel_served`) —
-both must be named in Phase B as "GETs that go to the primary".
+the OTA check (stamps `ota_channel_served`), which must be named in Phase B as a "GET that goes to
+the primary". (`GET /api/auth/verify-email` used to redeem its token too; since #876 it only shows a
+confirm page and the redemption is a `POST`.)
 
 ### 5.2 Socket events from players (`ws/deviceSocket.js`) — all write
 

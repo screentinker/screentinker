@@ -45,7 +45,6 @@ const HOP_BY_HOP = new Set([
  * assert nothing on this list is ever mounted as a plain "read" on a replica-served path.
  */
 const WRITING_GETS = Object.freeze([
-  '/api/auth/verify-email',   // redeems a verification token
   '/api/update/check',        // stamps devices.ota_channel_served (players are on the primary in C1)
 ]);
 

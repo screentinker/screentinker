@@ -1536,6 +1536,9 @@ app.use('/api/auth/passkeys/register/options', rateLimit(60000, 10));
 app.use('/api/auth/passkeys/register/verify', rateLimit(60000, 10));
 // Email-verification resend: cap so it can't be used to spray mail at an address.
 app.use('/api/auth/resend-verification', rateLimit(60000, 5));
+// The verify-email link page and its confirm button (#876). Unauthenticated; the token is
+// unguessable, so this only bounds an unauthenticated write a human makes once or twice.
+app.use('/api/auth/verify-email', rateLimit(60000, 20));
 // Domain lookup is unauthenticated by necessity (it runs before login). Rate limited so it
 // cannot be walked to enumerate which customers use SSO.
 app.use('/api/auth/sso/discover', rateLimit(60000, 10));
