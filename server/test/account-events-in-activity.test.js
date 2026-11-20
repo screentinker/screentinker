@@ -94,11 +94,13 @@ test('confirming an address is recorded', async () => {
   const token = crypto.randomBytes(24).toString('hex');
   db.prepare("UPDATE users SET email_verified = 0, email_verify_hash = ?, email_verify_expires = strftime('%s','now') + 3600 WHERE id = ?")
     .run(crypto.createHash('sha256').update(token).digest('hex'), member.id);
-  const r = await call('GET', '/api/auth/verify-email?token=' + token);
-  assert.ok(r.status === 302 || r.status === 200, 'status ' + r.status);
+  await call('GET', '/api/auth/verify-email?token=' + token);
+  assert.equal(rows(member.id, 'auth:email_verified').length, 0, '#876: opening the link records (and changes) nothing');
+  const r = await call('POST', '/api/auth/verify-email', null, { token });
+  assert.ok(r.status === 303 || r.status === 200, 'status ' + r.status);
   if (db.prepare('SELECT email_verified v FROM users WHERE id = ?').get(member.id).v !== 1) return; // token hashing differs: nothing to assert
   assert.equal(rows(member.id, 'auth:email_verified').length, 1);
-  await call('GET', '/api/auth/verify-email?token=' + token);
+  await call('POST', '/api/auth/verify-email', null, { token });
   assert.equal(rows(member.id, 'auth:email_verified').length, 1, 'a second click on a used link records nothing');
 });
 

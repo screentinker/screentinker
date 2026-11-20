@@ -180,3 +180,41 @@ test('the submit form posts where the server listens, and offers no status field
   const body = form.slice(form.indexOf('<body'));
   assert.equal((body.match(/<script\b/g) || []).length, 0, 'no JavaScript on the submit page');
 });
+
+/* ── #876: mail scanners open the emailed links before the person does ─────────────────────── */
+
+test('#876: peek shows the pending report and changes nothing, however often it is called', () => {
+  const db = freshDb();
+  const { token } = subs.create(db, VALID, null);
+  for (let i = 0; i < 3; i++) {
+    const row = subs.peek(db, token);
+    assert.equal(row.name, VALID.name);
+  }
+  const stored = db.prepare('SELECT status, decision_token_hash FROM hardware_submissions').get();
+  assert.equal(stored.status, 'pending', 'still pending after three looks');
+  assert.ok(stored.decision_token_hash, 'and the link still works');
+  assert.equal(subs.publishedDevices(db).length, 0, 'nothing published');
+  assert.ok(subs.decide(db, token, 'approved'), 'the button still decides');
+  assert.equal(subs.peek(db, token), null, 'a used link peeks as invalid');
+  assert.equal(subs.peek(db, 'nope'), null);
+  assert.equal(subs.peek(db, undefined), null);
+});
+
+test('#876: an expired link peeks as invalid', () => {
+  const db = freshDb();
+  const { token } = subs.create(db, VALID, null);
+  db.prepare('UPDATE hardware_submissions SET decision_token_expires = 1').run();
+  assert.equal(subs.peek(db, token), null);
+});
+
+test('#876: the emailed links GET a confirm page; only POST decides', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'hardware-submissions.js'), 'utf8');
+  assert.match(src, /router\.get\('\/:token\/approve', confirmPage\('approved'\)\)/);
+  assert.match(src, /router\.get\('\/:token\/reject', confirmPage\('rejected'\)\)/);
+  assert.match(src, /router\.post\('\/:token\/approve', decision\('approved'\)\)/);
+  assert.match(src, /router\.post\('\/:token\/reject', decision\('rejected'\)\)/);
+  assert.doesNotMatch(src, /router\.get\([^)]*decision\(/, 'no GET route may decide');
+  const confirm = src.slice(src.indexOf('function confirmPage'), src.indexOf('function decision'));
+  assert.doesNotMatch(confirm, /\.decide\(/, 'the confirm page only peeks');
+  assert.doesNotMatch(confirm, /<script/i, 'and has no script that could submit itself');
+});

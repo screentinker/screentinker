@@ -271,8 +271,9 @@ is cheaper. Both are documented; proxy is the default because it works without a
 discovered (I9). `test_no_builtin_primary_url` asserts no string literal resembling a host is used
 as its default.
 
-GETs that write (`/api/auth/verify-email`, `/api/update/check` stamping `ota_channel_served`) are
-listed by exact path in the same interceptor and proxied like writes.
+GETs that write (`/api/update/check` stamping `ota_channel_served`) are listed by exact path in the
+same interceptor and proxied like writes. (`/api/auth/verify-email` left that list in #876: its GET
+now only renders a confirm page, and the token is redeemed by a `POST`.)
 
 ### 5.3 Authentication on a replica
 

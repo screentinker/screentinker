@@ -87,7 +87,7 @@ router.post('/', async (req, res) => {
         <p>Approving publishes it on the Certified Hardware page as <b>community-reported</b>.
         It is not certification and carries no support commitment.</p>
         <p><a href="${approve}">Approve and publish</a> &nbsp;|&nbsp; <a href="${reject}">Reject</a></p>
-        <p style="color:#666;font-size:12px">These links work once and expire in 30 days.</p>`,
+        <p style="color:#666;font-size:12px">Each link opens a page with a button; nothing changes until you press it. They work once and expire in 30 days.</p>`,
     });
   } catch (e) {
     // The submission is already stored. Losing the notification is recoverable; losing the report
@@ -101,6 +101,38 @@ router.post('/', async (req, res) => {
      It is not certification and carries no support commitment.</p>`);
 });
 
+/*
+ * ⚠️ #876: THE EMAILED LINK'S GET CHANGES NOTHING. Mail filters (Defender Safe Links, Mimecast,
+ * Proofpoint) open every link in a message before the person does. When these GETs decided, a
+ * scanner following "Approve and publish" published a community report nobody had reviewed. Now the
+ * GET shows the report and a button, and only the button's POST decides.
+ */
+const VERB = { approved: 'approve', rejected: 'reject' };
+
+function invalidLink(res) {
+  return page(res, 410, 'That link is no longer valid',
+    '<p>It has already been used, or it expired. Nothing was changed.</p>');
+}
+
+function confirmPage(kind) {
+  return (req, res) => {
+    const row = submissions.peek(db, req.params.token);
+    if (!row) return invalidLink(res);
+    const other = kind === 'approved' ? 'rejected' : 'approved';
+    const detail = [['Device', row.name], ['Manufacturer', row.manufacturer], ['Category', row.category],
+      ['OS', row.os], ['Player', row.player], ['Notes', row.notes]]
+      .filter(([, v]) => v).map(([k, v]) => `<tr><td><b>${esc(k)}</b></td><td>${esc(v)}</td></tr>`).join('');
+    res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer');
+    return page(res, 200, kind === 'approved' ? 'Approve and publish this report?' : 'Reject this report?',
+      `<table cellpadding="4">${detail}</table>
+       <!-- relative: resolves to this same /<token>/<verb> URL -->
+       <form method="post" action="${esc(VERB[kind])}">
+         <button type="submit">${kind === 'approved' ? 'Approve and publish' : 'Reject'}</button>
+       </form>
+       <p>Changed your mind? <a href="${esc(VERB[other])}">${other === 'approved' ? 'Approve and publish' : 'Reject'} instead</a>.</p>`);
+  };
+}
+
 function decision(kind) {
   return (req, res) => {
     let row;
@@ -110,10 +142,7 @@ function decision(kind) {
       console.error('[hardware-submissions] decide:', e && e.message);
       return page(res, 500, 'Something went wrong', '<p>Please try again.</p>');
     }
-    if (!row) {
-      return page(res, 410, 'That link is no longer valid',
-        '<p>It has already been used, or it expired. Nothing was changed.</p>');
-    }
+    if (!row) return invalidLink(res);
     require('./certified-hardware').invalidate();
     return kind === 'approved'
       ? page(res, 200, 'Published', `<p><b>${esc(row.name)}</b> is now listed under Community reported.</p>`)
@@ -121,7 +150,9 @@ function decision(kind) {
   };
 }
 
-router.get('/:token/approve', decision('approved'));
-router.get('/:token/reject', decision('rejected'));
+router.get('/:token/approve', confirmPage('approved'));
+router.get('/:token/reject', confirmPage('rejected'));
+router.post('/:token/approve', decision('approved'));
+router.post('/:token/reject', decision('rejected'));
 
 module.exports = router;

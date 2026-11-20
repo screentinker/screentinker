@@ -17,6 +17,7 @@ const QRCode = require('qrcode');
 const { sendSignupEmails, sendVerificationEmail, sendPasswordResetEmail, sendAccountDeletedEmail } = require('../services/signupEmails');
 const passwordReset = require('../lib/passwordReset');
 const emailVerify = require('../lib/emailVerify');
+const actionPage = require('../lib/action-page');
 const emailSvc = require('../services/email');
 const { deleteUserCascade, OrgHasOtherMembersError } = require('../lib/user-deletion');
 const config = require('../config');
@@ -554,12 +555,31 @@ function ensureVerificationEmail(user, req) {
   sendVerificationEmail(user, token, req);
 }
 
-// The emailed link lands here (GET, unauthenticated — the user isn't logged in yet). We flip
-// the flag and redirect into the app with a flash flag, so there's no separate frontend route.
+// The emailed link lands here (GET, unauthenticated — the user isn't logged in yet).
+//
+// ⚠️ #876: THE GET CHANGES NOTHING. Mail filters (Defender Safe Links, Mimecast, Proofpoint) open
+// the link before the person does; when this GET verified, the scanner used the one-time token and
+// the person's own click then showed "verification failed". Now the GET shows a confirm button and
+// the POST below verifies. A link already used on a verified account goes straight to the
+// "verified" sign-in (a second click is not an error).
 router.get('/verify-email', (req, res) => {
-  const ok = emailVerify.consume(req.query.token);   // the user id, once; null for a used or unknown link
-  if (ok) logActivity(ok, 'auth:email_verified', null, null, getClientIp(req));
-  return res.redirect(ok ? '/app#/login?verified=1' : '/app#/login?verify_error=1');
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
+  const p = emailVerify.peek(token);
+  if (p.state === 'already') return res.redirect('/app#/login?verified=1');
+  if (p.state !== 'valid') return res.redirect('/app#/login?verify_error=1');
+  return actionPage.send(res, 200, {
+    title: 'Confirm your email address',
+    body: '<p>Press the button to confirm this address and finish setting up your ScreenTinker account.</p>',
+    form: { action: '/api/auth/verify-email', button: 'Confirm my email', fields: { token } },
+  });
+});
+
+// The confirm button posts here (a plain form, so urlencoded; JSON works too). Redirects into the
+// app with the same flash flags the old GET used, so the login page needs no change.
+router.post('/verify-email', express.urlencoded({ extended: false, limit: '4kb' }), (req, res) => {
+  const r = emailVerify.consume(req.body?.token);
+  if (r && !r.already) logActivity(r.id, 'auth:email_verified', null, null, getClientIp(req));
+  return res.redirect(303, r ? '/app#/login?verified=1' : '/app#/login?verify_error=1');
 });
 
 // Resend the verification email. Unauthenticated (the hosted gate blocks the session, so the

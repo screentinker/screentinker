@@ -8,6 +8,16 @@
   13.3.** From 13.3, Grafana no longer treats the bare `kiosk` that ScreenTinker sent as kiosk
   mode. ScreenTinker now sends `kiosk=1`, which is kiosk mode on Grafana 13.0 and 13.3
   alike. Single-panel widgets were not affected.
+- **Email verification failed for people whose company scans links in email** (#876). Microsoft
+  Defender Safe Links, Mimecast, Proofpoint and similar open every link in a message before the
+  person does. The verification link verified on that first open, so the scanner used it up and the
+  person's own click showed "verification failed". The link now opens a **Confirm my email** page,
+  and only its button verifies. Opening an already-used link goes straight to sign-in as verified
+  instead of showing an error.
+- **A link scanner could publish a community hardware report without review** (#876). The review
+  email's **Approve and publish** and **Reject** links acted on the first open, so a scanner
+  following them decided the report. Each link now opens a page showing the report and a button,
+  and nothing changes until the button is pressed.
 
 ## 3.2.4
 

@@ -192,10 +192,11 @@ test('test_every_mutating_route_passes_resolveTenancy: no second writer can hide
     'A mutating route is neither mounted behind resolveTenancy (config/api-surface.js) nor named in ' +
     'NOT_WORKSPACE_SCOPED with a reason. On a replica it would be a second writer for a copied workspace.');
 
-  // The two GETs that write are named, so they cannot drift back into "reads".
+  // The GET that writes is named, so it cannot drift back into "reads". (#876 took
+  // /api/auth/verify-email off this list: its GET now only renders a confirm page, and the POST writes.)
   const { WRITING_GETS } = require('../lib/replica-proxy');
-  assert.deepEqual([...WRITING_GETS].sort(), ['/api/auth/verify-email', '/api/update/check']);
-  assert.match(read('routes/auth.js'), /router\.get\('\/verify-email'/);
+  assert.deepEqual([...WRITING_GETS].sort(), ['/api/update/check']);
+  assert.match(read('routes/auth.js'), /router\.post\('\/verify-email'/);
   assert.match(server, /'\/api\/update\/check'/);
 
   // And the interceptor is where the design says: in the resolver, before next().

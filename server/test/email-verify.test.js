@@ -55,6 +55,15 @@ async function jfetch(BASE, p, body, method = 'POST') {
   let json = null; try { json = await res.json(); } catch { /* redirect / non-JSON */ }
   return { status: res.status, body: json, location: res.headers.get('location') };
 }
+// The confirm page's button: a plain <form>, so urlencoded.
+async function formPost(BASE, p, fields) {
+  const res = await fetch(BASE + p, {
+    method: 'POST', redirect: 'manual',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(fields).toString(),
+  });
+  return { status: res.status, location: res.headers.get('location') };
+}
 const register = (BASE, email) => jfetch(BASE, '/api/auth/register', { email, password: PW });
 const login = (BASE, email) => jfetch(BASE, '/api/auth/login', { email, password: PW });
 
@@ -91,7 +100,7 @@ describe('hosted (SELF_HOSTED unset): hard block until verified', () => {
     assert.equal(r.body.token, undefined, 'NO session before verification');
   });
 
-  test('login is blocked until verified, then succeeds; verify link is single-use', async () => {
+  test('#876: opening the link changes nothing; the confirm button verifies; a second click is not an error', async () => {
     const email = 'ev-' + rand() + '@x.test';
     await register(S.BASE, email);
 
@@ -101,28 +110,58 @@ describe('hosted (SELF_HOSTED unset): hard block until verified', () => {
 
     const tok = rand() + rand();
     plantToken(S.dbPath, email, tok);
-    const click = await jfetch(S.BASE, '/api/auth/verify-email?token=' + tok, null, 'GET');
-    assert.equal(click.status, 302);
+
+    // A mail scanner (or the person) opening the link: a page with a button, and NOTHING changes.
+    for (let i = 0; i < 3; i++) {
+      const open = await fetch(S.BASE + '/api/auth/verify-email?token=' + tok, { redirect: 'manual' });
+      assert.equal(open.status, 200, 'GET renders the confirm page');
+      const html = await open.text();
+      assert.match(html, /<form method="post" action="\/api\/auth\/verify-email">/);
+      assert.ok(html.includes(`name="token" value="${tok}"`), 'the token rides in the form');
+      assert.doesNotMatch(html, /<script/i, 'no script: a scanner that runs JS must not submit it');
+    }
+    const still = await login(S.BASE, email);
+    assert.equal(still.body.verification_required, true, 'three GETs verified nothing');
+
+    // The person presses the button.
+    const click = await formPost(S.BASE, '/api/auth/verify-email', { token: tok });
+    assert.equal(click.status, 303);
     assert.match(click.location, /verified=1/);
 
     const ok = await login(S.BASE, email);
     assert.ok(ok.body.token, 'login succeeds after verification');
     assert.equal(ok.body.user.email_verified, 1);
 
-    const reuse = await jfetch(S.BASE, '/api/auth/verify-email?token=' + tok, null, 'GET');
-    assert.match(reuse.location, /verify_error=1/, 'single-use: second click errors');
+    // Pressing again, or opening the link again: "verified", not an error.
+    const again = await formPost(S.BASE, '/api/auth/verify-email', { token: tok });
+    assert.match(again.location, /verified=1/, 'second POST on a used link: already verified');
+    const reopen = await jfetch(S.BASE, '/api/auth/verify-email?token=' + tok, null, 'GET');
+    assert.equal(reopen.status, 302);
+    assert.match(reopen.location, /verified=1/, 'opening a used link: straight to the verified sign-in');
+
+    // A used link never verifies an account that is unverified AGAIN (an address change leaves the
+    // used marker in place): it is an error, and the account stays unverified.
+    const db = new Database(S.dbPath); db.pragma('busy_timeout = 4000');
+    try { db.prepare('UPDATE users SET email_verified = 0 WHERE email = ?').run(email); } finally { db.close(); }
+    assert.match((await formPost(S.BASE, '/api/auth/verify-email', { token: tok })).location, /verify_error=1/);
+    assert.match((await jfetch(S.BASE, '/api/auth/verify-email?token=' + tok, null, 'GET')).location, /verify_error=1/);
+    assert.equal((await login(S.BASE, email)).body.verification_required, true, 'still unverified');
   });
 
   test('bad and expired tokens redirect to verify_error', async () => {
     const bad = await jfetch(S.BASE, '/api/auth/verify-email?token=deadbeef', null, 'GET');
     assert.match(bad.location, /verify_error=1/);
+    const badPost = await formPost(S.BASE, '/api/auth/verify-email', { token: 'deadbeef' });
+    assert.match(badPost.location, /verify_error=1/);
 
     const email = 'ev-' + rand() + '@x.test';
     await register(S.BASE, email);
     const tok = rand() + rand();
     plantToken(S.dbPath, email, tok, -10); // already expired
     const click = await jfetch(S.BASE, '/api/auth/verify-email?token=' + tok, null, 'GET');
-    assert.match(click.location, /verify_error=1/, 'expired token rejected');
+    assert.match(click.location, /verify_error=1/, 'expired token rejected on open');
+    const press = await formPost(S.BASE, '/api/auth/verify-email', { token: tok });
+    assert.match(press.location, /verify_error=1/, 'expired token rejected on confirm');
 
     // ...and that same user (still unverified) is asked on login — the existing-user path.
     const gated = await login(S.BASE, email);
