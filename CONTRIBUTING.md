@@ -46,7 +46,16 @@ Open an issue on GitHub with:
 
 ## Security
 
-If you discover a security vulnerability, please email **support@screentinker.com** instead of opening a public issue.
+If you discover a security vulnerability, please report it privately as described in [SECURITY.md](SECURITY.md) instead of opening a public issue.
+
+### The security scan in CI
+
+`server/test/security-static.test.js` runs `server/scripts/security-scan.js`, a set of checks mapped to the OWASP Top 10, over the server, the player and the dashboard. It fails when a change adds a finding that is not already recorded in `server/test/security-baseline.json`. The two rules that matter most here, because past advisories were exactly these:
+
+- **No user data into HTML without escaping.** Use `textContent`, or wrap every `${...}` in `esc()`. For anything that becomes a URL (`href`, `src`, `location`, `window.open`), escaping is not enough: allow only `http:`/`https:` or build it from a fixed path.
+- **Every server-side fetch of a URL a user, tenant or upstream API supplied goes through `server/lib/ssrf-guard.js`.**
+
+Run `cd server && node scripts/security-scan.js` to see new findings locally. If one is genuinely safe, put `// security-ok(<rule>): <why it is safe>` on or above the line. The reason is the review record, so make it specific. CI also runs `npm audit` on production dependencies and fails on high or critical.
 
 ## License
 

@@ -278,6 +278,14 @@ jobs:
       - name: Licence gate
         run: node scripts/license-check.js --sbom sbom/screentinker-server.cdx.json
 
+      # OWASP A06 (vulnerable and outdated components). Production deps only, for the same reason
+      # as the licence gate. High or critical fails the build. When an upstream advisory lands with
+      # no fixed release yet, the answer is an `overrides` entry or a reviewed exception, not
+      # lowering this level (see the jimp/zod case, 2026-11-22, fixed by jimp 1.7.0).
+      - name: npm audit (production deps, high and above)
+        working-directory: server
+        run: npm audit --omit=dev --audit-level=high
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sbom
