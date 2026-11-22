@@ -274,7 +274,9 @@ function renderPlaylistGrid(playlists) {
 
 function drawPlaylistCards(box, filtered, h) {
   box.innerHTML = '<div id="playlistGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px"></div>';
-  const grid = document.getElementById('playlistGrid');
+  // Scoped to `box`: a late render after the user left the page found no #playlistGrid in the document.
+  const grid = box.querySelector('#playlistGrid');
+  if (!grid) return;
     grid.innerHTML = filtered.map(p => `
       <div class="rl-item rl-pad${h.isSelected(p) ? ' is-selected' : ''}" ${h.dragAttrs(p)} style="border-radius:var(--radius-lg)">
       ${h.selectBox(p)}

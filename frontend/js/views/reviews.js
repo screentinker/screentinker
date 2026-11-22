@@ -23,7 +23,9 @@ export async function render(container) {
     </div>`;
   const list = container.querySelector('#reviewList'), detail = container.querySelector('#reviewDetail'), filter = container.querySelector('#reviewFilter');
   const s = await approvalSettings(true);
-  container.querySelector('#reviewSub').textContent = s.require_approval ? (s.is_reviewer ? t('review.sub_reviewer') : t('review.sub_member')) : t('review.sub_off');
+  const sub = container.querySelector('#reviewSub');
+  if (!sub) return;   // the page was replaced while the settings loaded
+  sub.textContent = s.require_approval ? (s.is_reviewer ? t('review.sub_reviewer') : t('review.sub_member')) : t('review.sub_off');
   let rows = [], selected = null;
 
   async function load() {

@@ -369,7 +369,7 @@ export async function render(app) {
       <tbody>${cache.triggers.map(rowHtml).join('')}</tbody>
     </table></div>` : `<div class="corp-empty">${esc(t('trigger.empty'))}</div>`}`;
 
-  document.getElementById('tgNew').addEventListener('click', () => openForm(app, null));
+  body.querySelector('#tgNew')?.addEventListener('click', () => openForm(app, null));
   body.querySelectorAll('tr[data-id]').forEach((row) => {
     const tr = cache.triggers.find(x => x.id === row.dataset.id);
     row.querySelector('[data-act="edit"]')?.addEventListener('click', () => openForm(app, tr));

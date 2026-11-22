@@ -79,7 +79,7 @@ export async function render(container, workspaceId) {
         <button class="btn btn-primary" id="inviteMemberBtn">${t('members.button.invite')}</button>
       </div>
     `;
-    document.getElementById('inviteMemberBtn').addEventListener('click', () => {
+    headerActions.querySelector('#inviteMemberBtn')?.addEventListener('click', () => {
       openInviteMemberModal({ id: workspaceId, name: workspaceName }, {
         onSuccess: (result) => {
           // "Invite sent" only when an email really went out; otherwise the link to pass on.
@@ -90,7 +90,7 @@ export async function render(container, workspaceId) {
         mapError: mapMutationError,
       });
     });
-    document.getElementById('addUserBtn').addEventListener('click', () => {
+    headerActions.querySelector('#addUserBtn')?.addEventListener('click', () => {
       openAddUserModal({ id: workspaceId, name: workspaceName }, {
         onSuccess: (result) => {
           showToast(t('members.success.user_created', { email: result.email }), 'success');

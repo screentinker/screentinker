@@ -356,7 +356,7 @@ const langOptions = (cur) => getAvailableLanguages().map((l) => opt(l.code, l.na
 // can't), the dashboard's own languages are offered. The saved choice is always kept in the list.
 let weatherLangs = null;
 function loadWeatherLanguages() {
-  if (!weatherLangs) weatherLangs = api('/data-sources/weather-languages').then((r) => r.languages).catch(() => null);
+  if (!weatherLangs) weatherLangs = api.get('/data-sources/weather-languages').then((r) => r.languages).catch(() => null);
   return weatherLangs;
 }
 function languageName(code) {

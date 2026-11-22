@@ -1007,7 +1007,9 @@ async function loadStatusDebug() {
     </label>
     <p style="color:var(--text-muted);font-size:12px;margin:4px 0 0 24px">Adds internal limiter/prune/OTA counters to the public status endpoint. Off by default.</p>
   `;
-  document.getElementById('statusDebugChk').onchange = async (e) => {
+  const chk0 = el.querySelector('#statusDebugChk');
+  if (!chk0) return;   // the platform page was left while the setting loaded
+  chk0.onchange = async (e) => {
     const chk = e.target;
     chk.disabled = true;
     try { await api.adminSetStatusDebug(chk.checked); showToast('Status debug ' + (chk.checked ? 'enabled' : 'disabled'), 'success'); }
