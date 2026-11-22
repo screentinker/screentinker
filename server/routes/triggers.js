@@ -201,7 +201,8 @@ router.post('/', requireScope('full'), requireFleetWrite, (req, res) => {
   const aErr = setAssignments(req, id, b.assignments);
   if (aErr) { db.prepare('DELETE FROM triggers WHERE id = ?').run(id); return res.status(400).json({ error: aErr }); }
 
-  console.log(`[trigger] created ${id} "${c.name}" token=${c.match_token} mode=${c.mode}`);
+  // Never the token itself: it fires the trigger, and logs are kept and shipped far more widely than the DB.
+  console.log(`[trigger] created ${id} "${c.name}" mode=${c.mode}`);
   pushTrigger(req, id);
   res.json(withAssignments(db.prepare('SELECT * FROM triggers WHERE id = ?').get(id)));
 });
