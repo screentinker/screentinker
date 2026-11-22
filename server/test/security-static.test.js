@@ -69,6 +69,13 @@ test('GHSA-885f: preview banner names written with innerHTML', () => {
   assert.ok(has('server/player/index.html', 'client', code, 'dom-html-sink'));
 });
 
+test('inline scripts are found even with an unusual end tag', () => {
+  for (const end of ['</script>', '</script >', '</SCRIPT>', '</script\n>']) {
+    const code = `<p>x</p><script>function f(el, s) { el.innerHTML = s; }${end}<p>y</p>`;
+    assert.ok(has('server/player/index.html', 'client', code, 'dom-html-sink'), JSON.stringify(end));
+  }
+});
+
 test('GHSA-g46x: kiosk page button navigates to a stored javascript: URL (inside a server template)', () => {
   const code = 'module.exports = (cfg) => `<!doctype html><html><body><div id="b"></div><script>'
     + 'document.addEventListener("click", function (e) { var btn = e.target.closest("button");'

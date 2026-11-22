@@ -199,7 +199,9 @@ function listFiles() {
 function sources(rel, text) {
   if (!rel.endsWith('.html')) return [{ code: text, lineOffset: 0 }];
   const out = [];
-  const re = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+  // An end tag may carry whitespace or junk before '>' (`</script >`, `</SCRIPT foo>`), and a browser
+  // still ends the script there, so the pattern must too or that block would go unscanned.
+  const re = /<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi;
   let m;
   while ((m = re.exec(text))) {
     const attrs = m[1];
