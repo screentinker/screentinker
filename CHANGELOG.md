@@ -1,12 +1,82 @@
 # Changelog
 
-## Unreleased
+## 3.2.5
+
+Thanks to **@Omniflux** for the content inspector details (#884), **@Kirial** for the Grafana kiosk
+fix (#869), **@lpfxh** for reporting the incomplete Simplified Chinese (#882) and **@MashaWaleed**
+for the Android HTML widget crash report (#883). @Omniflux and @Kirial each authored 1 of the
+commits in this release.
+
+### ⚠️ Security
+
+Upgrade, especially on hosted or multi-tenant installs. All found in an internal review
+(GHSA-885f-qv76-v54j).
+
+- **Stored XSS in the playlist preview banner.** Layout, zone and item names were written into the
+  player's preview banner as HTML, on the dashboard's origin, so an editor could run script as an
+  admin who opened Playlist Preview. The banner is now plain text.
+- **Deleting another tenant's media through `subtitle_url`.** `PUT /api/content/:id` stored any
+  `subtitle_url`, and file clean-up only counted that one column, so deleting your own item could
+  delete another tenant's file. The route now only clears it, clean-up counts every file column,
+  and imports drop it.
+- **The template sandbox was skipped on the SSSP3 linked-widget path** (`?compat=sssp1228`), so a
+  template's script ran on the dashboard origin from a public URL. The template's sandbox CSP is
+  now applied there too.
+- **Pairing-code guesses were limited per exact IP.** With a dashboard session an attacker could
+  rotate addresses (an IPv6 /64) and keep guessing. Failures now count against the account and the
+  client network.
+- **A crafted HTML bundle could stall the server** (quadratic inlining on the main thread, uncapped
+  caches). The inliner is linear, the entry page is capped at 2 MB, and results are cached.
+- **Hosted: any organization owner could pre-register a verified account for any email** through
+  Add User. On hosted, accounts added by anyone but a platform admin now have no password and an
+  unverified address until the person sets a password from a link mailed only to them.
+
+### ⚠️ Behaviour changes
+
+- **Hosted Add User:** org owners and admins no longer set the new person's password. The person gets
+  an email to set it (valid 7 days, single use); without mail configured they use **Forgot
+  password**. Platform admins and self-hosted installs are unchanged.
+- **Using a password-reset link now also verifies the email address**, since it proves the inbox.
+- **HTML bundles whose entry page is over 2 MB** (or entry plus inlined assets over 8 MB) are now
+  refused with 413 instead of rendered.
+- **`PUT /api/content/:id` rejects a `subtitle_url`** other than `null`/`''` (clear) or its current
+  value: upload subtitles with `POST /api/content/:id/subtitle`.
+- **Old browsers opening `/player` go to `/player/legacy`** automatically (LG webOS 4 to 6,
+  Tizen-era Chromium), so "Play via URL" on those panels no longer shows a black screen.
+
+### Fixed (players)
+
+- **Android: a WebView renderer crash took the whole player down, or left zones black** (#883,
+  reported by @MashaWaleed; #888). Every WebView now handles a renderer crash, including the
+  full-screen view on a screen that starts straight into a zone layout and the replacement view after
+  a second crash. Zones, picture-in-picture and video-wall zones mount their content again in a fresh
+  WebView, at most 3 times a minute per area. On very old WebViews that run the renderer inside the
+  app, updating Android System WebView is still needed.
+- **Android: screenshots no longer show a stale frame of a stopped video**, and the player logs why
+  it declined to show standby content (#872).
+- **LG webOS / old Chromium: `/player` sends engines without modern syntax to `/player/legacy`.**
+
+### Fixed (dashboard)
+
+- **The weather widget's language list never loaded** (it always fell back to the dashboard's own
+  languages) (#889).
+- **Pages no longer throw errors when you leave them mid-load** (playlists, schedule, reviews,
+  triggers, workspace members, platform status debug) (#889).
+- **Platform → Users can assign hidden plans**, such as a customer's own plan (#885).
+
+### Added
+
+- **The content inspector shows more of an item's details**: MIME type, custom metadata, YouTube,
+  subtitle, audio guide and pre-rotation settings, RTSP TLS validation, and audio guide tracks
+  (#884, by @Omniflux).
+- **Simplified Chinese is complete** (#886, reported by @lpfxh): every dashboard string, and the
+  Traffic page no longer falls back to English. Machine-translated; corrections are welcome.
 
 ### Fixed (server)
 
 - **Grafana dashboards on screens showed Grafana's sidebar, top bar and toolbar again on Grafana
-  13.3.** From 13.3, Grafana no longer treats the bare `kiosk` that ScreenTinker sent as kiosk
-  mode. ScreenTinker now sends `kiosk=1`, which is kiosk mode on Grafana 13.0 and 13.3
+  13.3** (#869, by @Kirial). From 13.3, Grafana no longer treats the bare `kiosk` that ScreenTinker
+  sent as kiosk mode. ScreenTinker now sends `kiosk=1`, which is kiosk mode on Grafana 13.0 and 13.3
   alike. Single-panel widgets were not affected.
 - **Email verification failed for people whose company scans links in email** (#876). Microsoft
   Defender Safe Links, Mimecast, Proofpoint and similar open every link in a message before the
@@ -18,6 +88,12 @@
   email's **Approve and publish** and **Reject** links acted on the first open, so a scanner
   following them decided the report. Each link now opens a page showing the report and a button,
   and nothing changes until the button is pressed.
+
+### Dependencies
+
+- Server minor and patch updates (#881). better-sqlite3 stays on 13.0.x: 13.1 and 13.2 make a
+  corporate playlist lookup about 40x slower (#878). Refreshed Node, Go and Docker base images
+  (#873, #879, #880) and actions/setup-java (#874).
 
 ## 3.2.4
 
