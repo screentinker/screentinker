@@ -108,12 +108,7 @@ class PipOverlay(
             // Media fills the remaining box height (weight 1).
             val mediaLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
             if (type == "web") {
-                val wv = WebView(context)
-                WebViewSupport.configure(wv, "PiP")
-                // Mute web audio by default: deny autoplay-with-gesture so audio can't start.
-                try { wv.settings.mediaPlaybackRequiresUserGesture = true } catch (_: Throwable) {}
-                wv.setBackgroundColor(Color.TRANSPARENT)
-                wv.loadUrl(uri)
+                val wv = buildWebView(uri, current)
                 webView = wv
                 box.addView(wv, mediaLp)
             } else {
@@ -188,6 +183,42 @@ class PipOverlay(
             // A malformed payload must never wedge the layer.
             teardown()
             log("warn", "pip show failed: ${e.message}")
+        }
+    }
+
+    private fun buildWebView(uri: String, token: String?): WebView {
+        val wv = WebView(context)
+        WebViewSupport.configure(wv, "PiP", onRendererGone = { dead -> onRendererGone(dead, uri, token) })
+        // Mute web audio by default: deny autoplay-with-gesture so audio can't start.
+        try { wv.settings.mediaPlaybackRequiresUserGesture = true } catch (_: Throwable) {}
+        wv.setBackgroundColor(Color.TRANSPARENT)
+        wv.loadUrl(uri)
+        return wv
+    }
+
+    /*
+     * #883: the renderer died (it is shared with every other WebView, so zones and the fullscreen
+     * widget went with it). Put a fresh WebView in the same place in the box and load the page again,
+     * within RendererRecovery's budget, so the PiP does not stay an empty box until it is cleared.
+     */
+    private val rendererRecovery = com.remotedisplay.player.util.RendererRecovery()
+
+    private fun onRendererGone(dead: WebView, uri: String, token: String?) {
+        val parent = dead.parent as? ViewGroup
+        val index = parent?.indexOfChild(dead) ?: -1
+        val lp = dead.layoutParams
+        val mine = dead === webView && current == token
+        WebViewSupport.discardDead(dead)
+        if (dead === webView) webView = null
+        if (!mine || parent == null || index < 0) return
+        if (!rendererRecovery.allow("pip")) { log("warn", "pip renderer keeps dying, leaving it empty"); return }
+        try {
+            val fresh = buildWebView(uri, token)
+            parent.addView(fresh, index, lp)
+            webView = fresh
+            log("warn", "pip renderer gone, page reloaded")
+        } catch (t: Throwable) {
+            log("warn", "pip renderer recovery failed: ${t.message}")
         }
     }
 

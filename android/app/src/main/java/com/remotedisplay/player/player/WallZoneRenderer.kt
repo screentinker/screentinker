@@ -341,6 +341,30 @@ class WallZoneRenderer(
         zs.index = -1; zs.key = null
     }
 
+    /*
+     * #883: the WebView renderer died (shared by every WebView, so every web zone on the panel went
+     * with it). The dead view is discarded; if it was what the zone is showing, forgetting the zone's
+     * mount key makes the next tick mount the same slot again in a fresh WebView, at the clock's
+     * position, like a panel that just joined. RendererRecovery caps how often, per zone.
+     */
+    private val rendererRecovery = com.remotedisplay.player.util.RendererRecovery()
+
+    private fun onWallRendererGone(zs: ZoneState, dead: WebView) {
+        val m = zs.medias.firstOrNull { it.view === dead }
+        com.remotedisplay.player.util.WebViewSupport.discardDead(dead)
+        if (m == null) return
+        val wasCurrent = m === zs.current
+        m.released = true                       // already destroyed: release() must not touch it again
+        zs.medias.remove(m)
+        if (!wasCurrent || zs.key == null) return   // something newer is mounted, or a remount is due anyway
+        if (rendererRecovery.allow(zs.z.geom.id)) {
+            DebugLog.w(TAG, "'${zs.z.name}' renderer gone, re-mounting")
+            zs.key = null
+        } else {
+            DebugLog.w(TAG, "'${zs.z.name}' renderer keeps dying, left empty until its next slot")
+        }
+    }
+
     private fun mount(zs: ZoneState, a: JSONObject, t: WallZones.Target, prev: JSONObject?) {
         val mime = mimeOf(a)
         if (Hold.isHold(mime)) {
@@ -425,7 +449,7 @@ class WallZoneRenderer(
         val audible = WallZones.audible(zs.z.geom.id, audioSet, muted)
         return when {
             widgetType != null || widgetId != null -> {
-                val wv = WebView(context).also { com.remotedisplay.player.util.WebViewSupport.configure(it, "WallZone") }
+                val wv = WebView(context).also { com.remotedisplay.player.util.WebViewSupport.configure(it, "WallZone", onRendererGone = { dead -> onWallRendererGone(zs, dead) }) }
                 var media: Media? = null
                 // The "Now serving" chime (QueueChimeBridge) follows the wall's audio rule: only the
                 // screen and zone that WallZones.audible picks may sound, so a wall chimes once, not
@@ -440,7 +464,7 @@ class WallZoneRenderer(
                 Media(wv).also { media = it }
             }
             mime == ItemTiming.BUNDLE_MIME -> {
-                val wv = WebView(context).also { com.remotedisplay.player.util.WebViewSupport.configure(it, "WallZone") }
+                val wv = WebView(context).also { com.remotedisplay.player.util.WebViewSupport.configure(it, "WallZone", onRendererGone = { dead -> onWallRendererGone(zs, dead) }) }
                 wv.loadUrl("$serverUrl/api/content/" + a.optString("content_id", "") + "/bundle?rev=" + a.optLong("content_rev", 0L) +
                     com.remotedisplay.player.util.WidgetUrls.transparentParam(a.optInt("transparent_bg", 0) == 1))
                 Media(wv)
