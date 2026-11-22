@@ -86,6 +86,8 @@ class ZoneManager(
     // IPTV: a dwell-0 live stream in a rotating zone re-checks eligibility on this slow cadence
     // (stays if it is still the active pick; advances if a daypart opened a sibling). Never a busy-loop.
     private val LIVE_RECHECK_MS = 60_000L
+    // A zone whose web content kept killing the renderer tries again after this (RendererRecovery's window).
+    private val RENDERER_RETRY_MS = 60_000L
     // A zone holding only the HDMI input re-tunes this often after its picture is lost.
     private val LIVE_INPUT_RETRY_MS = 10_000L
     private var renderCache: com.remotedisplay.player.data.ContentCache? = null
@@ -391,7 +393,7 @@ class ZoneManager(
             // Widget - render in WebView
             widgetType != null -> {
                 val widgetId = a.optString("widget_id", "")
-                val webView = createWebView()
+                val webView = createWebView(zone, assignments, activeIdx, params, gen)
                 // rev, exactly as the fullscreen path does: a widget's id does not change when it
                 // is edited, so without it a zone kept rendering the old content indefinitely.
                 val wRev = a.optLong("widget_rev", 0L)
@@ -415,7 +417,7 @@ class ZoneManager(
             // content_rev so a replaced archive actually reloads; without this branch a bundle in a
             // zone matched nothing, rendered an empty view and never advanced.
             mimeType == ItemTiming.BUNDLE_MIME -> {
-                val webView = createWebView()
+                val webView = createWebView(zone, assignments, activeIdx, params, gen)
                 val bRev = a.optLong("content_rev", 0L)
                 webView.loadUrl("$renderServerUrl/api/content/" + a.optString("content_id", "") + "/bundle?rev=" + bRev +
                     com.remotedisplay.player.util.WidgetUrls.transparentParam(a.optInt("transparent_bg", 0) == 1))
@@ -426,7 +428,7 @@ class ZoneManager(
             }
             // YouTube - render via an embed wrapper with a valid origin (Error 153 fix)
             mimeType == "video/youtube" && !remoteUrl.isNullOrEmpty() -> {
-                val webView = createWebView()
+                val webView = createWebView(zone, assignments, activeIdx, params, gen)
                 // #624 play to end: the zone moves on when the video ends; its duration is only the
                 // fallback while the page has not reported the video's length. A one-item zone loops.
                 val toEnd = multi && a.optInt("play_to_end", 0) == 1
@@ -895,10 +897,48 @@ class ZoneManager(
         zoneRotators.clear()
     }
 
-    private fun createWebView(): WebView {
+    private fun createWebView(zone: Zone, assignments: List<JSONObject>, activeIdx: Int, params: FrameLayout.LayoutParams, gen: Int): WebView {
         return WebView(context).apply {
-            com.remotedisplay.player.util.WebViewSupport.configure(this, "Zone")
+            com.remotedisplay.player.util.WebViewSupport.configure(this, "Zone", onRendererGone = { dead ->
+                onZoneRendererGone(zone, assignments, activeIdx, params, gen, dead)
+            })
         }
+    }
+
+    /*
+     * ⚠️ A RENDERER CRASH MUST NOT LEAVE THE ZONE BLACK (#883). The app's WebViews share one renderer,
+     * so a crash kills every web zone at once. Discarding the dead view alone (the default) kept the
+     * player alive but left each zone empty until its next item, which for a one-item zone is never.
+     * The zone mounts the same item again in a fresh WebView, within RendererRecovery's budget; past
+     * it, it tries once more when the window has passed.
+     */
+    private val rendererRecovery = com.remotedisplay.player.util.RendererRecovery()
+
+    private fun onZoneRendererGone(zone: Zone, assignments: List<JSONObject>, activeIdx: Int, params: FrameLayout.LayoutParams, gen: Int, dead: WebView) {
+        val isCurrent = zoneViews[zone.id] === dead
+        if (isCurrent) zoneViews.remove(zone.id)
+        com.remotedisplay.player.util.WebViewSupport.discardDead(dead)
+        // Already replaced by a newer item (or the layout was torn down): nothing to bring back.
+        if (!isCurrent || zoneGeneration[zone.id] != gen) return
+        zoneFaces[zone.id] = ZoneFace.NONE
+        val remount = Runnable {
+            if (zoneGeneration[zone.id] != gen) return@Runnable
+            cancelZoneRotation(zone.id)
+            val g = gen + 1
+            zoneGeneration[zone.id] = g
+            mountZoneItem(zone, assignments, activeIdx, params, g, null)
+        }
+        // Held as the zone's rotator, so a layout change or cleanup() (cancelAllRotations) drops it.
+        val delayMs = if (rendererRecovery.allow(zone.id)) {
+            com.remotedisplay.player.util.DebugLog.w("Zone", "'${zone.name}' renderer gone, re-mounting [${activeIdx + 1}/${assignments.size}]")
+            0L
+        } else {
+            com.remotedisplay.player.util.DebugLog.w("Zone", "'${zone.name}' renderer keeps dying, retrying in ${RENDERER_RETRY_MS / 1000}s")
+            RENDERER_RETRY_MS
+        }
+        cancelZoneRotation(zone.id)
+        zoneRotators[zone.id] = remount
+        handler.postDelayed(remount, delayMs)
     }
 
     /**

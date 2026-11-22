@@ -185,6 +185,9 @@ class MediaPlayerManager(
         val parent = dead.parent as? android.view.ViewGroup
         val fresh = try { WebView(context) } catch (t: Throwable) { Log.e("MediaPlayerManager", "replacement WebView failed: ${t.message}"); null }
         if (parent != null && fresh != null) {
+            // The replacement must handle the NEXT renderer death itself: until the next full-screen
+            // item configured it, a second crash found it unhandled and Chromium killed the app.
+            com.remotedisplay.player.util.WebViewSupport.configure(fresh, "Fullscreen", webLoadState, webRendererGone)
             fresh.id = dead.id
             fresh.visibility = dead.visibility
             parent.addView(fresh, parent.indexOfChild(dead), dead.layoutParams)
@@ -237,6 +240,15 @@ class MediaPlayerManager(
 
     init {
         setupExoPlayer()
+        /*
+         * ⚠️ THE LAYOUT'S WEBVIEW HANDLES A RENDERER CRASH FROM THE START (#883). activity_main.xml
+         * inflates it at launch, but it only got WebViewSupport's client the first time something
+         * played full screen. Every WebView in the app shares one renderer, and when it dies Chromium
+         * kills the WHOLE APP if any WebView still attached does not handle it. So a screen that
+         * started straight into a zone layout or a PiP crashed on the first renderer death, even
+         * though every zone handled it. Configured here, before anything else can create a renderer.
+         */
+        youtubeWebView?.let { com.remotedisplay.player.util.WebViewSupport.configure(it, "Fullscreen", webLoadState, webRendererGone) }
     }
 
     // Build a player with the shared end/error listener so BOTH the active and the preload player
