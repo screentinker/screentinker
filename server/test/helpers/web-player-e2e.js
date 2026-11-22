@@ -40,11 +40,19 @@ const SKIP = (!CHROME || !puppeteer) ? (!puppeteer ? 'puppeteer-core not install
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ⚠️ A page that navigates under us is "not yet", not a failure: the player's service worker reloads
+// the page once on a fresh profile, and a check that ran during that reload threw "Execution context
+// was destroyed" at random in CI. Any other error still fails the test.
+const NAVIGATING = /Execution context was destroyed|Cannot find context with specified id|Target closed|detached Frame/i;
+
 async function waitFor(fn, timeoutMs, stepMs = 250) {
   const until = Date.now() + timeoutMs;
   let last;
   while (Date.now() < until) {
-    last = await fn();
+    try { last = await fn(); } catch (e) {
+      if (!NAVIGATING.test(String(e && e.message))) throw e;
+      last = null;
+    }
     if (last) return last;
     await sleep(stepMs);
   }
