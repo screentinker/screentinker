@@ -117,6 +117,20 @@ test('a locale never defines a key that English does not', () => {
   }
 });
 
+test('a locale that spreads English does it before its own keys', () => {
+  // `export default { ...en, 'k': '译文' }`: a later key wins, so the spread must come first. zh.js
+  // had 39 Traffic-page strings ABOVE `...en`, and every one of them rendered in English.
+  const bad = [];
+  for (const locale of ACTIVE_LOCALES) {
+    const src = fs.readFileSync(path.join(FRONTEND, 'i18n', `${locale}.js`), 'utf8');
+    const spread = src.search(/^\s*\.\.\.en\s*,?\s*$/m);
+    if (spread < 0) continue;
+    const before = [...src.slice(0, spread).matchAll(/^\s*'([^']+)'\s*:/gm)].map(m => m[1]);
+    if (before.length) bad.push(`${locale}: ${before.length} key(s) before ...en, e.g. ${before[0]}`);
+  }
+  assert.deepEqual(bad, [], bad.join('\n  '));
+});
+
 test('translation coverage is reported, but an untranslated string is not a build failure', () => {
   // ⚠️ WHY A MISSING TRANSLATION DOES NOT FAIL THE BUILD.
   //
