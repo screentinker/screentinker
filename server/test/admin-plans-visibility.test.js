@@ -143,4 +143,18 @@ test('an unauthenticated caller cannot read it either', async () => {
   assert.equal((await get('/api/admin/plans')).status, 401);
 });
 
+// The Users table's plan picker is where a plan gets ASSIGNED. It read the public list, so a hidden
+// plan (e.g. a customer's own plan) could not be picked there, although the plan editor's help text
+// says a hidden plan "can still be assigned to users here". Pin it to the admin list.
+test('the Users plan picker offers hidden plans (admin list, not the public one)', () => {
+  const src = require('fs').readFileSync(path.join(__dirname, '../../frontend/js/views/admin.js'), 'utf8');
+  const start = src.indexOf('async function loadUsers(');
+  assert.ok(start >= 0, 'loadUsers not found');
+  const body = src.slice(start, src.indexOf('\nasync function ', start + 1));
+  const fetchPart = body.slice(0, body.indexOf('el.innerHTML'));
+  assert.match(fetchPart, /api\.adminListPlans\(\)/, 'loadUsers should load plans from the admin list');
+  assert.ok(fetchPart.indexOf('adminListPlans') < fetchPart.lastIndexOf("fetch('/api/subscription/plans')"),
+    'the public list may only be the fallback for a caller who cannot read the admin list');
+});
+
 test.after(() => { server.close(); });

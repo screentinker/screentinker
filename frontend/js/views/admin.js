@@ -875,9 +875,15 @@ function wireUserFilters(el) {
 async function loadUsers() {
   const el = document.getElementById('allUsersTable');
   try {
+    // Every plan, hidden ones included. /api/subscription/plans filters `active = 1` for the pricing
+    // page, so a hidden plan (a customer's own plan, a comped or beta tier) could not be assigned
+    // here, although the plan editor promises it can. The admin list needs a platform admin, the
+    // same role /subscription/assign needs; anyone else still gets the public list to look at.
     const [users, plans] = await Promise.all([
       API('/auth/users'),
-      fetch('/api/subscription/plans').then(r => r.json()),
+      api.adminListPlans()
+        .then(r => r.plans)
+        .catch(() => fetch('/api/subscription/plans').then(r => r.json())),
     ]);
     const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
 
@@ -912,7 +918,7 @@ async function loadUsers() {
               </td>
               <td style="padding:8px">
                 <select class="input" style="max-width:130px;width:100%;background:var(--bg-input);font-size:12px;padding:4px" data-plan-user="${u.id}">
-                  ${plans.map(p => `<option value="${p.id}" ${u.plan_id === p.id ? 'selected' : ''}>${esc(p.display_name)}</option>`).join('')}
+                  ${plans.map(p => `<option value="${esc(p.id)}" ${u.plan_id === p.id ? 'selected' : ''}>${esc(p.display_name)}${p.active === 0 ? ` (${esc(t('admin.plan_hidden'))})` : ''}</option>`).join('')}
                 </select>
               </td>
               ${workspaceCell(u)}
