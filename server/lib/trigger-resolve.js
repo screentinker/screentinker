@@ -79,7 +79,9 @@ function evaluate({ text, triggers, deviceSecret, clearAllToken, source }) {
     return { ok: false, reason: 'bad_secret' };
   }
 
-  if (clearAllToken && parsed.token === clearAllToken) {
+  // Tokens are compared in constant time, like the secret: they come off the network and each one
+  // fires or clears something on its own.
+  if (clearAllToken && secretMatches(parsed.token, clearAllToken)) {
     return { ok: true, action: 'clear_all' };
   }
 
@@ -94,8 +96,8 @@ function evaluate({ text, triggers, deviceSecret, clearAllToken, source }) {
      */
     const accepts = source === 'udp' ? t.source_udp : t.source_http;
     if (!accepts) continue;
-    if (t.match_token && parsed.token === t.match_token) return { ok: true, action: 'fire', trigger: t };
-    if (t.clear_token && parsed.token === t.clear_token) return { ok: true, action: 'clear', trigger: t };
+    if (t.match_token && secretMatches(parsed.token, t.match_token)) return { ok: true, action: 'fire', trigger: t };
+    if (t.clear_token && secretMatches(parsed.token, t.clear_token)) return { ok: true, action: 'clear', trigger: t };
   }
   return { ok: false, reason: 'unknown_token' };
 }

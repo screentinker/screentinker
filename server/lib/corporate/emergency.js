@@ -141,6 +141,7 @@ function tokenClash(db, orgId, tokens, { id = null, scopeRows = [] } = {}) {
       JOIN workspaces w ON w.id = t.workspace_id WHERE w.organization_id = ? AND t.id != ?`).all(orgId, id || '');
   for (const r of rows) {
     for (const tok of list) {
+      // security-ok(timing-compare): config-time clash check between stored tokens an editor is saving, no attacker-timed input
       if (tok === r.match_token || (r.clear_token && tok === r.clear_token)) {
         return { status: 409, code: 'CORPORATE_EMERGENCY_TOKEN', error: `"${tok}" is already used as a fire or clear token by the ${r.kind === 'emergency' ? 'emergency alert' : 'trigger'} "${r.name}" in your organization — every screen resolves tokens in one namespace, so a duplicate would make one of them unfirable.` };
       }
@@ -245,6 +246,7 @@ function reasonsFor(t, org, d) {
   if (!httpOk && !udpOk) trig.push('listener_off');
   if (!anyListener) act.push('listener_off');
   if ((httpOk || udpOk) && !d.trigger_secret) trig.push('no_secret');
+  // security-ok(timing-compare): coverage report comparing two stored tokens, no attacker-timed input
   if (d.trigger_clear_all_token && (d.trigger_clear_all_token === t.match_token || d.trigger_clear_all_token === t.clear_token)) trig.push('clear_all_collision');
   if (!d.last_heartbeat || (t.updated_at && d.last_heartbeat < t.updated_at)) trig.push('not_synced');
   if (!t.enabled) { trig.push('disabled'); act.push('disabled'); }

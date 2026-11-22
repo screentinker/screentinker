@@ -1092,6 +1092,7 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
    * (`clear_all_collision`) — and the store's clear-all simply isn't sent while it lasts.
    */
   if (trigger_config.clear_all_token && triggers.some((t) => t && t.kind === 'emergency'
+      // security-ok(timing-compare): collision check between two stored tokens before sync, no attacker-timed input
       && (t.match_token === trigger_config.clear_all_token || t.clear_token === trigger_config.clear_all_token))) {
     trigger_config.clear_all_token = null;
   }
