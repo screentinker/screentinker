@@ -209,8 +209,8 @@ router.post('/:id/bundle-preview', async (req, res) => {
       safePath = await storageLocations.ensureLocalFile(content, 'asset');
       if (!safePath) return res.status(404).json({ error: 'Bundle not found' });
     }
-    const { inlineBundle } = require('../lib/bundle-inline');
-    const out = await inlineBundle(safePath, content.bundle_entry || 'index.html');
+    const { inlineBundleCached } = require('../lib/bundle-inline');
+    const out = await inlineBundleCached(safePath, content.bundle_entry || 'index.html');
     const token = require('../lib/bundle-preview-store').put(content.id, out.html);
     res.json({ url: `/api/content/${content.id}/bundle-preview/${token}`, skipped: out.skipped, inlined: out.inlined });
   } catch (e) {
@@ -1299,8 +1299,15 @@ router.put('/:id', (req, res) => {
   if (audio_guide_enabled !== undefined) set('audio_guide_enabled', audio_guide_enabled ? 1 : 0);
   if (captions_lang !== undefined) set('captions_lang', captions_lang ? String(captions_lang).slice(0, 10) : null);
   if (subtitle_url !== undefined) {
-    // Only null (clear) is accepted here — a real subtitle_url is set by the upload endpoint.
-    set('subtitle_url', subtitle_url ? String(subtitle_url).slice(0, 255) : null);
+    // Only clearing (null or '') is accepted here: a real subtitle_url is set by the upload
+    // endpoint, which names a file it just wrote.
+    // ⚠️ Never store a caller-chosen name. subtitle_url is a filename in the shared contentDir and
+    // the delete paths unlink it, so a forged one pointed at another tenant's media (lib/content-files).
+    // A client that echoes the whole row back (the stored value, unchanged) is a no-op, not an error.
+    if (subtitle_url === null || subtitle_url === '') set('subtitle_url', null);
+    else if (subtitle_url !== content.subtitle_url) {
+      return res.status(400).json({ error: 'subtitle_url can only be cleared here (null); upload a subtitle with POST /:id/subtitle' });
+    }
   }
   if (subtitle_lang !== undefined) set('subtitle_lang', subtitle_lang ? String(subtitle_lang).slice(0, 10) : null);
   /*

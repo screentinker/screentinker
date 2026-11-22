@@ -46,7 +46,7 @@ db.exec(`
   CREATE TABLE content (
     id TEXT PRIMARY KEY, filename TEXT NOT NULL, filepath TEXT NOT NULL, mime_type TEXT NOT NULL,
     file_size INTEGER NOT NULL, duration_sec REAL, thumbnail_path TEXT, width INTEGER, height INTEGER,
-    remote_url TEXT, user_id TEXT, folder TEXT, folder_id TEXT, workspace_id TEXT,
+    remote_url TEXT, subtitle_url TEXT, user_id TEXT, folder TEXT, folder_id TEXT, workspace_id TEXT,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   );
   -- ⚠️ The delete handler also clears mesh provenance, because that table declares no FOREIGN KEY

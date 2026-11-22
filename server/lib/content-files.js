@@ -25,6 +25,15 @@ const config = require('../config');
  * Counted, not assumed. The column name is interpolated, so it is checked against a fixed set
  * first — it is never caller data, and this keeps it never being caller data by accident.
  */
+/*
+ * ⚠️ COUNTED ACROSS EVERY REFCOUNTED COLUMN, NOT JUST THE ONE BEING RELEASED. All three columns
+ * name files in the same contentDir, so "is anyone else using these bytes" has to ask all of them.
+ * Counting only the given column let one tenant point its own subtitle_url at another tenant's
+ * filepath (PUT /:id used to store any string) and then delete its row: the subtitle refcount saw
+ * no other subtitle_url and unlinked the other tenant's media. The keeper row itself is still
+ * excluded in every column, because an image's thumbnail_path legitimately equals its own filepath
+ * and counting that would keep the file forever.
+ */
 const REFCOUNTED_COLUMNS = Object.freeze(['filepath', 'thumbnail_path', 'subtitle_url']);
 
 function unlinkIfUnreferenced(rel, keeperId, column) {
@@ -32,11 +41,10 @@ function unlinkIfUnreferenced(rel, keeperId, column) {
   if (!REFCOUNTED_COLUMNS.includes(column)) throw new Error(`refusing to refcount on ${column}`);
 
   const base = path.basename(rel);
+  const refersTo = REFCOUNTED_COLUMNS.map((c) => `(${c} = ? OR ${c} LIKE ?)`).join(' OR ');
   const others = db.prepare(
-    `SELECT COUNT(*) AS n FROM content
-      WHERE ${column} IS NOT NULL AND ${column} != '' AND id != ?
-        AND (${column} = ? OR ${column} LIKE ?)`,
-  ).get(keeperId, base, `%/${base}`);
+    `SELECT COUNT(*) AS n FROM content WHERE id != ? AND (${refersTo})`,
+  ).get(keeperId, ...REFCOUNTED_COLUMNS.flatMap(() => [base, `%/${base}`]));
 
   if (others && others.n > 0) return { unlinked: false, reason: 'still referenced', others: others.n };
 

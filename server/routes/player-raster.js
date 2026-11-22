@@ -248,8 +248,8 @@ async function bundleHtml(row) {
     safePath = await require('../lib/storage/locations').ensureLocalFile(row, 'asset');
     if (!safePath) throw Object.assign(new Error('Bundle not found'), { code: 'NOT_FOUND' });
   }
-  const { inlineBundle } = require('../lib/bundle-inline');
-  const out = await inlineBundle(safePath, row.bundle_entry || 'index.html');
+  const { inlineBundleCached } = require('../lib/bundle-inline');
+  const out = await inlineBundleCached(safePath, row.bundle_entry || 'index.html');
   return out.html;
 }
 

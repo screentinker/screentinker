@@ -131,6 +131,25 @@
     }
   })();
   </script>
+  <!--
+    ⚠️ OLD ENGINES GO TO THE LEGACY BUILD. Vanilla ES5, and it must stay before every other player
+    script. This page's scripts use syntax newer than an LG webOS 4-6 / Tizen-era browser can parse
+    (`?.` needs Chrome 80): there the main script block is a SyntaxError, so nothing runs and the
+    screen stays black ("Unexpected token" in the field reports). The IPK shell already picks
+    /player/legacy for those engines, but "Play via URL", a URL launcher or an older IPK opens
+    /player directly. Only the exact /player paths redirect: legacy.html is built from this file
+    and carries this script too, and other hosts (file://, /view/) must not be bounced.
+  -->
+  <script>
+  (function () {
+    try {
+      var p = window.location.pathname;
+      if (p !== '/player' && p !== '/player/' && p !== '/player/index.html') return;
+      try { if (Function('return ({ v: 1 })?.v ?? 0')() === 1) return; } catch (e) { /* no ?. : old engine */ }
+      window.location.replace('/player/legacy' + window.location.search + window.location.hash);
+    } catch (e) { /* never block the player over this */ }
+  })();
+  </script>
   <!-- Debug overlay module (section 2). Defers so HTML parse doesn't block
        on the fetch. Auto-activation check fires after DOMContentLoaded;
        few-ms delay vs the inline trap is fine since errors before this
@@ -3700,7 +3719,15 @@
         el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:3000;background:rgba(245,158,11,.94);color:#000;font:12px sans-serif;padding:5px 10px;text-align:center;line-height:1.4';
         document.body.appendChild(el);
       }
-      el.innerHTML = lines.join('<br>');
+      // ⚠️ Never innerHTML here: the lines carry editor-controlled layout, item and zone
+      // names, and this page runs on the dashboard origin with the operator's token in
+      // localStorage. A name like <img onerror=...> would run as the admin who clicked
+      // Playlist Preview. Text nodes plus <br> elements only.
+      el.textContent = '';
+      lines.forEach((line, i) => {
+        if (i) el.appendChild(document.createElement('br'));
+        el.appendChild(document.createTextNode(line));
+      });
     }
 
     function showPreviewError(status) {

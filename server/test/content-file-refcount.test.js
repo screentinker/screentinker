@@ -123,3 +123,30 @@ test('a missing file and an empty reference are both quietly fine', () => {
   assert.equal(unlinkIfUnreferenced('', id(), 'filepath').unlinked, false);
   assert.equal(unlinkIfUnreferenced('not-on-disk.mp4', id(), 'filepath').reason, 'already gone');
 });
+
+test('⚠️ a file another row names in a DIFFERENT column survives (forged subtitle_url)', () => {
+  // The attack: tenant A points its own subtitle_url at tenant B's media, then deletes its row. A
+  // refcount on subtitle_url alone sees no other subtitle and unlinks B's file.
+  const name = `${'f'.repeat(64)}.mp4`;
+  const p = touch(name);
+  const attacker = mkRow(wsA, `${'9'.repeat(64)}.mp4`, { subtitle_url: name });
+  mkRow(wsB, name);                       // the victim's row, naming the file as its filepath
+  const r = unlinkIfUnreferenced(name, attacker, 'subtitle_url');
+  assert.equal(r.unlinked, false);
+  assert.equal(r.reason, 'still referenced');
+  assert.equal(fs.existsSync(p), true, "a subtitle delete must not unlink another tenant's media");
+
+  const thumb = `thumb_${'f'.repeat(64)}.jpg`;
+  const tp = touch(thumb);
+  mkRow(wsB, `${'8'.repeat(64)}.mp4`, { thumbnail_path: thumb });
+  assert.equal(unlinkIfUnreferenced(thumb, attacker, 'filepath').unlinked, false);
+  assert.equal(fs.existsSync(tp), true);
+});
+
+test('the keeper row\'s own other columns do not pin its file (an image\'s thumbnail IS its file)', () => {
+  const name = `${'7'.repeat(64)}.png`;
+  const p = touch(name);
+  const only = mkRow(wsA, name, { thumbnail_path: name });
+  assert.equal(unlinkIfUnreferenced(name, only, 'filepath').unlinked, true);
+  assert.equal(fs.existsSync(p), false, 'counting the row against itself would leak every image');
+});

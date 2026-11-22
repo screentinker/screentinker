@@ -40,7 +40,23 @@ router.post('/users', (req, res) => {
   // Accept workspaceId (preferred) or orgId as an alias for the target field.
   const workspaceId = String(req.body?.workspaceId || req.body?.orgId || '').trim();
   const role = String(req.body?.role || '').trim();
-  const mustChangePassword = !!req.body?.mustChangePassword;
+  /*
+   * ⚠️ ON THE HOSTED CLOUD, ONLY A PLATFORM ADMIN MAY MINT A READY-TO-USE ACCOUNT.
+   *
+   * Every hosted signup is the org_owner of its own organization, so canAdminWorkspace passes for
+   * anyone who registers. Created verified with a password the creator chose, this route let any
+   * signup squat any address: the real owner's /register got a 409, their SSO login got
+   * account_exists_local, and the squatter signed in as them. #292 (verified, admin-set password)
+   * was written for an operator provisioning colleagues on their own server, which is still the
+   * case for a platform admin anywhere and for every admin on a self-hosted instance.
+   *
+   * Anyone else on hosted gets an account with NO password and email_verified = 0, and the
+   * set-password link goes to the MAILBOX only. ⚠️ Never return that link to the creator: whoever
+   * holds it sets the password, so handing it back would reopen exactly this hole.
+   */
+  const cfg = require('../config');
+  const mailboxMustClaim = !cfg.selfHosted && req.user?.role !== 'platform_admin';
+  const mustChangePassword = !mailboxMustClaim && !!req.body?.mustChangePassword;
 
   if (!email || !EMAIL_RE.test(email)) {
     return res.status(400).json({ error: 'Valid email required' });
@@ -48,7 +64,7 @@ router.post('/users', (req, res) => {
   if (!WORKSPACE_ROLES.includes(role)) {
     return res.status(400).json({ error: 'Role must be workspace_admin, workspace_editor, or workspace_viewer' });
   }
-  if (password.length < MIN_PASSWORD_LENGTH) {
+  if (!mailboxMustClaim && password.length < MIN_PASSWORD_LENGTH) {
     return res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` });
   }
   if (!workspaceId) {
@@ -118,7 +134,9 @@ router.post('/users', (req, res) => {
   }
 
   const id = uuidv4();
-  const passwordHash = bcrypt.hashSync(password, 10);
+  // NULL is "no password": login refuses a row without a hash (routes/auth.js) until the mailed
+  // set-password link has been used.
+  const passwordHash = mailboxMustClaim ? null : bcrypt.hashSync(password, 10);
 
   // HOSTED_INSTANCE: an admin-provisioned user is already set up with a
   // password, so they must NOT receive the welcome email or enter the
@@ -142,15 +160,14 @@ router.post('/users', (req, res) => {
   // wrote 'free' regardless, so a colleague ADDED on the operator's own server was held to two
   // screens while one who signed up was not. Hosted, and the trial model, stay on 'free': an added
   // user never gets a trial clock they did not ask for.
-  const cfg = require('../config');
   const startPlan = (cfg.selfHosted && cfg.selfHostedSignupPlan === 'enterprise') ? 'enterprise' : 'free';
   const txn = db.transaction(() => {
     db.prepare(`
       INSERT INTO users (
         id, email, name, password_hash, auth_provider, role, plan_id,
         must_change_password, email_verified, email_proven, welcome_email_sent_at, activation_nudge_sent_at
-      ) VALUES (?, ?, ?, ?, 'local', 'user', ?, ?, 1, 0, strftime('%s','now'), strftime('%s','now'))
-    `).run(id, email, name || email.split('@')[0], passwordHash, startPlan, mustChangePassword ? 1 : 0);
+      ) VALUES (?, ?, ?, ?, 'local', 'user', ?, ?, ?, 0, strftime('%s','now'), strftime('%s','now'))
+    `).run(id, email, name || email.split('@')[0], passwordHash, startPlan, mustChangePassword ? 1 : 0, mailboxMustClaim ? 0 : 1);
 
     // Same membership footprint as an accepted invite: one workspace_members
     // row, invited_by = the admin who created them.
@@ -165,11 +182,32 @@ router.post('/users', (req, res) => {
   // plaintext password (and the generic activityLogger only summarizes name).
   logActivity(req.user.id, 'admin_create_user', `target: ${email}, role: ${role}`, null, getClientIp(req), ws.id);
 
+  // The set-password link, mailed to the address only (see mailboxMustClaim above). Without mail
+  // the account simply waits: the person can claim it later through "Forgot password".
+  let passwordSetup;
+  if (mailboxMustClaim) {
+    const emailSvc = require('../services/email');
+    if (emailSvc.isConfigured()) {
+      const pr = require('../lib/passwordReset');
+      const token = pr.issue(id, { ttlSec: pr.INVITE_TTL_SEC });
+      const url = `${require('../lib/public-origin').publicOrigin(req)}/app#/reset-password?token=${encodeURIComponent(token)}`;
+      const by = req.user.name || req.user.email || 'An administrator';
+      emailSvc.sendEmail({
+        to: email,
+        subject: 'Set your ScreenTinker password',
+        text: `${by} added you to the workspace "${ws.name}" on ScreenTinker.\n\nOpen this link to choose your password (valid for 7 days, and usable once):\n${url}\n\nIf it expires, use "Forgot password" on the sign-in page with this email address.`,
+      }).catch((e) => console.error('[admin-create-user] set-password mail failed:', e && e.message));
+      passwordSetup = 'emailed';
+    } else {
+      passwordSetup = 'email_unavailable';
+    }
+  }
+
   // Response never includes password or hash.
   const created = db.prepare(
     'SELECT id, email, name, role, auth_provider, plan_id, must_change_password, created_at FROM users WHERE id = ?'
   ).get(id);
-  res.status(201).json({ ...created, workspace_id: ws.id, workspace_role: role });
+  res.status(201).json({ ...created, workspace_id: ws.id, workspace_role: role, ...(passwordSetup ? { password_setup: passwordSetup } : {}) });
 });
 
 // POST /api/admin/orgs - create a new organization + its first ("Default")

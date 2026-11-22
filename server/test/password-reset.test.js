@@ -117,6 +117,14 @@ test('a token works exactly once', async () => {
   assert.equal((await login(S.email, 'SecondUse12345')).status, 401, 'and must not have changed the password');
 });
 
+test('redeeming a reset link verifies the address (the token was mailed to it), still with no session', async () => {
+  db.prepare('UPDATE users SET email_verified = 0 WHERE id = ?').run(S.user.user.id);
+  const r = await reset(issueTokenFor(S.user.user.id), 'VerifiedByReset1');
+  assert.equal(r.status, 200);
+  assert.ok(!r.body || !r.body.token, 'a reset still hands out no session');
+  assert.equal(db.prepare('SELECT email_verified FROM users WHERE id = ?').get(S.user.user.id).email_verified, 1);
+});
+
 test('an unknown or expired token is refused', async () => {
   assert.equal((await reset(crypto.randomBytes(32).toString('hex'), NEW_PW)).status, 400, 'unknown token');
   assert.equal((await reset('', NEW_PW)).status, 400, 'empty token');

@@ -1738,7 +1738,11 @@ function isTokenPairRequest(req) {
     && (req.path || '').toLowerCase().replace(/\/+$/, '') === '/pair';
 }
 function provisionLimiter() {
-  const perIp = rateLimit(60000, 5);
+  // Per client NETWORK, not per exact address: IPv6 folded to its /64, or one host rotating through
+  // its own prefix gets 5/min per address. Only dashboard users call /api/provision (players never
+  // do), so a site's screens sharing a /64 cannot be squeezed by this.
+  const { netKey } = require('./lib/pair-lockout'); // ⚠️ required here: the module-level const sits further down (TDZ)
+  const perIp = rateLimit(60000, 5, null, (req) => netKey(getClientIp(req)) || 'net:unknown');
   const tokenFront = rateLimit(60000, 120, null, (req) => 'st-front:' + getClientIp(req));
   return (req, res, next) => (isTokenPairRequest(req) ? tokenFront(req, res, next) : perIp(req, res, next));
 }
@@ -2034,8 +2038,9 @@ app.get('/api/content/:id/bundle-preview/:token', (req, res) => {
  * not left to the player's frame attribute, because a link opened in a tab has no frame.
  *
  * The bytes are never extracted to disk; lib/bundle-inline.js reads entries out of the stored
- * archive in memory. Rate limiting comes from the /api/content mount above, which matters here
- * because inlining is the one memory-hungry thing on this route.
+ * archive in memory. ⚠️ NOT rate limited: contentLimiter skips GETs and the backstop exempts this
+ * path (players fetch it at fleet scale). What bounds it instead is the inliner itself: a capped,
+ * charged entry page, linear scanners, and a result cache so a poll does not re-inline.
  */
 app.get('/api/content/:id/bundle', async (req, res) => {
   const { db } = require('./db/database');
@@ -2059,9 +2064,11 @@ app.get('/api/content/:id/bundle', async (req, res) => {
       safePath = await require('./lib/storage/locations').ensureLocalFile(content, 'asset');
       if (!safePath) return res.status(404).json({ error: 'Bundle not found' });
     }
-    const { inlineBundle } = require('./lib/bundle-inline');
+    // Cached per archive file + mtime + size (lib/bundle-inline.js RESULT CACHE): player polls hit this
+    // route constantly, and it is public and not rate limited.
+    const { inlineBundleCached } = require('./lib/bundle-inline');
     const entry = content.bundle_entry || 'index.html';
-    const out = await inlineBundle(safePath, entry);
+    const out = await inlineBundleCached(safePath, entry);
     res.setHeader('Content-Security-Policy', BUNDLE_SANDBOX_CSP);
     // Framed by a player at a null origin, so SAMEORIGIN would refuse it — the same reason the
     // widget render route drops this header.
@@ -3444,8 +3451,11 @@ app.post('/api/provision/pair', bearerAuth, resolveTenancy, requireTokenScope('f
   // #87: lock out an IP after repeated failed pairing-code guesses (brute-force defense
   // beyond the 5/min rate-limit on /api/provision).
   // #827: a token's failures count against its OWNER (every token they hold), not the IP it calls from.
-  const ip = req.viaToken ? 'st-owner:' + req.user.id : getClientIp(req);
-  if (pairLockout.isLocked(ip)) {
+  // A dashboard session counts against BOTH the account and the client network (IPv6 folded to its
+  // /64): keyed on the exact IP alone, rotating through one's own /64 bought a fresh budget per
+  // address. lib/pair-lockout.js keysFor() says why each bucket is there.
+  const lockKeys = pairLockout.keysFor(req.viaToken ? { userId: req.user.id } : { userId: req.user.id, ip: getClientIp(req) });
+  if (pairLockout.isLockedAny(lockKeys)) {
     return res.status(429).json({ error: 'Too many failed pairing attempts. Try again in a few minutes.' });
   }
   const { pairing_code, name } = req.body;
@@ -3458,7 +3468,7 @@ app.post('/api/provision/pair', bearerAuth, resolveTenancy, requireTokenScope('f
   const device = db.prepare('SELECT * FROM devices WHERE pairing_code = ?').get(pairing_code);
   // #87: an UNKNOWN code is a brute-force guess - count it toward the per-IP lockout.
   if (!device) {
-    pairLockout.recordFailure(ip);
+    pairLockout.recordFailureAll(lockKeys);
     return res.status(404).json({ error: 'No device found with that pairing code' });
   }
   // An EXPIRED code is a legitimate-but-stale code (a slow rollout, not an attack), so it
@@ -3488,7 +3498,7 @@ app.post('/api/provision/pair', bearerAuth, resolveTenancy, requireTokenScope('f
   if (pairLockout.isCodeExpired(lastSeen)) {
     return res.status(410).json({ error: pairLockout.CODE_EXPIRED_MESSAGE });
   }
-  pairLockout.noteSuccess(ip); // forgives one earlier typo, never the whole count (lib/pair-lockout.js)
+  pairLockout.noteSuccessAll(lockKeys); // forgives one earlier typo, never the whole count (lib/pair-lockout.js)
 
   // One free trial per screen (lib/trial-screens.js): a trialing account claiming the third screen
   // that another, unpaid trial already used is refused. Hosted only; paying / Free accounts never.

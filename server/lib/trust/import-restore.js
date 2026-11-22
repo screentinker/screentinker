@@ -926,6 +926,10 @@ const HOOKS = {
     row.thumbnail_path = f.thumb ? f.thumb.name : (raw.thumbnail_path && raw.thumbnail_path === raw.filepath && f.asset ? f.asset.name : null);
     row.byte_digest = f.asset ? f.asset.sha256 : null;
     row.storage_profile_id = null; row.object_key = null;
+    // ⚠️ The subtitle file never travels in the archive, so a subtitle_url here is only a name from
+    // the archive, and the delete paths unlink whatever it names in the shared contentDir. Reset like
+    // filepath/thumbnail_path above; the operator uploads the .vtt again.
+    if ('subtitle_url' in row) row.subtitle_url = null;
     return row;
   },
   custom_fonts(r, row, raw) {

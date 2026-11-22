@@ -31,6 +31,10 @@ db.exec(`
     plan_id TEXT DEFAULT 'free',
     email_alerts INTEGER DEFAULT 1,
     must_change_password INTEGER NOT NULL DEFAULT 0,
+    password_reset_hash TEXT,
+    password_reset_expires INTEGER,
+    email_verify_hash TEXT,
+    email_verify_expires INTEGER,
     -- Mirrors the real schema, where this arrives as
     --   ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0
     -- The DEFAULT 0 is the whole point: it is what left admin-created users facing an
@@ -233,6 +237,78 @@ test('org_admin can create in their own org but NOT another org', async () => {
   const denied = await post('/api/admin/users', tokens.orgAdminA, newUserBody({ email: 'in-b@test.local', workspaceId: 'ws-b' }));
   assert.equal(denied.status, 403);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM users WHERE email=?').get('in-b@test.local').c, 0);
+});
+
+/*
+ * ⚠️ Hosted: an org owner/admin is any signup, so it must not mint a verified, password-usable
+ * account for an address it does not own (squatting the real person's signup and SSO). This test
+ * file runs without SELF_HOSTED, i.e. as the hosted cloud.
+ */
+test('hosted: a non-platform-admin creator gets an unverified, passwordless account; its password is ignored', async () => {
+  const res = await post('/api/admin/users', tokens.orgAdminA, newUserBody({ email: 'squat@test.local', password: 'Attacker123' }));
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  assert.equal(body.password_setup, 'email_unavailable', 'no SMTP in this test: nothing mailed, and no link returned');
+  assert.ok(!JSON.stringify(body).includes('token'), 'the set-password link must never go back to the creator');
+  const row = db.prepare('SELECT * FROM users WHERE email = ?').get('squat@test.local');
+  assert.equal(row.email_verified, 0);
+  assert.equal(row.password_hash, null);
+  assert.equal(row.must_change_password, 0);
+  const login = await post('/api/auth/login', null, { email: 'squat@test.local', password: 'Attacker123' });
+  assert.equal(login.status, 401, 'the creator-chosen password must not sign in');
+  // A short or missing password is no longer a reason to refuse: it is not used.
+  assert.equal((await post('/api/admin/users', tokens.orgAdminA, newUserBody({ email: 'nopw@test.local', password: '' }))).status, 201);
+});
+
+test('hosted: with mail configured the set-password link goes to the mailbox, and only that sets a password', async () => {
+  const emailSvc = require('../services/email');
+  const orig = { isConfigured: emailSvc.isConfigured, sendEmail: emailSvc.sendEmail };
+  const sent = [];
+  emailSvc.isConfigured = () => true;
+  emailSvc.sendEmail = async (m) => { sent.push(m); return { sent: true }; };
+  try {
+    const res = await post('/api/admin/users', tokens.orgAdminA, newUserBody({ email: 'mailed@test.local' }));
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.equal(body.password_setup, 'emailed');
+    assert.ok(!JSON.stringify(body).includes('reset-password'), 'the link is mailed, never returned');
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].to, 'mailed@test.local');
+    // An invitation lasts a week (people open it the next day); a forgot-password link stays 1 hour.
+    const pr = require('../lib/passwordReset');
+    const exp = db.prepare("SELECT password_reset_expires AS e FROM users WHERE email = 'mailed@test.local'").get().e;
+    const left = exp - Math.floor(Date.now() / 1000);
+    assert.ok(left > pr.INVITE_TTL_SEC - 120 && left <= pr.INVITE_TTL_SEC, `invite link lasts 7 days (got ${left}s)`);
+    assert.equal(pr.INVITE_TTL_SEC, 7 * 24 * 3600);
+    assert.equal(pr.TTL_SEC, 3600, 'a forgot-password link is still 1 hour');
+    assert.match(sent[0].text, /valid for 7 days/);
+    const token = decodeURIComponent(/token=([^\s]+)/.exec(sent[0].text)[1]);
+    const reset = await post('/api/auth/reset-password', null, { token, password: 'MailboxOwner1' });
+    assert.equal(reset.status, 200);
+    // Using the mailed link proved the inbox, so the address is verified and login goes straight in.
+    assert.equal(db.prepare("SELECT email_verified FROM users WHERE email = 'mailed@test.local'").get().email_verified, 1);
+    const login = await post('/api/auth/login', null, { email: 'mailed@test.local', password: 'MailboxOwner1' });
+    assert.equal(login.status, 200);
+    assert.ok((await login.json()).token, 'no second confirm-your-email step');
+  } finally {
+    Object.assign(emailSvc, orig);
+  }
+});
+
+test('self-hosted: an org admin keeps the #292 behaviour (verified, admin-set password)', async () => {
+  const cfg = require('../config');
+  const was = cfg.selfHosted;
+  cfg.selfHosted = true;
+  try {
+    const res = await post('/api/admin/users', tokens.orgAdminA, newUserBody({ email: 'sh@test.local', password: 'SelfHosted1', mustChangePassword: false }));
+    assert.equal(res.status, 201);
+    assert.equal((await res.json()).password_setup, undefined);
+    const row = db.prepare('SELECT * FROM users WHERE email = ?').get('sh@test.local');
+    assert.equal(row.email_verified, 1);
+    assert.ok(bcrypt.compareSync('SelfHosted1', row.password_hash));
+  } finally {
+    cfg.selfHosted = was;
+  }
 });
 
 test('validation: bad email 400, bad role 400, short password 400, missing workspace 404', async () => {

@@ -4,7 +4,7 @@ import { showToast } from '../components/toast.js';
 import { esc, isPlatformAdmin } from '../utils.js';
 import { t, tn } from '../i18n.js';
 import { pluginFieldsHtml, readPluginFields } from '../lib/plugin-fields.js';
-import { openAddUserModal } from '../components/workspace-members-add-user-modal.js';
+import { openAddUserModal, addUserSuccessMessage } from '../components/workspace-members-add-user-modal.js';
 import { openManageWorkspacesModal } from '../components/admin-user-workspaces-modal.js';
 import { openCreateOrgModal } from '../components/admin-create-org-modal.js';
 import { openTypeToConfirmModal } from '../components/type-to-confirm-modal.js';
@@ -251,7 +251,7 @@ function wireAddUser() {
   document.getElementById('adminAddUserBtn')?.addEventListener('click', () => {
     openAddUserModal(null, {
       onSuccess: (result) => {
-        showToast(t('members.success.user_created', { email: result.email }), 'success');
+        showToast(addUserSuccessMessage(result), 'success');
         loadUsers();
       },
       mapError: mapMutationError,

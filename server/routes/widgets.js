@@ -859,9 +859,12 @@ function renderLegacyLinkedWidget(linked, opts) {
   };
   // Linked widgets must use the saved widget's resolvers, not the preview
   // switch: templates otherwise lose their images, fonts and data bindings.
+  // ⚠️ Returns the whole { html, csp }, not .html: /render is CSP-exempt in server.js, so
+  // without the template's own `sandbox allow-scripts` CSP the author's JS would run
+  // top-level on the dashboard origin from a public URL. The caller must apply out.csp.
   if (widget.widget_type === 'template') return require('../lib/templates/widget').renderTemplateWidget(widget, {
     origin: opts.origin, resolveImage: common.resolveImage, resolveFont: common.resolveFont, resolveData: common.resolveData,
-  }).html;
+  });
   if (widget.widget_type === 'cap_alert') {
     const feed = config.feed_id && db.prepare('SELECT * FROM cap_feeds WHERE id = ? AND workspace_id = ?').get(config.feed_id, widget.workspace_id);
     return require('../lib/cap/card').renderCard(feed ? require('../lib/cap/feeds').liveAlerts(db, feed) : [], { title: feed ? feed.name : 'Emergency alert' });
@@ -1175,7 +1178,16 @@ router.get('/:id/render', (req, res) => {
       if (linked.widget.widget_type === 'rss') {
         return legacyRssSnapshot(linked.config).then((snapshot) => res.send(renderLegacyRSS(linked.config, snapshot)));
       }
-      return Promise.resolve(renderLegacyLinkedWidget(linked, renderOpts)).then((html) => res.send(html));
+      return Promise.resolve(renderLegacyLinkedWidget(linked, renderOpts)).then((out) => {
+        if (out && typeof out === 'object') {
+          // A linked template: same headers as the direct template render above.
+          res.setHeader('Content-Security-Policy', out.csp);
+          res.setHeader('X-Content-Type-Options', 'nosniff');
+          res.setHeader('Referrer-Policy', 'no-referrer');
+          return res.send(out.html);
+        }
+        return res.send(out);
+      });
     }
   }
   if (widget.widget_type === 'weather' && req.query.compat === 'sssp1228') {

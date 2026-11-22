@@ -32,6 +32,29 @@ function generatePassword(len = 16) {
   return out;
 }
 
+/*
+ * ⚠️ HOSTED, NOT A PLATFORM ADMIN: NO PASSWORD FIELD. The server (routes/admin.js POST /users)
+ * ignores a password from such a creator and mails the set-password link to the address instead,
+ * because any signup is an org owner and could otherwise squat any email. Asking for a password
+ * here would suggest it works. Only a KNOWN hosted instance (self_hosted === false from /me) hides
+ * it; when unsure the field stays, and the server's password_setup still drives the toast.
+ * role === 'platform_admin' exactly, the same test the server makes.
+ */
+function passwordByEmail() {
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || 'null');
+    return !!u && u.self_hosted === false && u.role !== 'platform_admin';
+  } catch (_) { return false; }
+}
+
+// The success toast for a created user, from what the server actually did (password_setup).
+export function addUserSuccessMessage(result) {
+  const email = result && result.email;
+  if (result && result.password_setup === 'emailed') return t('members.success.user_created_emailed', { email });
+  if (result && result.password_setup === 'email_unavailable') return t('members.success.user_created_no_email', { email });
+  return t('members.success.user_created', { email });
+}
+
 function wsLabel(w) {
   return `${w.organization_name || '—'} / ${w.name}`;
 }
@@ -40,6 +63,7 @@ export function openAddUserModal(workspace, opts = {}) {
   const { onSuccess, mapError } = opts;
   // Picker mode whenever no concrete target workspace was supplied.
   const pickerMode = !(workspace && workspace.id);
+  const byEmail = passwordByEmail();
 
   const title = pickerMode
     ? t('members.modal.add_user_title_generic')
@@ -81,13 +105,15 @@ export function openAddUserModal(workspace, opts = {}) {
           <label for="addUserName">${t('members.modal.name_label')}</label>
           <input id="addUserName" type="text" class="input" placeholder="${t('members.modal.name_placeholder')}" style="width:100%" autocomplete="off">
         </div>
+        ${byEmail ? `
+        <p style="font-size:13px;color:var(--text-secondary);margin:0 0 12px">${esc(t('members.modal.password_by_email'))}</p>` : `
         <div class="form-group">
           <label for="addUserPassword">${t('members.modal.password_label')}</label>
           <div style="display:flex;gap:8px">
             <input id="addUserPassword" type="text" class="input" placeholder="${t('members.modal.password_placeholder')}" style="flex:1" autocomplete="off" autocapitalize="off" spellcheck="false">
             <button class="btn btn-secondary" type="button" id="addUserGenerate" style="white-space:nowrap">${t('members.modal.generate')}</button>
           </div>
-        </div>
+        </div>`}
         ${workspaceGroup}
         <div class="form-group">
           <label for="addUserRole">${t('members.modal.role_label')}</label>
@@ -95,10 +121,10 @@ export function openAddUserModal(workspace, opts = {}) {
             ${roleOptions}
           </select>
         </div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        ${byEmail ? '' : `<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
           <input id="addUserMustChange" type="checkbox" checked>
           ${t('members.modal.must_change_label')}
-        </label>
+        </label>`}
         <div id="addUserError" style="display:none;color:var(--danger);font-size:13px;margin-top:8px"></div>
       </div>
       <div class="modal-footer">
@@ -147,27 +173,25 @@ export function openAddUserModal(workspace, opts = {}) {
   document.addEventListener('keydown', onKey);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   overlay.querySelectorAll('[data-add-close]').forEach(b => b.addEventListener('click', close));
-  genBtn.addEventListener('click', () => { pwInput.value = generatePassword(); pwInput.type = 'text'; });
+  if (genBtn) genBtn.addEventListener('click', () => { pwInput.value = generatePassword(); pwInput.type = 'text'; });
 
   async function submit() {
     errorEl.style.display = 'none';
     const email = emailInput.value.trim().toLowerCase();
     const name = nameInput.value.trim();
-    const password = pwInput.value;
+    const password = pwInput ? pwInput.value : '';
     const role = roleSelect.value;
     const workspaceId = pickerMode ? (wsSelect.value || '') : workspace.id;
     if (!email || !EMAIL_RE.test(email)) { showError(t('members.error.invalid_email')); emailInput.focus(); return; }
-    if (!password || password.length < 8) { showError(t('members.error.password_min_8')); pwInput.focus(); return; }
+    if (!byEmail && (!password || password.length < 8)) { showError(t('members.error.password_min_8')); pwInput.focus(); return; }
     if (pickerMode && !workspaceId) { showError(t('members.modal.workspace_required')); (wsFilter || wsSelect).focus(); return; }
 
     submitBtn.disabled = true;
     submitBtn.textContent = t('members.modal.creating');
     try {
-      const result = await api.adminCreateUser({
-        email, name, password, role,
-        workspaceId,
-        mustChangePassword: mustChange.checked,
-      });
+      const result = await api.adminCreateUser(byEmail
+        ? { email, name, role, workspaceId }
+        : { email, name, password, role, workspaceId, mustChangePassword: mustChange.checked });
       close();
       if (typeof onSuccess === 'function') {
         try { onSuccess(result); }

@@ -5023,6 +5023,7 @@ export default {
   'members.modal.password_placeholder': 'Set a password',
   'members.modal.generate': 'Generate',
   'members.modal.must_change_label': 'Require a password change on first login',
+  'members.modal.password_by_email': 'They will get an email with a link to set their own password.',
   'members.modal.create': 'Create user',
   'members.modal.creating': 'Creating...',
 
@@ -5056,6 +5057,8 @@ export default {
   'members.success.role_changed': 'Role updated',
   'members.success.member_removed': '{name} removed',
   'members.success.user_created': 'User {email} created',
+  'members.success.user_created_emailed': 'User {email} created. We emailed {email} a link to set their password.',
+  'members.success.user_created_no_email': "User {email} created. Email isn't configured, so they can use Forgot password on the sign-in page to set one.",
 
   // Forced first-login password change (#10). Shown when an admin-provisioned
   // user (must_change_password) is routed to #/change-password.

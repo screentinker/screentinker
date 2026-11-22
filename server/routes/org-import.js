@@ -281,14 +281,16 @@ router.post('/jobs/:id/screens/:deviceId/pair', (req, res) => {
   // organization this session happens to be looking at).
   if (!req.isPlatformAdmin && !(job.organization_id && imp.canTarget(db, who(req), job.organization_id))) return res.status(403).json({ error: 'Organization owners and admins only' });
   const pairLockout = require('../lib/pair-lockout');
-  const ip = req.ip || '';
-  if (pairLockout.isLocked(ip)) return res.status(429).json({ error: 'Too many failed pairing attempts. Try again in a few minutes.' });
+  // Charged to the account AND the client network (IPv6 /64), as POST /api/provision/pair does: the
+  // bare req.ip let one host rotate through its own prefix for a fresh budget per address.
+  const lockKeys = pairLockout.keysFor({ userId: req.user && req.user.id, ip: req.ip || '' });
+  if (pairLockout.isLockedAny(lockKeys)) return res.status(429).json({ error: 'Too many failed pairing attempts. Try again in a few minutes.' });
   const r = screens.pairInto(db, { importedId: String(req.params.deviceId), code: (req.body || {}).pairing_code, orgId: job.organization_id });
   if (r.error) {
-    if (r.guess) pairLockout.recordFailure(ip);
+    if (r.guess) pairLockout.recordFailureAll(lockKeys);
     return res.status(r.status).json({ error: r.error });
   }
-  pairLockout.noteSuccess(ip);
+  pairLockout.noteSuccessAll(lockKeys);
   const deviceNs = req.app.get('io') && req.app.get('io').of('/device');
   if (deviceNs) deviceNs.to(r.device.id).emit('device:paired', { device_id: r.device.id, name: r.device.name, settings_pin: r.device.settings_pin || undefined, brand: require('../lib/branding').playerBrandForDevice(db, r.device.id) });
   auditFromReq(req, 'trust.import_screen_paired', { import_id: job.id, device_id: r.device.id, previous_id: r.previous_id });

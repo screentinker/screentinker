@@ -33,6 +33,7 @@ before(async () => {
   // grants access without standing up full workspace membership — this test is about the
   // subtitle endpoint mechanics, not tenancy (covered elsewhere).
   const app = express();
+  app.use(express.json());
   app.use((req, _res, next) => { req.workspaceId = 'ws-subs'; req.user = { id: USER, role: 'platform_admin' }; next(); });
   app.use('/', require('../routes/content'));
   server = http.createServer(app);
@@ -103,4 +104,34 @@ test('a non-.vtt upload to /:id/subtitle is rejected', async () => {
     req.end(body);
   });
   assert.notEqual(status, 200); // multer fileFilter rejects the .txt
+});
+
+function putJson(url, payload) {
+  const body = Buffer.from(JSON.stringify(payload));
+  return new Promise((resolve, reject) => {
+    const req = http.request(url, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', 'Content-Length': body.length },
+    }, (r) => { let d = ''; r.on('data', (x) => { d += x; }); r.on('end', () => resolve({ status: r.statusCode, body: d })); });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+test('⚠️ PUT /:id never stores a caller-chosen subtitle_url (it would name another tenant\'s file)', async () => {
+  // The delete paths unlink subtitle_url out of the shared contentDir, so a forged name pointed at
+  // someone else's media was a cross-tenant delete. Only clearing is accepted on PUT.
+  const c = uid('vid3');
+  db.prepare("INSERT INTO content (id, filename, mime_type, filepath, subtitle_url) VALUES (?, ?, 'video/mp4', 'v3.mp4', 'mine.vtt')").run(c, c);
+  const forged = await putJson(`${base}/${c}`, { subtitle_url: 'victim-media.mp4' });
+  assert.equal(forged.status, 400);
+  assert.equal(db.prepare('SELECT subtitle_url FROM content WHERE id = ?').get(c).subtitle_url, 'mine.vtt');
+
+  // Echoing the stored value back unchanged is a harmless no-op, not an error.
+  const echo = await putJson(`${base}/${c}`, { subtitle_url: 'mine.vtt', filename: 'Renamed' });
+  assert.equal(echo.status, 200);
+  assert.equal(db.prepare('SELECT subtitle_url FROM content WHERE id = ?').get(c).subtitle_url, 'mine.vtt');
+
+  const cleared = await putJson(`${base}/${c}`, { subtitle_url: null });
+  assert.equal(cleared.status, 200);
+  assert.equal(db.prepare('SELECT subtitle_url FROM content WHERE id = ?').get(c).subtitle_url, null);
 });

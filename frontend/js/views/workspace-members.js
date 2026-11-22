@@ -12,7 +12,7 @@ import { api } from '../api.js';
 import { t, tn } from '../i18n.js';
 import { showToast } from '../components/toast.js';
 import { openInviteMemberModal, openInviteLinkModal } from '../components/workspace-members-invite-modal.js';
-import { openAddUserModal } from '../components/workspace-members-add-user-modal.js';
+import { openAddUserModal, addUserSuccessMessage } from '../components/workspace-members-add-user-modal.js';
 import { renderApprovalSettings } from '../components/approval-settings.js';
 import { renderLiveVideoSettings } from '../components/live-video-settings.js';
 import { renderScreenShareSettings } from '../components/screen-share.js';   // 3.0 screen share
@@ -93,7 +93,7 @@ export async function render(container, workspaceId) {
     headerActions.querySelector('#addUserBtn')?.addEventListener('click', () => {
       openAddUserModal({ id: workspaceId, name: workspaceName }, {
         onSuccess: (result) => {
-          showToast(t('members.success.user_created', { email: result.email }), 'success');
+          showToast(addUserSuccessMessage(result), 'success');
           render(container, workspaceId);
         },
         mapError: mapMutationError,
