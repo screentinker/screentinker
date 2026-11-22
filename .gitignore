@@ -118,3 +118,7 @@ ios/DerivedData/
 
 # scripts/upgrade.sh: present only while an upgrade installs (server/lib/preflight-deps.js waits for it)
 server/.upgrade-in-progress
+# Added by code-review-graph
+.code-review-graph/
+# npm cache from the dependency preflight (server/lib/preflight-deps.js) or a local install
+.npm-cache/
