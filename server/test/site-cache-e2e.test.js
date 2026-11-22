@@ -38,6 +38,18 @@ after(async () => {
   if (srv) srv.stop();
 });
 
+// Resolves once read() has returned the same value for `quietMs` (a counter that stopped moving).
+async function settled(read, quietMs) {
+  let last = read();
+  let since = Date.now();
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+    const v = read();
+    if (v !== last) { last = v; since = Date.now(); } else if (Date.now() - since >= quietMs) return;
+  }
+}
+
 const playing = 'playlist.length === 1 && !!currentVideoEl && !currentVideoEl.paused && currentVideoEl.readyState >= 2';
 
 describe('site cache: media comes from the LAN box, and still plays without it', { skip: SKIP }, () => {
@@ -73,8 +85,18 @@ describe('site cache: media comes from the LAN box, and still plays without it',
       // This load declares net.site_cache, so its payload brings the box's address and a token, which
       // the player keeps (it survives a reboot with the WAN down).
       assert.ok(await waitFor(() => player(page, '!!(siteCacheCfg && siteCacheCfg.token)'), 30000), 'the payload carried the site cache');
-      // Everything so far was pinned from the origin. Start this screen's cache empty, as a screen
-      // meeting new media would, so what happens next is the site-cache path.
+      /*
+       * ⚠️ LET THE FIRST FILL FINISH BEFORE EMPTYING THE CACHE. Prefetch is single-flight per URL
+       * (sw.js `prefetching`), and the worker outlives a reload. On a slow runner it was still pulling
+       * the clip (from the origin or, now that it has the config, from the box) when the cache was
+       * deleted: the reload's prefetch for the same URL was skipped as already in flight, and the
+       * in-flight one wrote into the deleted cache. Nothing asked the box again, and this failed on
+       * main CI 2026-11-22 (hits=2 misses=0). Wait until the clip is held and the box has gone quiet.
+       */
+      assert.ok(await waitFor(() => player(page, `caches.open('rd-content-v1').then((c) => c.keys()).then((k) => k.length >= 1)`), 60000), 'the first fill finished');
+      await settled(() => node.stats.hits, 1500);
+      // Start this screen's cache empty, as a screen meeting new media would, so what happens next
+      // is the site-cache path.
       await page.evaluate(() => caches.delete('rd-content-v1'));
       const hitsAt = node.stats.hits;
       await page.reload({ waitUntil: 'domcontentloaded' });
