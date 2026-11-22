@@ -40,6 +40,22 @@ const sssp3Capabilities = [
 fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
 let html = fs.readFileSync(rendererSource, 'utf8');
+/*
+ * The web player's "old engines go to /player/legacy" redirect (server/player/index.html) only acts
+ * on the server's /player paths. This package runs the renderer from local files, so the block is
+ * dead weight here, and as an extra inline script it would break the two-script structure below.
+ * Removed whole: its comment and its <script>.
+ */
+(function dropLegacyRedirect() {
+  const mark = html.indexOf('OLD ENGINES GO TO THE LEGACY BUILD');
+  if (mark < 0) return;
+  const start = html.lastIndexOf('<!--', mark);
+  const end = html.indexOf('</script>', mark);
+  if (start < 0 || end < 0) throw Error('Legacy redirect block in the renderer source is malformed');
+  const block = html.slice(start, end + '</script>'.length);
+  if (!/window\.location\.replace\('\/player\/legacy'/.test(block)) throw Error('Legacy redirect block not recognised');
+  html = html.slice(0, start) + html.slice(end + '</script>'.length);
+})();
 function replaceDocumentOnce(needle, replacement, label) {
   const count = html.split(needle).length - 1;
   if (count !== 1) throw Error('Renderer document hook missing or ambiguous: ' + label);
