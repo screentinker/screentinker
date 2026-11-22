@@ -70,6 +70,6 @@ test('the route needs a signed-in user, like the rest of /api/data-sources', asy
 test('the Weather form builds its Language list from the weather languages, not the dashboard list', () => {
   assert.match(VIEW, /<select id="dsWxLocaleInput" class="input">\$\{weatherLangOptions\(/,
     'the weather select uses weatherLangOptions');
-  assert.match(VIEW, /api\('\/data-sources\/weather-languages'\)/, 'it asks the server which languages exist');
+  assert.match(VIEW, /api\.get\('\/data-sources\/weather-languages'\)/, 'it asks the server which languages exist');
   assert.match(VIEW, /if \(cur && !list\.includes\(cur\)\) list\.push\(cur\)/, 'a saved language is never dropped from the list');
 });
