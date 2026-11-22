@@ -54,10 +54,18 @@ const TOK = 'devtok_' + crypto.randomBytes(16).toString('hex');
 
 const run = (sql, ...a) => { const r = new (require('better-sqlite3'))(path.join(DATA_DIR, 'db', 'remote_display.db')); try { return r.prepare(sql).run(...a); } finally { r.close(); } };
 
+// ⚠️ A page that navigates under us is "not yet", not a failure (the player's service worker
+// reloads the page once on a fresh profile; a check during that reload threw at random in CI).
+const NAVIGATING = /Execution context was destroyed|Cannot find context with specified id|Target closed|detached Frame/i;
+
 async function waitFor(fn, ms = 20000, what = 'condition') {
   const t0 = Date.now();
   for (;;) {
-    const v = await fn();
+    let v;
+    try { v = await fn(); } catch (e) {
+      if (!NAVIGATING.test(String(e && e.message))) throw e;
+      v = null;
+    }
     if (v) return v;
     if (Date.now() - t0 > ms) throw new Error('timed out waiting for ' + what);
     await sleep(150);
