@@ -191,7 +191,8 @@
 .lib-insp-facts { display: grid; gap: 6px; margin: 12px 0; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
 .lib-insp-facts div { display: grid; grid-template-columns: 112px 1fr; gap: 8px; font-size: 14px; }
 .lib-insp-facts dt { color: var(--text-secondary); }
-.lib-insp-facts dd { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; }
+.lib-insp-facts dd { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; white-space: pre-wrap; }
+.lib-insp-usage + .lib-insp-usage { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 .lib-insp-sub { margin: 0 0 8px; font-size: 15px; font-weight: 600; color: var(--text-primary); }
 .lib-insp-links { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .lib-insp-links a { color: var(--accent); text-underline-offset: 2px; }
