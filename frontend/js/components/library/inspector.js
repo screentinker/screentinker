@@ -21,12 +21,59 @@ import { creditLine } from '../stock-picker.js';
 
 const NARROW = '(max-width: 1100px)';
 
+function objectValue(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function detailsFor(c) {
+  const flag = (value) => t(value ? 'library.inspector.detail_enabled' : 'library.inspector.detail_disabled');
+  const ty = typeOf(c);
+  const facts = [
+    [t('library.col.type'), ty.label + (ty.remote ? ` · ${t('library.inspector.linked')}` : '')],
+    [t('content.label_mime_type'), c.mime_type],
+    [t('library.col.duration'), durationOf(c)],
+    [t('library.col.dimensions'), dimensionsOf(c)],
+    [t('library.inspector.size'), isStoredFile(c) ? formatSize(c.file_size) : ''],
+    [t('library.inspector.source'), sourceOf(c)],
+    // Free stock (lib/stock-media.js): who took it, and where from. Shown wherever the item is.
+    [t('stock.inspector.credit'), creditLine(c)],
+    [t('library.inspector.added'), c.created_at ? new Date(Number(c.created_at) * 1000).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' }) : ''],
+    [t('content.label_expires_at'), c.expires_at ? new Date(Number(c.expires_at) * 1000).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''],
+  ];
+  const extended = [
+    [t('content.label_meta'), Object.entries(objectValue(c.meta) || {}).map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`).join('\n')],
+  ];
+  if (c.mime_type === 'video/rtsp') extended.push([t('library.inspector.tls_self_signed'), flag(!c.tls_self_signed)]);
+  if (c.mime_type === 'video/youtube') {
+    extended.push([t('content.label_unstable_connection'), flag(c.unstable_connection)]);
+    extended.push([t('content.label_captions_enabled'), flag(c.captions_enabled)]);
+    extended.push([t('content.label_captions_lang'), c.captions_lang || 'en']);
+  }
+  const uploadedVideo = !c.remote_url && c.mime_type?.startsWith('video/');
+  if (uploadedVideo) {
+    extended.push([t('content.label_subtitle_file'), c.subtitle_url ? t('library.inspector.file_attached') : t('library.inspector.file_not_attached')]);
+    if (c.subtitle_url) extended.push([t('content.label_subtitle_lang'), c.subtitle_lang || 'en']);
+    extended.push([t('content.audio_guide_enable'), flag(c.audio_guide_enabled)]);
+    extended.push([t('content.tvsafe.prerotated_short'), flag(c.video_prerotated)]);
+  }
+  const withValues = (rows) => rows.filter(([, value]) => value !== '' && value != null);
+  return { facts: withValues(facts), extended: withValues(extended) };
+}
+
 export function createInspector(host, opts) {
   // opts: { folders(), folderPath(f), rootLabel, canWrite(), menuItems(item, anchor), onSaved(item),
   //         onReplaced(item), onClose(), onPreviewBundle(item) }
   let item = null;
   let draft = null;
   let usageReq = 0;
+  let audioTracksReq = 0;
   let opener = null;
   const mq = window.matchMedia(NARROW);
 
@@ -81,20 +128,9 @@ export function createInspector(host, opts) {
     stopMedia();
     if (!item) { host.hidden = true; host.innerHTML = ''; return; }
     const c = item;
-    const ty = typeOf(c);
     const st = statusOf(c);
     const writable = opts.canWrite();
-    const rows = [
-      [t('library.col.type'), ty.label + (ty.remote ? ` · ${t('library.inspector.linked')}` : '')],
-      [t('library.col.duration'), durationOf(c)],
-      [t('library.col.dimensions'), dimensionsOf(c)],
-      [t('library.inspector.size'), isStoredFile(c) ? formatSize(c.file_size) : ''],
-      [t('library.inspector.source'), sourceOf(c)],
-      // Free stock (lib/stock-media.js): who took it, and where from. Shown wherever the item is.
-      [t('stock.inspector.credit'), creditLine(c)],
-      [t('library.inspector.added'), c.created_at ? new Date(Number(c.created_at) * 1000).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' }) : ''],
-      [t('content.label_expires_at'), c.expires_at ? new Date(Number(c.expires_at) * 1000).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''],
-    ].filter(([, v]) => v);
+    const { facts, extended } = detailsFor(c);
     host.hidden = false;
     host.innerHTML = `
       <div class="lib-insp-head">
@@ -133,7 +169,12 @@ export function createInspector(host, opts) {
             <button type="submit" class="btn btn-primary btn-sm" data-act="save" ${isDirty() ? '' : 'disabled'}>${esc(t('common.save'))}</button>
           </div>` : `<p class="lib-field-help">${esc(t('library.inspector.read_only'))}</p>`}
         </form>
-        <dl class="lib-insp-facts">${rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
+        <dl class="lib-insp-facts">${facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
+        ${extended.length ? `<dl class="lib-insp-facts">${extended.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>` : ''}
+        ${!c.remote_url && c.mime_type?.startsWith('video/') ? `<section class="lib-insp-usage" aria-labelledby="libInspAudioTitle">
+          <h3 id="libInspAudioTitle" class="lib-insp-sub">${esc(t('content.label_audio_tracks'))}</h3>
+          <div data-audio-tracks aria-live="polite">${esc(t('common.loading'))}</div>
+        </section>` : ''}
         <section class="lib-insp-usage" aria-labelledby="libInspUsageTitle">
           <h3 id="libInspUsageTitle" class="lib-insp-sub">${esc(t('library.inspector.used_in'))}</h3>
           <div data-usage aria-live="polite">${esc(t('common.loading'))}</div>
@@ -149,6 +190,7 @@ export function createInspector(host, opts) {
     hydrateAuthImages(host);
     wire();
     loadUsage(c);
+    if (!c.remote_url && c.mime_type?.startsWith('video/')) loadAudioTracks(c);
   }
 
   function syncSaveRow() {
@@ -225,6 +267,23 @@ export function createInspector(host, opts) {
       ${u.playlists.length ? `<ul class="lib-insp-links">${u.playlists.map((p) => `<li><a href="#/playlists/${encodeURIComponent(p.id)}">${esc(p.name)}</a>${p.smart ? ` <span class="lib-muted">(${esc(t('library.inspector.smart'))})</span>` : ''}</li>`).join('')}</ul>` : ''}
       ${other.length ? `<p class="lib-field-help">${esc(t('library.inspector.also_used', { list: other.join(', ') }))}</p>` : ''}
       ${!u.in_use ? `<p class="lib-field-help">${esc(t('library.inspector.not_used'))}</p>` : ''}`;
+  }
+
+  async function loadAudioTracks(c) {
+    const my = ++audioTracksReq;
+    const box = () => host.querySelector('[data-audio-tracks]');
+    let tracks;
+    try {
+      tracks = await api.get(`/content/${encodeURIComponent(c.id)}/audio-tracks`);
+      if (!Array.isArray(tracks)) throw new Error('Invalid audio tracks response');
+    } catch {
+      if (my === audioTracksReq && box()) box().textContent = t('library.inspector.audio_tracks_failed');
+      return;
+    }
+    if (my !== audioTracksReq || !box() || !item || item.id !== c.id) return;
+    box().innerHTML = tracks.length
+      ? `<ul class="lib-insp-links">${tracks.map((track) => `<li>${esc(track.label || track.lang)} <span class="lib-muted">(${esc(track.lang)})</span>${track.is_default ? ` · ${esc(t('content.audio_default'))}` : ''}${track.has_caption ? ` · ${esc(t('content.audio_has_caption'))}` : ''}</li>`).join('')}</ul>`
+      : `<p class="lib-field-help">${esc(t('content.audio_none'))}</p>`;
   }
 
   async function save() {

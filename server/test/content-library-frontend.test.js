@@ -16,7 +16,7 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 /** Run an ES module's source as a script: imports dropped, `export` keywords removed. */
 function load(file, names, ctx = {}) {
   const src = read(file)
-    .replace(/^import [\s\S]*?from '[^']+';\n/gm, '')
+    .replace(/^import .*?;\r?\n/gm, '')
     .replace(/^export (const|function|async function|let) /gm, '$1 ')
     .replace(/^export \{[^}]*\};?$/gm, '');
   const box = { module: {}, URL, console, ...ctx };
@@ -27,11 +27,14 @@ const plain = (v) => JSON.parse(JSON.stringify(v));   // objects made in the vm 
 const tStub = (k, v) => (v ? `${k}:${JSON.stringify(v)}` : k);
 
 const add = load('components/library/add-content.js', ['youtubeId', 'liveKind', 'detectMediaType', 'treeOrder', 'UPLOAD_ACCEPT'], { t: tStub, esc: String });
-const meta = load('components/library/content-meta.js', ['typeOf', 'statusOf', 'usageText', 'thumbOf', 'durationOf', 'dimensionsOf', 'formatDuration', 'isStoredFile'], { t: tStub });
+const meta = load('components/library/content-meta.js', ['typeOf', 'statusOf', 'usageText', 'thumbOf', 'durationOf', 'dimensionsOf', 'formatDuration', 'formatSize', 'sourceOf', 'isStoredFile'], { t: tStub });
+const inspectorDetails = load('components/library/inspector.js', ['detailsFor'], {
+  t: tStub, ...meta, creditLine: () => '',
+});
 
 test('YouTube: the form accepts exactly what the server accepts', () => {
   // routes/content.js extractYoutubeId, copied from the source so a change there fails here.
-  const route = fs.readFileSync(path.join(__dirname, '..', 'routes', 'content.js'), 'utf8');
+  const route = fs.readFileSync(path.join(__dirname, '..', 'routes', 'content.js'), 'utf8').replace(/\r\n/g, '\n');
   const body = route.slice(route.indexOf('function extractYoutubeId'), route.indexOf('\n}\n', route.indexOf('function extractYoutubeId')) + 2);
   const server = vm.runInNewContext(`${body}; extractYoutubeId`);
   const cases = ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'https://youtu.be/dQw4w9WgXcQ', 'https://www.youtube.com/shorts/abcdefghijk',
@@ -112,6 +115,53 @@ test('the inspector names every kind of reference the server reports', () => {
   assert.deepEqual(kinds.sort(), ['corporate', 'schedules', 'screens', 'slides', 'walls', 'widgets']);
   const en = read('i18n/en.js');
   for (const k of kinds) assert.ok(en.includes(`'library.inspector.elsewhere_${k}'`), k);
+});
+
+test('the inspector separates edit-dialog metadata and media settings', () => {
+  const { facts, extended: rows } = inspectorDetails.detailsFor({
+    id: 'yt', filename: 'Tour', mime_type: 'video/youtube',
+    remote_url: 'https://youtube.com/watch?v=video',
+    meta: '{"department":"sales","languages":["en","fr"]}',
+    unstable_connection: true, captions_enabled: false, captions_lang: 'fr',
+  });
+  const value = (key) => rows.find(([label]) => label === key)?.[1];
+  assert.equal(value('content.label_meta'), 'department=sales\nlanguages=["en","fr"]');
+  assert.equal(value('content.label_unstable_connection'), 'library.inspector.detail_enabled');
+  assert.equal(value('content.label_captions_enabled'), 'library.inspector.detail_disabled');
+  assert.equal(value('content.label_captions_lang'), 'fr');
+  assert.ok(facts.some(([key]) => key === 'library.col.type'));
+  assert.ok(facts.some(([key, val]) => key === 'content.label_mime_type' && val === 'video/youtube'));
+  assert.ok(!facts.some(([key]) => key === 'content.label_meta'));
+  assert.ok(!rows.some(([key]) => key === 'content.label_subtitle_file'), 'uploaded-video settings are not shown for a YouTube item');
+
+  const { extended: uploaded } = inspectorDetails.detailsFor({
+    id: 'mp4', filename: 'Tour.mp4', mime_type: 'video/mp4', filepath: 'tour.mp4',
+    subtitle_url: '/subtitles/tour.vtt', subtitle_lang: 'ja',
+    audio_guide_enabled: 1, video_prerotated: 0,
+  });
+  const uploadedValue = (key) => uploaded.find(([label]) => label === key)?.[1];
+  assert.equal(uploadedValue('content.label_subtitle_file'), 'library.inspector.file_attached');
+  assert.equal(uploadedValue('content.label_subtitle_lang'), 'ja');
+  assert.equal(uploadedValue('content.audio_guide_enable'), 'library.inspector.detail_enabled');
+  assert.equal(uploadedValue('content.tvsafe.prerotated_short'), 'library.inspector.detail_disabled');
+
+  const { extended: camera } = inspectorDetails.detailsFor({
+    id: 'camera', mime_type: 'video/rtsp',
+    remote_url: 'rtsp://viewer:secret@camera.example/live?token=private',
+    tls_self_signed: 1,
+    fisheye: '{"mount":"wall","pan":12,"tilt":5,"zoom":80,"lens_fov":180,"rotation":0,"touch":true}',
+    onvif: '{"manufacturer":"Acme","model":"Cam 1","ptz":true}',
+  });
+  const cameraValue = (key) => camera.find(([label]) => label === key)?.[1];
+  assert.equal(cameraValue('library.inspector.tls_self_signed'), 'library.inspector.detail_disabled');
+  const { extended: verifiedCamera } = inspectorDetails.detailsFor({
+    mime_type: 'video/rtsp', tls_self_signed: 0,
+  });
+  assert.equal(verifiedCamera.find(([key]) => key === 'library.inspector.tls_self_signed')?.[1], 'library.inspector.detail_enabled');
+  const noExtendedData = inspectorDetails.detailsFor({ mime_type: 'image/png' });
+  assert.deepEqual(plain(noExtendedData.extended), []);
+  const source = read('components/library/inspector.js');
+  assert.match(source, /<dl class="lib-insp-facts">[\s\S]*\$\{extended\.length \? `<dl class="lib-insp-facts">/);
 });
 
 /* ---------------- the upload queue, with the uploader stubbed ---------------- */
