@@ -50,10 +50,19 @@ const TOK = 'devtok_' + crypto.randomBytes(16).toString('hex');
 
 const run = (sql, ...a) => { const r = new (require('better-sqlite3'))(path.join(DATA_DIR, 'db', 'remote_display.db')); try { return r.prepare(sql).run(...a); } finally { r.close(); } };
 
+// ⚠️ A page that navigates under us is "not yet", not a failure. On a fresh profile the player's
+// service worker activates and reloads the page once ("reloading for fresh code"); a check that runs
+// during that reload threw "Execution context was destroyed" and failed CI at random.
+const NAVIGATING = /Execution context was destroyed|Cannot find context with specified id|Target closed|detached Frame/i;
+
 async function waitFor(fn, ms = 20000, what = 'condition') {
   const t0 = Date.now();
   for (;;) {
-    const v = await fn();
+    let v;
+    try { v = await fn(); } catch (e) {
+      if (!NAVIGATING.test(String(e && e.message))) throw e;
+      v = null;
+    }
     if (v) return v;
     if (Date.now() - t0 > ms) throw new Error('timed out waiting for ' + what);
     await sleep(150);
