@@ -14,6 +14,17 @@
   ],
   "releases": [
     {
+      "version": "3.2.5",
+      "date": "2026-11-22",
+      "notes": [
+        "Security update: please upgrade. Fixes a script injection in Playlist Preview, a way to delete another account's media, and tighter limits on pairing-code guessing.",
+        "On the hosted service, people you add get an email to set their own password (valid 7 days) instead of you choosing it.",
+        "Android players recover from web page crashes instead of restarting, and zones and picture-in-picture come back on their own.",
+        "Older LG webOS screens opened with Play via URL now load the compatible player instead of a black screen.",
+        "Simplified Chinese is complete, and the content details panel shows more about each item."
+      ]
+    },
+    {
       "version": "3.2.4",
       "date": "2026-11-17",
       "notes": [
