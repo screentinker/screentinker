@@ -575,7 +575,9 @@ export async function render(container) {
     };
   }
   function renderRailMini() {
-    document.getElementById('miniLabel').textContent = fmtDate(miniMonth, { month: 'long', year: 'numeric' });
+    const label = document.getElementById('miniLabel');
+    if (!label) return;   // the week loaded after the user left the schedule page
+    label.textContent = fmtDate(miniMonth, { month: 'long', year: 'numeric' });
     const busy = new Set(allEvents.map((ev) => ymd(evStart(ev))));
     renderMini(document.getElementById('schedMini'), miniMonth, { onPick: (d) => setView(null, d), busyDays: busy });
   }
