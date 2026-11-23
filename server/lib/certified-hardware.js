@@ -238,13 +238,13 @@ function render(data) {
   <meta property="og:url" content="${URL}">
   <meta property="og:title" content="Certified Hardware">
   <meta property="og:description" content="${esc(DESCRIPTION)}">
-  <meta property="og:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta property="og:image" content="https://screentinker.com/assets/social-card.png">
   <meta property="og:site_name" content="ScreenTinker">
 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Certified Hardware">
   <meta name="twitter:description" content="${esc(DESCRIPTION)}">
-  <meta name="twitter:image" content="https://screentinker.com/assets/dashboard-preview.png">
+  <meta name="twitter:image" content="https://screentinker.com/assets/social-card.png">
 
   <meta name="theme-color" content="#111827">
   <link rel="icon" href="/assets/icon-192.png">
