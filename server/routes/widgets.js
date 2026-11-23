@@ -173,6 +173,15 @@ function validateQueueWidget(type, config, workspaceId) {
   return ok ? null : 'That queue is not in this workspace.';
 }
 
+// A Curbside widget may only show a location of its OWN workspace, for the same reason.
+function validateCurbsideWidget(type, config, workspaceId) {
+  if (type !== 'curbside') return null;
+  const id = config && config.location_id;
+  if (!id) return null;   // an unconfigured widget shows its empty text
+  const ok = workspaceId && db.prepare('SELECT 1 FROM curbside_locations WHERE id = ? AND workspace_id = ?').get(String(id), workspaceId);
+  return ok ? null : 'That curbside location is not in this workspace.';
+}
+
 // Validate ISO date string format
 function safeDateString(d) {
   if (!d) return '';
@@ -242,6 +251,8 @@ router.post('/', (req, res) => {
   if (roomErr) return res.status(400).json({ error: roomErr });
   const queueErr = validateQueueWidget(widget_type, config, req.workspaceId);
   if (queueErr) return res.status(400).json({ error: queueErr });
+  const curbErr = validateCurbsideWidget(widget_type, config, req.workspaceId);
+  if (curbErr) return res.status(400).json({ error: curbErr });
 
   const id = uuidv4();
   db.prepare('INSERT INTO widgets (id, user_id, workspace_id, widget_type, name, config) VALUES (?, ?, ?, ?, ?, ?)')
@@ -417,6 +428,8 @@ router.put('/:id', (req, res) => {
   if (roomErr) return res.status(400).json({ error: roomErr });
   const queueErr = config ? validateQueueWidget(widget.widget_type, config, widget.workspace_id) : null;
   if (queueErr) return res.status(400).json({ error: queueErr });
+  const curbErr = config ? validateCurbsideWidget(widget.widget_type, config, widget.workspace_id) : null;
+  if (curbErr) return res.status(400).json({ error: curbErr });
 
   /*
    * Approval on: the edit becomes a DRAFT. Players keep rendering `config` (their rev is
@@ -907,6 +920,8 @@ function renderWidgetHtml(type, config, opts = {}) {
     case 'diag-smoothness': return renderDiagSmoothness(config);
     // Only reached by the editor's Preview (a sample number, no polling): a saved widget's /render is handled above.
     case 'queue': return require('../lib/queue/widget').renderQueueWidget({ config });
+    // Only reached by the editor's Preview (sample rows, no polling): a saved widget's /render is handled above.
+    case 'curbside': return require('../lib/curbside/widget').renderCurbsideWidget({ config });
     // Only reached by the editor's Preview: a saved widget's /render is handled above.
     case 'bi-dashboard': return require('../lib/bi/widget').previewHtml(config);
     /*
@@ -1145,6 +1160,26 @@ router.get('/:id/render', (req, res) => {
     return res.send(qw.renderQueueWidget({ widgetId: widget.id, origin, config, initial }));
   }
   /*
+   * Curbside pickup (lib/curbside/widget.js): the page holds only the widget's look; the cars and the
+   * location's labels come from /curbside.json below. Same sandbox and connect-src as the queue widget.
+   */
+  if (widget.widget_type === 'curbside') {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const cw = require('../lib/curbside/widget');
+    res.setHeader('Content-Security-Policy', cw.renderCsp(origin));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    if (req.query.rev) res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    // A rev-pinned copy is cached for a year, so it carries no list; an uncached one starts with it.
+    let initial = null;
+    if (!req.query.rev && config.location_id) {
+      const cs = require('../lib/curbside/service');
+      const loc = db.prepare('SELECT * FROM curbside_locations WHERE id = ? AND workspace_id = ?').get(String(config.location_id), widget.workspace_id);
+      if (loc) initial = cs.widgetState(db, cs.current(db, loc));
+    }
+    return res.send(cw.renderCurbsideWidget({ widgetId: widget.id, origin, config, initial }));
+  }
+  /*
    * The news widget (renderRSS): items and pictures come from this server only, and its policy says
    * so — a screen showing headlines contacts no publisher and no feed service.
    */
@@ -1316,6 +1351,30 @@ router.get('/:id/queue.json', (req, res) => {
   const rev = svc.revOf(q);
   if (typeof req.query.rev === 'string' && req.query.rev === rev) return res.json({ rev, unchanged: true });
   res.json(svc.widgetState(q));
+});
+
+/*
+ * What a Curbside widget polls (lib/curbside/widget.js): its location's open arrivals as order number,
+ * spot and status (never the customer's note), the location's widget labels and two counters for the
+ * chime. Public and CORS-open like queue.json; no tokens, no client ids. `?rev=` that matches answers
+ * {unchanged:true}. A missing widget, location or wrong type is a 404 the widget treats like any
+ * failed poll: it keeps the last list it had.
+ */
+router.get('/:id/curbside.json', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  const widget = db.prepare('SELECT id, workspace_id, widget_type, config FROM widgets WHERE id = ?').get(req.params.id);
+  if (!widget || widget.widget_type !== 'curbside') return res.status(404).json({ error: 'Not a curbside widget' });
+  let cfg = {};
+  try { cfg = JSON.parse(widget.config || '{}'); } catch { cfg = {}; }
+  const cs = require('../lib/curbside/service');
+  let loc = cfg.location_id ? db.prepare('SELECT * FROM curbside_locations WHERE id = ? AND workspace_id = ?').get(String(cfg.location_id), widget.workspace_id) : null;
+  if (!loc) return res.status(404).json({ error: 'No location' });
+  loc = cs.current(db, loc);
+  const rev = cs.revOf(loc);
+  if (typeof req.query.rev === 'string' && req.query.rev === rev) return res.json({ rev, unchanged: true });
+  res.json(cs.widgetState(db, loc));
 });
 
 // Latest frame-rate telemetry per widget, reported by the diag-smoothness widget running on a device.

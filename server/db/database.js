@@ -5532,6 +5532,70 @@ migrationStep('now serving queues', () => {
   if (!had) console.log('[migrate] queues + queue_tickets + queue_events created (now serving)');
 });
 
+migrationStep('curbside pickup', () => {
+  /*
+   * Curbside pickup (lib/curbside/service.js, docs/curbside-pickup.md). A location is a car park with
+   * labelled spots; a customer scans the QR code on a spot, types an order number and taps "I'm here",
+   * and staff see the car on their list. Standalone: no POS, no names, nothing about the person.
+   *
+   * curbside_locations holds the settings (spots as a JSON array of labels, the admin's text
+   * overrides as a JSON object), the local day it is on, and two capabilities exactly like a queue:
+   * public_token opens the customer page, staff_token is the staff link (compared in constant time,
+   * never logged, never shown to a read-only member). `rev` goes up on every change a screen or phone
+   * shows; ack_seq and arrive_seq only ever go up, so a widget can tell "a car was acknowledged" or
+   * "a car arrived" from any other change (the chime).
+   *
+   * curbside_arrivals: one row per check-in. status waiting -> seen -> done, or cancelled (the
+   * customer, `cancelled` = 1) or expired (left open at local midnight). The partial unique index is
+   * the "one open arrival per spot" rule, enforced by the database. Rows older than 7 days are deleted.
+   */
+  const had = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'curbside_locations'").get();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS curbside_locations (
+      id            TEXT PRIMARY KEY,
+      workspace_id  TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      name          TEXT NOT NULL,
+      timezone      TEXT NOT NULL DEFAULT 'UTC',
+      spots         TEXT NOT NULL DEFAULT '[]',
+      texts         TEXT NOT NULL DEFAULT '{}',
+      public_token  TEXT NOT NULL UNIQUE,
+      staff_token   TEXT,
+      day           TEXT NOT NULL,
+      rev           INTEGER NOT NULL DEFAULT 1,
+      ack_seq       INTEGER NOT NULL DEFAULT 0,
+      arrive_seq    INTEGER NOT NULL DEFAULT 0,
+      created_by    TEXT,
+      created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      updated_at    INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_curbside_locations_ws ON curbside_locations (workspace_id);
+    CREATE TABLE IF NOT EXISTS curbside_arrivals (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id  TEXT NOT NULL REFERENCES curbside_locations(id) ON DELETE CASCADE,
+      day          TEXT NOT NULL,
+      spot         TEXT NOT NULL,
+      order_ref    TEXT NOT NULL,
+      note         TEXT,
+      status       TEXT NOT NULL DEFAULT 'waiting',
+      client_id    TEXT,
+      created_at   INTEGER NOT NULL,
+      ack_at       INTEGER,
+      done_at      INTEGER,
+      cancelled    INTEGER NOT NULL DEFAULT 0,
+      ip_key       TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_curbside_open_spot ON curbside_arrivals (location_id, spot) WHERE status IN ('waiting', 'seen');
+    CREATE INDEX IF NOT EXISTS idx_curbside_arrivals_loc ON curbside_arrivals (location_id, status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_curbside_arrivals_client ON curbside_arrivals (location_id, client_id) WHERE client_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_curbside_arrivals_created ON curbside_arrivals (created_at);
+  `);
+  // ip_key: a keyed hash of the address that made an OPEN check-in (the per-address cap on open
+  // check-ins, lib/curbside/service.js). Cleared when the check-in closes; never the address itself.
+  try { db.prepare('ALTER TABLE curbside_arrivals ADD COLUMN ip_key TEXT').run(); } catch (_) { /* present */ }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_curbside_arrivals_ip ON curbside_arrivals (location_id, ip_key) WHERE ip_key IS NOT NULL");
+  if (!had) console.log('[migrate] curbside_locations + curbside_arrivals created (curbside pickup)');
+});
+
 migrationStep('native video plane per display', () => {
   // Android player: full-screen video on a SurfaceView (the display's hardware plane) instead of a
   // TextureView in the UI layer, so a 4K clip reaches a 4K panel at 4K on boxes whose UI renders at

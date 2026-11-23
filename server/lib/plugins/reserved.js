@@ -23,6 +23,8 @@ const BUILTIN_WIDGET_TYPES = Object.freeze([
   'room-display',
   // "Now serving" (lib/queue/widget.js).
   'queue',
+  // Curbside pickup (lib/curbside/widget.js).
+  'curbside',
 ]);
 
 const RESERVED_WIDGET_TYPES = new Set([

@@ -54,6 +54,7 @@ import { mountSocialEditor, readSocialConfig } from '../components/social-wall-e
 import { mountFeedPicker, readFeedPicker } from '../components/news-feed-picker.js';
 import { mountRoomEditor, readRoomConfig } from '../components/room-display-editor.js';
 import { mountQueueEditor, readQueueConfig } from '../components/queue-widget-editor.js';
+import { mountCurbsideEditor, readCurbsideConfig } from '../components/curbside-widget-editor.js';
 import { mountResourceLibrary } from '../components/library/resource-library.js';
 
 // A refused request must reject, not resolve.
@@ -77,7 +78,7 @@ const API = (url, opts = {}) => {
 
 // Widget type ids only — name + desc are looked up via t() so they switch
 // language with the rest of the UI.
-const WIDGET_TYPES = ['clock', 'weather', 'radar', 'rss', 'text', 'webpage', 'cloud-doc', 'social', 'directory-board', 'directory-search', 'menu-board', 'bi-dashboard', 'room-display', 'queue', 'transition'];
+const WIDGET_TYPES = ['clock', 'weather', 'radar', 'rss', 'text', 'webpage', 'cloud-doc', 'social', 'directory-board', 'directory-search', 'menu-board', 'bi-dashboard', 'room-display', 'queue', 'curbside', 'transition'];
 const WIDGET_ICONS = {
   clock: '&#128339;',
   weather: '&#9925;',
@@ -93,6 +94,7 @@ const WIDGET_ICONS = {
   'bi-dashboard': '&#128202;',
   'room-display': '&#128682;',
   queue: '&#127915;',
+  curbside: '&#128664;',
   transition: '&#127916;',
   // Built-in, but never offered in the "new widget" grid: a template widget is created from the
   // Templates library (the server refuses POST /widgets for it) and edited with the same form.
@@ -843,6 +845,10 @@ export async function render(container) {
         // components/queue-widget-editor.js renders into this box once the modal is open.
         html += `<div id="wQueueEditor"></div>`;
         break;
+      case 'curbside':
+        // components/curbside-widget-editor.js renders into this box once the modal is open.
+        html += `<div id="wCurbsideEditor"></div>`;
+        break;
       case 'directory-board':
         html += `
           <div class="form-group" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px;border:1px dashed var(--border);border-radius:6px;background:var(--bg-input)">
@@ -1015,6 +1021,7 @@ export async function render(container) {
       put: (u, b) => API(u, { method: 'PUT', body: JSON.stringify(b || {}) }),
     });
     if (type === 'queue') mountQueueEditor(document.getElementById('wQueueEditor'), config, { get: (u) => API(u) });
+    if (type === 'curbside') mountCurbsideEditor(document.getElementById('wCurbsideEditor'), config, { get: (u) => API(u) });
     if (type === 'transition') initTransitionForm(config);
     if (type === 'clock') initClockForm();
   }
@@ -1558,6 +1565,7 @@ export async function render(container) {
         break;
       case 'room-display': Object.assign(config, readRoomConfig()); break;
       case 'queue': Object.assign(config, readQueueConfig()); break;
+      case 'curbside': Object.assign(config, readCurbsideConfig()); break;
       case 'transition': {
         const shaders = Array.from(document.querySelectorAll('#wTransList input[type=checkbox]:checked')).map(c => c.dataset.id);
         const params = {}; // per-shader tuned values held in transState.params

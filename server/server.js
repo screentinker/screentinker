@@ -1660,6 +1660,15 @@ app.use('/api/room-panel', rateLimit(60000, 1200), require('./routes/room-panel'
   app.get('/queue/:token', rateLimit(60000, 240), queuePage('queue.html'));
   app.get(['/queue-staff', '/queue-staff/'], rateLimit(60000, 240), queuePage('queue-staff.html'));
   app.use('/api/public/queue', rateLimit(60000, 2400), require('./routes/queue-public'));
+  /*
+   * Curbside pickup (lib/curbside/service.js, docs/curbside-pickup.md): the customer page a spot's QR
+   * code opens (/curbside/<public token>?spot=<label>), the staff page (/curbside-staff, its key in
+   * the URL FRAGMENT) and the API both poll. Same shape and limits as the queue pages above; the
+   * router adds tighter ones per action (20 check-ins a minute per address).
+   */
+  app.get('/curbside/:token', rateLimit(60000, 240), queuePage('curbside.html'));
+  app.get(['/curbside-staff', '/curbside-staff/'], rateLimit(60000, 240), queuePage('curbside-staff.html'));
+  app.use('/api/public/curbside', rateLimit(60000, 2400), require('./routes/curbside-public'));
 }
 /*
  * 3.0 site cache: the door a site's cache BOX uses (manifest, bytes, status) — routes/site-cache-node.js.
@@ -2296,6 +2305,8 @@ const { PUBLIC_ROUTERS, JWT_ONLY_ROUTERS, AGENCY_ROUTERS } = require('./config/a
 app.get('/api/widgets/:id/render', (req, res, next) => { req._skipAuth = true; next(); });
 app.get('/api/widgets/:id/data.json', (req, res, next) => { req._skipAuth = true; next(); });
 app.get('/api/widgets/:id/queue.json', (req, res, next) => { req._skipAuth = true; next(); }); // "Now serving" widget poll (lib/queue/widget.js)
+// security-ok(auth-skip): the Curbside widget's poll is public like queue.json; it answers order numbers, spots and statuses only, found by widget id
+app.get('/api/widgets/:id/curbside.json', (req, res, next) => { req._skipAuth = true; next(); }); // Curbside widget poll (lib/curbside/widget.js)
 app.post('/api/widgets/:id/telemetry', (req, res, next) => { req._skipAuth = true; next(); }); // diag widget reports frame stats (null-origin iframe)
 app.get('/api/widgets/:id/telemetry', (req, res, next) => { req._skipAuth = true; next(); });
 app.get('/api/widgets/preview-session/:id', (req, res, next) => { req._skipAuth = true; next(); });
@@ -3206,6 +3217,25 @@ try {
   if (typeof activityPrune.unref === 'function') activityPrune.unref();
 } catch (e) {
   console.warn(`[audit] retention not scheduled: ${e && e.message}`);
+}
+
+/*
+ * Curbside pickup: check-ins older than 7 days are deleted (lib/curbside/service.js purgeOld). A
+ * location that is used rolls its own day and purges on the way; this daily sweep covers the ones
+ * nobody opened. This server's own workspaces only. unref'd, and not at boot.
+ */
+try {
+  const curbsidePrune = setInterval(() => {
+    try {
+      const removed = require('./lib/curbside/service').purgeOld(require('./db/database').db);
+      if (removed > 0) console.log(`[curbside] purged ${removed} check-in(s) older than 7 days`);
+    } catch (e) {
+      console.warn(`[curbside] purge failed: ${e && e.message}`);
+    }
+  }, 24 * 60 * 60 * 1000);
+  if (typeof curbsidePrune.unref === 'function') curbsidePrune.unref();
+} catch (e) {
+  console.warn(`[curbside] purge not scheduled: ${e && e.message}`);
 }
 
 const { startThresholdAlerts } = require('./services/threshold-alerts');

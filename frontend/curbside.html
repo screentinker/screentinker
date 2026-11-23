@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0f172a">
+<title>Curbside pickup</title>
+<style>
+  :root { --bg:#f8fafc; --card:#ffffff; --text:#0f172a; --muted:#64748b; --border:#cbd5e1; --accent:#2563eb; --ok:#15803d; --ok-bg:#dcfce7; --wait-bg:#dbeafe; --danger:#b91c1c; --danger-bg:#fee2e2; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0b1120; --card:#111827; --text:#f1f5f9; --muted:#94a3b8; --border:#334155; --accent:#60a5fa; --ok:#4ade80; --ok-bg:#14532d; --wait-bg:#1e3a8a; --danger:#fca5a5; --danger-bg:#450a0a; } }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  .wrap { max-width:460px; margin:0 auto; padding:5vh 16px 32px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:22px 20px; }
+  .loc { font-size:15px; color:var(--muted); margin:0 0 4px; text-align:center; }
+  h1 { font-size:26px; margin:0 0 10px; text-align:center; }
+  .spot { text-align:center; margin:6px 0 14px; }
+  .spot span { display:block; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+  .spot b { font-size:64px; line-height:1; font-weight:800; }
+  .intro { font-size:16px; line-height:1.45; margin:0 0 16px; text-align:center; }
+  label { display:block; font-size:15px; font-weight:600; margin:14px 0 6px; }
+  input, select { width:100%; font:inherit; font-size:20px; padding:12px; border-radius:12px; border:1px solid var(--border); background:var(--bg); color:var(--text); }
+  input#note { font-size:17px; }
+  button { font:inherit; font-size:20px; font-weight:800; padding:16px 20px; border-radius:14px; border:0; background:var(--accent); color:#fff; width:100%; margin-top:20px; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  button.secondary { background:transparent; color:var(--text); border:1px solid var(--border); font-size:16px; font-weight:600; padding:12px; margin-top:14px; }
+  .msg { margin-top:14px; font-size:16px; padding:12px; border-radius:12px; background:var(--danger-bg); color:var(--danger); }
+  .status { margin-top:6px; font-size:20px; font-weight:700; line-height:1.4; padding:16px; border-radius:14px; text-align:center; background:var(--wait-bg); }
+  .status.seen { background:var(--ok-bg); color:var(--ok); font-size:24px; }
+  .status.done, .status.cancelled { background:transparent; border:1px solid var(--border); }
+  .order { text-align:center; font-size:17px; margin:0 0 14px; color:var(--muted); }
+  .order b { color:var(--text); font-size:22px; }
+  .note { margin-top:18px; font-size:13px; color:var(--muted); text-align:center; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="card" aria-live="polite">
+    <p class="loc" id="loc"></p>
+    <h1 id="heading"></h1>
+    <div class="spot" id="spotBox" hidden><span id="spotLabel"></span><b id="spot"></b></div>
+    <form id="form" hidden novalidate>
+      <p class="intro" id="intro"></p>
+      <div id="pickBox" hidden>
+        <label for="pick" id="pickLabel"></label>
+        <select id="pick"></select>
+      </div>
+      <label for="order" id="orderLabel"></label>
+      <input id="order" name="order" autocomplete="off" inputmode="text" maxlength="20" required>
+      <label for="note" id="noteLabel"></label>
+      <input id="note" name="note" autocomplete="off" maxlength="80">
+      <button type="submit" id="submit"></button>
+    </form>
+    <div id="mine" hidden>
+      <p class="order" id="orderLine"></p>
+      <div class="status" id="status"></div>
+      <button type="button" class="secondary" id="cancel" hidden></button>
+      <button type="button" id="again" hidden></button>
+    </div>
+    <div class="msg" id="msg" hidden></div>
+    <div class="note" id="keep" hidden></div>
+  </div>
+</main>
+<script type="module" src="/js/curbside-page.js"></script>
+</body>
+</html>
