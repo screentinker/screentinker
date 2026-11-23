@@ -3823,6 +3823,9 @@ function webosNotAvailable(res) {
 
 app.get('/webos/version.json', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
+  // The installed shell runs from file:// and polls this cross-origin, so without this header the
+  // browser refuses the response and the panel never learns an update exists. Public metadata.
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.json(ipkCache.versionJson());
 });
 

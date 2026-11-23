@@ -147,6 +147,55 @@ test('webos: the shell scripts parse, and device-control degrades to nothing wit
     (e) => assert.match(String(e.message), /unsupported/));
 });
 
+test('webos: the browser\'s own window.Storage is not taken for SCAP Storage', () => {
+  // Every real browser has a native `Storage` (the Web Storage interface), and a no-SCAP build
+  // (vendor/ files empty, as CI publishes) used to announce system.self_update because of it.
+  // A bound function stringifies as `[native code]`, the way the browser's built-in does.
+  const nativeStorage = function Storage() { throw new TypeError('Illegal constructor'); }.bind(null);
+  const sandbox = { console: { log() {} }, Promise, JSON, Storage: nativeStorage };
+  sandbox.window = sandbox;
+  vm.runInNewContext(fs.readFileSync(path.join(WEBOS, 'js', 'device-control.js'), 'utf8'), sandbox);
+  assert.equal(sandbox.STWebOS.available(), false);
+  assert.equal(sandbox.STWebOS.capabilities().length, 0, 'no system.self_update from the native Storage');
+
+  // A SCAP Storage (plain script) is still found.
+  function ScapStorage() {}
+  ScapStorage.prototype.copyFile = function () {};
+  const scap = { console: { log() {} }, Promise, JSON, Storage: ScapStorage };
+  scap.window = scap;
+  vm.runInNewContext(fs.readFileSync(path.join(WEBOS, 'js', 'device-control.js'), 'utf8'), scap);
+  assert.deepEqual(Array.from(scap.STWebOS.capabilities()), ['system.self_update']);
+});
+
+test('webos: a packaged config.json is read even where fetch() refuses file://', async () => {
+  const src = fs.readFileSync(path.join(WEBOS, 'js', 'app.js'), 'utf8');
+  const grab = (name) => {
+    const i = src.indexOf(`function ${name}(`);
+    let depth = 0;
+    for (let j = src.indexOf('{', i); j < src.length; j++) {
+      if (src[j] === '{') depth++;
+      if (src[j] === '}' && --depth === 0) return src.slice(i, j + 1);
+    }
+    throw new Error(`no ${name}`);
+  };
+  // webOS: fetch() of a file:// URL rejects, XHR answers with status 0 and the file's text.
+  class FakeXHR {
+    open(m, u) { this.u = u; }
+    send() { this.status = 0; this.responseText = '{"serverUrl":"https://signage.example.test"}'; setTimeout(() => this.onload(), 0); }
+  }
+  const sb = { Promise, JSON, setTimeout, XMLHttpRequest: FakeXHR, fetch: () => Promise.reject(new TypeError('Failed to fetch')) };
+  vm.runInNewContext(`var packagedConfig = null;\n${grab('readLocalJson')}\n${grab('loadPackagedConfig')}\nthis.load = loadPackagedConfig;`, sb);
+  const cfg = await sb.load();
+  assert.equal(cfg && cfg.serverUrl, 'https://signage.example.test');
+});
+
+test('webos: version.json is readable from the file:// shell (CORS)', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const start = server.indexOf("app.get('/webos/version.json'");
+  const route = server.slice(start, server.indexOf('});', start));
+  assert.match(route, /Access-Control-Allow-Origin', '\*'/);
+});
+
 test('webos: the server serves the artifact and the version the shell polls', () => {
   const ipk = require('../lib/ipk-cache');
   const v = ipk.versionJson({ version: '2.1.0', exists: true, size: 12345 }, { exists: false });

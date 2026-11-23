@@ -71,9 +71,28 @@
   // A config.json next to the app wins over nothing, and a value typed on the remote wins over
   // it: fleets deployed from an SI server ship the address in the package; a single panel is
   // typed in once.
+  // The app runs from file://, where webOS's Chromium refuses fetch() ("Failed to fetch", seen on
+  // the webOS 6 emulator, Chrome 79) but XHR reads the file (status 0). fetch() alone meant a
+  // packaged config.json was never read and every such panel went to DEFAULT_SERVER instead.
+  function readLocalJson(name) {
+    return new Promise(function (resolve) {
+      try {
+        var x = new XMLHttpRequest();
+        x.open('GET', name);
+        x.onload = function () {
+          if (x.status !== 0 && x.status !== 200) return resolve(null);
+          try { resolve(JSON.parse(x.responseText)); } catch (e) { resolve(null); }
+        };
+        x.onerror = function () { resolve(null); };
+        x.send();
+      } catch (e) { resolve(null); }
+    });
+  }
+
   function loadPackagedConfig() {
     return fetch('config.json', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return readLocalJson('config.json'); })
       .then(function (j) { packagedConfig = j || null; return packagedConfig; })
       .catch(function () { packagedConfig = null; return null; });
   }
