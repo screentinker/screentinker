@@ -22,6 +22,7 @@ const POLL_MS = 4000;
 let timer = null;
 let locations = [];
 let fetchedAt = 0;
+let appEl = null;         // the container render() drew into, for a re-render when the set of locations changes
 
 const abs = (p) => `${location.origin}${p}`;
 
@@ -335,7 +336,11 @@ function card(app, loc0) {
 async function refresh() {
   try {
     const fresh = await api.get('/curbside');
-    if (fresh.length !== locations.length || fresh.some((l, i) => l.id !== locations[i].id)) return;   // structure changed: next render
+    // Another admin added or deleted a location: draw the page again (a plain update has no card for it).
+    if (fresh.length !== locations.length || fresh.some((l, i) => l.id !== locations[i].id)) {
+      if (appEl && appEl.isConnected) render(appEl);
+      return;
+    }
     locations = fresh; fetchedAt = Date.now();
     for (const l of locations) {
       const el = document.querySelector(`.corp-card[data-id="${CSS.escape(l.id)}"]`);
@@ -358,6 +363,7 @@ async function createLocation(app) {
 
 export async function render(app) {
   cleanup();
+  appEl = app;
   ensureStyle();
   app.textContent = '';
   const body = h('div');
@@ -378,7 +384,8 @@ export async function render(app) {
   for (const l of locations) body.append(card(app, l));
   if (isPrivateHost(location.hostname)) body.append(h('p', { style: 'font-size:12px;color:#ca8a04;margin-top:12px', text: t('qr.private_origin', { origin: location.origin }) }));
   body.append(h('p', { style: 'font-size:13px;color:var(--text-muted);margin-top:12px', text: t('curbside.dash.widget_hint') }));
-  if (locations.length) timer = setInterval(refresh, POLL_MS);
+  // Polls even with no location yet, so one another admin creates appears here.
+  timer = setInterval(refresh, POLL_MS);
 }
 
 export function cleanup() {

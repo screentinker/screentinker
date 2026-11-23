@@ -404,12 +404,78 @@ test('check-ins are limited per address; asking again for your own never is', as
   for (let i = 1; i <= 25; i++) {
     const c = cid();
     const r = await checkin(l, c, { spot: String(i), order_ref: String(i) }, ip);
-    if (r.status === 429) limited++;
-    else if (!held) held = c;
+    if (r.status === 429) { assert.equal(r.body.code, 'rate_limited'); limited++; continue; }
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    // Keep the first one open; close the rest so the open-per-address cap is not what refuses them.
+    if (!held) held = c;
+    else svc.done(db, svc.load(db, l.id), svc.clientArrival(db, svc.load(db, l.id), c).id);
   }
   assert.ok(limited >= 5, `got ${limited} refusals`);
   assert.equal((await checkin(l, held, { spot: '1', order_ref: '1' }, ip)).status, 200);
   assert.equal((await checkin(l, cid(), { spot: '30', order_ref: '30' }, '203.0.113.78')).status, 201);
+});
+
+test('one address cannot fill every spot by rotating client ids: at most 2 OPEN check-ins per address', async () => {
+  const l = await newLocation({ spots_count: 10 });
+  const ip = '203.0.113.150';
+  const a = cid(), b = cid(), c = cid();
+  assert.equal((await checkin(l, a, { spot: '1', order_ref: '1' }, ip)).status, 201);
+  assert.equal((await checkin(l, b, { spot: '2', order_ref: '2' }, ip)).status, 201);
+  const third = await checkin(l, c, { spot: '3', order_ref: '3' }, ip);
+  assert.equal(third.status, 429);
+  assert.equal(third.body.code, 'open_limit');
+  assert.match(third.body.error, /already has 2 cars checked in here/);
+  // The phones already checked in still get their own check-in back.
+  assert.equal((await checkin(l, a, { spot: '1', order_ref: '1' }, ip)).status, 200);
+  // Another address is unaffected.
+  assert.equal((await checkin(l, cid(), { spot: '4', order_ref: '4' }, '203.0.113.151')).status, 201);
+  // When one closes, the address may check in again.
+  const id = svc.clientArrival(db, svc.load(db, l.id), a).id;
+  await staff(l, 'POST', 'done', { id });
+  assert.equal((await checkin(l, c, { spot: '3', order_ref: '3' }, ip)).status, 201);
+  // Only a keyed hash is stored, only while open, never the address.
+  const rows = db.prepare('SELECT status, ip_key FROM curbside_arrivals WHERE location_id = ?').all(l.id);
+  assert.ok(rows.every((r) => !String(r.ip_key || '').includes('203.0.113')));
+  assert.ok(rows.filter((r) => r.status === 'done').every((r) => r.ip_key === null), 'cleared when closed');
+  assert.ok(rows.filter((r) => r.status === 'waiting').every((r) => typeof r.ip_key === 'string' && r.ip_key.length >= 16));
+});
+
+test('changing the timezone to one on another date never expires the cars waiting', async () => {
+  // 14:00 on Jan 10 in Chicago is already 05:00 on Jan 11 in Tokyo.
+  const t0 = Date.UTC(2026, 0, 10, 20, 0);
+  let l = svc.create(db, { workspaceId: WS, name: 'TZ', timezone: 'America/Chicago', spotsCount: 3, nowMs: t0 });
+  const me = cid();
+  svc.checkIn(db, l, { spot: '1', orderRef: '11', clientId: me, nowMs: t0 });
+  l = svc.update(db, svc.load(db, l.id), { timezone: 'Asia/Tokyo' }, t0 + 1000);
+  assert.equal(l.day, '2026-01-11');
+  assert.equal(svc.openArrivals(db, l).length, 1, 'still waiting after the timezone change');
+  assert.equal(svc.clientArrival(db, l, me).status, 'waiting', 'the phone still sees its check-in');
+  l = svc.current(db, svc.load(db, l.id), t0 + 2000);
+  assert.equal(svc.openArrivals(db, l).length, 1, 'and on the next poll');
+  // And back again (the date moves backwards).
+  l = svc.update(db, svc.load(db, l.id), { timezone: 'America/Chicago' }, t0 + 3000);
+  assert.equal(l.day, '2026-01-10');
+  assert.equal(svc.openArrivals(db, l).length, 1);
+  // A real midnight still closes it.
+  l = svc.current(db, svc.load(db, l.id), Date.UTC(2026, 0, 11, 6, 1));
+  assert.equal(svc.openArrivals(db, l).length, 0);
+  // Through the dashboard route too.
+  const r = await newLocation({ timezone: 'Pacific/Kiritimati' });   // UTC+14: usually a different date
+  await checkin(r, cid(), { spot: '1', order_ref: '5' });
+  const moved = await api('PUT', `/api/curbside/${r.id}`, { timezone: 'Pacific/Pago_Pago' });   // UTC-11
+  assert.equal(moved.status, 200);
+  assert.notEqual(moved.body.day, r.day, 'the two zones are a day apart');
+  assert.equal(moved.body.arrivals.length, 1, 'the car is still on the list');
+});
+
+test('a blank spots value means the default 10 spots', async () => {
+  assert.equal(svc.create(db, { workspaceId: WS, name: 'B', timezone: 'UTC', spots: '' }).spots, JSON.stringify(Array.from({ length: 10 }, (_, i) => String(i + 1))));
+  assert.equal(JSON.parse(svc.create(db, { workspaceId: WS, name: 'B2', timezone: 'UTC', spots: '   ', spotsCount: '' }).spots).length, 10);
+  const r = await api('POST', '/api/curbside', { name: 'Blank', spots: '' });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  assert.equal(r.body.spots.length, 10);
+  // A list with no usable label is still refused.
+  assert.equal((await api('POST', '/api/curbside', { name: 'x', spots: ' , ' })).status, 400);
 });
 
 test('a deleted workspace or location takes its arrivals with it; the export classifies both tables', async () => {

@@ -35,6 +35,9 @@ const { localDay, resolveTimezone, newToken } = require('../queue/service');
 const texts = require('./texts');
 
 const PURGE_DAYS = 7;
+// At most this many OPEN check-ins per network address per location, so one phone rotating client ids
+// cannot fill every spot. Counted by a keyed hash of the address (ip_key), cleared when a check-in closes.
+const OPEN_PER_IP = 2;
 const MAX_SPOTS = 200;
 const SPOT_MAX = 12;
 const ORDER_MAX = 20;
@@ -132,7 +135,7 @@ function bump(db, id, nowMs, kind = 'plain') {
   db.prepare(BUMP_SQL[kind] || BUMP_SQL.plain).run(nowSec(nowMs), id);
 }
 
-/** Delete arrivals older than PURGE_DAYS, for one location or (no id) for every location given. */
+/** Delete this location's arrivals older than PURGE_DAYS (every location: purgeOld below). */
 function purgeLocation(db, locationId, nowMs) {
   return db.prepare('DELETE FROM curbside_arrivals WHERE location_id = ? AND created_at < ?')
     .run(locationId, nowMs - PURGE_DAYS * 86400000).changes;
@@ -147,7 +150,7 @@ function current(db, loc, nowMs = Date.now()) {
     const fresh = load(db, loc.id);
     if (!fresh) return null;
     if (fresh.day !== today) {
-      db.prepare(`UPDATE curbside_arrivals SET status = 'expired', done_at = ? WHERE location_id = ? AND status IN ('waiting', 'seen') AND day <> ?`)
+      db.prepare(`UPDATE curbside_arrivals SET status = 'expired', done_at = ?, ip_key = NULL WHERE location_id = ? AND status IN ('waiting', 'seen') AND day <> ?`)
         .run(nowMs, fresh.id, today);
       purgeLocation(db, fresh.id, nowMs);
       db.prepare('UPDATE curbside_locations SET day = ?, rev = rev + 1, updated_at = ? WHERE id = ?').run(today, nowSec(nowMs), fresh.id);
@@ -157,7 +160,9 @@ function current(db, loc, nowMs = Date.now()) {
 }
 
 function create(db, { workspaceId, name, timezone, spots, spotsCount, userId, nowMs = Date.now() }) {
-  const list = cleanSpots(spots, (spots === undefined || spots === null) && (spotsCount === undefined || spotsCount === null) ? 10 : spotsCount);
+  // Nothing said about spots (missing, null or a blank string, as an empty form field sends) means 1..10.
+  const blank = (v) => v === undefined || v === null || (typeof v === 'string' && !v.trim());
+  const list = blank(spots) && blank(spotsCount) ? cleanSpots(undefined, 10) : cleanSpots(blank(spots) ? undefined : spots, blank(spotsCount) ? undefined : spotsCount);
   const id = crypto.randomUUID();
   const tz = resolveTimezone(db, workspaceId, timezone);
   db.prepare(`INSERT INTO curbside_locations (id, workspace_id, name, timezone, spots, texts, public_token, staff_token, day, created_by)
@@ -166,6 +171,11 @@ function create(db, { workspaceId, name, timezone, spots, spotsCount, userId, no
   return load(db, id);
 }
 
+/*
+ * ⚠️ A NEW TIMEZONE IS NOT A NEW DAY. The location's `day` is recomputed in the new zone in the same
+ * transaction, and today's open arrivals move to it, so changing Chicago to Tokyo (where it may
+ * already be tomorrow) never makes current() see a rollover and expire the cars waiting outside.
+ */
 function update(db, loc, { name, timezone, spots, spotsCount, texts: t }, nowMs = Date.now()) {
   const sets = [];
   const vals = [];
@@ -174,9 +184,8 @@ function update(db, loc, { name, timezone, spots, spotsCount, texts: t }, nowMs 
     if (!n) throw new CurbsideError(400, 'name', 'A location needs a name');
     sets.push('name = ?'); vals.push(n);
   }
-  if (timezone !== undefined) {
-    if (!isRealTimezone(timezone)) throw new CurbsideError(400, 'timezone', 'Not a timezone this server knows (use a name like Europe/Lisbon)');
-    sets.push('timezone = ?'); vals.push(timezone);
+  if (timezone !== undefined && !isRealTimezone(timezone)) {
+    throw new CurbsideError(400, 'timezone', 'Not a timezone this server knows (use a name like Europe/Lisbon)');
   }
   if (spots !== undefined || (spotsCount !== undefined && spotsCount !== null && spotsCount !== '')) {
     sets.push('spots = ?'); vals.push(JSON.stringify(cleanSpots(spots, spotsCount)));
@@ -185,9 +194,23 @@ function update(db, loc, { name, timezone, spots, spotsCount, texts: t }, nowMs 
     if (t === null || typeof t !== 'object' || Array.isArray(t)) throw new CurbsideError(400, 'texts', 'texts must be an object');
     sets.push('texts = ?'); vals.push(JSON.stringify(texts.cleanOverrides(t)));
   }
-  if (!sets.length) return loc;
-  db.prepare(`UPDATE curbside_locations SET ${sets.join(', ')}, rev = rev + 1, updated_at = ? WHERE id = ?`).run(...vals, nowSec(nowMs), loc.id);
-  return current(db, load(db, loc.id), nowMs);
+  if (!sets.length && timezone === undefined) return loc;
+  return db.transaction(() => {
+    // Any real rollover in the OLD zone happens first, exactly as it would have on the next poll.
+    const live = current(db, load(db, loc.id), nowMs);
+    if (!live) throw new CurbsideError(404, 'not_found', 'This location no longer exists');
+    if (timezone !== undefined) {
+      sets.push('timezone = ?'); vals.push(timezone);
+      const newDay = localDay(timezone, nowMs);
+      if (newDay !== live.day) {
+        sets.push('day = ?'); vals.push(newDay);
+        db.prepare(`UPDATE curbside_arrivals SET day = ? WHERE location_id = ? AND day = ? AND status IN ('waiting', 'seen')`)
+          .run(newDay, live.id, live.day);
+      }
+    }
+    db.prepare(`UPDATE curbside_locations SET ${sets.join(', ')}, rev = rev + 1, updated_at = ? WHERE id = ?`).run(...vals, nowSec(nowMs), live.id);
+    return current(db, load(db, live.id), nowMs);
+  })();
 }
 
 const ARRIVAL_COLS = 'id, spot, order_ref, note, status, created_at, ack_at, done_at, cancelled';
@@ -214,7 +237,7 @@ function spotTaken(db, loc, spot) {
  * again returns it (whatever spot was asked), so a double tap, a retry or a second scan never makes a
  * second one. A spot with someone else's open check-in is refused with code 'spot_taken'.
  */
-function checkIn(db, loc, { spot, orderRef, note, clientId, nowMs = Date.now() } = {}) {
+function checkIn(db, loc, { spot, orderRef, note, clientId, ipKey = null, nowMs = Date.now() } = {}) {
   const cid = validClient(clientId);
   if (!cid) throw new CurbsideError(400, 'client', 'Please reload the page and try again');
   return db.transaction(() => {
@@ -227,10 +250,17 @@ function checkIn(db, loc, { spot, orderRef, note, clientId, nowMs = Date.now() }
     const order = cleanOrder(orderRef);
     const n = cleanNote(note);
     if (spotTaken(db, live, label)) throw new CurbsideError(409, 'spot_taken', 'This spot is taken');
+    const ipk = typeof ipKey === 'string' && ipKey ? ipKey.slice(0, 64) : null;
+    if (ipk) {
+      const open = db.prepare(`SELECT COUNT(*) AS n FROM curbside_arrivals WHERE location_id = ? AND ip_key = ? AND status IN ('waiting', 'seen')`).get(live.id, ipk).n;
+      if (open >= OPEN_PER_IP) {
+        throw new CurbsideError(429, 'open_limit', `This network already has ${OPEN_PER_IP} cars checked in here. Please come inside or ask a member of staff.`);
+      }
+    }
     let id;
     try {
-      id = db.prepare(`INSERT INTO curbside_arrivals (location_id, day, spot, order_ref, note, status, client_id, created_at)
-        VALUES (?, ?, ?, ?, ?, 'waiting', ?, ?)`).run(live.id, live.day, label, order, n, cid, nowMs).lastInsertRowid;
+      id = db.prepare(`INSERT INTO curbside_arrivals (location_id, day, spot, order_ref, note, status, client_id, created_at, ip_key)
+        VALUES (?, ?, ?, ?, ?, 'waiting', ?, ?, ?)`).run(live.id, live.day, label, order, n, cid, nowMs, ipk).lastInsertRowid;
     } catch (e) {
       if (e && /UNIQUE/.test(String(e.code || e.message))) throw new CurbsideError(409, 'spot_taken', 'This spot is taken');
       throw e;
@@ -249,7 +279,7 @@ function cancel(db, loc, { clientId, nowMs = Date.now() } = {}) {
     if (!live) throw new CurbsideError(404, 'not_found', 'This curbside link is not active');
     const mine = cid ? clientArrival(db, live, cid) : null;
     if (!mine || !OPEN.includes(mine.status)) throw new CurbsideError(404, 'none', 'There is no check-in to cancel');
-    db.prepare(`UPDATE curbside_arrivals SET status = 'cancelled', cancelled = 1, done_at = ? WHERE id = ?`).run(nowMs, mine.id);
+    db.prepare(`UPDATE curbside_arrivals SET status = 'cancelled', cancelled = 1, done_at = ?, ip_key = NULL WHERE id = ?`).run(nowMs, mine.id);
     bump(db, live.id, nowMs);
     return { location: load(db, live.id), arrival: db.prepare(`SELECT ${ARRIVAL_COLS} FROM curbside_arrivals WHERE id = ?`).get(mine.id) };
   })();
@@ -285,7 +315,7 @@ function done(db, loc, id, { nowMs = Date.now() } = {}) {
     const a = staffArrival(db, live, id);
     if (a.status === 'done') return load(db, live.id);
     if (!OPEN.includes(a.status)) throw new CurbsideError(409, 'closed', 'That car is no longer on the list');
-    db.prepare(`UPDATE curbside_arrivals SET status = 'done', done_at = ? WHERE id = ?`).run(nowMs, a.id);
+    db.prepare(`UPDATE curbside_arrivals SET status = 'done', done_at = ?, ip_key = NULL WHERE id = ?`).run(nowMs, a.id);
     bump(db, live.id, nowMs);
     return load(db, live.id);
   })();
@@ -380,5 +410,5 @@ module.exports = {
   rotateStaff, revokeStaff, rotatePublic, byStaffKey, byPublicToken, revOf, load,
   widgetState, customerState, staffState, openArrivals, clientArrival, purgeOld,
   spotsOf, overridesOf, findSpot, cleanSpots, cleanOrder, cleanNote, localDay, newToken,
-  PURGE_DAYS, MAX_SPOTS, SPOT_MAX, ORDER_MAX, NOTE_MAX,
+  PURGE_DAYS, OPEN_PER_IP, MAX_SPOTS, SPOT_MAX, ORDER_MAX, NOTE_MAX,
 };

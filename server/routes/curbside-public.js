@@ -18,7 +18,8 @@
  * its fragment and sends it in X-Curbside-Staff-Key. Answers never include a token or a client id.
  *
  * Limits (per client IP, on top of the coarse mount limit in server.js): 20 check-ins and 20 cancels
- * a minute, 120 staff actions a minute, 20 refused staff keys a minute.
+ * a minute, at most 2 OPEN check-ins per address per location (code 'open_limit'), 120 staff actions
+ * a minute, 20 refused staff keys a minute.
  */
 
 const express = require('express');
@@ -30,6 +31,10 @@ const svc = require('../lib/curbside/service');
 const { getClientIp } = require('../services/activity');
 
 const ipOf = (req) => String(getClientIp(req) || req.ip || '');
+// The per-address cap on open check-ins (service.js OPEN_PER_IP) counts a keyed hash, never the address.
+const crypto = require('crypto');
+const ipKeyOf = (req, loc) => crypto.createHmac('sha256', String(appConfig.jwtSecret || ''))
+  .update(`curbside-ip|${loc.id}|${ipOf(req)}`).digest('base64url').slice(0, 32);
 const clientOf = (req) => { const v = req.get('x-curbside-client'); return typeof v === 'string' ? v.slice(0, 80) : null; };
 
 /*
@@ -118,7 +123,7 @@ router.post('/c/:token/checkin', (req, res) => {
     if (!(had && (had.status === 'waiting' || had.status === 'seen'))) {
       if (limit(req, res, 'checkin', 20)) return;
     }
-    const r = svc.checkIn(db, loc, { spot: b.spot, orderRef: b.order_ref, note: b.note, clientId });
+    const r = svc.checkIn(db, loc, { spot: b.spot, orderRef: b.order_ref, note: b.note, clientId, ipKey: ipKeyOf(req, loc) });
     res.status(r.existing ? 200 : 201).json({ existing: r.existing, state: svc.customerState(db, r.location, { spot: r.arrival.spot, clientId }) });
   } catch (e) { send(res, e); }
 });

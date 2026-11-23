@@ -18,7 +18,9 @@ export async function mountCurbsideEditor(box, config = {}, { get }) {
   const vol = Number.isFinite(Number(c.chime_volume)) ? Math.max(0, Math.min(100, Number(c.chime_volume))) : 60;
   const rows = Number.isInteger(Number(c.max_rows)) && Number(c.max_rows) > 0 ? Math.min(20, Number(c.max_rows)) : 8;
   const colour = (id, label, v) => h('label', { style: 'font-size:13px;margin-right:12px' }, label, h('br'), h('input', { attrs: { type: 'color', id, value: v } }));
-  const sel = h('select', { className: 'input', attrs: { id: 'wCurbLoc' } }, h('option', { attrs: { value: '' }, text: t('curbside.widget.loading') }));
+  // While the list loads, the only option carries the widget's CURRENT location: saving before the
+  // list arrives keeps the link instead of sending '' and unlinking the widget.
+  const sel = h('select', { className: 'input', attrs: { id: 'wCurbLoc' } }, h('option', { attrs: { value: typeof c.location_id === 'string' ? c.location_id : '' }, text: t('curbside.widget.loading') }));
   const volIn = h('input', { attrs: { type: 'range', id: 'wCurbVol', min: 0, max: 100, step: 5, value: vol }, style: 'flex:1' });
   const volOut = h('span', { style: 'font-size:13px;width:44px;text-align:right', text: `${vol}%` });
   volIn.addEventListener('input', () => { volOut.textContent = `${volIn.value}%`; });

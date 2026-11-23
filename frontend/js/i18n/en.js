@@ -9405,6 +9405,7 @@ export default {
   'curbside.pub.need_order': 'Please type your order number.',
   'curbside.pub.slow_down': 'Too many check-ins from this network right now. Please wait a minute and try again.',
   'curbside.pub.cancel_confirm': 'Cancel your check-in?',
+  'curbside.pub.open_limit': 'This network already has 2 cars checked in here. Please come inside or ask a member of staff.',
   'curbside.staff.title': 'Curbside',
   'curbside.staff.err': 'That did not work. Please try again.',
   'curbside.staff.sub': '{waiting} waiting · {done} done today',

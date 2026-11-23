@@ -33,7 +33,7 @@ It is standalone: there is no connection to a till or an ordering system, and th
 
 You can change the name, the timezone and the spots later under **Settings** on the location's card. Spot labels can be up to 12 characters each, up to 200 spots. **Or number them 1 to** fills the list with 1 to N for you.
 
-The location takes the timezone of the browser you created it from. Open check-ins close at midnight in that timezone (see [End of the day](#end-of-the-day)).
+The location takes the timezone of the browser you created it from. Open check-ins close at midnight in that timezone (see [End of the day](#end-of-the-day)). Changing the timezone never closes the cars already waiting.
 
 Only people who can edit the workspace can create a location, mark cars as seen or done, change the words or see the staff link. Read-only members see the location, the cars waiting and the QR codes, and nothing else.
 
@@ -121,6 +121,7 @@ On the **staff page**, see [Give staff the link](#3-give-staff-the-link).
 ## Limits
 
 - One network address can make at most 20 new check-ins a minute, and cancel at most 20. Re-opening the page for a check-in a phone already has is never limited.
+- One network address can have at most 2 open check-ins at a location at a time, so one phone cannot fill every spot. A third gets "This network already has 2 cars checked in here" until one of them is done or cancelled. The server keeps only a keyed hash of the address, only while the check-in is open.
 - Staff actions are limited to 120 a minute per address, and wrong staff links to 20 a minute.
 - Up to 200 spots per location.
 
@@ -130,7 +131,7 @@ On the **staff page**, see [Give staff the link](#3-give-staff-the-link).
 - The staff key sits after the `#` in the staff link, which browsers never send to a server: it is in no server log and no `Referer`. The staff page sends it in a request header, and the server compares it in constant time.
 - Each customer's browser makes a random id and keeps it, and sends it in a request header (never in the address). It is how the page finds the same check-in again, and the only thing that can cancel it.
 - The pages are sent with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`, and are not indexed by search engines. Server logs record the route shape only, never a key.
-- A check-in stores the spot, the order number, the optional note, the times, the status and that random browser id. Nothing else: no name, no phone number, no address, no device. Check-ins are deleted after 7 days.
+- A check-in stores the spot, the order number, the optional note, the times, the status and that random browser id, plus, only while it is open, a keyed hash of the network address (for the limit above). Nothing else: no name, no phone number, no device. Check-ins are deleted after 7 days.
 - A screen's widget never sees either key and never sees the note; it reads the order numbers, spots and statuses through its own widget id.
 - Everything a customer or an admin types is shown as text everywhere (pages, widget, dashboard) and never treated as HTML.
 - Deleting a location deletes its check-ins. Deleting a workspace deletes its locations and check-ins. An organization export includes each location's settings and words, without the keys, and no check-ins; an import does not re-create locations (make a new one and print its QR codes).

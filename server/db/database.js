@@ -5581,13 +5581,18 @@ migrationStep('curbside pickup', () => {
       created_at   INTEGER NOT NULL,
       ack_at       INTEGER,
       done_at      INTEGER,
-      cancelled    INTEGER NOT NULL DEFAULT 0
+      cancelled    INTEGER NOT NULL DEFAULT 0,
+      ip_key       TEXT
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_curbside_open_spot ON curbside_arrivals (location_id, spot) WHERE status IN ('waiting', 'seen');
     CREATE INDEX IF NOT EXISTS idx_curbside_arrivals_loc ON curbside_arrivals (location_id, status, created_at);
     CREATE INDEX IF NOT EXISTS idx_curbside_arrivals_client ON curbside_arrivals (location_id, client_id) WHERE client_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_curbside_arrivals_created ON curbside_arrivals (created_at);
   `);
+  // ip_key: a keyed hash of the address that made an OPEN check-in (the per-address cap on open
+  // check-ins, lib/curbside/service.js). Cleared when the check-in closes; never the address itself.
+  try { db.prepare('ALTER TABLE curbside_arrivals ADD COLUMN ip_key TEXT').run(); } catch (_) { /* present */ }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_curbside_arrivals_ip ON curbside_arrivals (location_id, ip_key) WHERE ip_key IS NOT NULL");
   if (!had) console.log('[migrate] curbside_locations + curbside_arrivals created (curbside pickup)');
 });
 

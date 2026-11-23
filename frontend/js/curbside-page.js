@@ -144,6 +144,7 @@ async function checkIn(ev) {
   } catch (e) {
     if (e.code === 'spot_taken') { rev = null; try { await load(); } catch { /* keep */ } }
     else if (e.code === 'rate_limited') showMsg(t('curbside.pub.slow_down'));
+    else if (e.code === 'open_limit') showMsg(t('curbside.pub.open_limit'));
     else if (e.status === 404) showMsg(t('curbside.pub.not_found'));
     else showMsg(e.message);
   } finally { busy = false; paint(); }

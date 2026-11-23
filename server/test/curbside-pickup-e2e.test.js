@@ -163,6 +163,17 @@ describe('curbside pickup, end to end', { skip: SKIP }, () => {
       assert.match(await text(dp, `.corp-card[data-id="${l.id}"] .cs-car`), /B-9/);
       await dp.click(`.corp-card[data-id="${l.id}"] .cs-car .cs-done`);
       assert.ok(await waitFor(async () => /All done/.test(await text(cp, '#status') || ''), 10000), 'Done from the dashboard reaches the phone');
+      // Another admin adds a location while the page is open: it appears without a reload, and the
+      // page keeps updating afterwards (a new car on it shows up too).
+      const l2 = await srv.api('POST', '/curbside', { name: 'Second lot', timezone: 'UTC', spots_count: 2 });
+      await dp.bringToFront();
+      assert.ok(await waitFor(async () => !!(await dp.$(`.corp-card[data-id="${l2.id}"]`)), 15000), 'a location made elsewhere appears');
+      await fetch(`${srv.base}/api/public/curbside/c/${l2.customer_path.split('/').pop()}/checkin`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Curbside-Client': 'e2e-second-lot-client-x' }, body: JSON.stringify({ spot: '2', order_ref: 'Z-1' }),
+      });
+      assert.ok(await waitFor(async () => /Z-1/.test(await text(dp, `.corp-card[data-id="${l2.id}"]`) || ''), 15000), 'and it keeps updating after that');
+      await srv.api('DELETE', `/curbside/${l2.id}`);
+      assert.ok(await waitFor(async () => !(await dp.$(`.corp-card[data-id="${l2.id}"]`)), 15000), 'a deleted location disappears');
       assert.deepEqual(dp.errors, [], 'the dashboard view never threw');
     } finally { await ctx.close(); }
   });
