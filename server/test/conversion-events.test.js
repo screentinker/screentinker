@@ -72,3 +72,16 @@ test('funnel counts distinct accounts per step within the signup cohort', () => 
   assert.ok(step('signup') >= 2);
   assert.equal(step('first_pair') >= 1 && step('first_pair') <= step('signup'), true);
 });
+
+test('the import wizard may report which system was picked, with only the vendor id', () => {
+  assert.ok(conversion.CLIENT_EVENTS.has('migrate_vendor_picked'), 'a client may report it');
+  const u = crypto.randomUUID();
+  assert.equal(conversion.record(db, { userId: u, event: 'migrate_vendor_picked', meta: { vendor: 'magicinfo' } }), true);
+  const row = db.prepare("SELECT meta FROM conversion_events WHERE user_id = ? AND event = 'migrate_vendor_picked'").get(u);
+  assert.deepEqual(JSON.parse(row.meta), { vendor: 'magicinfo' });
+  // Picking it again in the same session is one row, a different system is another.
+  assert.equal(conversion.record(db, { userId: u, event: 'migrate_vendor_picked', meta: { vendor: 'magicinfo' } }), false);
+  assert.equal(conversion.record(db, { userId: u, event: 'migrate_vendor_picked', meta: { vendor: 'xibo' } }), true);
+  const view = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'views', 'migrate.js'), 'utf8');
+  assert.match(view, /api\.trackEvent\('migrate_vendor_picked', \{ vendor: state\.vendor\.id \}\)/, 'the wizard sends the id only');
+});

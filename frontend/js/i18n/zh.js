@@ -3079,6 +3079,7 @@ export default {
   'migrate.how.xibo': '在 Xibo 中打开 Administration，再打开 Applications，添加一个勾选了“Client Credentials”的 Application。复制其 Client ID 和 Client Secret。输入您的 CMS 地址（即登录时使用的地址），例如 https://cms.example.com。',
   'migrate.how.yodeck': '在 Yodeck 中依次打开 Account Settings、Advanced Settings、API Tokens，生成一个令牌（需 Premium 或 Enterprise 方案）。按 label:token 格式粘贴。Yodeck 不会通过其 API 提供原始上传的图片和文档：这些会被列出，以便您通过 zip 导入添加。视频会以 Yodeck 播放的版本导入。',
   'migrate.how.optisigns': 'OptiSigns 有 API，但没有公开任何下载文件的方法，因此播放列表导入后会是空的。请从 OptiSigns 下载您的文件并使用 zip 导入：每个播放列表一个文件夹，或使用 playlists.csv。',
+  'migrate.how.magicinfo': "MagicINFO 的 API 可以列出您的内容和播放列表，但没有文档说明如何下载文件，因此播放列表导入后会是空的。您的三星屏幕可以继续使用：在显示器菜单中将其切换到 ScreenTinker（System > Play Via > URL Launcher，新机型上称为 Custom App）。将媒体文件从 MagicINFO 中复制出来，然后使用 zip 导入：每个播放列表一个文件夹，或一个 playlists.csv。",
   'migrate.how.screencloud': '在 ScreenCloud Studio 中打开 Account Settings，然后打开 Developer 选项卡，创建一个具有读取权限的令牌。选择那里显示的区域（EU 或 US）。ScreenCloud 将时间规则保存在单个频道项目上；这些规则会被列出，但不会导入。',
   'migrate.how.anthias': '输入您的 Anthias 设备地址，例如 http://192.168.1.20。如果开启了身份验证，请输入其用户名和密码。每台设备会作为一个屏幕和一个播放列表导入。',
   'migrate.how.screenly': '在 Screenly 中依次打开 Settings、Security、Tokens 并添加一个令牌。播放列表、标签和屏幕都会导入；简单的日期和时间规则会变成排程。',

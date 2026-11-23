@@ -19,6 +19,7 @@ const ADAPTERS = [
   require('./xibo'),
   require('./yodeck'),
   require('./optisigns'),
+  require('./magicinfo'),
   require('./screencloud'),
   require('./anthias'),
   require('./screenly'),

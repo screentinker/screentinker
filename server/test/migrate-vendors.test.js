@@ -649,6 +649,22 @@ test('OptiSigns: listed with the reason it cannot be imported, never contacted',
   assert.equal(W.calls.length, 0);
 });
 
+test('MagicINFO: listed with the reason it cannot be imported yet (screens stay), never contacted', async () => {
+  const u = mkUser('magicinfo');
+  const ws = mkWorkspace('magicinfo', u);
+  const v = await call(u, ws, 'GET', '/api/migrate/vendors');
+  const m = v.body.vendors.find((x) => x.id === 'magicinfo');
+  assert.ok(m, 'MagicINFO is in the wizard');
+  assert.equal(m.mode, 'none');
+  assert.deepEqual(m.fields, [], 'it asks for no credentials');
+  assert.ok(m.docs.some((d) => d.startsWith('https://docs.samsungvx.com/')), 'it cites Samsung\'s docs');
+  const r = await call(u, ws, 'POST', '/api/migrate/jobs', { vendor: 'magicinfo', credentials: { url: 'http://10.0.0.9:7001', username: 'a', password: 'b' } });
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /MagicINFO/);
+  assert.equal(W.calls.length, 0, 'nothing was contacted');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM migration_jobs WHERE workspace_id = ?').get(ws).n, 0);
+});
+
 /* ===================================================================== credential lifetime */
 
 test('a held credential expires: the sweep deletes it and the job then asks for it again', async () => {

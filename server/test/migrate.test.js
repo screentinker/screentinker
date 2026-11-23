@@ -384,7 +384,7 @@ test('the vendor list says how to connect and never anything secret', async () =
   const v = await call(OWNER, 'GET', '/api/migrate/vendors');
   assert.equal(v.status, 200);
   const ids = v.body.vendors.map((x) => x.id);
-  for (const id of ['xibo', 'yodeck', 'optisigns', 'screencloud', 'anthias', 'generic-zip']) assert.ok(ids.includes(id), id);
+  for (const id of ['xibo', 'yodeck', 'optisigns', 'magicinfo', 'screencloud', 'anthias', 'generic-zip']) assert.ok(ids.includes(id), id);
   for (const x of v.body.vendors) for (const d of x.docs) assert.match(d, /^https:\/\//);
 });
 
@@ -402,4 +402,16 @@ test('a resume cannot point a file import at another upload by naming it in the 
   assert.equal(r.status, 409);
   assert.equal(r.body.code, 'needs_credentials');
   await call(OTHER, 'POST', `/api/migrate/jobs/${victim.body.id}/cancel`, {}, WS_B);
+});
+
+test('the wizard has MagicINFO help text in every language', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const dir = path.join(__dirname, '..', '..', 'frontend', 'js', 'i18n');
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.js'))) {
+    const src = fs.readFileSync(path.join(dir, f), 'utf8');
+    assert.match(src, /'migrate\.how\.magicinfo': "[^"]*MagicINFO[^"]*URL Launcher[^"]*"/, `${f} explains MagicINFO and the URL Launcher switch`);
+  }
+  const view = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'views', 'migrate.js'), 'utf8');
+  assert.match(view, /magicinfo: \(\) => t\('migrate\.how\.magicinfo'\)/);
 });

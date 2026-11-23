@@ -22,11 +22,12 @@ const EVENTS = new Set([
   'onboarding_started', 'onboarding_completed', 'onboarding_skipped', 'sample_content_used',
   'first_publish', 'billing_view', 'upgrade_prompt_shown', 'upgrade_prompt_clicked',
   'trial_banner_clicked', 'locked_feature_viewed',
+  'migrate_vendor_picked',   // the import wizard: which CMS people are leaving ({ vendor })
 ]);
 const CLIENT_EVENTS = new Set([
   'onboarding_started', 'onboarding_completed', 'onboarding_skipped', 'sample_content_used',
   'first_publish', 'billing_view', 'upgrade_prompt_shown', 'upgrade_prompt_clicked',
-  'trial_banner_clicked', 'locked_feature_viewed',
+  'trial_banner_clicked', 'locked_feature_viewed', 'migrate_vendor_picked',
 ]);
 // Events that only mean something once per account: a second "first_pair" is noise.
 const ONCE = new Set(['signup', 'first_pair', 'first_publish', 'onboarding_completed', 'onboarding_skipped', 'checkout_complete']);

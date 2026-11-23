@@ -55,6 +55,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://screentinker.com/compare/magicinfo-alternative.html</loc>
+    <lastmod>2026-11-23</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://screentinker.com/templates</loc>
     <lastmod>2026-10-06</lastmod>
     <changefreq>weekly</changefreq>

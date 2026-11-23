@@ -27,6 +27,7 @@ const HOW = {
   xibo: () => t('migrate.how.xibo'),
   yodeck: () => t('migrate.how.yodeck'),
   optisigns: () => t('migrate.how.optisigns'),
+  magicinfo: () => t('migrate.how.magicinfo'),
   screencloud: () => t('migrate.how.screencloud'),
   anthias: () => t('migrate.how.anthias'),
   screenly: () => t('migrate.how.screenly'),
@@ -174,7 +175,14 @@ function drawPick() {
       <ul class="mig-tiles">${tiles}</ul>
     </section>${recent}`;
   }
-  body().querySelectorAll('[data-vendor]').forEach((b) => b.addEventListener('click', () => { state.vendor = vendorById(b.dataset.vendor); state.step = 'connect'; draw(); }));
+  body().querySelectorAll('[data-vendor]').forEach((b) => b.addEventListener('click', () => {
+    state.vendor = vendorById(b.dataset.vendor);
+    // Which systems people come from decides which importers are worth building (hosted only; the
+    // server drops it on self-hosted instances). Just the vendor id: never a credential or address.
+    if (state.vendor) api.trackEvent('migrate_vendor_picked', { vendor: state.vendor.id });
+    state.step = 'connect';
+    draw();
+  }));
   body().querySelectorAll('[data-job]').forEach((b) => b.addEventListener('click', () => { const j = state.jobs.find((x) => x.id === b.dataset.job); if (j) showJob(j); }));
 }
 
