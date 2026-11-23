@@ -772,20 +772,9 @@ app.get('/gfx/:kind', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.type('html').send(html);
 });
-// Serve frontend static files
-// JS/CSS/HTML: no-cache (always revalidate, uses ETag/304)
-// Images/fonts/icons: long cache for Cloudflare + browser
-app.use(express.static(config.frontendDir, { index: false, etag: true, lastModified: true, setHeaders: (res, filePath) => {
-  if (filePath.endsWith('.js') || filePath.endsWith('.css') || filePath.endsWith('.html')) {
-    res.setHeader('Cache-Control', 'no-cache');
-  } else if (/\.(png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot|webp|mp4|webm)$/i.test(filePath)) {
-    res.setHeader('Cache-Control', 'public, max-age=2592000'); // 30 days
-  }
-  // The Power BI client and Leaflet are loaded by widget pages (bi-dashboard, radar) that a player
-  // frames in a sandboxed (opaque-origin) iframe — helmet's same-origin CORP would block them there.
-  if (filePath.includes(`${path.sep}vendor${path.sep}powerbi${path.sep}`)
-      || filePath.includes(`${path.sep}vendor${path.sep}leaflet${path.sep}`)) res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-}}));
+// Serve frontend static files. Cache and cross-origin rules: lib/static-headers.js.
+app.use(express.static(config.frontendDir, { index: false, etag: true, lastModified: true,
+  setHeaders: require('./lib/static-headers').staticHeaders(config.frontendDir) }));
 
 // Player HTML: dynamic route. Injects a small inline window.__playerConfig
 // script before the debug-overlay.js tag so the client knows whether to send
