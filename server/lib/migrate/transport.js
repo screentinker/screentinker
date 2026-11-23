@@ -54,7 +54,7 @@ const defaultWire = {
       return { status: r.statusCode, headers: r.headers || {}, text: r.text || '' };
     } catch (e) {
       if (e && e.statusCode) return { status: e.statusCode, headers: {}, text: '' };
-      throw wireError(e);
+      throw wireError(e, url);
     }
   },
   async download(url, dest, { headers = {}, maxBytes }) {
@@ -64,7 +64,7 @@ const defaultWire = {
       r = await guardedRequest(url, { headers, timeoutMs: 30 * 60 * 1000, idleTimeoutMs: 60000, responseType: 'stream', maxRedirects: 3 });
     } catch (e) {
       if (e && e.statusCode) throw new MigrateHttpError(`The file could not be downloaded (HTTP ${e.statusCode}).`, 'upstream-status', e.statusCode);
-      throw wireError(e);
+      throw wireError(e, url);
     }
     const declared = Number(r.headers && r.headers['content-length']);
     if (Number.isFinite(declared) && declared > maxBytes) { r.res.destroy(); throw new MigrateHttpError('too large', 'too_large'); }
@@ -79,20 +79,76 @@ const defaultWire = {
       out.on('error', reject);
       out.on('finish', resolve);
       r.res.pipe(out);
-    }).catch((e) => { try { fs.rmSync(dest, { force: true }); } catch { /* not written */ } throw e.code === 'too_large' ? e : wireError(e); });
+    }).catch((e) => { try { fs.rmSync(dest, { force: true }); } catch { /* not written */ } throw e.code === 'too_large' ? e : wireError(e, url); });
     return { size };
   },
 };
 
-function wireError(e) {
+function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^\[|\]$/g, ''); } catch { return ''; }
+}
+
+/*
+ * What a person reads when the SSRF guard refuses. It used to say "not allowed (private, internal or
+ * metadata addresses are blocked)" for EVERY refusal, including a name this server cannot resolve at
+ * all (#900: a Docker install whose container did not see the internal DNS or the host's hosts file
+ * was told its address was blocked, and spent a day on NAT). A name that does not resolve now says
+ * so; a refused address names itself and, on a self-hosted server, the setting that opens it.
+ */
+function ssrfError(e, url) {
+  const host = hostOf(url);
+  const reason = String((e && e.reason) || '');
+  const selfHosted = require('../../config').selfHosted;
+  if (reason === 'dns-fail' || reason === 'no-address') {
+    // The Docker advice only makes sense to the person who runs this server.
+    return new MigrateHttpError(`This server could not look up ${host || 'that address'}. Check the name.${selfHosted
+      ? ' If ScreenTinker runs in Docker, the container uses its own DNS and does not read the host\'s hosts file: add a dns: or extra_hosts: entry for it.'
+      : ' It must be reachable from the internet.'}`, 'unresolved');
+  }
+  const ip = reason.startsWith('blocked-ip:') ? reason.slice('blocked-ip:'.length) : '';
+  const where = ip && ip !== host ? `${host} (${ip})` : (ip || host);
+  const hint = selfHosted ? ` ${require('../ssrf-guard').privateAddressHint()}` : '';
+  return new MigrateHttpError(`That address${where ? ` (${where})` : ''} is not allowed from this server (private, internal or metadata addresses are blocked).${hint}`, 'blocked');
+}
+
+/*
+ * A socket-level failure in words, from its code only (never the message, which can carry a URL).
+ * #900: "The server could not be reached" with packets visibly flowing told nobody anything, and the
+ * cause was not logged either. Codes are Node's / OpenSSL's / the guard's, so they hold no secret.
+ */
+const TLS_UNTRUSTED = /^(CERT_|UNABLE_TO_|DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN|ERR_TLS_CERT_ALTNAME_INVALID)/;
+function networkDetail(e) {
+  const code = String((e && e.code) || '');
+  if (code === 'ECONNRESET') return 'connection reset';
+  if (code === 'ECONNREFUSED') return 'connection refused';
+  if (code === 'EHOSTUNREACH' || code === 'ENETUNREACH') return 'host unreachable';
+  if (code === 'EPIPE' || code === 'ERR_STREAM_PREMATURE_CLOSE') return 'connection closed early';
+  if (code === 'too-many-redirects') return 'too many redirects';
+  if (code === 'bad-redirect') return 'invalid redirect';
+  if (code === 'ERR_TLS_CERT_ALTNAME_INVALID') return 'TLS certificate does not match the name';
+  if (TLS_UNTRUSTED.test(code)) return `TLS certificate not trusted, ${code}`;
+  if (code === 'EPROTO' || /^ERR_SSL_/.test(code)) return `TLS error, ${code}`;
+  if (/^HPE_/.test(code)) return 'invalid HTTP response';
+  return /^[A-Za-z0-9_-]{2,40}$/.test(code) ? code : 'network error';
+}
+
+function pathOf(url) {
+  try { return new URL(url).pathname; } catch { return ''; }   // no query: it can hold a token
+}
+
+function wireError(e, url = '') {
   if (e && e.name === 'MigrateHttpError') return e;
   if (e && e.statusCode) return new MigrateHttpError(`The vendor answered HTTP ${e.statusCode}.`, 'upstream-status', e.statusCode);
-  if (e && (e.name === 'SsrfError' || e.code === 'ssrf')) {
-    return new MigrateHttpError('That address is not allowed from this server (private, internal or metadata addresses are blocked).', 'blocked');
-  }
+  if (e && (e.name === 'SsrfError' || e.code === 'ssrf')) return ssrfError(e, url);
   if (e && e.code === 'timeout') return new MigrateHttpError('The server did not respond in time.', 'timeout');
   if (e && e.code === 'size-limit') return new MigrateHttpError('The answer was larger than expected.', 'too_large');
-  return new MigrateHttpError('The server could not be reached.', 'network');
+  const detail = networkDetail(e);
+  const host = hostOf(url);
+  // One line per failed attempt (retries included), so a self-hoster can find it in the server log.
+  console.warn(`[migrate] ${host || '?'}${pathOf(url)}: ${detail}`);
+  const err = new MigrateHttpError(`The server could not be reached (${detail}${host ? ` from ${host}` : ''}).`, 'network');
+  err.detail = detail;
+  return err;
 }
 
 let wire = defaultWire;
@@ -129,9 +185,7 @@ function normalizeBaseUrl(raw) {
   let parsed;
   try { parsed = parseSafeUrl(s); }
   catch (e) {
-    if (e && e.reason && /^blocked-ip/.test(e.reason)) {
-      throw new MigrateHttpError('That address is not allowed from this server (private, internal or metadata addresses are blocked).', 'blocked');
-    }
+    if (e && e.reason && /^blocked-ip/.test(e.reason)) throw ssrfError(e, s);
     throw new MigrateHttpError('Enter a full http:// or https:// address, without a username or password in it.', 'bad_url');
   }
   const u = parsed.url;
@@ -219,4 +273,5 @@ function client(baseUrl, authHeaders = {}) {
 module.exports = {
   client, normalizeBaseUrl, retryAfterMs, MigrateHttpError, MAX_RETRIES,
   _setTransport, _setSleep,
+  _ssrfErrorForTest: ssrfError, _networkDetailForTest: networkDetail,
 };
