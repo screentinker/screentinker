@@ -84,3 +84,62 @@ test('the real wire still refuses a metadata address, now naming it', async () =
     assert.match(e.message, /169\.254\.169\.254/);
   });
 });
+
+/*
+ * #900 part 2: "The server could not be reached" with packets flowing between the servers. The
+ * message and the server log now carry the cause.
+ */
+const http = require('node:http');
+const net = require('node:net');
+
+async function withLocalServer(handler, fn) {
+  const srv = handler.length === 1 ? net.createServer(handler) : http.createServer(handler);
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const prevAllow = process.env.OUTBOUND_ALLOW_PRIVATE;
+  process.env.OUTBOUND_ALLOW_PRIVATE = 'true';    // the guard must let us reach 127.0.0.1
+  transport._setSleep(() => Promise.resolve());   // retries without waiting
+  const warns = [];
+  const origWarn = console.warn;
+  console.warn = (...a) => { warns.push(a.join(' ')); };
+  try { return await fn(`http://127.0.0.1:${srv.address().port}`, warns); } finally {
+    console.warn = origWarn;
+    transport._setSleep(null);
+    if (prevAllow === undefined) delete process.env.OUTBOUND_ALLOW_PRIVATE; else process.env.OUTBOUND_ALLOW_PRIVATE = prevAllow;
+    await new Promise((r) => srv.close(r));
+  }
+}
+
+test('a connection reset says "connection reset", is retried, and is logged without the query', async () => {
+  let hits = 0;
+  await withLocalServer((sock) => { hits++; sock.resetAndDestroy(); }, async (base, warns) => {
+    const e = await rejection(() => transport.client(base).api('/api/layout', { query: { embed: 'regions', token: 'SECRET' } }));
+    assert.equal(e.code, 'network');
+    assert.equal(e.detail, 'connection reset');
+    assert.match(e.message, /could not be reached \(connection reset from 127\.0\.0\.1\)/);
+    assert.equal(hits, transport.MAX_RETRIES + 1, 'retried, then gave up');
+    assert.ok(warns.some((w) => w === '[migrate] 127.0.0.1/api/layout: connection reset'), warns.join('\n'));
+    assert.ok(!warns.some((w) => /SECRET|embed/.test(w)), 'the query never reaches the log');
+  });
+});
+
+test('a redirect loop says "too many redirects"', async () => {
+  await withLocalServer((req, res) => { res.writeHead(302, { Location: req.url }); res.end(); }, async (base) => {
+    const e = await rejection(() => transport.client(base).api('/api/library'));
+    assert.equal(e.code, 'network');
+    assert.match(e.message, /too many redirects/);
+  });
+});
+
+test('TLS and other socket codes become words; unknown or odd codes stay safe', () => {
+  const d = (code) => transport._networkDetailForTest({ code });
+  assert.equal(d('DEPTH_ZERO_SELF_SIGNED_CERT'), 'TLS certificate not trusted, DEPTH_ZERO_SELF_SIGNED_CERT');
+  assert.equal(d('UNABLE_TO_VERIFY_LEAF_SIGNATURE'), 'TLS certificate not trusted, UNABLE_TO_VERIFY_LEAF_SIGNATURE');
+  assert.equal(d('CERT_HAS_EXPIRED'), 'TLS certificate not trusted, CERT_HAS_EXPIRED');
+  assert.equal(d('ERR_TLS_CERT_ALTNAME_INVALID'), 'TLS certificate does not match the name');
+  assert.equal(d('EPROTO'), 'TLS error, EPROTO');
+  assert.equal(d('ECONNREFUSED'), 'connection refused');
+  assert.equal(d('HPE_INVALID_CONSTANT'), 'invalid HTTP response');
+  assert.equal(d('ESOMETHINGNEW'), 'ESOMETHINGNEW');
+  assert.equal(d('https://user:pw@x/ y'), 'network error', 'anything that is not a plain code is not echoed');
+  assert.equal(transport._networkDetailForTest(null), 'network error');
+});
