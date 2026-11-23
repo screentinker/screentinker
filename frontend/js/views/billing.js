@@ -1,7 +1,24 @@
 import { api } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { esc } from '../utils.js';
+import { esc, amount } from '../utils.js';
 import { t } from '../i18n.js';
+
+/**
+ * Whether a plan card offers Monthly / Yearly checkout buttons.
+ *
+ * The plan being TRIALED is the account's current plan (plan_id === trial_plan) but nothing has
+ * been paid for it, so it must stay buyable: hiding the buttons on every "Current" card left a
+ * trial user no way to buy the plan they were trying (the card showed "Current" and nothing else,
+ * and "Manage subscription" needs a Stripe subscription a trial does not have). A paying account's
+ * current plan is changed in the billing portal instead, so only that case hides them.
+ * Pure (no DOM, no globals) so a test can run it.
+ */
+export function offersCheckout(p, subData, { paying, mayManage }) {
+  if (!p || !subData || subData.self_hosted) return false;
+  if (!(p.price_monthly > 0)) return false;
+  if (paying && subData.plan && p.id === subData.plan.id) return false;
+  return !!(mayManage || !paying);
+}
 
 export async function render(container) {
   container.innerHTML = `
@@ -156,8 +173,8 @@ export async function render(container) {
               <div style="font-size:24px;font-weight:700;color:var(--accent);margin-bottom:12px">
                 ${p.price_monthly > 0
                   ? (saleFor(p, 'monthly')
-                    ? `<s class="billing-was">$${p.price_monthly}</s> $${cut(p.price_monthly)}<span style="font-size:13px;color:var(--text-secondary);font-weight:400">${t('billing.per_month')}</span>`
-                    : `$${p.price_monthly}<span style="font-size:13px;color:var(--text-secondary);font-weight:400">${t('billing.per_month')}</span>`)
+                    ? `<s class="billing-was">$${amount(p.price_monthly)}</s> $${amount(cut(p.price_monthly))}<span style="font-size:13px;color:var(--text-secondary);font-weight:400">${t('billing.per_month')}</span>`
+                    : `$${amount(p.price_monthly)}<span style="font-size:13px;color:var(--text-secondary);font-weight:400">${t('billing.per_month')}</span>`)
                   : t('billing.free')}
               </div>
               ${p.id === recommendedId && p.id !== subData.plan.id ? `<div style="font-size:12px;color:var(--success);margin:-6px 0 8px">${subData.usage.devices > 0 ? t('billing.recommended_why', { n: subData.usage.devices }) : t('billing.recommended_why_new')}</div>` : ''}
@@ -169,10 +186,10 @@ export async function render(container) {
                 <div>${p.priority_support ? '&#10003;' : '&#10007;'} ${t('billing.feat.priority_support')}</div>
               </div>
               ${p.price_yearly > 0 ? (saleFor(p, 'yearly')
-                ? `<div style="font-size:12px;margin-top:8px">${t('billing.yearly_sale', { was: p.price_yearly, now: cut(p.price_yearly) })}</div>`
-                : `<div style="font-size:11px;color:var(--text-muted);margin-top:8px">${t('billing.yearly_save', { price: p.price_yearly, pct: Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100) })}</div>`) : ''}
+                ? `<div style="font-size:12px;margin-top:8px">${t('billing.yearly_sale', { was: amount(p.price_yearly), now: amount(cut(p.price_yearly)) })}</div>`
+                : `<div style="font-size:11px;color:var(--text-muted);margin-top:8px">${t('billing.yearly_save', { price: amount(p.price_yearly), pct: Math.round((1 - p.price_yearly / (p.price_monthly * 12)) * 100) })}</div>`) : ''}
               ${saleFor(p, 'monthly') || saleFor(p, 'yearly') ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">${t(`billing.sale_dur_${promo.duration}`, { n: promo.duration_in_months })}</div>` : ''}
-              ${!subData.self_hosted && p.price_monthly > 0 && p.id !== subData.plan.id && (mayManage || !paying) ? `
+              ${offersCheckout(p, subData, { paying, mayManage }) ? `
                 <div style="margin-top:12px;display:flex;gap:6px">
                   <button class="btn btn-primary btn-sm" style="flex:1" onclick="window._checkout('${p.id}','monthly')">${t('billing.monthly')}</button>
                   ${p.price_yearly > 0 ? `<button class="btn btn-secondary btn-sm" style="flex:1" onclick="window._checkout('${p.id}','yearly')">${t('billing.yearly')}</button>` : ''}
