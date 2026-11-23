@@ -55,6 +55,10 @@ const LIMIT_PATH_SHAPES = [
   [/^\/queue\/[^/]+$/, () => '/queue/:token'],
   [/^\/api\/public\/queue\/c\/[^/]+\/(state|ticket)$/, (m) => `/api/public/queue/c/:token/${m[1]}`],
   [/^\/api\/public\/queue\/c(\/.*)?$/, () => '/api/public/queue/c/:unmatched'],
+  // Curbside pickup: the same, for the customer page a spot's QR code opens.
+  [/^\/curbside\/[^/]+$/, () => '/curbside/:token'],
+  [/^\/api\/public\/curbside\/c\/[^/]+\/(state|checkin|cancel)$/, (m) => `/api/public/curbside/c/:token/${m[1]}`],
+  [/^\/api\/public\/curbside\/c(\/.*)?$/, () => '/api/public/curbside/c/:unmatched'],
   [/^\/api\/public\/requests\/form\/[^/]+\/uploads\/[^/]+$/, () => '/api/public/requests/form/:code/uploads/:id'],
   [/^\/api\/public\/requests\/form\/[^/]+(\/start|\/verify|\/verify\/confirm|\/sso|\/uploads|\/submit)?$/, (m) => `/api/public/requests/form/:code${m[1] || ''}`],
   [/^\/api\/public\/requests\/form(\/.*)?$/, () => '/api/public/requests/form/:unmatched'],

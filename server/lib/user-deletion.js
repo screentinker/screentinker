@@ -95,6 +95,8 @@ const WORKSPACE_INTEGRATIONS = [
   ['rooms', [['room_bookings', 'room_id'], ['room_checkins', 'room_id']]],
   // "Now serving" queues (lib/queue/service.js): tickets and the staff log go with their queue.
   ['queues', [['queue_tickets', 'queue_id'], ['queue_events', 'queue_id']]],
+  // Curbside pickup (lib/curbside/service.js): the check-ins go with their location.
+  ['curbside_locations', [['curbside_arrivals', 'location_id']]],
   ['automation_hooks', [['automation_hook_calls', 'hook_id']]],
   ['automation_subscriptions', [['automation_deliveries', 'subscription_id']]],
   // Includes the hidden push-mode feeds automation hooks raise their alerts on (source = 'hook').

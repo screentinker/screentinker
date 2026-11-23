@@ -122,6 +122,7 @@ const NOT_WORKSPACE_SCOPED = Object.freeze({
   'kiosk.js': 'mounted with tenancy (PUBLIC_ROUTERS)',
   // 3.0 content requests: the public form has no session; the workspace comes from the form code.
   'queue-public.js': '"Now serving" customer page and staff link; a router.param(token) guard and a /s guard forward every call (reads too: a poll can start the new day) for a copied workspace to the primary, asserted below',
+  'curbside-public.js': 'curbside pickup customer page and staff link; a router.param(token) guard and a /s guard forward every call (reads too: a poll can roll the day over) for a copied workspace to the primary, asserted below',
   'request-public.js': 'public request form; a router.param(code) guard forwards every mutating call for a copied workspace to the primary (and the status cancel does the same), asserted below',
   // Writes one column on a users row, authorised by an HMAC in an email link — not a workspace write.
   // ⚠️ It is NOT simply exempt: `users` IS copied and `email_alerts` is not blocklisted, so the POST
@@ -223,6 +224,13 @@ test('test_every_mutating_route_passes_resolveTenancy: no second writer can hide
     'queue-public.js: the staff copy guard');
   assert.ok(queuePublic.indexOf("router.param('token'") < queuePublic.indexOf("router.get('/c/:token/state'"), 'the guards run before the routes');
   assert.ok(queuePublic.indexOf("router.use('/s'") < queuePublic.indexOf("router.get('/s/state'"), 'the guards run before the routes');
+  const curbPublic = read('routes/curbside-public.js');
+  assert.match(curbPublic, /router\.param\('token'[\s\S]{0,200}copiedLocation\(svc\.byPublicToken\(db, token\)\)\) return replicaProxy\.proxyToPrimary\(req, res, appConfig\)/,
+    'curbside-public.js: the customer copy guard');
+  assert.match(curbPublic, /router\.use\('\/s'[\s\S]{0,200}copiedLocation\(svc\.byStaffKey\(db, key\)\)\) return replicaProxy\.proxyToPrimary\(req, res, appConfig\)/,
+    'curbside-public.js: the staff copy guard');
+  assert.ok(curbPublic.indexOf("router.param('token'") < curbPublic.indexOf("router.get('/c/:token/state'"), 'the guards run before the routes');
+  assert.ok(curbPublic.indexOf("router.use('/s'") < curbPublic.indexOf("router.get('/s/state'"), 'the guards run before the routes');
   const status = read('routes/status.js');
   // authenticateImport (the session check) also runs before multer, after the copy guard.
   assert.match(status, /router\.post\('\/import', proxyImportIfCopied, (authenticateImport, )?importUpload/, 'status.js: the import guard runs before multer');

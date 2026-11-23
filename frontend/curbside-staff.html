@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0f172a">
+<title>Curbside staff</title>
+<style>
+  :root { --bg:#0b1120; --card:#111827; --text:#f1f5f9; --muted:#94a3b8; --border:#1f2937; --accent:#16a34a; --accent2:#2563eb; --danger:#f87171; --fresh:#4ade80; --warm:#facc15; --late:#f87171; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  .wrap { max-width:720px; margin:0 auto; padding:18px 16px 40px; }
+  .top { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:15px; margin-bottom:14px; }
+  button { font:inherit; font-weight:700; border:0; border-radius:12px; cursor:pointer; color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  #sound { background:transparent; border:1px solid var(--border); color:var(--text); font-size:15px; padding:10px 14px; font-weight:600; }
+  #sound.on { border-color:var(--accent); color:var(--fresh); }
+  .msg { min-height:1.4em; color:var(--danger); font-size:15px; margin:8px 0; }
+  .cs-empty { text-align:center; color:var(--muted); font-size:18px; padding:40px 0; }
+  .cs-car { display:flex; align-items:center; background:var(--card); border:1px solid var(--border); border-left:8px solid var(--fresh); border-radius:16px; padding:14px; margin-bottom:12px; flex-wrap:wrap; }
+  .cs-car.warm { border-left-color:var(--warm); }
+  .cs-car.late { border-left-color:var(--late); }
+  .cs-car.seen { opacity:.85; }
+  .cs-spot { text-align:center; min-width:84px; margin-right:14px; }
+  .cs-spot-l { display:block; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+  .cs-spot b { font-size:44px; line-height:1; }
+  .cs-main { flex:1; min-width:160px; }
+  .cs-order { font-size:18px; }
+  .cs-order b { font-size:26px; }
+  .cs-note { font-size:16px; color:var(--text); margin-top:4px; word-break:break-word; }
+  .cs-meta { margin-top:6px; font-size:15px; }
+  .cs-age { font-weight:700; margin-right:12px; }
+  .cs-age.fresh { color:var(--fresh); } .cs-age.warm { color:var(--warm); } .cs-age.late { color:var(--late); }
+  .cs-status { color:var(--muted); }
+  .cs-status.seen { color:var(--fresh); font-weight:700; }
+  .cs-actions { display:flex; flex-direction:column; min-width:150px; margin-left:10px; }
+  .cs-actions button { font-size:18px; padding:14px 16px; margin:4px 0; }
+  .cs-ack { background:var(--accent2); }
+  .cs-done { background:var(--accent); }
+  .stale { color:var(--muted); font-size:13px; text-align:center; margin-top:10px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="top">
+    <div><h1 id="lname"></h1><div class="sub" id="sub"></div></div>
+    <button type="button" id="sound"></button>
+  </div>
+  <div id="bad" class="msg" hidden></div>
+  <div class="msg" id="msg" aria-live="polite"></div>
+  <div id="list"></div>
+  <div class="stale" id="stale"></div>
+</main>
+<script type="module" src="/js/curbside-staff-page.js"></script>
+</body>
+</html>

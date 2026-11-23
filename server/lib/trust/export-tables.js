@@ -104,6 +104,9 @@ const EXPORTED = {
   // (dropped by name like every credential); the day's tickets are excluded below.
   queues: { category: 'signs', scope: ws() },
   queue_events: { category: 'signs', scope: via('queue_id', 'queues') },
+  // Curbside pickup: the location's settings (spots, texts, timezone). Both links are tokens (dropped
+  // by name like every credential); the arrivals are excluded below.
+  curbside_locations: { category: 'signs', scope: ws() },
   // widgets
   widgets: { category: 'widgets', scope: ws() },
   // data sources and feeds (configs only: secrets are redacted)
@@ -266,6 +269,7 @@ const EXCLUDED = {
   embedded_zone_cursor: 'transient player position',
   room_panel_presence: 'transient panel heartbeat',
   queue_tickets: 'today\'s queue numbers: transient, deleted every day, and nothing about the person',
+  curbside_arrivals: 'curbside check-ins: transient (closed the same day, deleted after 7 days), order numbers and notes only',
   play_log_rollup_dirty: 'internal rollup bookkeeping',
   play_log_rollup_state: 'internal rollup bookkeeping',
   player_debug_logs: 'short-lived player diagnostics keyed by device, not tenant',

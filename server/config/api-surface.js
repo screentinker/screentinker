@@ -219,6 +219,12 @@ const JWT_ONLY_ROUTERS = [
    */
   { path: '/api/queues', mod: './routes/queues', tenancy: true },
   /*
+   * Curbside pickup (lib/curbside). JWT only, for the same reason as queues: the answer to a member
+   * who can write carries the staff link. The customer page, the staff link and the widget's poll are
+   * mounted separately in server.js (/api/public/curbside, /api/widgets/:id/curbside.json).
+   */
+  { path: '/api/curbside', mod: './routes/curbside', tenancy: true },
+  /*
    * Audience counting (lib/audience.js). JWT only: switching a screen's camera on is a privacy
    * decision for an org owner or admin, never something an API token can do.
    */
