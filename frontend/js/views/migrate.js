@@ -27,6 +27,7 @@ const HOW = {
   xibo: () => t('migrate.how.xibo'),
   yodeck: () => t('migrate.how.yodeck'),
   optisigns: () => t('migrate.how.optisigns'),
+  magicinfo: () => t('migrate.how.magicinfo'),
   screencloud: () => t('migrate.how.screencloud'),
   anthias: () => t('migrate.how.anthias'),
   screenly: () => t('migrate.how.screenly'),

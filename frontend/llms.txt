@@ -112,6 +112,7 @@ so plainly when it has none.
 - [vs OptiSigns](https://screentinker.com/compare/optisigns-alternative.html)
 - [vs Xibo](https://screentinker.com/compare/xibo-alternative.html)
 - [vs Anthias (Screenly OSE)](https://screentinker.com/compare/anthias-alternative.html)
+- [Moving off Samsung MagicINFO (retiring 2026-2027)](https://screentinker.com/compare/magicinfo-alternative.html)
 
 ## Project and API
 

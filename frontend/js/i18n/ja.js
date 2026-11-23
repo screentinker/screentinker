@@ -4174,6 +4174,7 @@ export default {
   'migrate.how.xibo': 'Xibo で「Administration」、「Applications」の順に開き、「Client Credentials」にチェックを入れてアプリケーションを追加します。その Client ID と Client Secret をコピーしてください。CMS のアドレス（サインインに使うアドレス、例: https://cms.example.com）を入力します。',
   'migrate.how.yodeck': 'Yodeck で「Account Settings」、「Advanced Settings」、「API Tokens」の順に開き、トークンを生成します（Premium または Enterprise プラン）。label:token の形式で貼り付けてください。Yodeck は、アップロードされた元の画像やドキュメントを API で提供しないため、それらは一覧に表示されます。zip インポートで追加してください。動画は Yodeck が再生しているバージョンで移行されます。',
   'migrate.how.optisigns': 'OptiSigns には API がありますが、ファイルをダウンロードする方法が公開されていないため、プレイリストが空のまま届いてしまいます。OptiSigns からファイルをダウンロードし、zip インポートを使ってください（プレイリストごとに 1 つのフォルダー、または playlists.csv）。',
+  'migrate.how.magicinfo': "MagicINFO の API はコンテンツとプレイリストを一覧できますが、ファイルをダウンロードする方法が文書化されていないため、プレイリストは空のまま届きます。Samsung の画面はそのまま使えます。ディスプレイのメニューで ScreenTinker に切り替えてください（System > Play Via > URL Launcher、新しい機種では Custom App）。メディアファイルを MagicINFO からコピーし、zip インポートを使ってください（プレイリストごとに 1 フォルダ、または playlists.csv）。",
   'migrate.how.screencloud': 'ScreenCloud Studio で「Account Settings」を開き、「Developer」タブで読み取り権限のあるトークンを作成します。そこに表示されているリージョン（EU または US）を選んでください。ScreenCloud では時間のルールが個々のチャンネルアイテムに設定されています。これらは一覧に表示されますが、インポートはされません。',
   'migrate.how.anthias': 'Anthias デバイスのアドレス（例: http://192.168.1.20）を入力します。認証をオンにしている場合は、ユーザー名とパスワードを入力してください。各デバイスは、1 つのプレイリストを持つ 1 台の画面としてインポートされます。',
   'migrate.how.screenly': 'Screenly で「Settings」、「Security」、「Tokens」の順に開き、トークンを追加します。プレイリスト、ラベル、画面が移行され、簡単な曜日と時刻のルールはスケジュールになります。',

@@ -95,6 +95,7 @@ Uploaded export files are deleted the same way, at most 24 hours after upload.
 | Screenly | API token | yes | yes | Screenly has none | simple rules | yes, labels as groups |
 | Anthias | the device's API | yes | its one loop | Anthias has none | no | the device |
 | OptiSigns | not possible, use the zip | — | — | — | — | — |
+| Samsung MagicINFO | not yet, use the zip (screens stay) | — | — | — | — | — |
 | Anything else | zip of media + CSV | yes | yes | — | — | yes (screens.csv) |
 
 Web pages, apps, tickers, clocks and other widgets are never imported: the same thing in another CMS
@@ -291,6 +292,39 @@ playlist or a `playlists.csv`.
 - https://docs.optisigns.com/quickstart
 - https://docs.optisigns.com/generate-api-key
 - https://api-doc.optisigns.com
+
+### Samsung MagicINFO: not yet through its API, and your screens stay
+
+Samsung is retiring MagicINFO: **On-Premise End of Sale is 31 December 2026** (End of Support
+31 December 2029) and **MagicINFO Cloud End of Service is 28 February 2027**. Samsung's successor
+is VXT.
+
+The MagicINFO Server REST API (`/MagicInfo/restapi/v2.0/`, a token from `POST /auth`) lists content,
+playlists, content schedules and device groups, but documents **no way to download a content file**.
+As with OptiSigns, ScreenTinker does not rely on undocumented behaviour, and without the files the
+playlists would arrive empty. An API importer may follow once it can be tested against a real
+MagicINFO server.
+
+**Your Samsung screens do not need replacing.** On the display, open the menu and go to
+**System > Play Via > URL Launcher** (called **Custom App** on Tizen 6.5 and later), point it at your
+ScreenTinker player address and make URL Launcher the source the display boots into (Auto Source
+Switching or the URL Launcher Settings entry, depending on firmware); nothing has to be installed
+(see the [Samsung TV guide](https://screentinker.com/guides/samsung-tv-digital-signage.html)). The
+display then plays ScreenTinker instead of MagicINFO.
+
+**Moving your content:** copy your media files out of MagicINFO (on an On-Premise server the
+uploaded files are in the server's `runtime` folder) or use your original files, then use the zip
+import below, with one folder per playlist or a `playlists.csv`. Rebuild MagicINFO Author (LFD)
+layouts, video wall layouts, tickers and data links with ScreenTinker layouts and widgets.
+
+If your MagicINFO 9 server is reachable from the internet, patch or isolate it while you move:
+CVE-2024-7399 and CVE-2025-4632 have been exploited in the wild.
+
+**Docs read**
+
+- https://docs.samsungvx.com/docs/ (End of Sale and End of Service dates)
+- https://docs.samsungvx.com/docs/x/NhiUAw (MagicINFO Server 9 / Cloud Open API)
+- https://nvd.nist.gov/vuln/detail/CVE-2024-7399
 
 ### Others we looked at
 
