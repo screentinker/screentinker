@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { mountPromotionsAdmin } from '../components/promotions-admin.js';
 import { showToast } from '../components/toast.js';
-import { esc, isPlatformAdmin } from '../utils.js';
+import { esc, isPlatformAdmin, amount } from '../utils.js';
 import { t, tn } from '../i18n.js';
 import { pluginFieldsHtml, readPluginFields } from '../lib/plugin-fields.js';
 import { openAddUserModal, addUserSuccessMessage } from '../components/workspace-members-add-user-modal.js';
@@ -1187,8 +1187,8 @@ async function loadPlans() {
               </td>
               <td style="padding:8px;text-align:right">${p.max_devices === -1 ? t('admin.unlimited') : p.max_devices}</td>
               <td style="padding:8px;text-align:right">${p.max_storage_mb === -1 ? t('admin.unlimited') : p.max_storage_mb >= 1024 ? (p.max_storage_mb/1024)+'GB' : p.max_storage_mb+'MB'}</td>
-              <td style="padding:8px;text-align:right">${p.price_monthly > 0 ? '$'+p.price_monthly : t('admin.free')}</td>
-              <td style="padding:8px;text-align:right">${p.price_yearly > 0 ? '$'+p.price_yearly : '-'}</td>
+              <td style="padding:8px;text-align:right">${p.price_monthly > 0 ? '$'+amount(p.price_monthly) : t('admin.free')}</td>
+              <td style="padding:8px;text-align:right">${p.price_yearly > 0 ? '$'+amount(p.price_yearly) : '-'}</td>
               <td style="padding:8px;text-align:right${p.user_count ? ';font-weight:500' : ';color:var(--text-muted)'}">${p.user_count}</td>
               <td style="padding:8px;text-align:right;color:var(--text-muted)">${p.device_count}</td>
               <td style="padding:8px;font-size:12px">${checkout(p)}</td>

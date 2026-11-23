@@ -6,6 +6,17 @@ export function esc(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+/**
+ * A price as shown after its "$": whole amounts stay whole ($99, $1) and anything with cents always
+ * has two digits, so a 90% sale shows $9.90 and $38.90, never $9.9 / $38.9. Matches money() on the
+ * landing page. Pure so a test can run it.
+ */
+export function amount(n) {
+  const v = Number(n);
+  if (!isFinite(v)) return '0';
+  return v % 1 ? v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : v.toLocaleString('en-US');
+}
+
 // v4 liveness badge. The patch4 server derives a 3-state liveness — 'healthy' / 'degraded'
 // (temporarily reconnecting) / 'offline' — and emits it as `data.liveness` on dashboard:device-status.
 // It is present on SOME emits only (the plain reconnect + disconnect emits, and any device object read

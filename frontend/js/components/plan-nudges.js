@@ -18,7 +18,7 @@
  */
 import { api } from '../api.js';
 import { t, tn } from '../i18n.js';
-import { isPlatformAdmin, inManagerApp } from '../utils.js';
+import { isPlatformAdmin, inManagerApp, amount } from '../utils.js';
 
 const BANNER_ID = 'trialBanner';
 const DISMISS_KEY = 'st.trialBanner.dismissed';
@@ -180,7 +180,7 @@ function fmtScreens(n) {
 export function promptCopy(code, body = {}, user = cachedUser()) {
   const sp = body.suggested_plan || null;
   const planName = body.plan ? body.plan[0].toUpperCase() + body.plan.slice(1) : '';
-  const price = sp && sp.price_monthly ? `$${sp.price_monthly}` : '';
+  const price = sp && sp.price_monthly ? `$${amount(sp.price_monthly)}` : '';
   const trialEnded = !!(user && user.trial && user.trial.expired_at && !user.trial.active);
   if (code === 'DEVICE_LIMIT') {
     return {
