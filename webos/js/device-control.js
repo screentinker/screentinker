@@ -21,10 +21,18 @@
 
   function log(msg) { try { console.log('[' + TAG + '] ' + msg); } catch (e) {} }
 
+  // A browser built-in, not a SCAP class. Every browser has a native `window.Storage` (the Web
+  // Storage interface behind localStorage), so without this a build with no SCAP files took it
+  // for SCAP's Storage, announced system.self_update and failed every update with "Illegal
+  // constructor". SCAP's classes are plain script from vendor/, never native code.
+  function isNative(fn) {
+    try { return /\[native code\]\s*\}\s*$/.test(Function.prototype.toString.call(fn)); } catch (e) { return false; }
+  }
+
   // A SCAP class, however this SDK build exposes it, or null.
   function plugin(globalName, cordovaId) {
     try {
-      if (typeof global[globalName] === 'function') return global[globalName];
+      if (typeof global[globalName] === 'function' && !isNative(global[globalName])) return global[globalName];
       if (global.cordova && typeof global.cordova.require === 'function') {
         var m = global.cordova.require(cordovaId);
         if (typeof m === 'function') return m;
