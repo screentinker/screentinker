@@ -167,6 +167,28 @@ test('webos: the browser\'s own window.Storage is not taken for SCAP Storage', (
   assert.deepEqual(Array.from(scap.STWebOS.capabilities()), ['system.self_update']);
 });
 
+test('webos: a packaged config.json is read even where fetch() refuses file://', async () => {
+  const src = fs.readFileSync(path.join(WEBOS, 'js', 'app.js'), 'utf8');
+  const grab = (name) => {
+    const i = src.indexOf(`function ${name}(`);
+    let depth = 0;
+    for (let j = src.indexOf('{', i); j < src.length; j++) {
+      if (src[j] === '{') depth++;
+      if (src[j] === '}' && --depth === 0) return src.slice(i, j + 1);
+    }
+    throw new Error(`no ${name}`);
+  };
+  // webOS: fetch() of a file:// URL rejects, XHR answers with status 0 and the file's text.
+  class FakeXHR {
+    open(m, u) { this.u = u; }
+    send() { this.status = 0; this.responseText = '{"serverUrl":"https://signage.example.test"}'; setTimeout(() => this.onload(), 0); }
+  }
+  const sb = { Promise, JSON, setTimeout, XMLHttpRequest: FakeXHR, fetch: () => Promise.reject(new TypeError('Failed to fetch')) };
+  vm.runInNewContext(`var packagedConfig = null;\n${grab('readLocalJson')}\n${grab('loadPackagedConfig')}\nthis.load = loadPackagedConfig;`, sb);
+  const cfg = await sb.load();
+  assert.equal(cfg && cfg.serverUrl, 'https://signage.example.test');
+});
+
 test('webos: version.json is readable from the file:// shell (CORS)', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   const start = server.indexOf("app.get('/webos/version.json'");
