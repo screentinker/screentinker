@@ -31,10 +31,14 @@ const svc = require('../lib/curbside/service');
 const { getClientIp } = require('../services/activity');
 
 const ipOf = (req) => String(getClientIp(req) || req.ip || '');
+// ⚠️ Limits, caps and lockouts count the NETWORK, never the exact address: one IPv6 host owns a whole
+// /64, so keying on the address gave every rotated source a fresh budget (same as lib/pair-lockout.js).
+const { ipKeyGenerator } = require('express-rate-limit');
+const netOf = (req) => { const ip = ipOf(req); return ip ? ipKeyGenerator(ip, 64) : ''; };
 // The per-address cap on open check-ins (service.js OPEN_PER_IP) counts a keyed hash, never the address.
 const crypto = require('crypto');
 const ipKeyOf = (req, loc) => crypto.createHmac('sha256', String(appConfig.jwtSecret || ''))
-  .update(`curbside-ip|${loc.id}|${ipOf(req)}`).digest('base64url').slice(0, 32);
+  .update(`curbside-ip|${loc.id}|${netOf(req)}`).digest('base64url').slice(0, 32);
 const clientOf = (req) => { const v = req.get('x-curbside-client'); return typeof v === 'string' ? v.slice(0, 80) : null; };
 
 /*
@@ -74,7 +78,7 @@ function limited(bucket, key, max, windowMs = 60000) {
   return 0;
 }
 function limit(req, res, bucket, max) {
-  const wait = limited(bucket, ipOf(req), max);
+  const wait = limited(bucket, netOf(req), max);
   if (!wait) return false;
   res.set('Retry-After', String(wait));
   res.status(429).json({ error: 'Too many requests, try again in a moment', code: 'rate_limited' });

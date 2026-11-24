@@ -440,6 +440,26 @@ test('one address cannot fill every spot by rotating client ids: at most 2 OPEN 
   assert.ok(rows.filter((r) => r.status === 'waiting').every((r) => typeof r.ip_key === 'string' && r.ip_key.length >= 16));
 });
 
+test('IPv6: the 2-open cap counts the /64, not each address in it', async () => {
+  const l = await newLocation({ spots_count: 10 });
+  assert.equal((await checkin(l, cid(), { spot: '1', order_ref: '1' }, '2001:db8:aa:1::10')).status, 201);
+  assert.equal((await checkin(l, cid(), { spot: '2', order_ref: '2' }, '2001:db8:aa:1::11')).status, 201);
+  const third = await checkin(l, cid(), { spot: '3', order_ref: '3' }, '2001:db8:aa:1:ffff:1:2:3');
+  assert.equal(third.status, 429, 'a fresh address in the same /64 is the same network');
+  assert.equal(third.body.code, 'open_limit');
+  assert.equal((await checkin(l, cid(), { spot: '4', order_ref: '4' }, '2001:db8:aa:2::10')).status, 201, 'another /64 is another network');
+});
+
+test('re-casing a spot label moves the car waiting there, so the spot cannot take a second car', async () => {
+  const l = await newLocation({ spots_count: undefined, spots: 'a, b' });
+  assert.equal((await checkin(l, cid(), { spot: 'a', order_ref: '1' }, freshIp())).status, 201);
+  assert.equal((await api('PUT', `/api/curbside/${l.id}`, { spots: 'A, b' })).status, 200);
+  const second = await checkin(l, cid(), { spot: 'A', order_ref: '2' }, freshIp());
+  assert.equal(second.status, 409, JSON.stringify(second.body));
+  assert.equal(second.body.code, 'spot_taken');
+  assert.deepEqual(svc.openArrivals(db, svc.load(db, l.id)).map((a) => a.spot), ['A']);
+});
+
 test('changing the timezone to one on another date never expires the cars waiting', async () => {
   // 14:00 on Jan 10 in Chicago is already 05:00 on Jan 11 in Tokyo.
   const t0 = Date.UTC(2026, 0, 10, 20, 0);
