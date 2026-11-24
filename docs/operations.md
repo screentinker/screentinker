@@ -19,7 +19,7 @@ did not behave.
 - [The served APK](#the-served-apk)
 - [Verifying a deploy](#verifying-a-deploy)
 - [Rolling back](#rolling-back)
-- [Applying a hot patch](#applying-a-hot-patch)
+- [Patching between releases](#patching-between-releases)
 - [Releases and version numbers](#releases-and-version-numbers)
 - [Upgrading Node.js](#upgrading-nodejs)
 - [Upgrading 1.9 to 2.0 on slow storage](#upgrading-19-to-20-on-slow-storage)
@@ -267,11 +267,17 @@ is, that is the moment to stop and read it rather than reflexively rolling forwa
 
 ---
 
-## Applying a hot patch
+## Patching between releases
 
-Sometimes a fix is merged and you need it before the next release. A hot patch puts just that change
-on your running server. It is temporary by design: the next upgrade replaces the patched files with
-the release, which already contains the fix.
+Sometimes a fix is merged and you need it before the next release. A patch puts just that change on
+your server. It is temporary by design: the next upgrade replaces the patched files with the release,
+which already contains the fix.
+
+**It needs a restart.** The server reads its code once at startup, so a patched file does nothing
+until the service restarts. That is a few seconds of downtime: screens keep playing from their local
+cache and reconnect on their own (some may show offline on the dashboard for a moment), and open
+dashboard tabs reconnect by themselves. Anything mid-flight, such as an upload or a shell session,
+has to be started again, so pick a quiet moment.
 
 **Patch the change, not the file.** Files change between releases, so copying the latest version of
 a file over yours can bring in unrelated changes your release is not ready for. Pick the smallest
