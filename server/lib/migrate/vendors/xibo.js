@@ -13,7 +13,10 @@
  * metadata address. The token is held only in this session object.
  *
  * Mapping:
- *   library (image/video/audio)  -> media, downloaded from GET /library/download/{id}/{type}
+ *   library (image/video/audio)  -> media, downloaded from GET /library/download/{id}
+ *     ⚠️ NOT /{id}/{type}: swagger.json still documents that, but the CMS routes (lib/routes.php) have
+ *     been /library/download/{id} since 3.x and answer the two-part path with a route 404. 2.x had
+ *     /library/download/:id(/:type), so the one-part path works there too. (#900)
  *   other library types          -> listed as not imported (fonts, modules, HTML packages, PDFs...)
  *   playlists (not region ones)  -> playlists; widget order = displayOrder; non-media widgets dropped
  *   layouts (published) + regions -> layouts + zones (pixel geometry -> percent), region items
@@ -220,8 +223,7 @@ module.exports = {
       },
       async fetchMedia(m, dest, maxBytes) {
         const id = encodeURIComponent(String(m.ref.id));
-        const type = encodeURIComponent(String(m.ref.type));
-        const got = await c.download(`${cred.base}/library/download/${id}/${type}`, dest, maxBytes);
+        const got = await c.download(`${cred.base}/library/download/${id}`, dest, maxBytes);
         checkXiboFile(dest, got);
         return got;
       },

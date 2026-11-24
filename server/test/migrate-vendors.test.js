@@ -289,13 +289,17 @@ function xiboFake({ failMedia = null, emptyMedia = null, pageMedia = null } = {}
     if (u.hostname !== 'cms.example.org') return null;
     const p = u.pathname;
     if (opts.download) {
-      const m = /^\/api\/library\/download\/(\d+)\/(\w+)$/.exec(p);
-      if (!m || opts.headers.Authorization !== `Bearer ${XIBO_TOKEN}`) return { status: 401 };
+      // The real CMS route (lib/routes.php, 3.x and 4.x): /library/download/{id}. The two-part
+      // /{id}/{type} that swagger.json documents is a route 404 there, as on the #900 reporter's CMS.
+      const m = /^\/api\/library\/download\/(\d+)$/.exec(p);
+      if (!m) return { status: 404 };   // Slim: no such route
+      if (opts.headers.Authorization !== `Bearer ${XIBO_TOKEN}`) return { status: 401 };
       if (failMedia && Number(m[1]) === failMedia) return { status: 500 };
       // A CMS whose SENDFILE_MODE names a web server feature that is not set up: 200, nothing.
       if (emptyMedia && Number(m[1]) === emptyMedia) return { bytes: Buffer.alloc(0) };
       if (pageMedia && Number(m[1]) === pageMedia) return { bytes: Buffer.from('<!DOCTYPE html><html><body>Login</body></html>') };
-      return { bytes: m[2] === 'video' ? MP4 : png(Number(m[1])) };
+      const item = library.find((x) => x.mediaId === Number(m[1]));
+      return { bytes: item && item.mediaType === 'video' ? MP4 : png(Number(m[1])) };
     }
     if (p === '/api/authorize/access_token') {
       const f = new URLSearchParams(opts.body);
