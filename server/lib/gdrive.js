@@ -190,6 +190,20 @@ const MEDIA_EXT_RE = /\.(jpe?g|png|gif|webp|bmp|svg|mp4|m4v|webm|mov|mkv|mp3|m4a
  */
 async function listFolder(orgId, driveId, itemId, { maxMedia = 1000 } = {}) {
   if (!ID_RE.test(String(itemId))) throw new GDriveError('The stored folder id is not valid.', { status: 500 });
+  // ⚠️ Look at the folder itself first. files.list only returns what the service account can see,
+  // so a folder that was unshared, trashed or moved out of reach lists as EMPTY (200, no error),
+  // and an empty complete listing removes every synced file and publishes an empty playlist.
+  let meta;
+  try {
+    meta = await apiGet(orgId, `/files/${itemId}?fields=${encodeURIComponent('id,mimeType,trashed')}&supportsAllDrives=true`);
+  } catch (e) {
+    if (e instanceof GDriveError && e.status === 404) {
+      throw new GDriveError('The folder is gone, or no longer shared with the service account. Nothing was removed; share it again (or remove this folder here).', { status: 404, code: 'gdrive_folder_gone' });
+    }
+    throw e;
+  }
+  if (!meta || meta.mimeType !== FOLDER_MIME) throw new GDriveError('That Drive item is no longer a folder. Nothing was removed.', { status: 502, code: 'gdrive_not_folder' });
+  if (meta.trashed) throw new GDriveError('The folder is in the Drive trash. Nothing was removed; restore it in Drive (or remove this folder here).', { status: 502, code: 'gdrive_folder_trashed' });
   const out = [];
   let media = 0;
   let pageToken = null;
