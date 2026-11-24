@@ -128,6 +128,75 @@ function templateWidgetLabel(w) {
   return key ? `${t('templates.widget_type_label')} · ${key}` : t('templates.widget_type_label');
 }
 
+/*
+ * News widget own messages: one row per line (text, optional "show until", remove). Built with DOM
+ * calls, never markup, since the text is whatever the operator typed. "Show until" is the browser's
+ * local time, stored as epoch ms, so a screen in another timezone still ends it at the same moment.
+ */
+function localInputValue(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function addOwnMessageRow(box, m = {}) {
+  const row = document.createElement('div');
+  row.className = 'own-msg-row';
+  row.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center;flex-wrap:wrap';
+  const text = document.createElement('input');
+  text.type = 'text'; text.className = 'input'; text.maxLength = 300; text.dataset.ownText = '';
+  text.placeholder = t('news.own.placeholder'); text.value = m.text || '';
+  text.style.cssText = 'flex:1 1 220px;min-width:0';
+  text.setAttribute('aria-label', t('news.own.title'));
+  const untilLabel = document.createElement('label');
+  untilLabel.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);margin:0';
+  untilLabel.textContent = t('news.own.until');
+  const until = document.createElement('input');
+  until.type = 'datetime-local'; until.className = 'input'; until.dataset.ownUntil = '';
+  until.value = localInputValue(m.until); until.style.cssText = 'width:auto';
+  untilLabel.appendChild(until);
+  const expired = document.createElement('span');
+  expired.style.cssText = 'font-size:12px;color:var(--danger,#f87171)';
+  const syncExpired = () => {
+    const ms = until.value ? new Date(until.value).getTime() : 0;
+    expired.textContent = ms && ms <= Date.now() ? t('news.own.expired') : '';
+  };
+  until.addEventListener('change', syncExpired);
+  syncExpired();
+  const remove = document.createElement('button');
+  remove.type = 'button'; remove.className = 'btn-icon'; remove.textContent = '\u00d7';
+  remove.title = t('news.own.remove'); remove.setAttribute('aria-label', t('news.own.remove'));
+  remove.addEventListener('click', () => row.remove());
+  row.append(text, untilLabel, expired, remove);
+  box.appendChild(row);
+  return text;
+}
+
+function mountOwnMessages(box, addBtn, messages) {
+  if (!box) return;
+  box.textContent = '';
+  for (const m of Array.isArray(messages) ? messages : []) if (m && typeof m.text === 'string') addOwnMessageRow(box, m);
+  addBtn?.addEventListener('click', () => {
+    if (box.childElementCount >= 20) return;
+    addOwnMessageRow(box).focus();
+  });
+}
+
+function readOwnMessages(box) {
+  if (!box) return [];
+  const out = [];
+  for (const row of box.querySelectorAll('.own-msg-row')) {
+    const text = (row.querySelector('[data-own-text]')?.value || '').trim();
+    if (!text) continue;
+    const v = row.querySelector('[data-own-until]')?.value || '';
+    const ms = v ? new Date(v).getTime() : NaN;
+    out.push({ text, until: Number.isFinite(ms) ? ms : null });
+  }
+  return out;
+}
+
 function escAttr(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -761,6 +830,11 @@ export async function render(container) {
         html += `
           <!-- 3.0 news feeds: a site or a feed, read by the server (components/news-feed-picker.js). -->
           <div class="form-group" id="wFeedPicker"></div>
+          <!-- Own messages: free text before the headlines (or alone with no feed), each with an optional end. -->
+          <div class="form-group"><label>${t('news.own.title')}</label>
+            <div class="form-hint" style="font-size:12px;color:var(--text-muted);margin-bottom:6px">${t('news.own.hint')}</div>
+            <div id="wOwnMsgs"></div>
+            <button type="button" class="btn btn-secondary btn-sm" id="wOwnAdd">${t('news.own.add')}</button></div>
           <div class="form-group"><label>${t('news.field.layout')}</label><select id="wNewsLayout" class="input" style="background:var(--bg-input)">
             <option value="ticker" ${config.layout !== 'headlines' ? 'selected' : ''}>${t('news.layout.ticker')}</option>
             <option value="headlines" ${config.layout === 'headlines' ? 'selected' : ''}>${t('news.layout.headlines')}</option></select></div>
@@ -1006,6 +1080,7 @@ export async function render(container) {
     if (type === 'menu-board') mountMenuEditor(document.getElementById('wMenuEditor'), config, { apiGet: (u) => API(u) });
     if (type === 'cloud-doc') initCloudDocForm();
     if (type === 'rss') mountFeedPicker(document.getElementById('wFeedPicker'), { url: config.feed_url || '', mode: config.feed_mode });
+    if (type === 'rss') mountOwnMessages(document.getElementById('wOwnMsgs'), document.getElementById('wOwnAdd'), config.messages);
     // Show only the settings of the chosen look (scroll speed for the ticker, seconds per headline for headlines).
     const newsLook = document.getElementById('wNewsLayout');
     if (newsLook) {
@@ -1528,6 +1603,7 @@ export async function render(container) {
         break;
       }
       case 'rss': Object.assign(config, readFeedPicker(document.getElementById('wFeedPicker')), {
+        messages: readOwnMessages(document.getElementById('wOwnMsgs')),
         layout: val('wNewsLayout') === 'headlines' ? 'headlines' : 'ticker',
         scroll_speed: parseInt(val('wScrollSpeed')) || 30,
         interval_sec: Math.min(300, Math.max(3, parseInt(val('wNewsInterval')) || 10)),

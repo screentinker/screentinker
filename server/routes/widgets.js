@@ -231,7 +231,7 @@ router.post('/', (req, res) => {
   if (tzErr) return res.status(400).json({ error: tzErr });
   const feedErr = rssFeedCredentialsError(widget_type, config);
   if (feedErr) return res.status(400).json({ error: feedErr });
-  let storedConfig = config;
+  let storedConfig = cleanRssConfig(widget_type, config);
   if (widget_type === 'cloud-doc') {
     const cd = cloudDocConfig(config);
     if (cd.error) return res.status(400).json({ error: cd.error });
@@ -409,6 +409,7 @@ router.put('/:id', (req, res) => {
   if (tzErr) return res.status(400).json({ error: tzErr });
   const feedErr = rssFeedCredentialsError(widget.widget_type, config);
   if (feedErr) return res.status(400).json({ error: feedErr });
+  config = cleanRssConfig(widget.widget_type, config);
   if (widget.widget_type === 'cloud-doc' && config) {
     const cd = cloudDocConfig(config);
     if (cd.error) return res.status(400).json({ error: cd.error });
@@ -778,7 +779,7 @@ function renderLegacyRSS(c, snapshot = null) {
   const news = require('../lib/news-feed');
   const source = snapshot || (r.feedUrl ? news.peek(r.feedUrl, r.mode) : null);
   const payload = source ? news.screenPayload(source, { max: r.maxItems, images: false }) : null;
-  const items = payload && Array.isArray(payload.items) ? payload.items : [];
+  const items = [...r.messages.map((m) => ({ title: m.text })), ...(payload && Array.isArray(payload.items) ? payload.items : [])];
   const body = items.map((item) => `<div class="st-news">${escapeHtml(String(item.title || ''))}${item.summary ? `<div class="st-note">${escapeHtml(String(item.summary))}</div>` : ''}</div>`).join('');
   return legacyStaticPage('News', body || '<div class="st-empty">Waiting for feed data…</div>', c);
 }
@@ -1745,6 +1746,37 @@ ${weatherScript}
  * `<` escaped and is put on screen with textContent. ES5 on purpose: the page also runs on old
  * player WebViews (the legacy player).
  */
+/*
+ * The news widget's OWN MESSAGES: free text an operator types ("Elevator out of service"), shown
+ * before the feed's headlines, or on their own when no feed is chosen. Each may carry `until` (epoch
+ * ms): from then on it is not shown, on the server's render AND on a screen that is already playing
+ * it (the page drops it on its own clock), so a temporary notice cannot outstay its welcome.
+ * Text is data like a feed title: it reaches the page as JSON and goes on screen via textContent.
+ */
+const OWN_MESSAGES_MAX = 20;
+const OWN_MESSAGE_CHARS = 300;
+function ownMessages(list, { now = Date.now(), keepExpired = false } = {}) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const m of list) {
+    if (out.length >= OWN_MESSAGES_MAX) break;
+    if (!m || typeof m !== 'object') continue;
+    const text = typeof m.text === 'string' ? m.text.replace(/\s+/g, ' ').trim().slice(0, OWN_MESSAGE_CHARS) : '';
+    if (!text) continue;
+    const u = Number(m.until);
+    const until = Number.isFinite(u) && u > 0 ? Math.round(u) : null;
+    if (until && until <= now && !keepExpired) continue;
+    out.push({ text, until });
+  }
+  return out;
+}
+
+// Saved as cleaned (expired ones kept, so the editor can show them as expired).
+function cleanRssConfig(type, config) {
+  if (type !== 'rss' || !config || typeof config !== 'object' || Array.isArray(config) || config.messages === undefined) return config;
+  return { ...config, messages: ownMessages(config.messages, { keepExpired: true }) };
+}
+
 function rssConfig(c) {
   const feedUrl = typeof c.feed_url === 'string' ? c.feed_url.trim().slice(0, 2000) : '';
   return {
@@ -1756,6 +1788,7 @@ function rssConfig(c) {
     intervalSec: Math.max(3, Math.min(300, Math.round(safeNumber(c.interval_sec, 10)) || 10)),
     showImages: c.show_images !== false,
     fontSize: Math.max(8, Math.min(400, safeNumber(c.font_size, 24))),
+    messages: ownMessages(c.messages),
   };
 }
 
@@ -1797,6 +1830,7 @@ function renderRSS(c, opts = {}) {
     url: itemsUrl ? `${itemsUrl}&n=${r.maxItems}` : '',
     layout: r.layout, speed: r.scrollSpeedSec, interval: r.intervalSec * 1000, images, font: r.fontSize,
     seed: seed ? seed.items : null,
+    own: r.messages.map((m) => ({ t: m.text, u: m.until })),
   };
   const fg = safeCss(c.color, '#FFF');
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
@@ -1826,7 +1860,15 @@ function renderRSS(c, opts = {}) {
   var cfg = JSON.parse(document.getElementById('cfg').textContent);
   var root = document.getElementById('root');
   var items = cfg.seed;
+  var own = cfg.own || [];
+  var shown = [], ownShown = 0;
   var anim = null, rot = null, idx = 0;
+  // Own messages still in date, on this screen's clock (an expired one drops off without a reload).
+  function liveOwn() {
+    var now = Date.now(), out = [];
+    for (var i = 0; i < own.length; i++) if (!own[i].u || own[i].u > now) out.push({ title: own[i].t });
+    return out;
+  }
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; }
   function message(text) { stop(); root.innerHTML = ''; root.appendChild(el('div', 'msg', text)); }
   function stop() { if (anim) { try { anim.cancel(); } catch (e) {} anim = null; } if (rot) { clearInterval(rot); rot = null; } }
@@ -1838,15 +1880,15 @@ function renderRSS(c, opts = {}) {
     stop();
     root.innerHTML = '';
     var strip = el('div', 'ticker');
-    for (var i = 0; i < items.length; i++) {
+    for (var i = 0; i < shown.length; i++) {
       var it = el('div', 'item');
-      if (cfg.images && items[i].image) {
+      if (cfg.images && shown[i].image) {
         var tp = el('span', 'tp'); var th = Math.round(cfg.font * 1.7);
         tp.style.height = th + 'px'; tp.style.width = Math.round(th * 16 / 9) + 'px';
-        tp.style.backgroundImage = 'url("' + String(items[i].image).replace(/["\\\\\\n]/g, '') + '")';
+        tp.style.backgroundImage = 'url("' + String(shown[i].image).replace(/["\\\\\\n]/g, '') + '")';
         it.appendChild(tp);
       }
-      it.appendChild(el('span', 'title', items[i].title)); strip.appendChild(it);
+      it.appendChild(el('span', 'title', shown[i].title)); strip.appendChild(it);
       strip.appendChild(el('div', 'item sep', '\\u2022'));
     }
     root.appendChild(strip);
@@ -1874,13 +1916,13 @@ function renderRSS(c, opts = {}) {
     stop();
     root.innerHTML = '';
     var cards = [];
-    for (var i = 0; i < items.length; i++) {
+    for (var i = 0; i < shown.length; i++) {
       var c = el('div', 'hl');
-      if (cfg.images && items[i].image) { var p = el('div', 'pic'); p.style.backgroundImage = 'url("' + String(items[i].image).replace(/["\\\\\\n]/g, '') + '")'; c.appendChild(p); }
+      if (cfg.images && shown[i].image) { var p = el('div', 'pic'); p.style.backgroundImage = 'url("' + String(shown[i].image).replace(/["\\\\\\n]/g, '') + '")'; c.appendChild(p); }
       var tx = el('div', 'txt');
-      tx.appendChild(el('div', 't', items[i].title));
-      if (items[i].summary) tx.appendChild(el('div', 's', items[i].summary));
-      var w = when(items[i].published); if (w) tx.appendChild(el('div', 'w', w));
+      tx.appendChild(el('div', 't', shown[i].title));
+      if (shown[i].summary) tx.appendChild(el('div', 's', shown[i].summary));
+      var w = when(shown[i].published); if (w) tx.appendChild(el('div', 'w', w));
       c.appendChild(tx); root.appendChild(c); cards.push(c);
     }
     idx = idx % cards.length;
@@ -1891,14 +1933,17 @@ function renderRSS(c, opts = {}) {
   }
 
   function draw() {
-    if (!items || !items.length) { message(items ? 'No items' : 'Feed unavailable'); return; }
+    var mine = liveOwn();
+    ownShown = mine.length;
+    shown = mine.concat(items || []);
+    if (!shown.length) { message(!cfg.url ? 'No feed chosen' : items ? 'No items' : 'Feed unavailable'); return; }
     if (cfg.layout === 'headlines') headlines(); else ticker();
   }
   function load() {
-    if (!cfg.url) { message('No feed chosen'); return; }
+    if (!cfg.url) { items = []; draw(); return; }
     var x = new XMLHttpRequest();
     var done = false;
-    function keep() { if (done) return; done = true; if (!items) message('Feed unavailable'); }
+    function keep() { if (done) return; done = true; if (!items) draw(); }
     try {
       x.open('GET', cfg.url, true);
       x.timeout = 30000;
@@ -1915,10 +1960,12 @@ function renderRSS(c, opts = {}) {
       x.send();
     } catch (e) { keep(); }
   }
-  if (items) draw();
-  window.addEventListener('resize', function () { if (items && items.length && cfg.layout !== 'headlines') ticker(); });
+  if (items || own.length) draw();
+  window.addEventListener('resize', function () { if (shown.length && cfg.layout !== 'headlines') ticker(); });
   load();
   setInterval(load, 300000);
+  // Redraw only when an own message has just expired (a redraw restarts the scroll).
+  if (own.length) setInterval(function () { if (liveOwn().length !== ownShown) draw(); }, 15000);
 })();
 </script></body></html>`;
 }
@@ -2930,6 +2977,7 @@ function renderDiagSmoothness(config) {
 
 module.exports = router;
 module.exports.renderWidgetHtml = renderWidgetHtml;
+module.exports.ownMessages = ownMessages;
 module.exports.renderLegacyRoomDisplay = renderLegacyRoomDisplay;
 module.exports.renderLegacySocial = renderLegacySocial;
 module.exports.dataResolverFor = dataResolverFor;
