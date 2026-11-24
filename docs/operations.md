@@ -19,6 +19,7 @@ did not behave.
 - [The served APK](#the-served-apk)
 - [Verifying a deploy](#verifying-a-deploy)
 - [Rolling back](#rolling-back)
+- [Patching between releases](#patching-between-releases)
 - [Releases and version numbers](#releases-and-version-numbers)
 - [Upgrading Node.js](#upgrading-nodejs)
 - [Upgrading 1.9 to 2.0 on slow storage](#upgrading-19-to-20-on-slow-storage)
@@ -263,6 +264,68 @@ docker compose up -d
 **The database usually does not need restoring.** Migrations are additive, so older code simply
 ignores the new columns. Restore the snapshot only if a migration was destructive — and if one ever
 is, that is the moment to stop and read it rather than reflexively rolling forward.
+
+---
+
+## Patching between releases
+
+Sometimes a fix is merged and you need it before the next release. A patch puts just that change on
+your server. It is temporary by design: the next upgrade replaces the patched files with the release,
+which already contains the fix.
+
+**It needs a restart.** The server reads its code once at startup, so a patched file does nothing
+until the service restarts. That is a few seconds of downtime: screens keep playing from their local
+cache and reconnect on their own (some may show offline on the dashboard for a moment), and open
+dashboard tabs reconnect by themselves. Anything mid-flight, such as an upload or a shell session,
+has to be started again, so pick a quiet moment.
+
+**Patch the change, not the file.** Files change between releases, so copying the latest version of
+a file over yours can bring in unrelated changes your release is not ready for. Pick the smallest
+form that fits the fix:
+
+| Size of the fix | Hand out | Applies with |
+|---|---|---|
+| One or two lines | a `sed` command | `sed -i` on the file |
+| A whole file that is unchanged in your release | a download pinned to a commit | `curl` over the file, after checking your copy matches the release |
+| Several files | a patch file (`gh pr diff <n> > fix.patch`) | `git apply --check fix.patch`, then `git apply fix.patch` (git checkout only) |
+
+`git apply --check` says up front whether a patch applies cleanly to your version; if it does not,
+wait for the release rather than forcing it.
+
+**Before you patch**, keep a copy of each file you change (`cp file file.before-patch`), so undoing
+it is a copy back and a restart.
+
+**Where the files are**
+
+- Native install (git checkout or server zip): `server/...` inside the install folder. Restart the
+  service afterwards (`sudo systemctl restart <service>`).
+- Docker: `/app/server/...` inside the container. Patch with `docker exec <container> ...`, then
+  `docker restart <container>`. A patch made inside a container is lost when the container is
+  recreated (`docker compose pull && docker compose up -d`), which is fine once that pulls a release
+  with the fix; until then, re-apply it after a recreate.
+
+**Check it took**: `grep` for a string the fix adds, and try the thing that was broken.
+
+### Example: the live debug log (#908)
+
+From 2.1.5 the dashboard's **Debug logging** panel (and the screen-capture permission, Open settings
+and Clear update cache buttons) did nothing, because the server refused those four commands. The fix
+adds them to the allowed list in `server/lib/device-command.js`. It is one line, so it is a `sed`.
+It applies to 3.0.2 and later; on 2.1.5 to 3.0.1 the line it anchors on does not exist, so upgrade
+instead:
+
+```bash
+# Docker (use your container's name)
+docker exec screentinker sed -i "s/^  'camera_view',\$/  'camera_view', 'set_debug', 'enable_system_capture', 'settings', 'clear_update_cache',/" /app/server/lib/device-command.js
+docker restart screentinker
+
+# Native, from the install folder
+sed -i "s/^  'camera_view',\$/  'camera_view', 'set_debug', 'enable_system_capture', 'settings', 'clear_update_cache',/" server/lib/device-command.js
+sudo systemctl restart <service>
+```
+
+Check: `grep -c "'set_debug', 'enable_system_capture'" <path>/device-command.js` prints `1`, and
+ticking Debug logging on a screen's page starts showing lines.
 
 ---
 
