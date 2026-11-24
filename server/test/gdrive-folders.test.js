@@ -59,6 +59,7 @@ const LINK = `https://drive.google.com/drive/folders/${FOLDER}?usp=sharing`;
 let tokenCalls = 0;
 let files;
 const seen = { authOnUsercontent: null };
+let folderState = 'ok';   // 'ok' | 'unshared' (Google: 404 on the folder, EMPTY list) | 'trashed'
 
 function resetFiles() {
   files = {
@@ -87,9 +88,14 @@ async function mockFetch(url, opts = {}) {
   }
   if (u.origin === 'https://www.googleapis.com') {
     assert.match(opts.headers.Authorization, /^Bearer gtok\d+$/);
-    if (u.pathname === `/drive/v3/files/${FOLDER}`) return json(200, { id: FOLDER, name: 'Lobby screens', mimeType: gdrive.FOLDER_MIME, webViewLink: `https://drive.google.com/drive/folders/${FOLDER}` });
+    if (u.pathname === `/drive/v3/files/${FOLDER}`) {
+      if (folderState === 'unshared') return json(404, { error: { code: 404, message: `File not found: ${FOLDER}.`, errors: [{ reason: 'notFound' }] } });
+      return json(200, { id: FOLDER, name: 'Lobby screens', mimeType: gdrive.FOLDER_MIME, trashed: folderState === 'trashed', webViewLink: `https://drive.google.com/drive/folders/${FOLDER}` });
+    }
     if (u.pathname === '/drive/v3/files/fileAAAAAAAAAA' && !u.searchParams.has('alt')) return json(200, { id: 'fileAAAAAAAAAA', name: 'b-second.png', mimeType: 'image/png' });
     if (u.pathname === '/drive/v3/files') {
+      // What Drive really does when the caller cannot see the parent (or it is trashed): 200, empty.
+      if (folderState !== 'ok') return json(200, { files: [] });
       assert.equal(u.searchParams.get('q'), `'${FOLDER}' in parents and trashed = false`);
       const list = Object.entries(files).map(([id, f]) => ({ id, name: f.name, mimeType: f.mime, ...(f.bytes ? { size: String(f.bytes.length), md5Checksum: f.md5 } : {}) }));
       list.push({ id: 'subEEEEEEEEEEE', name: 'Archive', mimeType: gdrive.FOLDER_MIME });
@@ -221,6 +227,28 @@ test('a changed file replaces its item in place; a deleted one leaves', async ()
   const after = db.prepare("SELECT content_id FROM cloud_folder_items WHERE folder_id = ? AND remote_id = 'fileAAAAAAAAAA'").get(folderId).content_id;
   assert.equal(after, before, 'same library item, new bytes');
   assert.deepEqual(playlistNames(), ['b-second.png']);
+});
+
+test('an unshared or trashed folder is an error, and nothing synced is removed', async () => {
+  const count = () => db.prepare('SELECT COUNT(*) n FROM cloud_folder_items WHERE folder_id = ?').get(folderId).n;
+  const names = playlistNames();
+  const n = count();
+  assert.ok(n > 0);
+  try {
+    for (const state of ['unshared', 'trashed']) {
+      folderState = state;
+      const out = await folders.syncFolder(folderId, { trigger: 'manual' });
+      assert.equal(out.status, 'error', state);
+      assert.match(out.error, state === 'unshared' ? /no longer shared/ : /trash/);
+      assert.equal(count(), n, `${state}: every synced file is still mapped`);
+      assert.deepEqual(playlistNames(), names, `${state}: the playlist is untouched`);
+    }
+  } finally { folderState = 'ok'; }
+  assert.equal((await folders.syncFolder(folderId, { trigger: 'manual' })).status, 'ok', 'shared again: syncs normally');
+});
+
+test('a Drive folder\'s playlist is labelled Google Drive, not SharePoint', () => {
+  assert.match(db.prepare('SELECT name FROM playlists WHERE id = ?').get(playlistId).name, /\(Google Drive\)$/);
 });
 
 test('a hand-off to anywhere but googleusercontent.com is refused', async () => {
