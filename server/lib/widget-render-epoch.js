@@ -16,5 +16,7 @@
  *   1  12-hour clocks showed 12 o'clock as "00" in 24-hour locales (lib/hour-cycle.js)
  *   2  clocks shrink to fit their zone instead of wrapping; slide widgets can fill their zone
  *   3  slides mark their photos and clips (data-st-cid) and ask the web player for cached copies
+ *   4  news: own messages (#912) and a seamless ticker loop with no black gap (#921); curbside order
+ *      numbers no longer cut off
  */
-module.exports = 3;
+module.exports = 4;

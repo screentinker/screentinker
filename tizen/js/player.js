@@ -599,7 +599,15 @@ PlaylistPlayer.prototype.load = function (assignments, playbackOrder) {
   // Current item survives -> keep playing it, just retarget the index (no restart).
   if (curId && !this._forceRender) {
     var stay = this.indexOfIdentity(items, curId);
-    if (stay >= 0 && this.hasContentOnScreen()) { this.index = stay; return; }
+    if (stay >= 0 && this.hasContentOnScreen()) {
+      this.index = stay;
+      // A widget edited in place keeps its identity but gets a new rev, and so a new page: render it
+      // now, as the web player does ("Widget edited - re-rendering in place"). Keeping it on screen
+      // left the old page up until the next playlist reassignment.
+      var was = oldItems[oldIndex], now = items[stay];
+      if (now && now.widget_id && was && (was.widget_rev || 0) !== (now.widget_rev || 0)) this.playCurrent();
+      return;
+    }
   }
   this._forceRender = false;
 

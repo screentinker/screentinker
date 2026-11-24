@@ -133,11 +133,14 @@ function renderCurbsideWidget({ widgetId = null, origin = '', config = {}, initi
     font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
   #w{position:absolute;top:0;left:0;right:0;bottom:0;padding:3vmin 4vmin;box-sizing:border-box;overflow:hidden}
   #head{font-weight:700;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.92;margin-bottom:.35em}
-  table{width:100%;border-collapse:collapse;table-layout:fixed}
+  table{width:100%;border-collapse:collapse}
   td{padding:.18em .3em;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
-  td.o{width:38%;font-weight:800;font-variant-numeric:tabular-nums}
-  td.s{width:22%}
-  td.st{width:40%;text-align:right;opacity:.85}
+  /* The order number takes all the room the spot and status do not need (a fixed 38% cut a 17-character
+     order to "ORD-20..." with the row half empty). width:100% + max-width:0 lets it ellipsize, still,
+     only when it truly does not fit. */
+  td.o{width:100%;max-width:0;font-weight:800;font-variant-numeric:tabular-nums}
+  td.s{width:1%}
+  td.st{width:1%;text-align:right;opacity:.85}
   tr.seen td.st{color:${c.accent};opacity:1;font-weight:700}
   tr.seen td.o{color:${c.accent}}
   tr+tr td{border-top:1px solid rgba(127,127,127,.25)}
@@ -169,6 +172,16 @@ ${curbsideWidgetStep.toString()}
     var px = Math.floor(Math.min((h * 0.9) / (n * 1.45 + 1.9), w / 21));
     px = Math.max(10, px);
     rowsEl.parentNode.style.fontSize = px + 'px';
+    // w / 21 is a guess at a line's length. Measure the real rows: a long order number ("ORD-2026-11-24-99",
+    // 17 of the 20 allowed) did not fit at 1920x1080 and was cut to "ORD-20...". Shrink just enough for
+    // the widest row, never below 10px; what still does not fit is ellipsized by the stylesheet.
+    var table = rowsEl.parentNode, avail = table.clientWidth, trs = rowsEl.getElementsByTagName('tr'), worst = 1;
+    for (var r = 0; r < trs.length; r++) {
+      var tds = trs[r].getElementsByTagName('td'), need = 0;
+      for (var c = 0; c < tds.length; c++) need += tds[c].scrollWidth;
+      if (avail > 0 && need > avail) worst = Math.min(worst, avail / need);
+    }
+    if (worst < 1) { px = Math.max(10, Math.floor(px * worst * 0.97)); table.style.fontSize = px + 'px'; }
     emptyEl.style.fontSize = px + 'px';
     moreEl.style.fontSize = Math.max(9, Math.floor(px * 0.75)) + 'px';
     headEl.style.fontSize = Math.max(10, Math.floor(px * 1.15)) + 'px';
