@@ -7,6 +7,7 @@ ScreenTinker can show documents straight from Google Workspace and Microsoft 365
 | A Google Slides, Docs or Sheets file | **Cloud document** widget | The file published, or shared with "anyone with the link" |
 | A PowerPoint, Word or Excel file from OneDrive or SharePoint | **Cloud document** widget | The file's **Embed** link |
 | A SharePoint or OneDrive **folder** of images and videos, kept up to date | **SharePoint & OneDrive folder sync** | Your organization's own Microsoft Entra app |
+| A Google Drive **folder** of images and videos, kept up to date | **Google Drive folder sync** | Your organization's own Google Cloud service account |
 
 ---
 
@@ -150,3 +151,43 @@ syncs.
 | *The app is not allowed to read this* | Grant the app the site (Sites.Selected) or Files.Read.All, and give admin consent. |
 | *Microsoft could not find that item* | The link is wrong, or the app cannot see that site. |
 | *not enough storage left on the plan* | The plan's storage is full. Those files are skipped until there is room. |
+
+---
+
+## Google Drive folder sync
+
+Works exactly like the SharePoint & OneDrive sync above (new, changed and removed files, the
+folder's playlist, the 500-file limit, storage, who may add a folder), for a Google Drive folder.
+Google Docs, Sheets and Slides, PDFs and other files are not synced and are counted as skipped:
+show a Google file with a Cloud document widget.
+
+ScreenTinker reads Drive as your organization's **own service account**, and sees only the folders
+you share with it. No Google sign-in, no domain-wide delegation, and nothing that needs Google's app
+review.
+
+### 1. Create a service account (once per organization)
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), pick or create a project.
+2. **APIs & Services → Library**: enable the **Google Drive API**.
+3. **IAM & Admin → Service accounts → Create service account.** It needs no roles in the project.
+4. Open the account, **Keys → Add key → Create new key → JSON**. A `.json` file downloads.
+5. In ScreenTinker, **Settings → Google Drive**: paste the whole file's contents and **Save**. The
+   key is stored encrypted and is never shown again. **Test connection** checks that Google accepts it.
+
+The card then shows the account's address, like `screens@your-project.iam.gserviceaccount.com`.
+
+### 2. Share a folder and add it (an organization owner or admin)
+
+1. In Google Drive, share the folder with the service account's address as a **Viewer**. For a
+   shared drive, add the address as a member of the drive instead.
+2. **Content → SharePoint, OneDrive & Google Drive folders… → Add a folder**, choose **Google
+   Drive**, and paste the folder's link (`https://drive.google.com/drive/folders/…`).
+
+### Troubleshooting
+
+| Message | What to do |
+|---|---|
+| *Google refused the service account: Invalid JWT Signature* | The key was deleted or replaced in Google Cloud. Create a new JSON key and paste it. |
+| *Google could not find that folder* | Share the folder with the service account's address, or check the link. |
+| *The service account is not allowed to read this* | Share the folder with it, and enable the Google Drive API in its project. |
+| *That link is to a file, not a folder* | Copy the folder's link, not a file's. |

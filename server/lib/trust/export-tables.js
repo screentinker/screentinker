@@ -158,6 +158,7 @@ const EXPORTED = {
   api_token_targets: { category: 'automation', scope: via('token_id', 'api_tokens') },
   // organization-level integrations (credentials redacted)
   org_m365_apps: { category: 'integrations', scope: org() },
+  org_google_drive: { category: 'integrations', scope: org() },
   canva_integrations: { category: 'integrations', scope: org() },
   bi_connections: { category: 'integrations', scope: org() },
   social_connections: { category: 'integrations', scope: org() },

@@ -112,6 +112,7 @@ const RESTORED = {
   automation_overrides: {},
   // organization-level integrations: restored DISCONNECTED (their credentials never leave a server)
   org_m365_apps: {},
+  org_google_drive: {},
   canva_integrations: {},
   bi_connections: {},
   social_connections: {},

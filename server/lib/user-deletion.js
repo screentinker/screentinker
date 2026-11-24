@@ -109,7 +109,7 @@ const WORKSPACE_INTEGRATIONS = [
 // refresh them once the app is gone. A person's connection to the INSTANCE app is theirs, not the
 // org's, and survives until the person is deleted.
 const ORG_INTEGRATIONS = [
-  'org_m365_apps', 'canva_integrations', 'bi_connections', 'social_connections', 'room_connections', 'audience_org_settings',
+  'org_m365_apps', 'org_google_drive', 'canva_integrations', 'bi_connections', 'social_connections', 'room_connections', 'audience_org_settings',
 ];
 
 function purgeWorkspaceIntegrations(db, wsIds, have, out) {
