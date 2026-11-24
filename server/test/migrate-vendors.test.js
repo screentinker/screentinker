@@ -246,7 +246,7 @@ test('the real (guarded) wire refuses a metadata address even if a name resolves
  */
 const XIBO_SECRET = 'xibo-CLIENT-SECRET-123456';
 const XIBO_TOKEN = 'eyJ0eXAiOiJKV1Q-XIBO-ACCESS-TOKEN';
-function xiboFake({ failMedia = null } = {}) {
+function xiboFake({ failMedia = null, emptyMedia = null, pageMedia = null } = {}) {
   const library = [
     { mediaId: 12, name: 'lobby', mediaType: 'image', storedAs: '12.png', fileName: 'lobby.png', fileSize: 245, duration: 10, retired: 0 },
     { mediaId: 13, name: 'promo', mediaType: 'video', storedAs: '13.mp4', fileName: 'promo.mp4', fileSize: 2100, duration: 30, retired: 0 },
@@ -289,10 +289,17 @@ function xiboFake({ failMedia = null } = {}) {
     if (u.hostname !== 'cms.example.org') return null;
     const p = u.pathname;
     if (opts.download) {
-      const m = /^\/api\/library\/download\/(\d+)\/(\w+)$/.exec(p);
-      if (!m || opts.headers.Authorization !== `Bearer ${XIBO_TOKEN}`) return { status: 401 };
+      // The real CMS route (lib/routes.php, 3.x and 4.x): /library/download/{id}. The two-part
+      // /{id}/{type} that swagger.json documents is a route 404 there, as on the #900 reporter's CMS.
+      const m = /^\/api\/library\/download\/(\d+)$/.exec(p);
+      if (!m) return { status: 404 };   // Slim: no such route
+      if (opts.headers.Authorization !== `Bearer ${XIBO_TOKEN}`) return { status: 401 };
       if (failMedia && Number(m[1]) === failMedia) return { status: 500 };
-      return { bytes: m[2] === 'video' ? MP4 : png(Number(m[1])) };
+      // A CMS whose SENDFILE_MODE names a web server feature that is not set up: 200, nothing.
+      if (emptyMedia && Number(m[1]) === emptyMedia) return { bytes: Buffer.alloc(0) };
+      if (pageMedia && Number(m[1]) === pageMedia) return { bytes: Buffer.from('<!DOCTYPE html><html><body>Login</body></html>') };
+      const item = library.find((x) => x.mediaId === Number(m[1]));
+      return { bytes: item && item.mediaType === 'video' ? MP4 : png(Number(m[1])) };
     }
     if (p === '/api/authorize/access_token') {
       const f = new URLSearchParams(opts.body);
@@ -375,6 +382,22 @@ test('Xibo: a wrong secret fails the scan with a readable reason, and the creden
   assert.match(j.error, /refused the client id or secret/);
   assert.equal(j.cred_enc, null);
   assert.ok(!logs.join('\n').includes('WRONG-secret-value'));
+});
+
+test('Xibo: an empty file or a page instead of the file names the CMS setting, not "not media" (#900)', async () => {
+  const u = mkUser('xiboempty');
+  const ws = mkWorkspace('xiboempty', u);
+  W.routes.push(xiboFake({ emptyMedia: 12, pageMedia: 14 }));
+  const { job, view } = await importAll(u, ws, 'xibo', { url: 'https://cms.example.org', client_id: 'cid', client_secret: XIBO_SECRET });
+  assert.equal(job.status, 'done', job.error || '');
+  const byName = Object.fromEntries(view.report.failed.map((f) => [f.name, f.reason]));
+  assert.match(byName['lobby.png'], /empty file/);
+  assert.match(byName['menu.png'], /page or an error message/);
+  for (const r of [byName['lobby.png'], byName['menu.png']]) {
+    assert.match(r, /SENDFILE_MODE/);
+    assert.doesNotMatch(r, /not an image, video or audio/);
+  }
+  assert.equal(view.report.created.media, 1, 'the video that did arrive is imported');
 });
 
 test('Xibo: re-running the import duplicates nothing', async () => {

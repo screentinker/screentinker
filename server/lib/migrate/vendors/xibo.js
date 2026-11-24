@@ -13,7 +13,10 @@
  * metadata address. The token is held only in this session object.
  *
  * Mapping:
- *   library (image/video/audio)  -> media, downloaded from GET /library/download/{id}/{type}
+ *   library (image/video/audio)  -> media, downloaded from GET /library/download/{id}
+ *     ⚠️ NOT /{id}/{type}: swagger.json still documents that, but the CMS routes (lib/routes.php) have
+ *     been /library/download/{id} since 3.x and answer the two-part path with a route 404. 2.x had
+ *     /library/download/:id(/:type), so the one-part path works there too. (#900)
  *   other library types          -> listed as not imported (fonts, modules, HTML packages, PDFs...)
  *   playlists (not region ones)  -> playlists; widget order = displayOrder; non-media widgets dropped
  *   layouts (published) + regions -> layouts + zones (pixel geometry -> percent), region items
@@ -32,6 +35,29 @@ const { offsetPages, truncatedNote, userError, str } = require('./common');
 const map = require('../map');
 
 const MEDIA_TYPES = { image: 'image', video: 'video', audio: 'audio' };
+
+/*
+ * ⚠️ Xibo hands library downloads to the web server (Settings: SENDFILE_MODE, Apache X-Sendfile or
+ * Nginx X-Accel-Redirect). When the web server is not set up for it, the API answers 200 with an
+ * EMPTY body, or a page instead of the file. Without this check the library rejected those bytes
+ * and the report said "not an image, video or audio file", which sent people looking in the wrong
+ * place (reported on #900). Say what really happened and where the setting is.
+ */
+const SENDFILE_HINT = 'In Xibo, check the CMS setting for how library files are sent (SENDFILE_MODE: Apache, Nginx or Off). If it names a web server feature that is not set up, the CMS sends empty files; setting it to Off fixes that.';
+function checkXiboFile(dest, got) {
+  const fs = require('fs');
+  const size = Number(got && got.size) || 0;
+  if (size === 0) {
+    try { fs.rmSync(dest, { force: true }); } catch { /* gone */ }
+    throw new MigrateHttpError(`Xibo sent an empty file. ${SENDFILE_HINT}`, 'empty_file');
+  }
+  let head = '';
+  try { const fd = fs.openSync(dest, 'r'); const b = Buffer.alloc(256); const n = fs.readSync(fd, b, 0, 256, 0); fs.closeSync(fd); head = b.subarray(0, n).toString('utf8'); } catch { /* checked by the library */ }
+  if (/^\s*(<!doctype html|<html|\{\s*"(error|message)")/i.test(head)) {
+    try { fs.rmSync(dest, { force: true }); } catch { /* gone */ }
+    throw new MigrateHttpError(`Xibo sent a page or an error message instead of the file. ${SENDFILE_HINT}`, 'not_a_file');
+  }
+}
 
 function apiBase(url) { return normalizeBaseUrl(url).replace(/\/api$/i, '') + '/api'; }
 
@@ -195,10 +221,11 @@ module.exports = {
         }
         return { account: cred.base.toLowerCase(), label: new URL(cred.base).host, media, playlists, layouts, schedules, screens, groups, unmapped };
       },
-      fetchMedia(m, dest, maxBytes) {
+      async fetchMedia(m, dest, maxBytes) {
         const id = encodeURIComponent(String(m.ref.id));
-        const type = encodeURIComponent(String(m.ref.type));
-        return c.download(`${cred.base}/library/download/${id}/${type}`, dest, maxBytes);
+        const got = await c.download(`${cred.base}/library/download/${id}`, dest, maxBytes);
+        checkXiboFile(dest, got);
+        return got;
       },
       close() { c.setAuth({}); },
     };
