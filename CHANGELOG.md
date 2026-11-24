@@ -1,5 +1,100 @@
 # Changelog
 
+## 3.2.6
+
+Thanks to **@Omniflux** for asking for Google Drive folder sync (#914) and for pointing out that
+self-hosted servers were showing screentinker.com's terms (#923), **@KiwasoVR** for reporting and
+testing the Raspberry Pi 3 white screen (#833, #907), **@lvh-oloRotonde** for the Xibo import reports
+(#900, #902, #920), and **@olchinga-de** for asking for free text in the news ticker (#912).
+
+### ⚠️ Security
+
+Low severity, found in internal reviews.
+
+- **Public pages counted limits per exact IPv6 address** (#918). The curbside check-in, "Now serving"
+  queue and content request pages keyed their rate limits, caps and wrong-link lockouts on the full
+  address, so one IPv6 host could rotate through its /64 for a fresh budget each time. They now count
+  the /64, as pairing already did. Logs keep the full address.
+- **A new trigger's token was written to the server log**, and network trigger tokens were compared
+  with a plain string compare. Neither happens any more (#896).
+
+### ⚠️ Behaviour changes
+
+- **Self-hosted servers no longer show screentinker.com's terms and privacy policy** (#923). With
+  `SELF_HOSTED=true`, `/legal/terms` and `/legal/privacy` show a short page saying the server is run
+  by its operator, or redirect to your own pages if you set `TERMS_URL` / `PRIVACY_URL`. The hosted
+  service is unchanged.
+- **Search engines (#913):** a published page on `www.` redirects to the `APP_URL` host (screens, the
+  API and downloads are never redirected); `/downloads`, `/guides.html` and `/admin.html` redirect to
+  the real pages; an `.html` address that does not exist is now a 404 instead of the dashboard; the
+  Markdown renditions, installers and dashboard shell are marked `noindex`.
+- **The dashboard now tells you when a screen refuses a command** (a toast), and the server logs
+  every refusal (#910).
+- **"Clear update cache" is only offered for Android and the native players**, the ones that
+  implement it. On BrightSign and SCAP webOS it reported success but did nothing (#919).
+- **The news ticker starts with its text already on screen** and loops with no gap (#921).
+
+### Added
+
+- **Curbside pickup** (#898). Each parking spot gets a QR code; customers check in with their order
+  number, staff see who is waiting on a private link and tap "We got you", and a screen widget shows
+  order numbers only. At most 2 open check-ins per network, texts are editable, and it works on old
+  TV engines. See docs/curbside-pickup.md.
+- **Google Drive folder sync** (#914, requested by @Omniflux). An organization admin adds its own
+  Google Cloud service account key (stored encrypted, never shown again), shares a Drive folder with
+  that account, and the folder syncs into the library like a SharePoint/OneDrive folder, optionally
+  as its own playlist. A folder that is unshared, trashed or out of reach stops the sync with an
+  error and removes nothing (#917). See docs/cloud-documents.md.
+- **Your own messages in the news widget** (#912, requested by @olchinga-de). Up to 20 lines of free
+  text (for example "Elevator out of service"), each with an optional time to stop showing it, in the
+  ticker, the headlines look, or on their own without a feed.
+- **Samsung MagicINFO in the import wizard** (#903): a step-by-step guide for moving off MagicINFO
+  before its end of support, and a "moving off MagicINFO" page on the site.
+- **Samsung Tizen: the live debug log works** (#911). Turn it on from the screen's page to stream
+  the player's log, starting with the lines from before you turned it on; it stops on its own after
+  30 minutes.
+- **A social preview card** for shared screentinker.com links (#905, #906).
+- **Copyright and DMCA notices in the terms** of the hosted service, with its designated agent
+  (#922).
+- **For contributors:** an OWASP Top 10 static security scan and an `npm audit` gate run in CI. The
+  scan's baseline may only shrink; mark a reviewed line with `// security-ok(rule): reason`. See
+  CONTRIBUTING (#894). Operators: how to apply a fix between releases, docs/operations (#909).
+
+### Fixed (players)
+
+- **Raspberry Pi 3: videos showed a white screen** (#833, reported by @KiwasoVR; #907). Debian's
+  Qt 6.8 leaves out the video shaders OpenGL ES 2 GPUs need, so the player now ships its own copy,
+  only on Qt 6.8.1/6.8.2 where they are missing. 1080p may still be too much for a Pi 3's memory.
+- **LG webOS shell without SCAP no longer claims it can update itself**; `/webos/version.json` is
+  readable from the packaged app, and the shell reads its config on webOS versions where `fetch`
+  fails on `file://` (#897).
+- **News ticker: a short message left the screen black between loops** (#921).
+
+### Fixed (dashboard)
+
+- **The live debug log, system capture, player settings and Clear update cache were refused with
+  "invalid command type"** since 2.1.5, so the debug log panel opened and stayed empty (#908).
+- **Widgets: Save sometimes created a widget with no type and every save failed** until you left the
+  page, when the page rendered twice in a row (#916, plugin cards #919).
+- **Billing: someone on a trial could not buy the plan they were trialing** (the "Current" card had
+  no buttons), and sale prices showed one cent digit ($9.9) (#899).
+
+### Fixed (server)
+
+- **Xibo import downloaded no media on Xibo 3 and 4** (#920, reported by @lvh-oloRotonde). It used
+  `/library/download/{id}/{type}` as Xibo's API description says, but the CMS only routes
+  `/library/download/{id}`. An empty download (Xibo's sendfile mode set up wrong) is now named as
+  that, not "not an image, video or audio file".
+- **The import wizard's connection errors name the host and the real cause**: a name that does not
+  resolve, a private address with the `OUTBOUND_ALLOW_PRIVATE` hint on self-hosted, a reset
+  connection (#902, reported by @lvh-oloRotonde in #900).
+- **Images under `/assets/` can be shown by other sites** (Cross-Origin-Resource-Policy), so link
+  previews show their picture (#901).
+
+### Dependencies
+
+- **jimp 1.7.0** (zod 4): clears the 29 high `npm audit` findings that all came from zod 3 (#893).
+
 ## 3.2.5
 
 Thanks to **@Omniflux** for the content inspector details (#884), **@Kirial** for the Grafana kiosk
