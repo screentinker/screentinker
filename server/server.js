@@ -573,6 +573,39 @@ function sendMarkdown(req, res, file, canonicalPath) {
   }
 }
 
+/*
+ * SEARCH ENGINES: ONE URL PER PAGE, AND NOTHING INDEXED THAT IS NOT A PAGE.
+ *
+ * Bing Webmaster Tools (2026-11-23) flagged pages with no title, no description, no h1 and thin
+ * content. None of them were real pages:
+ *   - www.screentinker.com/* served a full duplicate of the site. A published page on www. now
+ *     redirects to APP_URL's host. ONLY published pages (aiSurface.markdownSource finds an HTML file
+ *     for them): a screen, the API, sockets, the dashboard and downloads are never redirected, so a
+ *     player set up with a www. address keeps working. No APP_URL, or APP_URL on www., = no redirect.
+ *   - the Markdown renditions (*.md, for agents) and the installers under /download/ were indexed as
+ *     documents; the dashboard shell (/app, /index.html, and the catch-all at the bottom) as a page.
+ *     They are marked noindex with X-Robots-Tag. Agents still read the .md: noindex is about search
+ *     results, not fetching, and every HTML page still names its .md in the Link header.
+ *   - a few addresses people and crawlers guess get a 301 to the real page (SEO_ALIASES).
+ */
+const CANONICAL_URL = (() => { try { return new URL(process.env.APP_URL || ''); } catch (e) { return null; } })();
+const SEO_ALIASES = { '/downloads': '/download', '/downloads/': '/download', '/guides.html': '/guides/', '/admin.html': '/app' };
+const NOINDEX_PATH = /^\/(app(\/|$)|index\.html$)|^\/download\/.|\.md$/;
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  if (CANONICAL_URL && !CANONICAL_URL.hostname.startsWith('www.')
+      && String(req.hostname || '').toLowerCase() === 'www.' + CANONICAL_URL.hostname
+      && aiSurface.markdownSource(config.frontendDir, req.path)) {
+    // security-ok(open-redirect): the host is APP_URL's, fixed; originalUrl only adds a path on it
+    return res.redirect(301, CANONICAL_URL.origin + req.originalUrl);
+  }
+  const alias = Object.prototype.hasOwnProperty.call(SEO_ALIASES, req.path) ? SEO_ALIASES[req.path] : null;
+  // security-ok(open-redirect): alias is a fixed path from SEO_ALIASES; only the query string is carried over
+  if (alias) return res.redirect(301, alias + (req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : ''));
+  if (NOINDEX_PATH.test(req.path)) res.setHeader('X-Robots-Tag', 'noindex');
+  return next();
+});
+
 // /templates is rendered from the live catalog, so its rendition is too (the file on disk is only
 // the shell and its fallback copy).
 app.get('/templates.md', (req, res) => {
@@ -4025,6 +4058,12 @@ app.get('/{*splat}', (req, res) => {
   if (ASSET_EXTENSION.test(req.path)) {
     return res.status(404).set('Cache-Control', 'no-store').type('text/plain; charset=utf-8').send('Not found');
   }
+  // Every real .html page was served above (static, or a route). One that reached here does not exist,
+  // and answering it with the app shell and a 200 made it a thin duplicate page in search results.
+  if (/\.html?$/i.test(req.path)) return res.status(404).type('html').send(NOT_FOUND_PAGE);
+  // The dashboard's deep links (/app#/…, and older shapes) still get the shell, but never as a page
+  // to index: it is a module loader with no prose, the same at every address.
+  res.setHeader('X-Robots-Tag', 'noindex');
   res.sendFile(path.join(config.frontendDir, 'index.html'));
 });
 
