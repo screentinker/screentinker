@@ -55,11 +55,25 @@ class NativeVideoPlaneTest {
     @Test
     fun imageAsVideoKeepsTheOutgoingImageUntilTheNewVideoFrameRenders() {
         val source = File("src/main/java/com/remotedisplay/player/player/MediaPlayerManager.kt").readText()
-        val mount = source.substringAfter("fun playImageAsVideoVariantFromFile(").substringBefore("// #129: live per-item mute")
-        val cover = mount.indexOf("coverSwitchGap(myGeneration)")
+        // One mount path: the still goes through mountVideo (fisheye teardown, stall reset, preload).
+        val entry = source.substringAfter("fun playImageAsVideoVariantFromFile(").substringBefore("// #129: live per-item mute")
+        assertTrue("routes through mountVideo", entry.contains("mountVideo(file, muted = true, imageAsVideo = true, imageStill = still, onImageFallback = onFallback)"))
+        assertTrue("covers with its own image when leaving the native plane", entry.contains("ImageLoader.decodeFile(original, w, h)"))
+        val mount = source.substringAfter("private fun mountVideo(").substringBefore("fun showImage(")
+        val cover = mount.indexOf("coverSwitchGap(myGeneration, imageStill)")
         val typeChange = mount.indexOf("currentType = MediaType.VIDEO")
         assertTrue("captures/retains the outgoing frame before changing media type", cover >= 0 && typeChange > cover)
         assertTrue("keeps the cover when this mount owns it", mount.contains("if (coverGeneration != myGeneration) imageView.visibility = android.view.View.GONE"))
         assertTrue("removes the cover after a real video frame renders", source.contains("override fun onRenderedFirstFrame()") && source.contains("if (player === exoPlayer) clearSwitchCover()"))
+        assertTrue("the cover falls back to the incoming still", source.contains("captureCoverFrame() else null) ?: incomingStill"))
+    }
+
+    @Test
+    fun aStillOnTheVideoPlaneLoopsUntilThePlaylistMovesOn() {
+        val source = File("src/main/java/com/remotedisplay/player/player/MediaPlayerManager.kt").readText()
+        assertTrue("never ends on its own", source.contains("player === exoPlayer && !imageAsVideoActive) onVideoComplete()"))
+        assertTrue("a looping change keeps it looping", source.contains("if (loop || imageAsVideoActive) Player.REPEAT_MODE_ONE"))
+        assertTrue("mounted looping", source.contains("repeatMode = if (imageAsVideo || videoLooping) Player.REPEAT_MODE_ONE"))
+        assertTrue("a stalled still falls back to the image, not a skip", source.contains("if (imageAsVideoActive) fallbackFromImageAsVideo(\"image-as-video variant stalled\")"))
     }
 }

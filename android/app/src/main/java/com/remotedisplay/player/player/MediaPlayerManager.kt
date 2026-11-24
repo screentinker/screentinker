@@ -266,7 +266,9 @@ class MediaPlayerManager(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 // Only the ACTIVE (view-attached) player drives advance; ignore the preload player's
                 // own state changes (it's parked with playWhenReady=false and never ENDs while parked).
-                if (playbackState == Player.STATE_ENDED && player === exoPlayer) onVideoComplete()
+                // A still on the video plane loops until the playlist moves on: it never "ends"
+                // (a looping change elsewhere must not cut an image short).
+                if (playbackState == Player.STATE_ENDED && player === exoPlayer && !imageAsVideoActive) onVideoComplete()
             }
             // Root-2: a corrupt/undecodable video used to freeze the playlist forever — only
             // STATE_ENDED advanced, and an error goes to STATE_IDLE, so onVideoComplete never
@@ -359,7 +361,12 @@ class MediaPlayerManager(
         }
     } catch (e: Throwable) { null }
 
-    private fun coverSwitchGap(generation: Long) {
+    /**
+     * [incomingStill]: what to cover with when the outgoing frame cannot be grabbed (the native
+     * SurfaceView has no TextureView to read). A still bound for the video plane passes its own image
+     * at UI size, so a switch between two of them shows that image instead of black (#904).
+     */
+    private fun coverSwitchGap(generation: Long, incomingStill: Bitmap? = null) {
         /*
          * Coming from an IMAGE there is nothing to capture: the ImageView is already showing the
          * right pixels. Leaving it visible is both the correct still and free.
@@ -372,7 +379,7 @@ class MediaPlayerManager(
             mainHandler.postDelayed(clearCoverTimeout, COVER_MAX_MS)
             return
         }
-        val frame = if (currentType == MediaType.VIDEO && !audioOnly) captureCoverFrame() else null
+        val frame = (if (currentType == MediaType.VIDEO && !audioOnly) captureCoverFrame() else null) ?: incomingStill
         if (frame == null) {
             /*
              * ⚠️ NOTHING TO HOLD, SO GO BACK TO BLACK. With no still to cover it, leaving the
@@ -428,7 +435,10 @@ class MediaPlayerManager(
                 if (wedged) {
                     Log.w("MediaPlayerManager", "Playback stalled with no error or end — recovering")
                     resetPlayersAfterWedge()
-                    onVideoFault()
+                    // A still on the video plane falls back to the original image, as on an error,
+                    // instead of being skipped.
+                    if (imageAsVideoActive) fallbackFromImageAsVideo("image-as-video variant stalled")
+                    else onVideoFault()
                 }
             } else {
                 stall.reset()
@@ -1059,12 +1069,20 @@ class MediaPlayerManager(
         mountVideo(file, muted)
     }
 
-    private fun mountVideo(file: File, muted: Boolean = false, audioCard: Bitmap? = null) {
+    private fun mountVideo(
+        file: File, muted: Boolean = false, audioCard: Bitmap? = null,
+        imageAsVideo: Boolean = false, imageStill: Bitmap? = null, onImageFallback: (() -> Unit)? = null,
+    ) {
         clearImageAsVideoState()
         val myGeneration = ++mountGeneration
         // #298: grab the outgoing frame BEFORE currentType moves — captureCurrentFrame() reads it.
         // Not for audio: it shows its card at once and never renders a frame to take a cover down.
-        if (audioCard == null) coverSwitchGap(myGeneration)
+        if (audioCard == null) coverSwitchGap(myGeneration, imageStill)
+        if (imageAsVideo) {
+            // Set BEFORE the player starts, so its loop and fault handling treat it as a still.
+            imageAsVideoActive = true
+            imageAsVideoFallback = onImageFallback
+        }
         // After the cover: coverSwitchGap grabs the OUTGOING frame from the view it is still in.
         selectVideoView(nativeEligible(fisheye = false, audio = audioCard != null))
         stall.reset()             // a new item starts its own stall clock
@@ -1115,10 +1133,10 @@ class MediaPlayerManager(
         }
         if (fisheyePlayer) rebuildActivePlayer(null)
 
-        Log.i("MediaPlayerManager", "Playing ${if (audioCard != null) "audio" else "video"}: ${file.absolutePath} (muted=$muted)")
+        Log.i("MediaPlayerManager", "Playing ${if (imageAsVideo) "image as video" else if (audioCard != null) "audio" else "video"}: ${file.absolutePath} (muted=$muted)")
         exoPlayer?.apply {
-            volume = if (mountMuted(muted)) 0f else 1f
-            repeatMode = if (videoLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+            volume = if (imageAsVideo || mountMuted(muted)) 0f else 1f
+            repeatMode = if (imageAsVideo || videoLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
             setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
             prepare()
             playWhenReady = true
@@ -1215,28 +1233,18 @@ class MediaPlayerManager(
      * Play a server-generated still through the native video surface. The playlist continues to own
      * image timing; this short clip loops until the next item is mounted.
      */
-    fun playImageAsVideoVariantFromFile(file: java.io.File, fitMode: String?, onFallback: () -> Unit): Boolean {
+    fun playImageAsVideoVariantFromFile(file: java.io.File, original: java.io.File?, fitMode: String?, onFallback: () -> Unit): Boolean {
         if (!nativeEligible(fisheye = false, audio = false)) return false
-        imageAsVideoFallback = onFallback
         setItemFit(fitMode)
-        val myGeneration = ++mountGeneration
-        coverSwitchGap(myGeneration)
-        stopYoutubeIfPlaying()
-        stopLiveInputIfPlaying()
-        currentType = MediaType.VIDEO
-        imageAsVideoActive = true
-        selectVideoView(native = true)
-        playerView.visibility = android.view.View.VISIBLE
-        if (coverGeneration != myGeneration) imageView.visibility = android.view.View.GONE
-        youtubeWebView?.visibility = android.view.View.GONE
-        exoPlayer?.apply {
-            volume = 0f
-            repeatMode = Player.REPEAT_MODE_ONE
-            setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
-            prepare()
-            playWhenReady = true
-        }
-        Log.i("MediaPlayerManager", "Playing cached image as video on native video plane")
+        /*
+         * ONE mount path: mountVideo tears down a fisheye player, resets the stall clock and claims a
+         * parked preload exactly as for any clip (the copy of that logic here skipped all three).
+         * The cover is the image itself at UI size, only when the outgoing item is on the native plane
+         * (nothing to grab there); from an image the ImageView already shows the right pixels.
+         */
+        val still = if (currentType == MediaType.VIDEO && !audioOnly && original != null)
+            decodeBox().let { (w, h) -> ImageLoader.decodeFile(original, w, h) } else null
+        mountVideo(file, muted = true, imageAsVideo = true, imageStill = still, onImageFallback = onFallback)
         return true
     }
 
@@ -1336,7 +1344,8 @@ class MediaPlayerManager(
      */
     fun setVideoLooping(loop: Boolean) {
         videoLooping = loop
-        exoPlayer?.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        // A still on the video plane always loops: the playlist owns its timing, not the clip's 60 s.
+        exoPlayer?.repeatMode = if (loop || imageAsVideoActive) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
         preloadPlayer?.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
     }
 

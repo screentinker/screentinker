@@ -71,7 +71,7 @@ class AudioItemRoutingTest {
 
     @Test fun `audio skips the first-frame cover full screen and shows the card`() {
         val s = src("player/MediaPlayerManager.kt")
-        assertTrue(s.contains("if (audioCard == null) coverSwitchGap(myGeneration)"))
+        assertTrue(s.contains("if (audioCard == null) coverSwitchGap(myGeneration, imageStill)"))
         assertTrue(s.contains("if (audioCard != null) showAudioCard(audioCard)"))
     }
 

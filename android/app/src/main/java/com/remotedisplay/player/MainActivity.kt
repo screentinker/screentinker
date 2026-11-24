@@ -2118,7 +2118,7 @@ class MainActivity : AppCompatActivity() {
         "${config.serverUrl.trimEnd('/')}/api/content/${android.net.Uri.encode(contentId)}/image-as-video?rev=$revision"
 
     private fun playImageAsVideoVariant(item: PlaylistItem, original: java.io.File, variant: java.io.File): Boolean =
-        mediaPlayer.playImageAsVideoVariantFromFile(variant, item.fitMode) {
+        mediaPlayer.playImageAsVideoVariantFromFile(variant, original, item.fitMode) {
             Log.w("MainActivity", "Image-as-video variant failed; showing original ${item.filename}")
             mediaPlayer.showImage(original)
         }

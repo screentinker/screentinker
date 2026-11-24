@@ -546,7 +546,9 @@ class PlaylistController(
             (if (it.tlsSelfSigned) "|tls-self-signed" else "") +
             // A saved fisheye view or setting changed: appended only when set, like the flag above.
             (it.fisheye?.let { f -> "|fisheye:$f" } ?: "") +
-            (if (it.transparentBg) "|t" else "") + "|imageAsVideo:${it.imageAsVideoRevision}"
+            (if (it.transparentBg) "|t" else "") +
+            // The still's video-plane copy: appended only when there is one, like the flags above.
+            (if (it.imageAsVideoRevision > 0L) "|imageAsVideo:${it.imageAsVideoRevision}" else "")
         // Compared BEFORE items is replaced: an alert raised or cleared skips the deferral below.
         val interruptChanged = Interrupt.changed(Interrupt.keys(items), Interrupt.keys(newItems))
         val oldContentIds = items.map(::sig)
