@@ -59,6 +59,10 @@ const LINK = `https://drive.google.com/drive/folders/${FOLDER}?usp=sharing`;
 let tokenCalls = 0;
 let files;
 const seen = { authOnUsercontent: null };
+// Subfolders: folder id -> { files: { id: file }, folders: [{ id, name }], fail? }. The root lists
+// one subfolder, 'subEEEEEEEEEEE' ("Archive"), empty unless a test fills it.
+let tree = { subEEEEEEEEEEE: { files: {}, folders: [] } };
+const allFiles = () => Object.assign({}, files, ...Object.values(tree).map((t) => t.files));
 let folderState = 'ok';   // 'ok' | 'unshared' (Google: 404 on the folder, EMPTY list) | 'trashed'
 
 function resetFiles() {
@@ -94,6 +98,16 @@ async function mockFetch(url, opts = {}) {
     }
     if (u.pathname === '/drive/v3/files/fileAAAAAAAAAA' && !u.searchParams.has('alt')) return json(200, { id: 'fileAAAAAAAAAA', name: 'b-second.png', mimeType: 'image/png' });
     if (u.pathname === '/drive/v3/files') {
+      const parent = /^'([A-Za-z0-9_-]+)' in parents and trashed = false$/.exec(u.searchParams.get('q') || '');
+      if (parent && parent[1] !== FOLDER) {
+        const t = tree[parent[1]];
+        if (!t) return json(200, { files: [] });
+        if (t.fail) return json(500, { error: { code: 500, message: 'Internal Error', errors: [{ reason: 'backendError' }] } });
+        return json(200, { files: [
+          ...Object.entries(t.files).map(([id, f]) => ({ id, name: f.name, mimeType: f.mime, size: String(f.bytes.length), md5Checksum: f.md5 })),
+          ...t.folders.map((d) => ({ id: d.id, name: d.name, mimeType: gdrive.FOLDER_MIME })),
+        ] });
+      }
       // What Drive really does when the caller cannot see the parent (or it is trashed): 200, empty.
       if (folderState !== 'ok') return json(200, { files: [] });
       assert.equal(u.searchParams.get('q'), `'${FOLDER}' in parents and trashed = false`);
@@ -104,8 +118,8 @@ async function mockFetch(url, opts = {}) {
       return page === 'p2' ? json(200, { files: list.slice(2) }) : json(200, { files: list.slice(0, 2), nextPageToken: 'p2' });
     }
     const m = /^\/drive\/v3\/files\/([A-Za-z0-9_-]+)$/.exec(u.pathname);
-    if (m && u.searchParams.get('alt') === 'media' && files[m[1]]) {
-      const f = files[m[1]];
+    if (m && u.searchParams.get('alt') === 'media' && allFiles()[m[1]]) {
+      const f = allFiles()[m[1]];
       if (f.handoff) return new Response(null, { status: 302, headers: { Location: f.handoffTo || `https://doc-0k-4s-docs.googleusercontent.com/docs/securesc/x/${m[1]}` } });
       return new Response(f.bytes, { status: 200 });
     }
@@ -114,7 +128,7 @@ async function mockFetch(url, opts = {}) {
   if (u.hostname.endsWith('.googleusercontent.com')) {
     seen.authOnUsercontent = !!(opts.headers && opts.headers.Authorization);
     const id = u.pathname.split('/').pop();
-    return new Response(files[id].bytes, { status: 200 });
+    return new Response(allFiles()[id].bytes, { status: 200 });
   }
   throw new Error(`unexpected fetch ${url}`);
 }
@@ -258,6 +272,30 @@ test('a hand-off to anywhere but googleusercontent.com is refused', async () => 
   assert.match(out.summary.errors.join(' '), /googleusercontent/);
   delete files.fileFFFFFFFFFF;
   assert.throws(() => gdrive.checkDownloadUrl('https://evil.googleusercontent.com.example/x'), /googleusercontent/);
+});
+
+test('Drive subfolders sync in path order; a failing subfolder is not an unshared folder', async () => {
+  const paths = () => db.prepare('SELECT name FROM cloud_folder_items WHERE folder_id = ? ORDER BY name COLLATE NOCASE').all(folderId).map((x) => x.name);
+  tree.subEEEEEEEEEEE.files = { subFileAAAAAA: { name: 'a-sub.png', bytes: png(2, 2, [1, 2, 3]), md5: 's1', mime: 'image/png' } };
+  tree.subEEEEEEEEEEE.folders = [{ id: 'dayTwoFFFFFFF', name: 'Day 2' }];
+  tree.dayTwoFFFFFFF = { files: { dayFileBBBBBB: { name: 'clip.png', bytes: png(2, 2, [4, 5, 6]), md5: 'd1', mime: 'image/png' } }, folders: [] };
+  try {
+    let out = await folders.syncFolder(folderId, { trigger: 'manual' });
+    assert.equal(out.status, 'ok', out.error);
+    assert.equal(out.summary.added, 2);
+    assert.deepEqual(paths(), ['Archive/a-sub.png', 'Archive/Day 2/clip.png', 'b-second.png']);
+
+    tree.dayTwoFFFFFFF.fail = true;
+    out = await folders.syncFolder(folderId, { trigger: 'manual' });
+    assert.notEqual(out.status, 'error', 'one subfolder failing does not fail the sync');
+    assert.equal(out.summary.removed, 0);
+    assert.equal(out.summary.listing_complete, false);
+    assert.equal(paths().length, 3, 'nothing left');
+  } finally {
+    tree = { subEEEEEEEEEEE: { files: {}, folders: [] } };
+  }
+  const out = await folders.syncFolder(folderId, { trigger: 'manual' });
+  assert.equal(out.summary.removed, 2, 'emptied upstream: the subfolder files leave');
 });
 
 test('the engine still sends SharePoint folders to Microsoft', () => {

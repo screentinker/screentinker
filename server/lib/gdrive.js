@@ -188,13 +188,13 @@ const MEDIA_EXT_RE = /\.(jpe?g|png|gif|webp|bmp|svg|mp4|m4v|webm|mov|mkv|mp3|m4a
  * m365.listFolder: { files, complete }, stopping once `maxMedia` media files are listed. Google's own
  * Docs/Sheets/Slides have no bytes to download, so they are listed as not media (skipped, counted).
  */
-async function listFolder(orgId, driveId, itemId, { maxMedia = 1000 } = {}) {
+async function listFolder(orgId, driveId, itemId, { maxMedia = 1000, checkSelf = true } = {}) {
   if (!ID_RE.test(String(itemId))) throw new GDriveError('The stored folder id is not valid.', { status: 500 });
   // ⚠️ Look at the folder itself first. files.list only returns what the service account can see,
   // so a folder that was unshared, trashed or moved out of reach lists as EMPTY (200, no error),
   // and an empty complete listing removes every synced file and publishes an empty playlist.
-  let meta;
-  try {
+  let meta = { mimeType: FOLDER_MIME, trashed: false };
+  if (checkSelf) try {
     meta = await apiGet(orgId, `/files/${itemId}?fields=${encodeURIComponent('id,mimeType,trashed')}&supportsAllDrives=true`);
   } catch (e) {
     if (e instanceof GDriveError && e.status === 404) {
@@ -205,6 +205,7 @@ async function listFolder(orgId, driveId, itemId, { maxMedia = 1000 } = {}) {
   if (!meta || meta.mimeType !== FOLDER_MIME) throw new GDriveError('That Drive item is no longer a folder. Nothing was removed.', { status: 502, code: 'gdrive_not_folder' });
   if (meta.trashed) throw new GDriveError('The folder is in the Drive trash. Nothing was removed; restore it in Drive (or remove this folder here).', { status: 502, code: 'gdrive_folder_trashed' });
   const out = [];
+  const folders = [];
   let media = 0;
   let pageToken = null;
   let pages = 0;
@@ -218,7 +219,8 @@ async function listFolder(orgId, driveId, itemId, { maxMedia = 1000 } = {}) {
     let i = 0;
     for (; i < value.length && media < maxMedia; i++) {
       const it = value[i];
-      if (!it || it.mimeType === FOLDER_MIME || !it.id) continue;
+      if (!it || !it.id) continue;
+      if (it.mimeType === FOLDER_MIME) { folders.push({ id: String(it.id), name: String(it.name || '') }); continue; }
       const mime = String(it.mimeType || '');
       const native = mime.startsWith('application/vnd.google-apps.');
       const f = {
@@ -233,7 +235,7 @@ async function listFolder(orgId, driveId, itemId, { maxMedia = 1000 } = {}) {
     if (i < value.length) { complete = false; break; }
     pageToken = body && body.nextPageToken ? String(body.nextPageToken) : null;
   } while (pageToken);
-  return { files: out, complete };
+  return { files: out, folders, complete };
 }
 
 function checkDownloadUrl(url) {

@@ -80,7 +80,7 @@ library:
 | A removed file | Taken out of the folder's playlist. Deleted from the library, unless something else uses it (another playlist, a schedule, a video wall, a screen's default content or a direct assignment), in which case it stays. |
 | PowerPoint, Word, Excel, PDF | Not synced, and counted as skipped. Use a Cloud document widget. |
 
-Each folder can keep a **playlist** of its files in file-name order. The playlist is published
+Each folder can keep a **playlist** of its files in file-name order (path order, with subfolders). The playlist is published
 after each sync that changes it, unless your workspace requires approval: then it waits for
 review like any other change. Items you add to that playlist yourself are kept, after the
 folder's files.
@@ -91,6 +91,14 @@ against your plan's storage, and a file larger than the server's upload limit is
 Up to 500 media files per folder are synced (Office files do not count towards that). While a
 folder holds more than that, or is too large to list in full, the sync adds and updates the files
 it saw but removes nothing, and its summary says so. Split a larger folder into several.
+
+**Subfolders.** A folder added since 3.2.6 also syncs its subfolders, up to 5 levels deep and 200
+subfolders (turn off **Include subfolders** when adding it to sync only the folder itself). The
+playlist then plays in path order (`2026-08-28/…` before `2026-08-29/…`), and the 500-file limit
+counts the whole tree. If any subfolder cannot be listed in full, the rest still syncs but nothing
+is removed that time. A folder added before 3.2.6 syncs only its own files until you press **Include
+subfolders** on it; its summary says how many subfolders it is skipping. The same applies to Google
+Drive folders.
 
 A sync runs as the person who added the folder. If they leave the workspace (or can only view
 it), or the workspace is deleted, the folder is paused and shows the reason. Remove it and have an

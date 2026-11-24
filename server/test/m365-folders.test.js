@@ -66,6 +66,10 @@ const FOLDER = 'folder1';
 let tokenCalls = 0;
 let files;            // remote id -> { name, bytes, tag, mime, size? , downloadUrl? }
 let nextLinkOverride = null;
+// Subfolders: folder id -> { files: { id: file }, folders: [{ id, name }], fail? }. 'sub' is the
+// "Archive" folder the root lists; empty unless a test fills it.
+let tree = { sub: { files: {}, folders: [] } };
+const allFiles = () => Object.assign({}, files, ...Object.values(tree).map((t) => t.files));
 
 function resetFiles() {
   files = {
@@ -94,12 +98,21 @@ async function mockFetch(url, opts = {}) {
       value.push({ id: 'sub', name: 'Archive', folder: { childCount: 9 } });
       return json(200, { value, ...(nextLinkOverride ? { '@odata.nextLink': nextLinkOverride } : {}) });
     }
+    const kids = /^\/v1\.0\/drives\/[^/]+\/items\/([^/]+)\/children$/.exec(p);
+    if (kids && tree[kids[1]]) {
+      const t = tree[kids[1]];
+      if (t.fail) return json(500, { error: { code: 'generalException', message: 'Something went wrong.' } });
+      const value = Object.entries(t.files).map(([id, f]) => ({ id, name: f.name, size: f.bytes.length, cTag: f.tag, file: { mimeType: f.mime } }));
+      for (const d of t.folders) value.push({ id: d.id, name: d.name, folder: { childCount: 1 } });
+      return json(200, { value });
+    }
     const m = /^\/v1\.0\/drives\/[^/]+\/items\/([^/]+)$/.exec(p);
-    if (m && files[m[1]]) return json(200, { id: m[1], name: files[m[1]].name, size: files[m[1]].bytes.length, '@microsoft.graph.downloadUrl': files[m[1]].downloadUrl || `https://contoso.sharepoint.com/_layouts/15/download.aspx?id=${m[1]}&tag=${files[m[1]].tag}` });
+    const any = allFiles();
+    if (m && any[m[1]]) return json(200, { id: m[1], name: any[m[1]].name, size: any[m[1]].bytes.length, '@microsoft.graph.downloadUrl': any[m[1]].downloadUrl || `https://contoso.sharepoint.com/_layouts/15/download.aspx?id=${m[1]}&tag=${any[m[1]].tag}` });
     return json(404, { error: { code: 'itemNotFound' } });
   }
   if (u.hostname === 'contoso.sharepoint.com' && u.pathname === '/_layouts/15/download.aspx') {
-    const f = files[u.searchParams.get('id')];
+    const f = allFiles()[u.searchParams.get('id')];
     if (f.onDownload) f.onDownload();
     return new Response(f.bytes, { status: 200 });
   }
@@ -399,6 +412,52 @@ test('content a video wall, a screen default or an assignment uses is kept when 
   assert.equal(r2.body.summary.kept, 3);
   for (const [id] of uses) assert.ok(db.prepare('SELECT id FROM content WHERE id = ?').get(ids[id]), `${id}: kept`);
   assert.deepEqual(playlistNames(), ['c-third.png']);
+});
+
+test('subfolders: synced in path order, a failing one removes nothing, and switching them off says how many', async () => {
+  assert.equal(db.prepare('SELECT include_subfolders i FROM cloud_folders WHERE id = ?').get(folderId).i, 1, 'a new folder includes subfolders');
+  const sync = () => call('editor', 'POST', `/folders/${folderId}/sync`);
+  const paths = () => db.prepare('SELECT name FROM cloud_folder_items WHERE folder_id = ? ORDER BY name COLLATE NOCASE').all(folderId).map((x) => x.name);
+  tree.sub.files = { s1: { name: 'z-old.png', bytes: png(2, 3, [9, 9, 9]), tag: 'c1', mime: 'image/png' } };
+  tree.sub.folders = [{ id: 'deep', name: 'deep' }];
+  tree.deep = { files: { d1: { name: 'a.png', bytes: png(3, 2, [8, 8, 8]), tag: 'c1', mime: 'image/png' } }, folders: [] };
+  try {
+    let r = await sync();
+    assert.equal(r.body.status, 'ok', JSON.stringify(r.body));
+    assert.equal(r.body.summary.added, 2);
+    assert.deepEqual(paths(), ['Archive/deep/a.png', 'Archive/z-old.png', 'c-third.png'], 'items are stored by path');
+    assert.deepEqual(playlistNames(), ['a.png', 'z-old.png', 'c-third.png'], 'the playlist plays in path order; library names stay plain');
+
+    // One subfolder failing: the rest syncs, and nothing leaves (z-old.png is gone upstream too).
+    tree.deep.fail = true;
+    delete tree.sub.files.s1;
+    r = await sync();
+    assert.equal(r.body.summary.removed, 0);
+    assert.equal(r.body.summary.listing_complete, false);
+    assert.match(r.body.summary.errors.join(' '), /Archive\/deep\/:.*Nothing is removed/);
+    assert.deepEqual(paths(), ['Archive/deep/a.png', 'Archive/z-old.png', 'c-third.png']);
+
+    // Listing again: what really left, leaves.
+    tree.deep.fail = false;
+    r = await sync();
+    assert.equal(r.body.summary.removed, 1);
+    assert.deepEqual(playlistNames(), ['a.png', 'c-third.png']);
+
+    // Switched off: the subfolders' files leave, and the summary says how many subfolders are skipped.
+    assert.equal((await call('editor', 'PUT', `/folders/${folderId}`, { include_subfolders: false })).body.include_subfolders, false);
+    r = await sync();
+    assert.equal(r.body.summary.subfolders_skipped, 1);
+    assert.deepEqual(playlistNames(), ['c-third.png']);
+  } finally {
+    tree = { sub: { files: {}, folders: [] } };
+  }
+});
+
+test('a folder added before subfolders existed keeps syncing only its own files', () => {
+  // The migration's default: 0. Only a new folder (normaliseInput without `existing`) turns it on.
+  assert.equal(folders.normaliseInput({}).fields.include_subfolders, 1);
+  assert.equal(folders.normaliseInput({}, { id: 'x' }).fields.include_subfolders, undefined, 'an edit leaves it alone unless asked');
+  assert.match(db.prepare("SELECT dflt_value d FROM pragma_table_info('cloud_folders') WHERE name = 'include_subfolders'").get().d, /0/);
 });
 
 test('removing the sync keeps the library items and the playlist', async () => {

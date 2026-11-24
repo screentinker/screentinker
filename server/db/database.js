@@ -4697,6 +4697,8 @@ migrationStep('Microsoft 365 and cloud folders', () => {
     updated_at           INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   )`);
   db.exec('CREATE INDEX IF NOT EXISTS idx_cloud_folders_ws ON cloud_folders(workspace_id)');
+  // Sync subfolders too (lib/cloud-folders.js listTree). 0 for every folder added before this existed.
+  try { db.prepare('ALTER TABLE cloud_folders ADD COLUMN include_subfolders INTEGER NOT NULL DEFAULT 0').run(); } catch (_) { /* present */ }
   db.exec(`CREATE TABLE IF NOT EXISTS cloud_folder_items (
     folder_id  TEXT NOT NULL REFERENCES cloud_folders(id) ON DELETE CASCADE,
     remote_id  TEXT NOT NULL,
