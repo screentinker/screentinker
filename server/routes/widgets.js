@@ -1837,6 +1837,7 @@ function renderRSS(c, opts = {}) {
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:${safeCss(c.background, 'transparent')}; color:${fg}; height:100vh; overflow:hidden; font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
   .ticker { display:flex; align-items:center; height:100%; white-space:nowrap; position:relative; will-change:transform; }
+  .ticker .set { display:flex; align-items:center; flex:none; }
   .item { display:inline-block; padding:0 40px; font-size:${r.fontSize}px; color:${fg}; }
   .item .title { font-weight:600; }
   #root { position:relative; height:100%; }
@@ -1876,10 +1877,18 @@ function renderRSS(c, opts = {}) {
   /* Ticker. scroll_speed calibrates a constant px/sec (one viewport width per scroll_speed seconds),
      and the duration is derived from the strip's real width, so a long feed takes proportionally
      longer instead of being dragged past too fast to read. */
+  /*
+   * A seamless loop. One SET of the items is repeated until the copies cover the screen, and the strip
+   * moves left by exactly one set's width per loop: at the restart the next copy sits where the first
+   * one began, so the jump is invisible. (Scrolling one set in from the right edge and all the way off
+   * the left left the screen black between loops, for seconds with a short message.) Same speed as
+   * before: cfg.speed is the seconds a point takes to cross the screen.
+   */
   function ticker() {
     stop();
     root.innerHTML = '';
     var strip = el('div', 'ticker');
+    var first = el('div', 'set');
     for (var i = 0; i < shown.length; i++) {
       var it = el('div', 'item');
       if (cfg.images && shown[i].image) {
@@ -1888,17 +1897,21 @@ function renderRSS(c, opts = {}) {
         tp.style.backgroundImage = 'url("' + String(shown[i].image).replace(/["\\\\\\n]/g, '') + '")';
         it.appendChild(tp);
       }
-      it.appendChild(el('span', 'title', shown[i].title)); strip.appendChild(it);
-      strip.appendChild(el('div', 'item sep', '\\u2022'));
+      it.appendChild(el('span', 'title', shown[i].title)); first.appendChild(it);
+      first.appendChild(el('div', 'item sep', '\\u2022'));
     }
+    strip.appendChild(first);
     root.appendChild(strip);
-    var vw = window.innerWidth, w = strip.scrollWidth;
-    var ms = Math.max(1000, ((vw + w) / (vw / cfg.speed)) * 1000);
+    var vw = window.innerWidth, w = first.offsetWidth || first.scrollWidth;
+    if (!w) return;
+    var copies = Math.min(50, Math.ceil(vw / w) + 1);
+    for (var c = 1; c < copies; c++) strip.appendChild(first.cloneNode(true));
+    var ms = Math.max(1000, (w / (vw / cfg.speed)) * 1000);
     if (strip.animate) {
-      anim = strip.animate([{ transform: 'translateX(' + vw + 'px)' }, { transform: 'translateX(-' + w + 'px)' }], { duration: ms, iterations: Infinity, easing: 'linear' });
+      anim = strip.animate([{ transform: 'translateX(0px)' }, { transform: 'translateX(-' + w + 'px)' }], { duration: ms, iterations: Infinity, easing: 'linear' });
     } else {
       var st = document.createElement('style');
-      st.textContent = '@keyframes stt{from{transform:translateX(' + vw + 'px)}to{transform:translateX(-' + w + 'px)}}';
+      st.textContent = '@keyframes stt{from{transform:translateX(0px)}to{transform:translateX(-' + w + 'px)}}';
       root.appendChild(st);
       strip.style.animation = 'stt ' + (ms / 1000) + 's linear infinite';
     }
