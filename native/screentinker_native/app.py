@@ -1442,6 +1442,10 @@ def _main(argv=None):
     QtWebEngineQuick.initialize()
     qt = QGuiApplication(sys.argv)
     qt.setApplicationName("ScreenTinker")
+    # #833: Qt 6.8.1/6.8.2 as Debian builds it has no video shaders for OpenGL ES 2.0 GPUs (Pi 3):
+    # video decodes but never draws. Must run before the first VideoOutput is created.
+    from .player import qt_video_shaders
+    qt_video_shaders.install()
     app = App(args)
 
     from PySide6.QtQml import QQmlApplicationEngine
