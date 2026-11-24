@@ -1862,7 +1862,7 @@ export default {
   'library.add.discard_title': 'Discard what you entered?',
   'library.add.discard_yes': 'Discard',
   'library.add.doc_choice': 'What to connect',
-  'library.add.doc_folder': 'A SharePoint or OneDrive folder',
+  'library.add.doc_folder': "A SharePoint, OneDrive or Google Drive folder",
   'library.add.doc_folder_desc': 'Keep the images, videos and audio in a folder in sync with the library.',
   'library.add.doc_folder_more': 'Folder sync needs your organization’s Microsoft 365 connection, set up by an admin in Settings. Synced files land in the library and stay up to date.',
   'library.add.doc_folder_open': 'Open folder sync',
@@ -2211,7 +2211,7 @@ export default {
   'content.cloud_docs_default_name': 'Document',
   'content.cloud_docs_need_url': 'Paste the link to the document',
   'content.cloud_docs_added': 'Added under Widgets — add it to a playlist to show it',
-  'content.cloud_folders_btn': 'SharePoint & OneDrive folders…',
+  'content.cloud_folders_btn': "SharePoint, OneDrive & Google Drive folders…",
   // IPTV / live HLS stream
   'content.hls': 'Live stream',
   'content.hls_desc': 'HLS (.m3u8), or an rtsp:// or rtsps:// camera on Android and Raspberry Pi, Windows or Mac players. The screen opens the URL itself, so it can be a LAN address. ScreenTinker never pulls the video.',

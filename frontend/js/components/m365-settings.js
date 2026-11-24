@@ -1,10 +1,12 @@
 /*
- * Microsoft 365 (server/routes/m365.js, docs/cloud-documents.md).
+ * Microsoft 365 and Google Drive (server/routes/m365.js, docs/cloud-documents.md).
  *
  *   mountM365Settings  Settings card: the organization's own Entra app (tenant, client ID, secret).
  *                      Org owners and admins only — the server answers can_manage:false to everyone
  *                      else and the card stays hidden.
- *   openCloudFolders   Content library: SharePoint/OneDrive folders synced into this workspace.
+ *   mountGoogleDriveSettings  Settings card: the organization's own Google service account (its JSON
+ *                      key). Same rules; the key is write-only like the Entra secret.
+ *   openCloudFolders   Content library: SharePoint/OneDrive and Google Drive folders synced into this workspace.
  *                      Any editor can sync, pause or stop one; only org owners/admins (can_manage)
  *                      see the Add form — the server refuses everyone else.
  *
@@ -86,7 +88,71 @@ export async function mountM365Settings(host) {
   }
 }
 
+/* ============================== Google Drive ============================== */
+
+export async function mountGoogleDriveSettings(host) {
+  if (!host) return;
+  let app;
+  try { app = await api.get('/m365/google/app'); } catch (_) { host.style.display = 'none'; return; }
+  if (!app.can_manage) { host.style.display = 'none'; return; }
+  host.style.display = '';
+  render();
+
+  function render() {
+    const status = !app.configured ? '<span style="color:var(--text-muted)">Not set up</span>'
+      : app.last_test_ok === true ? `<span style="color:var(--success,#15803d)">Working, tested ${esc(when(app.last_test_at))}</span>`
+      : app.last_test_ok === false ? `<span style="color:var(--danger,#b91c1c)">Test failed: ${esc(app.last_error || '')}</span>`
+      : '<span style="color:var(--text-muted)">Saved, not tested yet</span>';
+    host.innerHTML = `
+      <h3>Google Drive</h3>
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:8px">
+        Connect your organization's own Google Cloud service account to sync Google Drive folders into the content library.
+        In Google Cloud: create a service account, enable the <strong>Google Drive API</strong> in its project, and create a JSON key.
+        Then share each Drive folder with the service account's address (Viewer is enough). See docs/cloud-documents.md.</p>
+      <div style="font-size:13px;margin-bottom:10px">${status}</div>
+      ${app.configured ? `<div style="font-size:13px;margin-bottom:10px">Share folders with: <code style="user-select:all">${esc(app.client_email || '')}</code></div>` : ''}
+      <div style="display:grid;gap:10px;max-width:560px">
+        <div class="form-group"><label>Service account JSON key</label>
+          <textarea class="input" data-g="json" rows="4" spellcheck="false" style="font-family:monospace;font-size:12px" placeholder="${app.has_private_key ? 'A key is set. Leave empty to keep it.' : 'Paste the whole JSON key file'}"></textarea></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" data-g-act="save">Save</button>
+          ${app.configured ? '<button class="btn btn-secondary btn-sm" data-g-act="test">Test connection</button><button class="btn btn-danger btn-sm" data-g-act="remove">Remove</button>' : ''}
+        </div>
+      </div>`;
+    host.querySelector('[data-g-act="save"]').addEventListener('click', save);
+    host.querySelector('[data-g-act="test"]')?.addEventListener('click', test);
+    host.querySelector('[data-g-act="remove"]')?.addEventListener('click', remove);
+  }
+
+  async function save() {
+    const key = host.querySelector('[data-g="json"]').value.trim();
+    try {
+      app = await api.put('/m365/google/app', key ? { service_account_json: key } : {});
+      showToast('Google Drive saved', 'success');
+      render();
+      await test();
+    } catch (err) { showToast(err.message, 'error'); }
+  }
+
+  async function test() {
+    try {
+      const r = await api.post('/m365/google/app/test', {});
+      showToast(r.ok ? 'Google accepted the service account' : r.error, r.ok ? 'success' : 'error');
+      app = await api.get('/m365/google/app');
+      render();
+    } catch (err) { showToast(err.message, 'error'); }
+  }
+
+  async function remove() {
+    if (!confirm('Remove the Google service account? Drive folder syncs stop until it is set up again. Files already synced stay in the library.')) return;
+    try { await api.delete('/m365/google/app'); app = { configured: false, can_manage: true }; render(); showToast('Google Drive removed', 'success'); }
+    catch (err) { showToast(err.message, 'error'); }
+  }
+}
+
 /* ============================== folder syncs ============================== */
+
+const PROVIDER_NAME = { m365: 'SharePoint / OneDrive', google: 'Google Drive' };
 
 function summaryLine(f) {
   const s = f.last_summary;
@@ -104,17 +170,17 @@ function summaryLine(f) {
   return `Synced ${when(f.last_sync_at)}${bits.length ? ' — ' + bits.join(', ') : ' — no changes'}`;
 }
 
-/** The SharePoint/OneDrive folders panel, as a modal over the content library. `onChange` reloads the library. */
+/** The cloud folders panel (SharePoint/OneDrive and Google Drive), as a modal over the content library. `onChange` reloads the library. */
 export async function openCloudFolders({ onChange } = {}) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px';
   overlay.innerHTML = `<div class="modal" style="width:100%;max-width:760px;max-height:90vh;overflow:auto;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
-      <h3 style="margin:0">SharePoint &amp; OneDrive folders</h3>
+      <h3 style="margin:0">Cloud folders</h3>
       <button class="btn btn-secondary btn-sm" data-cf="close">Close</button>
     </div>
-    <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px">Images, videos and audio in a folder are added to the library and kept up to date — changed files are replaced, removed files are taken out. PowerPoint, Word and Excel files are not synced: show them with a <strong>Cloud document</strong> widget and the file's Embed link.</p>
+    <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px">Images, videos and audio in a SharePoint, OneDrive or Google Drive folder are added to the library and kept up to date: changed files are replaced, removed files are taken out. Office files and Google Docs, Sheets and Slides are not synced: show them with a <strong>Cloud document</strong> widget.</p>
     <div data-cf="body">Loading…</div></div>`;
   document.body.appendChild(overlay);
   const close = () => overlay.remove();
@@ -122,23 +188,27 @@ export async function openCloudFolders({ onChange } = {}) {
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   const body = overlay.querySelector('[data-cf="body"]');
 
-  let app = { configured: false };
+  let app = { configured: false };      // Microsoft 365
+  let gapp = { configured: false };     // Google Drive
   let list = [];
   async function load() {
     try {
-      [app, list] = await Promise.all([api.get('/m365/app'), api.get('/m365/folders')]);
+      [app, gapp, list] = await Promise.all([api.get('/m365/app'), api.get('/m365/google/app').catch(() => ({ configured: false })), api.get('/m365/folders')]);
     } catch (err) { body.innerHTML = `<p style="color:var(--danger,#b91c1c)">${esc(err.message)}</p>`; return; }
     render();
   }
 
   function render() {
-    const setup = app.configured ? '' : `<div style="padding:10px;border:1px dashed var(--border);border-radius:6px;margin-bottom:12px;font-size:13px">
-      Microsoft 365 is not set up for your organization yet. ${app.can_manage ? 'Add your app in <strong>Settings → Microsoft 365</strong>.' : 'Ask an organization admin to add it in Settings → Microsoft 365.'}</div>`;
+    const canManage = !!(app.can_manage || gapp.can_manage);
+    const anyConfigured = app.configured || gapp.configured;
+    const setup = anyConfigured ? '' : `<div style="padding:10px;border:1px dashed var(--border);border-radius:6px;margin-bottom:12px;font-size:13px">
+      Neither Microsoft 365 nor Google Drive is set up for your organization yet. ${canManage ? 'Add one in <strong>Settings → Microsoft 365</strong> or <strong>Settings → Google Drive</strong>.' : 'Ask an organization admin to add one in Settings.'}</div>`;
+    const providers = [app.configured && 'm365', gapp.configured && 'google'].filter(Boolean);
     const rows = list.map((f) => `
       <div style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:flex-start">
           <div style="min-width:0;flex:1">
-            <strong>${esc(f.name)}</strong>${f.enabled ? '' : ' <span style="font-size:11px;color:var(--text-muted)">— paused</span>'}
+            <strong>${esc(f.name)}</strong> <span style="font-size:11px;color:var(--text-muted)">${esc(PROVIDER_NAME[f.provider] || PROVIDER_NAME.m365)}</span>${f.enabled ? '' : ' <span style="font-size:11px;color:var(--text-muted)">(paused)</span>'}
             <div style="font-size:12px;color:var(--text-muted);word-break:break-all">${esc(f.web_url || f.share_url)}</div>
             <div style="font-size:12px;margin-top:4px;color:${f.last_status === 'error' ? 'var(--danger,#b91c1c)' : f.last_status === 'partial' ? 'var(--warning,#b45309)' : 'var(--text-secondary)'}">${esc(summaryLine(f))}</div>
             ${f.last_summary && f.last_summary.errors && f.last_summary.errors.length ? `<details style="font-size:12px;margin-top:4px"><summary>Details</summary>${f.last_summary.errors.map((e) => `<div>${esc(e)}</div>`).join('')}</details>` : ''}
@@ -152,12 +222,14 @@ export async function openCloudFolders({ onChange } = {}) {
         </div>
       </div>`).join('');
     body.innerHTML = `${setup}${rows || '<p style="color:var(--text-muted);font-size:13px">No folders yet.</p>'}
-      ${app.configured && !app.can_manage ? '<p style="color:var(--text-muted);font-size:12px;margin-top:12px">Only an organization owner or admin can add a folder. You can sync the folders here now, or stop syncing them.</p>' : ''}
-      ${app.configured && app.can_manage ? `<details style="margin-top:12px" ${list.length ? '' : 'open'}><summary style="cursor:pointer;font-size:13px">Add a folder</summary>
+      ${anyConfigured && !canManage ? '<p style="color:var(--text-muted);font-size:12px;margin-top:12px">Only an organization owner or admin can add a folder. You can sync the folders here now, or stop syncing them.</p>' : ''}
+      ${providers.length && canManage ? `<details style="margin-top:12px" ${list.length ? '' : 'open'}><summary style="cursor:pointer;font-size:13px">Add a folder</summary>
         <div style="display:grid;gap:10px;margin-top:10px">
-          <div class="form-group"><label>Folder sharing link</label>
-            <input type="url" class="input" data-cf-f="share_url" placeholder="https://contoso.sharepoint.com/:f:/s/…" spellcheck="false">
-            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">In SharePoint or OneDrive, select the folder → Share → Copy link. The app must have access to that site.</div></div>
+          ${providers.length > 1 ? `<div class="form-group"><label>From</label><select class="input" data-cf-f="provider" style="background:var(--bg-input)">
+            ${providers.map((p) => `<option value="${p}">${esc(PROVIDER_NAME[p])}</option>`).join('')}</select></div>` : `<input type="hidden" data-cf-f="provider" value="${providers[0]}">`}
+          <div class="form-group"><label>Folder link</label>
+            <input type="url" class="input" data-cf-f="share_url" spellcheck="false">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px" data-cf-hint></div></div>
           <div class="form-group"><label>Name (optional)</label><input type="text" class="input" data-cf-f="name" placeholder="The folder's own name"></div>
           <div style="display:flex;gap:10px;flex-wrap:wrap">
             <div class="form-group" style="flex:1;min-width:140px"><label>Sync every (minutes)</label><input type="number" class="input" data-cf-f="interval_min" min="5" max="1440" value="15"></div>
@@ -168,6 +240,20 @@ export async function openCloudFolders({ onChange } = {}) {
         </div></details>` : ''}`;
 
     body.querySelector('[data-cf="add"]')?.addEventListener('click', add);
+    // The link's placeholder and hint follow the chosen provider.
+    const providerEl = body.querySelector('[data-cf-f="provider"]');
+    const syncHint = () => {
+      const p = providerEl ? providerEl.value : 'm365';
+      const input = body.querySelector('[data-cf-f="share_url"]');
+      const hint = body.querySelector('[data-cf-hint]');
+      if (!input || !hint) return;
+      input.placeholder = p === 'google' ? 'https://drive.google.com/drive/folders/…' : 'https://contoso.sharepoint.com/:f:/s/…';
+      hint.textContent = p === 'google'
+        ? `Open the folder in Google Drive and copy its link. Share the folder with ${gapp.client_email || 'the service account'} (Viewer is enough) first.`
+        : 'In SharePoint or OneDrive, select the folder, then Share, then Copy link. The app must have access to that site.';
+    };
+    providerEl?.addEventListener('change', syncHint);
+    syncHint();
     body.querySelectorAll('[data-cf-sync]').forEach((b) => b.addEventListener('click', async () => {
       b.disabled = true; b.textContent = 'Syncing…';
       try { await api.post(`/m365/folders/${b.dataset.cfSync}/sync`, {}); if (onChange) onChange(); }
@@ -188,6 +274,7 @@ export async function openCloudFolders({ onChange } = {}) {
   async function add() {
     const v = (k) => body.querySelector(`[data-cf-f="${k}"]`);
     const payload = {
+      provider: v('provider') ? v('provider').value : 'm365',
       share_url: v('share_url').value.trim(),
       name: v('name').value.trim() || undefined,
       interval_min: parseInt(v('interval_min').value, 10) || 15,

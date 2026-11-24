@@ -1514,7 +1514,7 @@ export default {
   'library.add.discard_title': "Descartar o que digitou?",
   'library.add.discard_yes': "Descartar",
   'library.add.doc_choice': "O que conectar",
-  'library.add.doc_folder': "Uma pasta do SharePoint ou OneDrive",
+  'library.add.doc_folder': "Uma pasta do SharePoint, OneDrive ou Google Drive",
   'library.add.doc_folder_desc': "Mantenha imagens, vídeos e áudios de uma pasta sincronizados com a biblioteca.",
   'library.add.doc_folder_more': "A sincronização de pasta precisa da conexão Microsoft 365 da sua organização, configurada por um admin em Configurações. Arquivos sincronizados vão para a biblioteca e permanecem atualizados.",
   'library.add.doc_folder_open': "Abrir sincronização de pasta",
@@ -1857,7 +1857,7 @@ export default {
   'content.cloud_docs_default_name': "Documento",
   'content.cloud_docs_need_url': "Cole o link do documento",
   'content.cloud_docs_added': "Adicionado em Widgets — adicione-o a uma playlist para exibi-lo",
-  'content.cloud_folders_btn': "Pastas do SharePoint e OneDrive…",
+  'content.cloud_folders_btn': "Pastas do SharePoint, OneDrive e Google Drive…",
   // IPTV / live HLS stream
   'content.hls': "Transmissão ao vivo",
   'content.hls_desc': "HLS (.m3u8) ou uma câmera rtsp:// em players Android. A tela abre a URL sozinha, então pode ser um endereço de LAN. O ScreenTinker nunca puxa o vídeo.",

@@ -1,10 +1,12 @@
 'use strict';
 
 /*
- * Microsoft 365 (lib/m365.js) and SharePoint/OneDrive folder syncs (lib/cloud-folders.js).
+ * Microsoft 365 (lib/m365.js), Google Drive (lib/gdrive.js), and the cloud folder syncs that use
+ * them (lib/cloud-folders.js). Mounted at /api/m365 for history; the folder endpoints serve both.
  *
  * JWT only (config/api-surface.js): the app holds a credential into the customer's tenant.
  *   /app       the ORGANIZATION's Entra app. Org owners/admins only; the secret is never returned.
+ *   /google/app  the ORGANIZATION's Google service account. Same rules; the private key is never returned.
  *   /folders   folder syncs into the CURRENT workspace. Read: any member. Sync now, settings, stop
  *              syncing: editor or above. ADDING one (choosing what is synced): org owners/admins only —
  *              the org's app may read far more than this workspace should see (another person's
@@ -19,6 +21,7 @@ router.use(require('../lib/backstop-limiter'));
 const { db } = require('../db/database');
 const { resourceAccess } = require('../lib/tenancy');
 const m365 = require('../lib/m365');
+const gdrive = require('../lib/gdrive');
 const folders = require('../lib/cloud-folders');
 
 function workspaceCtx(req, res, { write = false } = {}) {
@@ -100,6 +103,62 @@ router.post('/app/test', async (req, res) => {
   res.json({ ok, error });
 });
 
+/* ============================== the organization's Google service account ============================== */
+
+router.get('/google/app', (req, res) => {
+  const w = workspaceCtx(req, res); if (!w) return;
+  const manage = isOrgAdmin(req, w.orgId);
+  const pub = gdrive.present(gdrive.appRow(w.orgId));
+  res.json(manage ? { ...pub, can_manage: true } : { configured: pub.configured, can_manage: false });
+});
+
+router.put('/google/app', (req, res) => {
+  const w = workspaceCtx(req, res); if (!w) return;
+  if (!isOrgAdmin(req, w.orgId)) return res.status(403).json({ error: 'Only an organization owner or admin can set up Google Drive.' });
+  const b = req.body || {};
+  const existing = gdrive.appRow(w.orgId);
+  // The key is pasted whole (the JSON file Google downloads). Absent keeps the stored one.
+  let email = existing ? existing.client_email : null;
+  let keyEnc = existing ? existing.private_key_enc : null;
+  if (b.service_account_json !== undefined && b.service_account_json !== null && b.service_account_json !== '') {
+    if (String(b.service_account_json).length > 20000) return res.status(400).json({ error: 'That is too long to be a service account key.' });
+    const k = gdrive.parseKey(String(b.service_account_json));
+    if (k.error) return res.status(400).json({ error: k.error });
+    email = k.client_email.slice(0, 320);
+    keyEnc = require('../lib/secretbox').encrypt(k.private_key);
+  }
+  if (!email || !keyEnc) return res.status(400).json({ error: 'Paste the service account\'s JSON key.' });
+  db.prepare(`INSERT INTO org_google_drive (organization_id, client_email, private_key_enc, last_test_at, last_test_ok, last_error)
+      VALUES (?, ?, ?, NULL, NULL, NULL)
+      ON CONFLICT(organization_id) DO UPDATE SET client_email = excluded.client_email, private_key_enc = excluded.private_key_enc,
+        last_test_at = NULL, last_test_ok = NULL, last_error = NULL,
+        updated_at = MAX(CAST(strftime('%s','now') AS INTEGER), org_google_drive.updated_at + 1)`)
+    .run(w.orgId, email, keyEnc);
+  gdrive.forgetToken(w.orgId);
+  audit(req, 'gdrive_app.save', { organization_id: w.orgId, client_email: email, key_changed: !existing || keyEnc !== existing.private_key_enc });
+  res.json({ ...gdrive.present(gdrive.appRow(w.orgId)), can_manage: true });
+});
+
+router.delete('/google/app', (req, res) => {
+  const w = workspaceCtx(req, res); if (!w) return;
+  if (!isOrgAdmin(req, w.orgId)) return res.status(403).json({ error: 'Only an organization owner or admin can remove Google Drive.' });
+  db.prepare('DELETE FROM org_google_drive WHERE organization_id = ?').run(w.orgId);
+  gdrive.forgetToken(w.orgId);
+  audit(req, 'gdrive_app.delete', { organization_id: w.orgId });
+  res.json({ success: true });
+});
+
+router.post('/google/app/test', async (req, res) => {
+  const w = workspaceCtx(req, res); if (!w) return;
+  if (!isOrgAdmin(req, w.orgId)) return res.status(403).json({ error: 'Only an organization owner or admin can test Google Drive.' });
+  let ok = false, error = null;
+  try { await gdrive.testApp(w.orgId); ok = true; } catch (e) { error = e && e.status ? e.message : 'The test failed.'; }
+  try {
+    db.prepare("UPDATE org_google_drive SET last_test_at = strftime('%s','now'), last_test_ok = ?, last_error = ? WHERE organization_id = ?").run(ok ? 1 : 0, error, w.orgId);
+  } catch (_) { /* */ }
+  res.json({ ok, error });
+});
+
 /* ============================== folder syncs ============================== */
 
 function loadFolder(req, res) {
@@ -115,14 +174,16 @@ router.get('/folders', (req, res) => {
 
 router.post('/folders', async (req, res) => {
   const w = workspaceCtx(req, res, { write: true }); if (!w) return;
-  if (!isOrgAdmin(req, w.orgId)) return res.status(403).json({ error: 'Only an organization owner or admin can add a SharePoint or OneDrive folder.' });
+  if (!isOrgAdmin(req, w.orgId)) return res.status(403).json({ error: 'Only an organization owner or admin can add a cloud folder.' });
+  const provider = (req.body || {}).provider === undefined ? 'm365' : String((req.body || {}).provider);
+  if (!Object.prototype.hasOwnProperty.call(folders.PROVIDERS, provider)) return res.status(400).json({ error: 'provider must be "m365" or "google".' });
   const { fields, error } = folders.normaliseInput(req.body);
   if (error) return res.status(400).json({ error });
   let row;
   try {
-    row = await folders.createFolder({ workspaceId: req.workspaceId, organizationId: w.orgId, userId: req.user.id, shareUrl: (req.body || {}).share_url, fields });
+    row = await folders.createFolder({ workspaceId: req.workspaceId, organizationId: w.orgId, userId: req.user.id, shareUrl: (req.body || {}).share_url, fields, provider });
   } catch (e) { return fail(res, e); }
-  audit(req, 'cloud_folder.create', { folder_id: row.id, name: row.name });
+  audit(req, 'cloud_folder.create', { folder_id: row.id, name: row.name, provider });
   // The first sync runs now, in the background; the list shows its outcome.
   folders.syncFolder(row.id, { trigger: 'created' }).catch(() => { /* recorded on the row */ });
   res.status(201).json(folders.present(row));
