@@ -61,6 +61,7 @@ set:
 | `APP_URL` | The public URL. Without it, emailed links (verification, reset, invites) use whatever host a request claims. |
 | `EMAIL_TRANSPORT=smtp` with `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | Outgoing mail (verification, password reset, invites, alerts). |
 | `DISABLE_HOMEPAGE` | `true`: `/` goes straight to the app instead of the landing page. |
+| `TERMS_URL`, `PRIVACY_URL` | Self-hosted: your own terms of use and privacy policy; `/legal/terms` and `/legal/privacy` redirect there. Unset: a neutral page saying the instance is run by you (screentinker.com's terms are never shown on a self-hosted server). |
 | `HIDE_BILLING` | `true`: hide the billing pages in the dashboard (display only). |
 | `OUTBOUND_ALLOW_HOSTS` | LAN addresses the server may fetch (calendars, data sources, webhooks). Private ranges are refused by default; see [outbound-requests.md](outbound-requests.md). |
 | `JWT_SECRET` | Leave unset. One is generated on first boot and kept in the volume; changing it later signs everyone out and makes saved secrets unreadable. |

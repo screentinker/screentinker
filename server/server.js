@@ -588,6 +588,13 @@ function sendMarkdown(req, res, file, canonicalPath) {
  *     results, not fetching, and every HTML page still names its .md in the Link header.
  *   - a few addresses people and crawlers guess get a 301 to the real page (SEO_ALIASES).
  */
+// A self-hosted instance never serves the hosted service's terms / privacy policy as its own
+// (lib/self-hosted-legal.js). Above the SEO middleware, the .md route and static.
+app.get(/^\/legal\/(terms|privacy)(\.html|\.md)?$/, require('./lib/self-hosted-legal').handler({
+  selfHosted: config.selfHosted, termsUrl: config.termsUrl, privacyUrl: config.privacyUrl,
+  toMarkdown: (html, p, req) => { const base = aiSurface.origin(req); return mdRendition.toMarkdown(html, { url: base + p, origin: base }); },
+}));
+
 const CANONICAL_URL = (() => { try { return new URL(process.env.APP_URL || ''); } catch (e) { return null; } })();
 const SEO_ALIASES = { '/downloads': '/download', '/downloads/': '/download', '/guides.html': '/guides/', '/admin.html': '/app' };
 const NOINDEX_PATH = /^\/(app(\/|$)|index\.html$)|^\/download\/.|\.md$/;

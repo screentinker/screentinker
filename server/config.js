@@ -265,6 +265,10 @@ module.exports = {
   smtpFrom: process.env.SMTP_FROM || '',
   // Self-hosted mode: if true, first user gets enterprise plan and no billing
   selfHosted: process.env.SELF_HOSTED === 'true',
+  // Self-hosted only: the operator's own terms / privacy pages. /legal/terms and /legal/privacy
+  // redirect there; unset = a neutral page (lib/self-hosted-legal.js), never the hosted service's.
+  termsUrl: require('./lib/self-hosted-legal').cleanUrl(process.env.TERMS_URL),
+  privacyUrl: require('./lib/self-hosted-legal').cleanUrl(process.env.PRIVACY_URL),
   // 3.0: what LATER signups get on a self-hosted instance (the first account is always enterprise).
   // 'enterprise' (default): no trial clock, no limits - the operator owns the box. 'trial': the 2.x
   // behaviour (14-day Pro trial, then Free), for an operator who uses plans to ration accounts.
