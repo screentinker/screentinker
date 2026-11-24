@@ -43,6 +43,8 @@ function sentCommands() {
   return found;
 }
 
+module.exports = { sentCommands };
+
 test('the scan finds the dashboard\'s commands (guards the guard)', () => {
   const sent = sentCommands();
   for (const known of ['set_debug', 'screen_on', 'reboot', 'set_volume', 'shell']) {
@@ -59,4 +61,16 @@ test('the live debug log, screen-capture consent, settings and update-cache butt
   for (const cmd of ['set_debug', 'enable_system_capture', 'settings', 'clear_update_cache']) {
     assert.ok(ALLOWED_COMMANDS.includes(cmd), cmd);
   }
+});
+
+test('a command sent without a callback still reports a refusal (frontend/js/socket.js)', () => {
+  const src = fs.readFileSync(path.join(FRONTEND, 'socket.js'), 'utf8');
+  const fn = src.slice(src.indexOf('export function sendCommand'), src.indexOf('export function sendCommand') + 600);
+  assert.match(fn, /if \(typeof callback !== 'function'\) callback = \(ack\) => \{ reportCommandRefusal\(type, ack\); \};/,
+    'sendCommand must give a callback-less send the refusal reporter, or a refused command is silent again');
+  const rep = src.slice(src.indexOf('export function reportCommandRefusal'), src.indexOf('export function sendCommand'));
+  for (const reason of ['invalid', 'forbidden', 'unsupported', 'refused', 'rejected', 'no_ack']) {
+    assert.ok(src.includes(`'${reason}'`), `${reason} counts as a refusal`);
+  }
+  assert.match(rep, /showToast/);
 });

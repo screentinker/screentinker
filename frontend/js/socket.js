@@ -1,3 +1,5 @@
+import { showToast } from './components/toast.js';
+import { t } from './i18n.js';
 let dashboardSocket = null;
 const listeners = new Map();
 let refusalRetryMs = 2000;
@@ -304,8 +306,31 @@ export function sendKey(deviceId, keycode) {
 // Callers without a callback keep firing-and-forgetting (no behavior change).
 // With a callback, we use Socket.IO's .timeout() so the callback always fires -
 // either with the ack or with an Error if the server doesn't respond in 5s.
+/*
+ * ⚠️ A REFUSED COMMAND MUST NEVER BE SILENT.
+ *
+ * From 2.1.5 the server refused set_debug (and three other device-page commands) as "invalid
+ * command type" and said so in its reply, but those callers sent with no callback, so the reply
+ * went nowhere: the Debug logging panel just stayed empty, for two months, until two users noticed.
+ * A send with no callback of its own now gets this one, which shows any refusal. Callers that pass
+ * a callback handle the reply themselves (most already show their own toasts); a caller that only
+ * handles some cases can hand the rest to reportCommandRefusal.
+ *
+ * 'offline' and 'queued' are not refusals (the command waits for the screen), so they stay quiet.
+ */
+const REFUSALS = new Set(['invalid', 'forbidden', 'unsupported', 'refused', 'rejected', 'corporate', 'no_ack']);
+
+export function reportCommandRefusal(type, ack) {
+  if (!ack || ack.delivered !== false || ack.queued || !REFUSALS.has(ack.reason)) return false;
+  if (ack.reason === 'no_ack') showToast(t('device.toast.command_no_ack', { cmd: type }), 'error');
+  else if (ack.reason === 'unsupported') showToast(t('device.toast.command_unsupported', { cmd: type, cap: ack.capability || '' }), 'error');
+  else showToast(t('device.toast.command_refused', { cmd: type, reason: ack.error || ack.reason }), 'error');
+  return true;
+}
+
 export function sendCommand(deviceId, type, payload, callback) {
   if (!dashboardSocket) return;
+  if (typeof callback !== 'function') callback = (ack) => { reportCommandRefusal(type, ack); };
   if (typeof callback === 'function') {
     dashboardSocket.timeout(5000).emit('dashboard:device-command', { device_id: deviceId, type, payload }, (err, ack) => {
       if (err) callback({ delivered: false, reason: 'no_ack' });

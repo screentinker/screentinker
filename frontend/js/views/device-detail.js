@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { publishOrSubmit } from '../components/release.js';
 import { isSimpleMode } from '../components/ui-mode.js';
-import { on, off, requestScreenshot, watchDevice, startRemote, stopRemote, sendTouch, sendSwipe, sendKey, sendCommand, requestLivePublish, startTalk, stopTalk, ptyOpen, ptyInput, ptyResize, ptyClose } from '../socket.js';
+import { on, off, requestScreenshot, watchDevice, startRemote, stopRemote, sendTouch, sendSwipe, sendKey, sendCommand, reportCommandRefusal, requestLivePublish, startTalk, stopTalk, ptyOpen, ptyInput, ptyResize, ptyClose } from '../socket.js';
 import { TalkClient } from '../lib/talk-client.js';
 import { renderScreenShareCard, startScreenShare } from '../components/screen-share.js';   // 3.0 screen share
 import { showToast } from '../components/toast.js';
@@ -1927,6 +1927,7 @@ async function loadDevice(deviceId, activeTab = null) {
       // A refusal (head office's screen, a gated command) must not vanish: say why.
       sendCommand(currentDevice.id, type, {}, (ack) => {
         if (ack && ack.reason === 'corporate') showToast(ack.error || t('corp.locked.title'), 'error');
+        else reportCommandRefusal(type, ack);
       });
     };
     window._enableSystemView = () => {

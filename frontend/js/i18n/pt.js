@@ -3001,6 +3001,7 @@ export default {
   'device.toast.command_queued': "{cmd} — dispositivo offline, entregará ao reconectar",
   'device.toast.command_undeliverable': "{cmd} — dispositivo offline e fila indisponível",
   'device.toast.command_no_ack': "{cmd} — sem resposta do servidor",
+  'device.toast.command_refused': "{cmd}: o servidor recusou ({reason})",
   'device.toast.command_unsupported': "{cmd} — este player não suporta isso ({cap}). Recarregue a página para atualizar os controles.",
   'device.caps.title': "Recursos do player",
   'device.caps.declared': "Reportados pelo próprio player. Controles que esta tela não pode honrar ficam ocultos.",

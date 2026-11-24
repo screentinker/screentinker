@@ -2895,7 +2895,7 @@ export default {
   'device.toast.remote_started': "Fjernsession startet",
   'device.toast.command_queued': "{cmd} — skærmen er offline og får kommandoen, når den kommer online igen",
   'device.toast.command_undeliverable': "{cmd} — skærmen er offline, og køen er ikke tilgængelig",
-  'device.toast.command_no_ack': "{cmd} — intet svar fra serveren",
+  'device.toast.command_no_ack': "{cmd} — intet svar fra serveren", 'device.toast.command_refused': "{cmd}: afvist af serveren ({reason})",
   'device.toast.command_unsupported': "{cmd} — denne afspiller understøtter det ikke ({cap}). Genindlæs siden for at opdatere knapperne.",
   'device.caps.title': "Afspillerens funktioner",
   'device.caps.declared': "Oplyst af afspilleren selv. Knapper, som skærmen ikke kan bruge, er skjult.",

@@ -482,7 +482,7 @@ export default {
   'device.toast.screen_on_sent': '已发送开屏命令', 'device.toast.launch_sent': '已发送启动播放器命令',
   'device.toast.update_triggered': '已触发更新检查', 'device.toast.update_cache_cleared': '更新缓存已清除，下次检查将重新下载。',
   'device.toast.remote_started': '远程会话已开始', 'device.toast.command_queued': '{cmd} — 设备离线，将在重新连接后发送',
-  'device.toast.command_undeliverable': '{cmd} — 设备离线且队列不可用', 'device.toast.command_no_ack': '{cmd} — 服务器未响应',
+  'device.toast.command_undeliverable': '{cmd} — 设备离线且队列不可用', 'device.toast.command_no_ack': '{cmd} — 服务器未响应', 'device.toast.command_refused': '{cmd}：服务器拒绝了此命令（{reason}）',
   'device.toast.command_unsupported': '{cmd} — 此播放器不支持该操作（{cap}）。请刷新页面以更新可用控制项。',
   'device.caps.title': '播放器能力', 'device.caps.declared': '由播放器自行上报；设备不支持的控制项会被隐藏。',
   'device.caps.assumed': '播放器尚未上报能力，当前使用其平台默认能力；下次连接后会更新。', 'device.caps.none': '播放器报告它不支持任何操作。',

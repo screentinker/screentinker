@@ -1361,7 +1361,7 @@ export default {
     'device.toast.remote_started': 'Sessie voor afstandsbediening gestart',
     'device.toast.command_queued': '{cmd} — apparaat offline, wordt bezorgd zodra het opnieuw verbinding maakt',
     'device.toast.command_undeliverable': '{cmd} — apparaat offline en wachtrij niet beschikbaar',
-    'device.toast.command_no_ack': '{cmd} — geen antwoord van de server',
+    'device.toast.command_no_ack': '{cmd} — geen antwoord van de server', 'device.toast.command_refused': '{cmd}: geweigerd door de server ({reason})',
     'device.toast.command_unsupported':
         '{cmd} — deze speler ondersteunt dit niet ({cap}). Herlaad de pagina om de bediening te vernieuwen.',
     'device.caps.title': 'Mogelijkheden van de speler',

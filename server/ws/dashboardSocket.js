@@ -472,8 +472,20 @@ module.exports = function setupDashboardSocket(io) {
       if (typeof ack === 'function') ack({ delivered: !!conn, reason: conn ? undefined : 'offline' });
     });
 
-    socket.on('dashboard:device-command', (data, ack) => {
-      const { device_id, type, payload } = data;
+    socket.on('dashboard:device-command', (data, rawAck) => {
+      const { device_id, type, payload } = data || {};
+      /*
+       * ⚠️ EVERY REFUSAL IS LOGGED. set_debug and three other commands were refused here for two
+       * months (#908) and nothing on the server said so: the reply went to dashboard code that
+       * ignored it. One line per refusal (not offline/queued, which are waiting, not refused),
+       * so a pattern like "set_debug refused 40 times this week" shows up in the journal.
+       */
+      const ack = (reply) => {
+        if (reply && reply.delivered === false && !reply.queued && reply.reason !== 'offline') {
+          console.warn(`[command] refused ${String(type).slice(0, 40)} on ${String(device_id).slice(0, 40)}: ${reply.reason}${reply.error ? ` (${String(reply.error).slice(0, 120)})` : ''} role=${socket.userRole || '?'}`);
+        }
+        if (typeof rawAck === 'function') rawAck(reply);
+      };
       if (!canActOnDevice(socket, device_id, 'write')) {
         if (typeof ack === 'function') ack({ delivered: false, reason: 'forbidden' });
         return;

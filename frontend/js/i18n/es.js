@@ -6684,6 +6684,7 @@ export default {
   'device.toast.command_queued': '{cmd}: dispositivo desconectado; se entregará cuando vuelva a conectarse',
   'device.toast.command_undeliverable': '{cmd}: dispositivo desconectado y cola no disponible',
   'device.toast.command_no_ack': '{cmd}: el servidor no responde',
+  'device.toast.command_refused': '{cmd}: el servidor lo rechazó ({reason})',
   'device.toast.command_unsupported': '{cmd}: este reproductor no lo admite ({cap}). Recarga la página para actualizar los controles.',
   'device.caps.title': 'Funciones del reproductor',
   'device.caps.declared': 'Comunicadas por el propio reproductor. Se ocultan los controles que esta pantalla no puede ejecutar.',
