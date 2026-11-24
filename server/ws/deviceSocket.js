@@ -837,6 +837,7 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
       d.default_content_id, d.workspace_id, d.latitude, d.longitude,
       d.capabilities, d.platform, d.android_version, d.client_type,
       d.screen_width, d.screen_height, -- 3.0: which orientation version of a layout this screen gets
+      d.render_width, d.render_height, -- image-as-video: no copy when the UI already renders the image's size (#904)
       d.id -- an experiment's per-screen variant condition (lib/local-conditions 'screens') needs it
       FROM devices d JOIN device_resolved_playlist r ON r.device_id = d.id
       WHERE d.id = ?`).get(deviceId);

@@ -80,7 +80,7 @@ const CAPABILITIES = [
    * one. In NO baseline — an older player would not know what to do with the copy. */
   'playback.video_variants',
   /* High-resolution image-as-video copies (lib/image-as-video-variants.js): on a high-resolution
-   * Android display, play a server-made one-second H.264 variant of a large still through the
+   * Android display, play a server-made 60-second looping H.264 variant of a large still through the
    * native video plane, bypassing the 1080p UI layer. Declaring it lets the server queue variants
    * only for full-screen images on a device with that plane. In NO baseline — an older player would
    * not recognize the image-as-video payload and the server should not spend CPU making its copy. */

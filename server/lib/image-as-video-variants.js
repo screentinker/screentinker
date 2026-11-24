@@ -221,6 +221,11 @@ async function tick() {
     return;
   }
   const allowanceSettings = videoVariants.getSettings();
+  // The operator's video-variant switch and time window (Settings > Video copies) cover these too.
+  // Their CPU gate is not shared: its baseline belongs to the video queue, and this encode already
+  // runs at the lowest priority, one at a time.
+  if (!allowanceSettings.enabled) { schedule(10 * 60 * 1000); return; }
+  if (!videoVariants.inWindow(videoVariants.parseWindow(allowanceSettings.window) || null, new Date())) { schedule(5 * 60 * 1000); return; }
   const allowanceDate = new Date();
   if (!videoVariants.withinAllowance(content.workspace_id, IMAGE_CLIP_DURATION_SEC, allowanceSettings, allowanceDate)) {
     db.prepare("UPDATE content_image_as_video_variants SET status = 'failed', error = 'monthly allowance reached', updated_at = ? WHERE content_id = ? AND status = 'queued'")
@@ -349,10 +354,6 @@ function start({ push = null } = {}) {
   if (started) return;
   started = true;
   pushFn = push;
-  // Rows the earlier ffmpeg-based encoder failed for want of ffmpeg: the encoder no longer needs it.
-  db.prepare(`UPDATE content_image_as_video_variants
-      SET status = 'queued', error = NULL, attempts = 0, updated_at = strftime('%s','now')
-      WHERE status = 'failed' AND error = 'ffmpeg is unavailable on the server'`).run();
   db.prepare("UPDATE content_image_as_video_variants SET status = 'queued' WHERE status = 'running'").run();
   sweepOrphans();
   schedule(0);

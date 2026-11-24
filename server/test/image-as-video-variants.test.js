@@ -220,3 +220,36 @@ test('the clip is fitted to 3840x2160 and encoded by lib/still-video, not ffmpeg
   const source = require('fs').readFileSync(require.resolve('../lib/image-as-video-variants'), 'utf8');
   assert.doesNotMatch(source, /libx264|spawn\(/, 'encoding goes through lib/still-video, which runs it in its own process');
 });
+
+test('the operator switch and time window for video copies hold image encodes too', async () => {
+  imageAsVideoVariants.removeFor(CONTENT_ID);
+  let encodes = 0;
+  imageAsVideoVariants._resetForTest({ encode: async ({ out }) => { encodes++; fs.writeFileSync(out, 'v'); } });
+  const status = () => db.prepare('SELECT status FROM content_image_as_video_variants WHERE content_id = ?').get(CONTENT_ID).status;
+  try {
+    appSettings.setBool('video_variants_enabled', false);
+    imageAsVideoVariants.ensure(content());
+    await imageAsVideoVariants._tick();
+    await imageAsVideoVariants._drain();
+    assert.equal(encodes, 0, 'switched off: nothing encoded');
+    assert.equal(status(), 'queued', 'and the job waits');
+
+    appSettings.setBool('video_variants_enabled', true);
+    const h = new Date().getHours();
+    appSettings.set('video_variants_window', `${(h + 2) % 24}-${(h + 3) % 24}`);   // a window that is not now
+    await imageAsVideoVariants._tick();
+    await imageAsVideoVariants._drain();
+    assert.equal(encodes, 0, 'outside the window: nothing encoded');
+
+    appSettings.set('video_variants_window', '');
+    await imageAsVideoVariants._tick();
+    await imageAsVideoVariants._drain();
+    assert.equal(encodes, 1, 'allowed again: encoded');
+    assert.equal(status(), 'ready');
+  } finally {
+    appSettings.setBool('video_variants_enabled', true);
+    appSettings.set('video_variants_window', '');
+    imageAsVideoVariants.removeFor(CONTENT_ID);
+    imageAsVideoVariants._resetForTest();
+  }
+});
