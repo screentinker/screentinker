@@ -165,6 +165,7 @@ function summaryLine(f) {
   if (s.removed) bits.push(`${s.removed} removed`);
   if (s.skipped_other) bits.push(`${s.skipped_other} not media (skipped)`);
   if (s.skipped_too_large) bits.push(`${s.skipped_too_large} too large`);
+  if (s.subfolders_skipped) bits.push(`${s.subfolders_skipped} subfolder${s.subfolders_skipped === 1 ? '' : 's'} not synced (turn on Include subfolders)`);
   if (s.failed) bits.push(`${s.failed} failed`);
   if (s.playlist === 'pending_review') bits.push('playlist waiting for review');
   return `Synced ${when(f.last_sync_at)}${bits.length ? ' — ' + bits.join(', ') : ' — no changes'}`;
@@ -212,11 +213,12 @@ export async function openCloudFolders({ onChange } = {}) {
             <div style="font-size:12px;color:var(--text-muted);word-break:break-all">${esc(f.web_url || f.share_url)}</div>
             <div style="font-size:12px;margin-top:4px;color:${f.last_status === 'error' ? 'var(--danger,#b91c1c)' : f.last_status === 'partial' ? 'var(--warning,#b45309)' : 'var(--text-secondary)'}">${esc(summaryLine(f))}</div>
             ${f.last_summary && f.last_summary.errors && f.last_summary.errors.length ? `<details style="font-size:12px;margin-top:4px"><summary>Details</summary>${f.last_summary.errors.map((e) => `<div>${esc(e)}</div>`).join('')}</details>` : ''}
-            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${f.file_count} file${f.file_count === 1 ? '' : 's'} · every ${f.interval_min} min${f.auto_playlist ? ' · keeps a playlist' : ''}</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${f.file_count} file${f.file_count === 1 ? '' : 's'} · every ${f.interval_min} min${f.include_subfolders ? ' · with subfolders' : ''}${f.auto_playlist ? ' · keeps a playlist' : ''}</div>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             <button class="btn btn-secondary btn-sm" data-cf-sync="${esc(f.id)}">Sync now</button>
             <button class="btn btn-secondary btn-sm" data-cf-toggle="${esc(f.id)}" data-on="${f.enabled ? 1 : 0}">${f.enabled ? 'Pause' : 'Resume'}</button>
+            <button class="btn btn-secondary btn-sm" data-cf-subf="${esc(f.id)}" data-on="${f.include_subfolders ? 1 : 0}">${f.include_subfolders ? 'Top folder only' : 'Include subfolders'}</button>
             <button class="btn btn-danger btn-sm" data-cf-del="${esc(f.id)}">Stop syncing</button>
           </div>
         </div>
@@ -236,7 +238,8 @@ export async function openCloudFolders({ onChange } = {}) {
             <div class="form-group" style="flex:1;min-width:140px"><label>Sync every (minutes)</label><input type="number" class="input" data-cf-f="interval_min" min="5" max="1440" value="15"></div>
             <div class="form-group" style="flex:1;min-width:140px"><label>Seconds per image</label><input type="number" class="input" data-cf-f="default_duration_sec" min="1" value="10"></div>
           </div>
-          <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" data-cf-f="auto_playlist" checked> Keep a playlist of the folder, in file-name order</label>
+          <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" data-cf-f="include_subfolders" checked> Include subfolders (up to 5 levels deep)</label>
+          <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" data-cf-f="auto_playlist" checked> Keep a playlist of the folder, in folder then file-name order</label>
           <div><button class="btn btn-primary btn-sm" data-cf="add">Add folder</button></div>
         </div></details>` : ''}`;
 
@@ -261,6 +264,15 @@ export async function openCloudFolders({ onChange } = {}) {
       catch (err) { showToast(err.message, 'error'); }
       await load();
     }));
+    body.querySelectorAll('[data-cf-subf]').forEach((b) => b.addEventListener('click', async () => {
+      try {
+        await api.put(`/m365/folders/${b.dataset.cfSubf}`, { include_subfolders: b.dataset.on !== '1' });
+        // Sync now, in the background (a big tree takes a while); look again shortly for the outcome.
+        api.post(`/m365/folders/${b.dataset.cfSubf}/sync`, {}).catch(() => { /* shown on the row */ });
+        setTimeout(() => { if (document.body.contains(overlay)) { load(); if (onChange) onChange(); } }, 4000);
+      } catch (err) { showToast(err.message, 'error'); }
+      await load();
+    }));
     body.querySelectorAll('[data-cf-toggle]').forEach((b) => b.addEventListener('click', async () => {
       try { await api.put(`/m365/folders/${b.dataset.cfToggle}`, { enabled: b.dataset.on !== '1' }); } catch (err) { showToast(err.message, 'error'); }
       await load();
@@ -281,6 +293,7 @@ export async function openCloudFolders({ onChange } = {}) {
       interval_min: parseInt(v('interval_min').value, 10) || 15,
       default_duration_sec: parseInt(v('default_duration_sec').value, 10) || 10,
       auto_playlist: v('auto_playlist').checked,
+      include_subfolders: v('include_subfolders').checked,
     };
     if (!payload.share_url) { showToast('Paste the folder\'s sharing link', 'error'); return; }
     const btn = body.querySelector('[data-cf="add"]');

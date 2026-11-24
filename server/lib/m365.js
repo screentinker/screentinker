@@ -184,6 +184,7 @@ const MEDIA_EXT_RE = /\.(jpe?g|png|gif|webp|bmp|svg|mp4|m4v|webm|mov|mkv|mp3|m4a
  */
 async function listFolder(orgId, driveId, itemId, { maxMedia = 1000 } = {}) {
   const out = [];
+  const folders = [];
   let media = 0;
   let next = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/children?$top=200&$select=id,name,size,file,folder,cTag,eTag,lastModifiedDateTime`;
   let pages = 0;
@@ -195,7 +196,8 @@ async function listFolder(orgId, driveId, itemId, { maxMedia = 1000 } = {}) {
     let i = 0;
     for (; i < value.length && media < maxMedia; i++) {
       const it = value[i];
-      if (!it || it.folder || !it.file) continue;
+      if (it && it.folder && it.id) { folders.push({ id: String(it.id), name: String(it.name || '') }); continue; }
+      if (!it || !it.file) continue;
       const mime = String((it.file && it.file.mimeType) || '');
       const f = {
         id: String(it.id), name: String(it.name || ''), size: Number(it.size) || 0,
@@ -208,7 +210,7 @@ async function listFolder(orgId, driveId, itemId, { maxMedia = 1000 } = {}) {
     if (i < value.length) { complete = false; break; }
     next = body && body['@odata.nextLink'] ? String(body['@odata.nextLink']) : null;
   }
-  return { files: out, complete };
+  return { files: out, folders, complete };
 }
 
 /**

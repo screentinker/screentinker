@@ -56,6 +56,9 @@ const MIN_INTERVAL_MIN = 5;
 const MAX_INTERVAL_MIN = 24 * 60;
 const DEFAULT_INTERVAL_MIN = 15;
 let MAX_FILES = 500;            // media files per folder; _setMaxFiles in tests
+// Include subfolders: how deep, and how many folders one sync may list (each is a provider call).
+const MAX_DEPTH = 5;
+const MAX_SUBFOLDERS = 200;
 
 let io = null;
 let timer = null;
@@ -83,6 +86,9 @@ function normaliseInput(body, existing = null) {
   }
   if (b.enabled !== undefined) out.enabled = b.enabled ? 1 : 0;
   if (!existing || b.auto_playlist !== undefined) out.auto_playlist = b.auto_playlist === false || b.auto_playlist === 0 ? 0 : 1;
+  // On for a NEW folder unless turned off; an existing folder changes only when asked, so an upgrade
+  // never suddenly fills a playlist with a folder's subfolders.
+  if (!existing || b.include_subfolders !== undefined) out.include_subfolders = b.include_subfolders === false || b.include_subfolders === 0 ? 0 : 1;
   return { fields: out };
 }
 
@@ -91,7 +97,7 @@ function present(row) {
   try { summary = row.last_summary ? JSON.parse(row.last_summary) : null; } catch { summary = null; }
   return {
     id: row.id, name: row.name, provider: row.provider, share_url: row.share_url, web_url: row.web_url,
-    playlist_id: row.playlist_id, auto_playlist: !!row.auto_playlist,
+    playlist_id: row.playlist_id, auto_playlist: !!row.auto_playlist, include_subfolders: !!row.include_subfolders,
     interval_min: row.interval_min, default_duration_sec: row.default_duration_sec, enabled: !!row.enabled,
     last_sync_at: row.last_sync_at, last_status: row.last_status, last_error: row.last_error, last_summary: summary,
     file_count: (() => { try { return dbOf().prepare('SELECT COUNT(*) n FROM cloud_folder_items WHERE folder_id = ?').get(row.id).n; } catch { return 0; } })(),
@@ -247,6 +253,62 @@ function retireContent(db, folder, contentId) {
  * Sync one folder now. Returns the summary it stored. Never throws for an upstream problem — it
  * records it on the row (last_status / last_error) — but does throw for "already syncing".
  */
+/*
+ * The folder's media, and (include_subfolders) its subfolders' to MAX_DEPTH levels, breadth first.
+ * Each file carries `path`, its place under the synced folder ("2026-08-28/clip.mp4"), which is what
+ * cloud_folder_items.name stores and the playlist sorts by: folder, then file name. A file directly in
+ * the folder has path === name, so folders synced before subfolders existed keep their rows as they are.
+ *
+ * ⚠️ COMPLETE MEANS EVERY LEVEL. A subfolder that could not be listed in full (or a walk cut short by
+ * MAX_SUBFOLDERS or the media cap) makes the whole listing incomplete, and an incomplete listing removes
+ * nothing: a hiccup on one subfolder must never retire the files in it. Only the synced folder itself is
+ * checked for being unshared or trashed (gdrive checkSelf); a subfolder that vanished simply lists empty
+ * and its files leave, like files deleted from the folder.
+ */
+async function listTree(provider, folder, { maxMedia, heartbeat }) {
+  const files = [];
+  let complete = true;
+  let media = 0;
+  let listed = 0;
+  let skippedFolders = 0;
+  let tooDeep = 0;
+  const errors = [];
+  const seen = new Set([String(folder.item_id)]);
+  const queue = [{ id: folder.item_id, path: '', depth: 0 }];
+  while (queue.length) {
+    const node = queue.shift();
+    if (node.depth > 0 && ++listed > MAX_SUBFOLDERS) { complete = false; break; }
+    let listing;
+    try {
+      listing = await provider.listFolder(folder.organization_id, folder.drive_id, node.id,
+        { maxMedia: Math.max(1, maxMedia - media), checkSelf: node.depth === 0 });
+    } catch (e) {
+      // The synced folder itself failing is the sync failing (unshared, trashed, no access). One
+      // subfolder failing is not: the rest syncs, and the listing is incomplete so nothing leaves.
+      if (node.depth === 0) throw e;
+      complete = false;
+      if (errors.length < 5) errors.push(`${node.path}: ${(e && e.message) || 'could not be listed'}`);
+      continue;
+    }
+    if (heartbeat) heartbeat();
+    if (!listing.complete) complete = false;
+    for (const f of listing.files) {
+      files.push({ ...f, path: node.path + f.name });
+      if (f.media) media++;
+    }
+    const subs = (listing.folders || []).slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
+    if (!folder.include_subfolders) { skippedFolders += subs.length; continue; }
+    for (const s of subs) {
+      if (seen.has(String(s.id))) continue;          // a folder shortcut looping back
+      seen.add(String(s.id));
+      if (node.depth + 1 > MAX_DEPTH) { tooDeep++; continue; }
+      queue.push({ id: s.id, path: `${node.path}${s.name}/`, depth: node.depth + 1 });
+    }
+    if (media >= maxMedia) { if (queue.length) complete = false; break; }
+  }
+  return { files, complete, skippedFolders, tooDeep, errors, cutShort: listed > MAX_SUBFOLDERS };
+}
+
 async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
   const db = dbOf();
   if (running.has(folderId)) { const e = new Error('This folder is already syncing.'); e.status = 409; throw e; }
@@ -265,8 +327,12 @@ async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
     if (why) throw pauseFolder(db, folder.id, why);
 
     const provider = providerOf(folder.provider);
-    const listing = await provider.listFolder(folder.organization_id, folder.drive_id, folder.item_id, { maxMedia: MAX_FILES + 1 });
+    const listing = await listTree(provider, folder, { maxMedia: MAX_FILES + 1, heartbeat });
     heartbeat();
+    if (listing.skippedFolders) summary.subfolders_skipped = listing.skippedFolders;
+    for (const e of listing.errors) summary.errors.push(`${e} Nothing is removed until it lists again.`);
+    if (listing.tooDeep) summary.errors.push(`${listing.tooDeep} folder(s) deeper than ${MAX_DEPTH} levels are not synced.`);
+    if (listing.cutShort) summary.errors.push(`Only the first ${MAX_SUBFOLDERS} subfolders are synced, and nothing is removed while there are more.`);
     const allMedia = listing.files.filter((f) => f.media);
     const media = allMedia.slice(0, MAX_FILES);
     // Only a complete listing can say a file has gone; otherwise nothing is removed this time.
@@ -293,14 +359,14 @@ async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
       const row = mapped.get(f.id);
       const live = row && db.prepare('SELECT * FROM content WHERE id = ?').get(row.content_id);
       if (row && live && row.tag === f.tag) {
-        if (row.name !== f.name) db.prepare('UPDATE cloud_folder_items SET name = ? WHERE folder_id = ? AND remote_id = ?').run(f.name, folder.id, f.id);
+        if (row.name !== f.path) db.prepare('UPDATE cloud_folder_items SET name = ? WHERE folder_id = ? AND remote_id = ?').run(f.path, folder.id, f.id);
         summary.unchanged++;
         continue;
       }
       const { room, cap } = maxBytesFor(folder.user_id, folder.workspace_id);
       if ((cap && f.size > cap) || (room != null && f.size > room)) {
         summary.skipped_too_large++;
-        if (summary.errors.length < 10) summary.errors.push(`${f.name}: ${cap && f.size > cap ? 'larger than this server accepts' : 'not enough storage left on the plan'}`);
+        if (summary.errors.length < 10) summary.errors.push(`${f.path}: ${cap && f.size > cap ? 'larger than this server accepts' : 'not enough storage left on the plan'}`);
         continue;
       }
       let tmp = null;
@@ -310,18 +376,18 @@ async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
         if (row && live) {
           const r = await replaceContentBytes({ content: live, file, actor, writer, reqOrIo: io });
           if (r.status !== 200) throw new Error(r.body && r.body.error ? r.body.error : `replace failed (${r.status})`);
-          db.prepare('UPDATE cloud_folder_items SET tag = ?, name = ?, size = ? WHERE folder_id = ? AND remote_id = ?').run(f.tag, f.name, f.size, folder.id, f.id);
+          db.prepare('UPDATE cloud_folder_items SET tag = ?, name = ?, size = ? WHERE folder_id = ? AND remote_id = ?').run(f.tag, f.path, f.size, folder.id, f.id);
           summary.updated++;
         } else {
           const content = await ingestUploadedFile({ file, userId: folder.user_id, workspaceId: folder.workspace_id });
           db.prepare(`INSERT INTO cloud_folder_items (folder_id, remote_id, content_id, name, tag, size) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(folder_id, remote_id) DO UPDATE SET content_id = excluded.content_id, name = excluded.name, tag = excluded.tag, size = excluded.size`)
-            .run(folder.id, f.id, content.id, f.name, f.tag, f.size);
+            .run(folder.id, f.id, content.id, f.path, f.tag, f.size);
           summary.added++;
         }
       } catch (e) {
         summary.failed++;
-        if (summary.errors.length < 10) summary.errors.push(`${f.name}: ${e && e.message}`);
+        if (summary.errors.length < 10) summary.errors.push(`${f.path}: ${e && e.message}`);
       } finally {
         // ingest/replace rename the .part on success; anything left is ours to remove.
         if (tmp && fs.existsSync(tmp.path)) { try { fs.unlinkSync(tmp.path); } catch { /* */ } }
@@ -374,10 +440,10 @@ async function createFolder({ workspaceId, organizationId, userId, shareUrl, fie
   if (dup) { const e = new Error('This folder is already synced into this workspace.'); e.status = 409; throw e; }
   const id = crypto.randomUUID();
   db.prepare(`INSERT INTO cloud_folders (id, workspace_id, organization_id, user_id, provider, name, share_url, drive_id, item_id, web_url,
-      interval_min, default_duration_sec, auto_playlist, enabled)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
+      interval_min, default_duration_sec, auto_playlist, include_subfolders, enabled)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
     .run(id, workspaceId, organizationId, userId, providerName, fields.name || target.name, provider.validateShareUrl(shareUrl), target.driveId, target.itemId,
-      target.webUrl, fields.interval_min, fields.default_duration_sec, fields.auto_playlist);
+      target.webUrl, fields.interval_min, fields.default_duration_sec, fields.auto_playlist, fields.include_subfolders ? 1 : 0);
   return db.prepare('SELECT * FROM cloud_folders WHERE id = ?').get(id);
 }
 
