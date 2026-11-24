@@ -1911,7 +1911,21 @@ export async function render(container) {
     };
   }
 
-  loadPluginTypes().then(() => { mountLibrary(); return loadWidgets(); });
+  /*
+   * ⚠️ ONLY THE NEWEST RENDER MAY FINISH. Everything above is synchronous and belongs to this render's
+   * DOM; the library (and with it the grid's click handler) is mounted only after loadPluginTypes()
+   * resolves. When the page renders twice in a row, the OLDER render's wait could resolve last and
+   * mount ITS closures onto the NEWER render's DOM: Edit then set the old render's editingWidget,
+   * Save (bound by the new render) saw none and POSTed a new widget with no type, which the server
+   * refused. Every save failed until the page was left. Found by the news widget editor e2e test.
+   */
+  const renderToken = {};
+  container.__stWidgetsRender = renderToken;
+  loadPluginTypes().then(() => {
+    if (container.__stWidgetsRender !== renderToken) return;   // a newer render owns the page now
+    mountLibrary();
+    return loadWidgets();
+  });
 }
 
 export function cleanup() {}
