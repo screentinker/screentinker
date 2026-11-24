@@ -25,8 +25,16 @@ test('Settings → Google Drive, then the folders panel offers Google Drive', { 
     await page.goto(`${srv.base}/app#/settings`, { waitUntil: 'domcontentloaded' });
     await page.reload({ waitUntil: 'domcontentloaded' });
     assert.ok(await waitFor(() => page.$eval('#gdriveCard', (el) => el.style.display !== 'none' && /Google Drive/.test(el.textContent)).catch(() => false), 20000), 'the card is shown to the org owner');
-    await page.$eval('#gdriveCard [data-g="json"]', (el, v) => { el.value = v; }, JSON.stringify({ type: 'service_account', client_email: email, private_key: pem }));
-    await page.click('#gdriveCard [data-g-act="save"]');
+    // The settings view can render twice on load; the second render's card starts empty and hidden
+    // until its own GET returns. So wait for the key box itself, then fill and save in ONE step,
+    // on whichever card is current at that moment.
+    const key = JSON.stringify({ type: 'service_account', client_email: email, private_key: pem });
+    assert.ok(await waitFor(() => page.evaluate((v) => {
+      const ta = document.querySelector('#gdriveCard [data-g="json"]');
+      const save = document.querySelector('#gdriveCard [data-g-act="save"]');
+      if (!ta || !save) return false;
+      ta.value = v; save.click(); return true;
+    }, key).catch(() => false), 20000), 'the key box, filled and saved');
     assert.ok(await waitFor(() => page.$eval('#gdriveCard', (el) => el.textContent.includes('Share folders with')).catch(() => false), 15000), 'saved');
     const card = await page.$eval('#gdriveCard', (el) => el.textContent);
     assert.ok(card.includes(email), 'the address to share with');
