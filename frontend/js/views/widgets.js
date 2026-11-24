@@ -667,6 +667,9 @@ export async function render(container) {
     } catch {
       pluginTypes = [];
     }
+    // A newer render owns the page (see renderToken below): its own call adds the plugin cards. Ours
+    // would bind THIS render's closures to the newer grid, and Save would POST a typeless widget.
+    if (container.__stWidgetsRender !== renderToken) return;
     const grid = document.getElementById('widgetTypeGrid');
     if (grid && pluginTypes.length) {
     for (const p of pluginTypes) {

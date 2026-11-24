@@ -926,7 +926,19 @@ function capabilityForCommand(type) {
  * Can this device be sent this command?
  * @returns {{ok: true} | {ok: false, capability: string}}
  */
+/*
+ * Commands only some families implement although the capability they need is wider. 'clear_update_cache'
+ * drops a staged player download: Android (MainActivity) and the native players (app.py) do; the web
+ * player does not, yet BrightSign (with storage) and SCAP webOS declare system.self_update at runtime,
+ * so the dashboard said "Update cache cleared" for a command the panel silently dropped.
+ */
+const COMMAND_FAMILIES = {
+  clear_update_cache: ['android', 'linux', 'windows', 'macos'],
+};
+
 function commandAllowed(device, type) {
+  const families = COMMAND_FAMILIES[type];
+  if (families && !families.includes(platformFamily(device))) return { ok: false, capability: capabilitiesForCommand(type)[0] || null };
   const needed = capabilitiesForCommand(type);
   if (!needed.length) return { ok: true };
   if (needed.some((cap) => supports(device, cap))) return { ok: true };
@@ -935,5 +947,5 @@ function commandAllowed(device, type) {
 
 module.exports = {
   CAPABILITIES, CAP_SET, BASELINE, capabilitiesFor, supports, platformFamily, parseDeclared,
-  COMMAND_CAPABILITY, capabilityForCommand, capabilitiesForCommand, commandAllowed,
+  COMMAND_CAPABILITY, COMMAND_FAMILIES, capabilityForCommand, capabilitiesForCommand, commandAllowed,
 };

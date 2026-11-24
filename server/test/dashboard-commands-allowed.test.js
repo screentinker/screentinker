@@ -74,3 +74,25 @@ test('a command sent without a callback still reports a refusal (frontend/js/soc
   }
   assert.match(rep, /showToast/);
 });
+
+test('"Clear update cache" goes only to players that implement it, whatever capabilities a web player declares', () => {
+  const caps = require('../lib/player-capabilities');
+  const withSelfUpdate = (d) => ({ ...d, capabilities: JSON.stringify([...caps.capabilitiesFor(d), 'system.self_update']) });
+  // BrightSign with storage and SCAP webOS declare system.self_update at runtime; the web player has
+  // no clear_update_cache handler, so the dashboard reported a success the panel never had.
+  for (const d of [
+    { platform: 'BrightSign XD1035', client_type: 'web' },
+    { platform: 'webOS 6.0', android_version: 'Web/webOS', client_type: 'web' },
+  ]) {
+    const v = caps.commandAllowed(withSelfUpdate(d), 'clear_update_cache');
+    assert.equal(v.ok, false, d.platform);
+    assert.equal(v.capability, 'system.self_update');
+  }
+  for (const d of [
+    { platform: 'Android 13', client_type: 'apk', android_version: '13' },
+    { platform: 'Linux/Debian (Raspberry Pi 5)', client_type: 'pi' },
+    { platform: 'Windows/11 Pro (Legion)', client_type: 'win' },
+  ]) {
+    assert.equal(caps.commandAllowed(withSelfUpdate(d), 'clear_update_cache').ok, true, d.platform);
+  }
+});
