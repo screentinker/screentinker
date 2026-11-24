@@ -21,7 +21,7 @@
         "The news ticker can show your own messages, like \"Elevator out of service\", each with an optional time to stop, and no longer goes blank between loops.",
         "Sync a Google Drive folder into your library with your organization's own Google service account, like SharePoint and OneDrive folders.",
         "Importing from Xibo 3 and 4 brings in your media again, connection errors say what went wrong, and there is a guide for moving off Samsung MagicINFO.",
-        "Samsung Tizen screens support the live debug log, Raspberry Pi 3 players no longer show a white screen for video, and widgets save reliably again."
+        "Samsung Tizen screens support the live debug log, Raspberry Pi 3 players should no longer show a white screen for video, and widgets save reliably again."
       ]
     },
     {

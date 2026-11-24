@@ -64,7 +64,8 @@ Low severity, found in internal reviews.
 
 - **Raspberry Pi 3: videos showed a white screen** (#833, reported by @KiwasoVR; #907). Debian's
   Qt 6.8 leaves out the video shaders OpenGL ES 2 GPUs need, so the player now ships its own copy,
-  only on Qt 6.8.1/6.8.2 where they are missing. 1080p may still be too much for a Pi 3's memory.
+  only on Qt 6.8.1/6.8.2 where they are missing. Not yet confirmed on Pi 3 hardware; please report how it
+  goes. 1080p may still be too much for a Pi 3's memory.
 - **LG webOS shell without SCAP no longer claims it can update itself**; `/webos/version.json` is
   readable from the packaged app, and the shell reads its config on webOS versions where `fetch`
   fails on `file://` (#897).
