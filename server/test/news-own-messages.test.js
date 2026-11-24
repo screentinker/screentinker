@@ -68,10 +68,31 @@ test('a ticker with only own messages scrolls them, and an expired one drops off
     ] });
     // A navigation (not setContent) so the timer hook above runs before the page's script.
     await page.goto('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-    const titles = () => page.$$eval('.ticker .title', (els) => els.map((e) => e.textContent));
+    const titles = () => page.$$eval('.ticker .set:first-child .title', (els) => els.map((e) => e.textContent));
     assert.deepEqual(await titles(), ['Elevator out of service', 'Lobby doors close at 9pm']);
-    await page.waitForFunction(() => document.querySelectorAll('.ticker .title').length === 1, { timeout: 5000 });
+    await page.waitForFunction(() => document.querySelectorAll('.ticker .set:first-child .title').length === 1, { timeout: 5000 });
     assert.deepEqual(await titles(), ['Lobby doors close at 9pm']);
+  } finally { await page.close(); }
+});
+
+test('a short ticker loops with no black gap: copies cover the screen, one set per loop', { skip: SKIP }, async () => {
+  const page = await browser.newPage();
+  try {
+    await page.setViewport({ width: 1280, height: 120 });
+    await page.goto('data:text/html;charset=utf-8,' + encodeURIComponent(renderWidgetHtml('rss', { layout: 'ticker', messages: [{ text: 'Elevator out' }] })));
+    await page.waitForSelector('.ticker .set');
+    const m = await page.evaluate(() => {
+      const strip = document.querySelector('.ticker');
+      const sets = strip.querySelectorAll('.set');
+      const w = sets[0].offsetWidth;
+      const a = strip.getAnimations ? strip.getAnimations()[0] : null;
+      const kf = a ? a.effect.getKeyframes().map((k) => k.transform) : null;
+      return { sets: sets.length, w, total: Array.from(sets).reduce((n, s) => n + s.offsetWidth, 0), vw: innerWidth, kf };
+    });
+    assert.ok(m.sets >= 2, `repeated (${m.sets} copies)`);
+    // At any point of the loop (shifted by 0..w) the copies still reach the right edge: never a gap.
+    assert.ok(m.total - m.w >= m.vw, `copies cover the screen at the end of a loop (${m.total} - ${m.w} >= ${m.vw})`);
+    assert.deepEqual(m.kf, ['translateX(0px)', `translateX(-${m.w}px)`], 'moves exactly one set per loop');
   } finally { await page.close(); }
 });
 
