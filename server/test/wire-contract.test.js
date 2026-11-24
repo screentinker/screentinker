@@ -94,9 +94,6 @@ for (const [name, dirs] of Object.entries({
 // Commands the server would deliver to a player that has no handler for them, and why.
 const KNOWN_UNHANDLED = {
   upload_logs: 'embedded boards only; the dashboard shows the button only for them',
-  // The Tizen player has never implemented the live debug log: set_debug reaches the TV and is
-  // answered "unknown command". Tracked as a follow-up; remove this line when tizen/js handles it.
-  'tizen:set_debug': 'not implemented on Tizen yet (follow-up to #908)',
   'web:enable_system_capture': 'Android consent prompt; the button is shown only for Android',
   'tizen:enable_system_capture': 'Android consent prompt; the button is shown only for Android',
   'web:settings': 'opens Android settings; the button is shown only for Android',

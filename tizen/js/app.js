@@ -444,6 +444,10 @@
       // dashboard slider did nothing on Tizen at all.
       if (type === 'set_volume') { applyVolume(payload); return; }
 
+      // Live debug log: the dashboard's "Debug logging" checkbox. Also not a fleet-control action,
+      // so it must not reach STDeviceControl, which answers anything it does not know "unknown command".
+      if (type === 'set_debug') { setRemoteDebug(payload); return; }
+
       if (!window.STDeviceControl) { reportCmd('error', type, 'device-control unavailable'); return; }
       STDeviceControl.run(type, payload).then(function (res) {
         var note = res.note;
@@ -751,6 +755,31 @@
       if (detail) m.detail = detail;
       socket.emit('device:event', m);
     } catch (e) {}
+  }
+
+  // set_debug (js/debug-log.js): stream the console/error ring buffer to the dashboard's live panel.
+  // send() reads the CURRENT socket, so a reconnect mid-stream keeps streaming on the new one.
+  var debugStream = window.STDebugLog ? STDebugLog.createStream({
+    send: function (tag, level, message) {
+      if (!socket || !socket.connected || !deviceId) return;
+      socket.emit('device:log', { device_id: deviceId, tag: tag, level: level, message: message });
+    },
+    platform: function () {
+      var bits = ['Tizen'];
+      try { bits.push('screen ' + screen.width + 'x' + screen.height); } catch (e) {}
+      try {
+        var caps = window.STDeviceControl && STDeviceControl.capabilities ? STDeviceControl.capabilities() : null;
+        if (caps) bits.push('control ' + (caps.backend || 'none'));
+      } catch (e) {}
+      try { bits.push(navigator.userAgent); } catch (e) {}
+      return bits.join(' - ');
+    },
+  }) : null;
+
+  function setRemoteDebug(payload) {
+    var on = !!(payload && payload.enabled);
+    if (!debugStream) { if (on) reportCmd('warn', 'set_debug', 'debug log unavailable on this build'); return; }
+    debugStream.set(on);
   }
 
   // #125: report a command outcome to the dashboard. device:log surfaces live as
