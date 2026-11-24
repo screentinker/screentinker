@@ -230,13 +230,16 @@ def _read_reply(sock):
 def test_the_relay_refuses_a_self_signed_camera_unless_the_item_says_so(rtsp_camera):
     port, _ = rtsp_camera
     with pytest.raises(R.CameraTlsError) as e:
-        RR.RtspsRelay("rtsps://viewer:pw@localhost:%d/cam" % port, False, connect_timeout=5).open()
+        RR.RtspsRelay("rtsps://viewer:pw@127.0.0.1:%d/cam" % port, False, connect_timeout=5).open()
     assert "not trusted" in str(e.value) and "pw" not in str(e.value)
 
 
 def test_the_relay_plays_a_session_over_the_one_tls_connection(rtsp_camera):
     port, seen = rtsp_camera
-    relay = RR.RtspsRelay("rtsps://viewer:pw@localhost:%d/cam?x=1" % port, True, connect_timeout=5)
+    # 127.0.0.1, not localhost: the camera listens on IPv4 only, and macOS tries ::1 first. On the macOS
+    # runner something else (a system TLS service) can hold the same port number on ::1, and the relay,
+    # which accepts any certificate here, then talks to it instead: `seen` stays empty and the read times out.
+    relay = RR.RtspsRelay("rtsps://viewer:pw@127.0.0.1:%d/cam?x=1" % port, True, connect_timeout=5)
     local = relay.open()
     assert local == "rtsp://viewer:pw@127.0.0.1:%d/cam?x=1" % relay.port
     q = socket.create_connection(("127.0.0.1", relay.port), timeout=5)
