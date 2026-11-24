@@ -276,6 +276,14 @@ const INTEGRATIONS = [
     },
   },
   {
+    id: 'gdrive', level: 'org', customerData: false,
+    status(ctx) {
+      const apps = count(ctx, 'org_google_drive', "COALESCE(private_key_enc,'') <> ''", orgScope(ctx));
+      const folders = count(ctx, 'cloud_folders', "enabled = 1 AND provider = 'google'", wsScope(ctx));
+      return { enabled: apps > 0, count: folders, hosts: apps ? ['oauth2.googleapis.com', 'www.googleapis.com'] : [] };
+    },
+  },
+  {
     id: 'bi', level: 'org', customerData: false,
     status(ctx) {
       const sc = orgScope(ctx);

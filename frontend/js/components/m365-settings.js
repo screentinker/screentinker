@@ -221,6 +221,7 @@ export async function openCloudFolders({ onChange } = {}) {
           </div>
         </div>
       </div>`).join('');
+    // security-ok(dom-html-sink): every value is esc()'d (rows, names, links), a number, or a fixed provider id
     body.innerHTML = `${setup}${rows || '<p style="color:var(--text-muted);font-size:13px">No folders yet.</p>'}
       ${anyConfigured && !canManage ? '<p style="color:var(--text-muted);font-size:12px;margin-top:12px">Only an organization owner or admin can add a folder. You can sync the folders here now, or stop syncing them.</p>' : ''}
       ${providers.length && canManage ? `<details style="margin-top:12px" ${list.length ? '' : 'open'}><summary style="cursor:pointer;font-size:13px">Add a folder</summary>
