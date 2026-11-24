@@ -190,7 +190,12 @@ function noteMiss(ip) {
 function _resetLimits() { hits.clear(); misses.clear(); inflight.clear(); }
 
 /** The IP as stored: keyed-hashed, so the table can count per IP without holding addresses. */
-function ipHash(ip) { return crypto.createHmac('sha256', String(config.jwtSecret || 'st')).update('req-ip:' + String(ip || '')).digest('hex').slice(0, 32); }
+// The per-network daily quota: IPv6 folded to its /64 (one host owns all of it), IPv4 as is.
+function ipHash(ip) {
+  const s = String(ip || '');
+  const net = s ? require('express-rate-limit').ipKeyGenerator(s, 64) : '';
+  return crypto.createHmac('sha256', String(config.jwtSecret || 'st')).update('req-ip:' + net).digest('hex').slice(0, 32);
+}
 
 // ─── forms ───────────────────────────────────────────────────────────────────────────────────
 

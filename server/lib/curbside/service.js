@@ -187,8 +187,10 @@ function update(db, loc, { name, timezone, spots, spotsCount, texts: t }, nowMs 
   if (timezone !== undefined && !isRealTimezone(timezone)) {
     throw new CurbsideError(400, 'timezone', 'Not a timezone this server knows (use a name like Europe/Lisbon)');
   }
+  let newSpots = null;
   if (spots !== undefined || (spotsCount !== undefined && spotsCount !== null && spotsCount !== '')) {
-    sets.push('spots = ?'); vals.push(JSON.stringify(cleanSpots(spots, spotsCount)));
+    newSpots = cleanSpots(spots, spotsCount);
+    sets.push('spots = ?'); vals.push(JSON.stringify(newSpots));
   }
   if (t !== undefined) {
     if (t === null || typeof t !== 'object' || Array.isArray(t)) throw new CurbsideError(400, 'texts', 'texts must be an object');
@@ -209,6 +211,17 @@ function update(db, loc, { name, timezone, spots, spotsCount, texts: t }, nowMs 
       }
     }
     db.prepare(`UPDATE curbside_locations SET ${sets.join(', ')}, rev = rev + 1, updated_at = ? WHERE id = ?`).run(...vals, nowSec(nowMs), live.id);
+    if (newSpots) {
+      // Spot labels match case-insensitively (findSpot), but the open-spot check and its unique index
+      // are exact. A spot re-cased from 'a' to 'A' would otherwise take a second car while the first
+      // still waits at 'a', so open check-ins move to the new spelling.
+      const byLower = new Map(newSpots.map((s) => [s.toLowerCase(), s]));
+      const move = db.prepare('UPDATE curbside_arrivals SET spot = ? WHERE id = ?');
+      for (const a of openArrivals(db, live)) {
+        const to = byLower.get(String(a.spot).toLowerCase());
+        if (to && to !== a.spot) move.run(to, a.id);
+      }
+    }
     return current(db, load(db, live.id), nowMs);
   })();
 }

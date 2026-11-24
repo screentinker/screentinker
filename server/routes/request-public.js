@@ -22,6 +22,10 @@ const cr = require('../lib/content-requests');
 const { getClientIp } = require('../services/activity');
 
 const ipOf = (req) => String(getClientIp(req) || req.ip || '');
+// ⚠️ Limits, caps and lockouts count the NETWORK, never the exact address: one IPv6 host owns a whole
+// /64, so keying on the address gave every rotated source a fresh budget (same as lib/pair-lockout.js).
+const { ipKeyGenerator } = require('express-rate-limit');
+const netOf = (req) => { const ip = ipOf(req); return ip ? ipKeyGenerator(ip, 64) : ''; };
 
 function send(res, e) {
   if (e && (e.name === 'RequestError' || e.name === 'ApprovalError')) {
@@ -33,7 +37,7 @@ function send(res, e) {
 
 /** Per-IP, per-action. Returns true when it answered 429. */
 function limit(req, res, bucket, max, windowMs = 60000) {
-  const wait = cr.limited(bucket, ipOf(req), max, windowMs);
+  const wait = cr.limited(bucket, netOf(req), max, windowMs);
   if (!wait) return false;
   res.set('Retry-After', String(wait));
   res.status(429).json({ error: 'Too many requests, try again later', code: 'rate_limited' });
@@ -46,7 +50,7 @@ function limit(req, res, bucket, max, windowMs = 60000) {
  * hopeless, but this keeps a scan from costing a database lookup per guess.
  */
 function formFrom(req, res) {
-  const ip = ipOf(req);
+  const ip = netOf(req);
   if (cr.isLockedOut(ip)) { res.set('Retry-After', '900'); res.status(429).json({ error: 'Too many wrong links from this network. Try again later.', code: 'locked_out' }); return null; }
   const form = cr.formByCode(req.params.code);
   if (!form) { cr.noteMiss(ip); res.status(404).json({ error: 'This request form does not exist, or its link has changed', code: 'not_found' }); return null; }
@@ -204,7 +208,7 @@ router.post('/form/:code/submit', async (req, res) => {
 // ─── the status link (POST: the token travels in the body, never in a URL) ───────────────────
 
 function requestFrom(req, res) {
-  const ip = ipOf(req);
+  const ip = netOf(req);
   if (cr.isLockedOut(ip)) { res.set('Retry-After', '900'); res.status(429).json({ error: 'Too many wrong links from this network. Try again later.', code: 'locked_out' }); return null; }
   const r = cr.byStatusToken(req.body && req.body.token);
   if (!r) { cr.noteMiss(ip); res.status(404).json({ error: 'No request matches this link', code: 'not_found' }); return null; }

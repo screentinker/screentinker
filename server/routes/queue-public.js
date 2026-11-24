@@ -30,6 +30,10 @@ const svc = require('../lib/queue/service');
 const { getClientIp } = require('../services/activity');
 
 const ipOf = (req) => String(getClientIp(req) || req.ip || '');
+// ⚠️ Limits, caps and lockouts count the NETWORK, never the exact address: one IPv6 host owns a whole
+// /64, so keying on the address gave every rotated source a fresh budget (same as lib/pair-lockout.js).
+const { ipKeyGenerator } = require('express-rate-limit');
+const netOf = (req) => { const ip = ipOf(req); return ip ? ipKeyGenerator(ip, 64) : ''; };
 
 /*
  * Scale-out (docs/scale-out.md): these calls land in the workspace the QUEUE belongs to, which no
@@ -69,7 +73,7 @@ function limited(bucket, key, max, windowMs = 60000) {
   return 0;
 }
 function limit(req, res, bucket, max) {
-  const wait = limited(bucket, ipOf(req), max);
+  const wait = limited(bucket, netOf(req), max);
   if (!wait) return false;
   res.set('Retry-After', String(wait));
   res.status(429).json({ error: 'Too many requests, try again in a moment', code: 'rate_limited' });
