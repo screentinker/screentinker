@@ -945,6 +945,7 @@ export default {
   'device.toast.command_queued': "{cmd} — デバイスはオフライン、再接続時に配信されます",
   'device.toast.command_undeliverable': "{cmd} — デバイスがオフラインでキューが使用不可です",
   'device.toast.command_no_ack': "{cmd} — サーバー応答なし",
+  'device.toast.command_refused': "{cmd}: サーバーが拒否しました（{reason}）",
   'device.toast.command_unsupported': "{cmd} — このプレーヤーはサポートしていません ({cap})。ページをリロードしてコントロールを更新します。",
   'device.caps.title': "プレーヤーの機能",
   'device.caps.declared': "プレイヤー自身による報告。この表示が受け入れられないコントロールは非表示になります。",

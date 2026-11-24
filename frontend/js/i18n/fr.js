@@ -951,6 +951,7 @@ export default {
   'device.toast.command_queued': "{cmd} — appareil hors ligne, sera livré lors de la reconnexion",
   'device.toast.command_undeliverable': "{cmd} — appareil hors ligne et file d'attente indisponible",
   'device.toast.command_no_ack': "{cmd} — aucune réponse du serveur",
+  'device.toast.command_refused': "{cmd} : refusé par le serveur ({reason})",
   'device.toast.command_unsupported': "{cmd} — ce lecteur ne le prend pas en charge ({cap}). Actualisez la page pour actualiser les contrôles.",
   'device.caps.title': "Capacités du lecteur",
   'device.caps.declared': "Rapporté par le joueur lui-même. Les contrôles que cet écran ne peut pas honorer sont masqués.",

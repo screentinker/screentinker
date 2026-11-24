@@ -3408,6 +3408,7 @@ export default {
   'device.toast.command_queued': '{cmd} — device offline, will deliver on reconnect',
   'device.toast.command_undeliverable': '{cmd} — device offline and queue unavailable',
   'device.toast.command_no_ack': '{cmd} — no server response',
+  'device.toast.command_refused': '{cmd}: the server refused it ({reason})',
   'device.toast.command_unsupported': '{cmd} — this player does not support it ({cap}). Reload the page to refresh the controls.',
   'device.caps.title': 'Player capabilities',
   'device.caps.declared': 'Reported by the player itself. Controls this display cannot honour are hidden.',

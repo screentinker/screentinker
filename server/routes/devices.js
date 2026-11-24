@@ -1090,7 +1090,11 @@ router.post('/:id/command', requireCommandScope, (req, res) => {
 
   const { type, payload } = req.body || {};
   if (!type) return res.status(400).json({ error: 'command type required' });
-  if (!ALLOWED_COMMANDS.includes(type)) return res.status(400).json({ error: 'invalid command type' });
+  if (!ALLOWED_COMMANDS.includes(type)) {
+    // Logged, like the socket path's refusals (ws/dashboardSocket.js): a refusal nobody sees is how #908 hid.
+    console.warn(`[command] refused ${String(type).slice(0, 40)} on ${device.id}: invalid command type (REST)`);
+    return res.status(400).json({ error: 'invalid command type' });
+  }
   const v = validateCommand(type, payload);   // #312 follow-up: reject a malformed set_server_url at the door
   if (!v.ok) return res.status(400).json({ error: v.error });
 
