@@ -73,6 +73,20 @@ const ALLOWED_COMMANDS = Object.freeze([
    * is off is stale by the time it is back.
    */
   'camera_view',
+  /*
+   * ⚠️ FOUR DASHBOARD BUTTONS WERE REFUSED HERE FROM 2026-09-19 (#396) UNTIL THIS WAS ADDED.
+   * The dashboard socket only began checking this list in #396 ("one list, both doors"), and these
+   * four had only ever been sent through that socket, so they were never on it: the live debug log
+   * panel opened and stayed empty, and the other three buttons did nothing. Their capability gates
+   * (player-capabilities COMMAND_CAPABILITY) were always there. dashboard-commands-allowed.test.js
+   * now holds every command the dashboard sends to this list.
+   *  - set_debug: the device page's "Debug logging" stream (lines go to shell-capable users only,
+   *    ws/dashboardSocket.js emitToShellUsers).
+   *  - enable_system_capture: ask Android for screen-capture consent (remote view, screenshots).
+   *  - settings: open the system settings on the panel.
+   *  - clear_update_cache: drop a downloaded update (gated on system.self_update).
+   */
+  'set_debug', 'enable_system_capture', 'settings', 'clear_update_cache',
 ]);
 
 /*
