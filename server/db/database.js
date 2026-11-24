@@ -4714,6 +4714,24 @@ migrationStep('Microsoft 365 and cloud folders', () => {
   )`);
 });
 
+migrationStep('Google Drive folder sync', () => {
+  /*
+   * Google Drive (lib/gdrive.js): an organization's own Google Cloud service account, for reading
+   * Drive folders shared with it. The private key is secretbox-encrypted and never returned by the
+   * API. Its folders are rows in cloud_folders with provider 'google'.
+   */
+  db.exec(`CREATE TABLE IF NOT EXISTS org_google_drive (
+    organization_id  TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    client_email     TEXT NOT NULL,
+    private_key_enc  TEXT,
+    last_test_at     INTEGER,
+    last_test_ok     INTEGER,
+    last_error       TEXT,
+    created_at       INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at       INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  )`);
+});
+
 migrationStep('OTA rollouts', () => {
   // Health-checked player rollouts (lib/ota-rollout.js): waves, automatic halt, rollback package.
   db.exec(`

@@ -119,6 +119,7 @@ function restoreOrder(db, { instance, options, present }) {
 const CREDENTIAL_TABLES = {
   org_sso_providers: 'sso',
   org_m365_apps: 'm365',
+  org_google_drive: 'gdrive',
   canva_integrations: 'canva',
   bi_connections: 'bi',
   social_connections: 'social',

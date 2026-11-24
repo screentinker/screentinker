@@ -1,8 +1,10 @@
 'use strict';
 
 /*
- * SharePoint / OneDrive folder sync (cloud_folders): a folder in the organization's Microsoft 365,
- * kept in step with the workspace content library — and, optionally, with a playlist of its own.
+ * Cloud folder sync (cloud_folders): a SharePoint / OneDrive folder (provider 'm365', lib/m365.js) or
+ * a Google Drive folder (provider 'google', lib/gdrive.js), kept in step with the workspace content
+ * library — and, optionally, with a playlist of its own. A provider supplies resolveFolder,
+ * listFolder and downloadFile; everything below is the same for both.
  *
  *   new file upstream      -> downloaded and added exactly like an upload (lib/content-ingest)
  *   changed file upstream  -> downloaded and REPLACED through lib/content-replace, so the item keeps
@@ -36,6 +38,15 @@ const path = require('path');
 const crypto = require('crypto');
 const config = require('../config');
 const m365 = require('./m365');
+const gdrive = require('./gdrive');
+
+const PROVIDERS = { m365, google: gdrive };
+const PROVIDER_LABEL = { m365: 'SharePoint sync', google: 'Google Drive sync' };
+function providerOf(name) {
+  const p = PROVIDERS[name || 'm365'];
+  if (!p) { const e = new Error('Unknown folder provider.'); e.status = 400; throw e; }
+  return p;
+}
 
 function dbOf() { return require('../db/database').db; }
 
@@ -253,7 +264,8 @@ async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
     const why = cannotSync(db, folder);
     if (why) throw pauseFolder(db, folder.id, why);
 
-    const listing = await m365.listFolder(folder.organization_id, folder.drive_id, folder.item_id, { maxMedia: MAX_FILES + 1 });
+    const provider = providerOf(folder.provider);
+    const listing = await provider.listFolder(folder.organization_id, folder.drive_id, folder.item_id, { maxMedia: MAX_FILES + 1 });
     heartbeat();
     const allMedia = listing.files.filter((f) => f.media);
     const media = allMedia.slice(0, MAX_FILES);
@@ -265,7 +277,7 @@ async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
     summary.skipped_other = listing.files.filter((f) => !f.media).length;
 
     const mapped = new Map(db.prepare('SELECT * FROM cloud_folder_items WHERE folder_id = ?').all(folder.id).map((r) => [r.remote_id, r]));
-    const actor = { userId: null, kind: 'system', label: 'SharePoint sync' };
+    const actor = { userId: null, kind: 'system', label: PROVIDER_LABEL[folder.provider] || 'Folder sync' };
     /*
      * WHO the bytes are written for (lib/content-replace.js `writer`): the folder's creator. Without
      * it the sync runs as system, and a synced file that head office later put in a corporate
@@ -293,7 +305,7 @@ async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
       }
       let tmp = null;
       try {
-        tmp = await m365.downloadFile(folder.organization_id, folder.drive_id, f.id, { destDir: config.contentDir, maxBytes: Math.min(cap || Infinity, room == null ? Infinity : room) });
+        tmp = await provider.downloadFile(folder.organization_id, folder.drive_id, f.id, { destDir: config.contentDir, maxBytes: Math.min(cap || Infinity, room == null ? Infinity : room) });
         const file = { path: tmp.path, size: tmp.size, originalname: f.name };
         if (row && live) {
           const r = await replaceContentBytes({ content: live, file, actor, writer, reqOrIo: io });
@@ -354,16 +366,17 @@ async function syncFolder(folderId, { trigger = 'schedule' } = {}) {
 
 /* ============================== create ============================== */
 
-async function createFolder({ workspaceId, organizationId, userId, shareUrl, fields }) {
+async function createFolder({ workspaceId, organizationId, userId, shareUrl, fields, provider: providerName = 'm365' }) {
   const db = dbOf();
-  const target = await m365.resolveFolder(organizationId, shareUrl);
+  const provider = providerOf(providerName);
+  const target = await provider.resolveFolder(organizationId, shareUrl);
   const dup = db.prepare('SELECT id FROM cloud_folders WHERE workspace_id = ? AND drive_id = ? AND item_id = ?').get(workspaceId, target.driveId, target.itemId);
   if (dup) { const e = new Error('This folder is already synced into this workspace.'); e.status = 409; throw e; }
   const id = crypto.randomUUID();
   db.prepare(`INSERT INTO cloud_folders (id, workspace_id, organization_id, user_id, provider, name, share_url, drive_id, item_id, web_url,
       interval_min, default_duration_sec, auto_playlist, enabled)
-      VALUES (?, ?, ?, ?, 'm365', ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
-    .run(id, workspaceId, organizationId, userId, fields.name || target.name, m365.validateShareUrl(shareUrl), target.driveId, target.itemId,
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
+    .run(id, workspaceId, organizationId, userId, providerName, fields.name || target.name, provider.validateShareUrl(shareUrl), target.driveId, target.itemId,
       target.webUrl, fields.interval_min, fields.default_duration_sec, fields.auto_playlist);
   return db.prepare('SELECT * FROM cloud_folders WHERE id = ?').get(id);
 }
@@ -394,4 +407,4 @@ function start(ioRef) {
 function _setIo(ref) { io = ref || null; }
 function _setMaxFiles(n) { MAX_FILES = n; }
 
-module.exports = { normaliseInput, present, syncFolder, createFolder, syncPlaylistItems, start, tick, _setIo, MIN_INTERVAL_MIN, MAX_INTERVAL_MIN, _setMaxFiles };
+module.exports = { PROVIDERS, providerOf, normaliseInput, present, syncFolder, createFolder, syncPlaylistItems, start, tick, _setIo, MIN_INTERVAL_MIN, MAX_INTERVAL_MIN, _setMaxFiles };

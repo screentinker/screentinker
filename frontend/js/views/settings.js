@@ -11,7 +11,7 @@ import { addPasskey, unavailableMessage } from '../components/passkey-setup.js';
 import { resetBranding, applyAccent } from '../branding.js';
 import { mountCorporateSettings } from '../components/corporate-settings.js';
 import { mountStorageSettings } from '../components/storage-settings.js';
-import { mountM365Settings } from '../components/m365-settings.js';
+import { mountM365Settings, mountGoogleDriveSettings } from '../components/m365-settings.js';
 import { mountBiConnections } from '../components/bi-connections-settings.js';
 import { mountSocialConnections } from '../components/social-connections-settings.js';
 import { mountRoomSettings } from '../components/room-settings.js';
@@ -151,6 +151,7 @@ export async function render(container) {
     <!-- Where media is stored (org owners/admins). Mounted only for them; the server enforces it. -->
     <div class="settings-section" id="storageCard" style="display:none"></div>
     <div class="settings-section" id="m365Card" style="display:none"></div>
+    <div class="settings-section" id="gdriveCard" style="display:none"></div>
     <div class="settings-section" id="biCard" style="display:none"></div>
     <div class="settings-section" id="socialConnCard" style="display:none"></div>
 
@@ -1786,6 +1787,7 @@ export async function render(container) {
   if (canManageOrgSecurity || user.current_workspace_role === 'workspace_admin') mountStorageSettings(document.getElementById('storageCard'));
   // The server decides (can_manage): org owners and admins only.
   if (canManageOrgSecurity) mountM365Settings(document.getElementById('m365Card'));
+  if (canManageOrgSecurity) mountGoogleDriveSettings(document.getElementById('gdriveCard'));
   // BI connections belong to the organization; the card hides itself unless the server says can_manage.
   if (canManageOrgSecurity) mountBiConnections(document.getElementById('biCard'));
   if (canManageOrgSecurity) mountSocialConnections(document.getElementById('socialConnCard'));

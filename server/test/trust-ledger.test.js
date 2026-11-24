@@ -223,6 +223,7 @@ const ALLOWED = {
   'lib/onvif/transport.js': 'feature',
   'lib/live-publish-ws.js': 'feature',
   'lib/m365.js': 'feature',
+  'lib/gdrive.js': 'feature',
   'lib/mesh/content-cache.js': 'feature',
   'lib/mesh/local-apply.js': 'feature',
   'lib/mesh/pull-download.js': 'feature',
