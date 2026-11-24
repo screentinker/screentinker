@@ -1940,7 +1940,8 @@ function renderRSS(c, opts = {}) {
     if (cfg.layout === 'headlines') headlines(); else ticker();
   }
   function load() {
-    if (!cfg.url) { items = []; draw(); return; }
+    // No feed: own messages only. Draw once; redrawing every 5 minutes restarted the scroll mid-message.
+    if (!cfg.url) { if (!items) { items = []; draw(); } return; }
     var x = new XMLHttpRequest();
     var done = false;
     function keep() { if (done) return; done = true; if (!items) draw(); }
