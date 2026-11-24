@@ -596,10 +596,11 @@ app.use((req, res, next) => {
   if (CANONICAL_URL && !CANONICAL_URL.hostname.startsWith('www.')
       && String(req.hostname || '').toLowerCase() === 'www.' + CANONICAL_URL.hostname
       && aiSurface.markdownSource(config.frontendDir, req.path)) {
-    // originalUrl is a path on this site, and the host is fixed: never an open redirect.
+    // security-ok(open-redirect): the host is APP_URL's, fixed; originalUrl only adds a path on it
     return res.redirect(301, CANONICAL_URL.origin + req.originalUrl);
   }
   const alias = Object.prototype.hasOwnProperty.call(SEO_ALIASES, req.path) ? SEO_ALIASES[req.path] : null;
+  // security-ok(open-redirect): alias is a fixed path from SEO_ALIASES; only the query string is carried over
   if (alias) return res.redirect(301, alias + (req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : ''));
   if (NOINDEX_PATH.test(req.path)) res.setHeader('X-Robots-Tag', 'noindex');
   return next();
