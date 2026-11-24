@@ -45,6 +45,11 @@ Low severity, found in internal reviews.
   that account, and the folder syncs into the library like a SharePoint/OneDrive folder, optionally
   as its own playlist. A folder that is unshared, trashed or out of reach stops the sync with an
   error and removes nothing (#917). See docs/cloud-documents.md.
+- **Cloud folders sync their subfolders** (Google Drive and SharePoint/OneDrive, #925). A new folder
+  includes its subfolders (up to 5 levels, 200 subfolders), and the playlist plays in path order
+  (`2026-08-28/…` before `2026-08-29/…`). Folders added before 3.2.6 keep syncing only their own
+  files until you press **Include subfolders** on them; their summary now says how many subfolders
+  they skip. If any subfolder cannot be listed, the rest still syncs and nothing is removed.
 - **Your own messages in the news widget** (#912, requested by @olchinga-de). Up to 20 lines of free
   text (for example "Elevator out of service"), each with an optional time to stop showing it, in the
   ticker, the headlines look, or on their own without a feed.
@@ -69,7 +74,12 @@ Low severity, found in internal reviews.
 - **LG webOS shell without SCAP no longer claims it can update itself**; `/webos/version.json` is
   readable from the packaged app, and the shell reads its config on webOS versions where `fetch`
   fails on `file://` (#897).
-- **News ticker: a short message left the screen black between loops** (#921).
+- **News ticker: a short message left the screen black between loops** (#921). Widget pages are
+  rendered as version 4, so screens that already show a ticker fetch the fixed page (#924).
+- **Samsung Tizen: a widget edited while on screen kept its old page** until the playlist was
+  reassigned. It now re-renders, as the web player does (#924).
+- **Curbside widget: long order numbers were cut off** ("Order ORD-20…" on a 1080p screen); the
+  order column takes the free space and the text shrinks to fit (#924).
 
 ### Fixed (dashboard)
 
