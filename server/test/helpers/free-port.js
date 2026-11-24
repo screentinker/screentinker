@@ -17,6 +17,9 @@ const fs = require('fs');
  * same port from that range in the same instant is the remaining, far smaller, chance.
  */
 const handedOut = new Set();
+// fetch() refuses the WHATWG "bad ports" outright ("fetch failed", cause "bad port"). 10080 is the
+// only one at or above LOW; drawing it failed backstop-limit on CI once.
+const FETCH_BAD_PORTS = new Set([10080]);
 
 function ephemeralLow() {
   try {
@@ -40,7 +43,7 @@ function canBind(port) {
 async function freePort() {
   for (let i = 0; i < 200; i++) {
     const port = LOW + Math.floor(Math.random() * (HIGH - LOW));
-    if (handedOut.has(port)) continue;
+    if (handedOut.has(port) || FETCH_BAD_PORTS.has(port)) continue;
     if (await canBind(port)) { handedOut.add(port); return port; }
   }
   throw new Error(`freePort: no bindable port found in ${LOW}-${HIGH - 1}`);

@@ -27,11 +27,12 @@ test('own messages: edit, add, remove and save in the news widget editor', { ski
     await page.reload({ waitUntil: 'domcontentloaded' });
     const edit = `[data-edit-widget="${w.id}"]`;
     assert.ok(await waitFor(() => page.$(edit).then(Boolean), 20000), 'the widget list shows the widget');
-    // The list re-renders as it loads, so click from inside the page, retrying until the form is open.
-    assert.ok(await waitFor(async () => {
-      await page.evaluate((sel) => document.querySelector(sel)?.click(), edit).catch(() => {});
-      return page.$$eval('#wOwnMsgs .own-msg-row', (r) => r.length === 2).catch(() => false);
-    }, 15000), 'two saved rows');
+    // Exactly ONE click, on a freshly looked-up button (the list re-renders as it loads, and the grid's
+    // click handler is delegated, so a fresh node always works). Clicking again while the first form
+    // is loading re-opens it a moment later and wipes what the test typed: seen as a rare "never
+    // saved" on CI's slower node:sqlite job.
+    await page.evaluate((sel) => document.querySelector(sel).click(), edit);
+    assert.ok(await waitFor(() => page.$$eval('#wOwnMsgs .own-msg-row', (r) => r.length === 2).catch(() => false), 15000), 'two saved rows');
     const rows = () => page.$$eval('#wOwnMsgs .own-msg-row', (rs) => rs.map((r) => ({
       text: r.querySelector('[data-own-text]').value, until: r.querySelector('[data-own-until]').value,
       expired: r.querySelector('span').textContent, bold: !!r.querySelector('b'),
@@ -46,10 +47,14 @@ test('own messages: edit, add, remove and save in the news widget editor', { ski
     // Remove the old one, add a new one with an end time.
     await page.click('#wOwnMsgs .own-msg-row:first-child .btn-icon');
     await page.click('#wOwnAdd');
-    await page.keyboard.type('Elevator out of service');
+    await page.type('#wOwnMsgs .own-msg-row:last-child [data-own-text]', 'Elevator out of service');
     await page.$eval('#wOwnMsgs .own-msg-row:last-child [data-own-until]', (el) => { el.value = '2031-05-06T07:08'; el.dispatchEvent(new Event('change')); });
     await page.click('#wOwnAdd');   // a blank row is dropped on save
-    await page.click('#saveWidgetBtn');
+    // Wait for the save request itself, so a slow server (CI's node:sqlite job) fails with a reason.
+    const put = page.waitForResponse((r) => r.request().method() === 'PUT' && r.url().endsWith('/api/widgets/' + w.id), { timeout: 30000 });
+    await page.evaluate(() => document.getElementById('saveWidgetBtn').click());
+    const res = await put;
+    assert.equal(res.status(), 200, await res.text());
     const saved = await waitFor(async () => {
       const cur = await srv.api('GET', '/widgets/' + w.id);
       const m = JSON.parse(cur.config).messages;
