@@ -83,6 +83,43 @@ const MAX_WORKSPACES_PER_ORG = (() => {
 })();
 
 /*
+ * GET /target-orgs — the organizations this caller is allowed to create a workspace inside.
+ *
+ * Lifted out of GET /api/auth/me so the dashboard's every-page-load /me response stays light: a
+ * hosted instance can carry hundreds of tenants, and only the workspace-create modal needs the full
+ * list. Returning it lazily keeps the per-request payload to the few rows the modal actually reads.
+ *
+ * Same authorization rule as the create route's resolveTargetOrg:
+ *   - Platform admin (isPlatformRole): every organization on the server — the create route allows a
+ *     platform admin to land a workspace in any tenant, so anything less would force them to type an
+ *     org id blind, and the picker is the one place that guesswork lives.
+ *   - Otherwise: only organizations where the caller holds org_owner or org_admin. An ordinary
+ *     org_member cannot create siblings, so including those orgs would be a lie about what Save does.
+ *
+ * Empty array is a real answer — it means "you administer no organization", which the modal renders
+ * as a disabled Save. A null/undefined orgId field in /me is now (since the lift) the only way to
+ * detect "this caller is from an older session", and the modal handles that as "let the server
+ * resolve", preserving the pre-multi-org behaviour.
+ *
+ * Mounted BEFORE /:id/* so the literal "target-orgs" path is not eaten by the URL-param routes
+ * below; router.param('id') only fires on mutating requests anyway, but being explicit is cheaper
+ * than re-debugging it later.
+ */
+router.get('/target-orgs', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+  const rows = isPlatformRole(req.user.role)
+    ? db.prepare(`SELECT id, name, 'platform_admin' AS role FROM organizations ORDER BY name COLLATE NOCASE`).all()
+    : db.prepare(`
+        SELECT o.id, o.name, om.role
+          FROM organizations o
+          JOIN organization_members om ON om.organization_id = o.id
+         WHERE om.user_id = ? AND om.role IN ('org_owner', 'org_admin')
+         ORDER BY o.name COLLATE NOCASE
+      `).all(req.user.id);
+  res.json(rows);
+});
+
+/*
  * Which organization a create lands in.
  *
  * ⚠️ NEVER THE BODY ALONE. `organization_id` is honoured only after confirming the caller actually

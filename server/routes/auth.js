@@ -1002,27 +1002,12 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     : null;
 
   /*
-   * The organizations this caller is allowed to create a workspace inside.
-   *
-   * For ordinary users: every organization where they hold org_owner or org_admin. The workspace
-   * create route (routes/workspaces.js resolveTargetOrg) demands exactly one of those roles in the
-   * target org, so this list is what the create-workspace picker can present as a choice.
-   *
-   * For platform staff: every organization on the server. The create route allows a platform admin
-   * to land a workspace in any tenant regardless of org membership, so anything less than the full
-   * list would force them to type an org id blind — and the picker is the place that guesswork lives.
-   *
-   * Sort by name (case-insensitive) so the picker order is stable across reloads and locales.
+   * The organizations this caller is allowed to create a workspace inside used to live here and got
+   * lifted out — a hosted instance carries every tenant on the server, and shipping that list on
+   * every /me hit (which is every page load) was wasted bandwidth for the only consumer (the
+   * workspace-create modal). It is now GET /api/workspaces/target-orgs, fetched lazily when the
+   * modal opens. See server/routes/workspaces.js for the matching route.
    */
-  const administeredOrganizations = isPlatformAdmin
-    ? db.prepare(`SELECT id, name, 'platform_admin' AS role FROM organizations ORDER BY name COLLATE NOCASE`).all()
-    : db.prepare(`
-        SELECT o.id, o.name, om.role
-          FROM organizations o
-          JOIN organization_members om ON om.organization_id = o.id
-         WHERE om.user_id = ? AND om.role IN ('org_owner', 'org_admin')
-         ORDER BY o.name COLLATE NOCASE
-      `).all(req.user.id);
 
   res.json({
     ...req.user,
@@ -1051,7 +1036,6 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     is_platform_admin: req.isPlatformAdmin,
     acting_as: req.actingAs,
     accessible_workspaces: accessible,
-    administered_organizations: administeredOrganizations,
   });
 });
 

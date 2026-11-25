@@ -264,3 +264,94 @@ test('⚠️ the per-org cap stops a scripted caller minting workspaces forever'
   assert.match(String(over.body.error), /maximum of 25/);
   assert.equal(countIn('org-a'), cap, 'the cap must hold');
 });
+
+/* ================================================================= GET /target-orgs — the picker list */
+
+/*
+ * What the workspace-create modal asks for when it opens, and what it uses to decide whether to
+ * show a select, a read-only "In: <name>" line, or an error with Save disabled.
+ *
+ * ⚠️ SAME AUTHORIZATION RULE AS THE CREATE ROUTE. The picker is the front end; if it lies about
+ * what the create will accept, the modal will hand the operator a Save that the server then
+ * refuses. So org_member rows are excluded (no create), and a platform admin sees every tenant.
+ *
+ * Order is name-ascending (COLLATE NOCASE) so the picker order is stable across reloads and the
+ * UI's "current org first" default can match a known position.
+ */
+
+test('GET /target-orgs: an org_owner sees the one org they own', async () => {
+  as('u-owner');
+  const r = await call('GET', '/target-orgs');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.length, 1, 'u-owner is org_owner of org-a only');
+  assert.equal(r.body[0].id, 'org-a');
+  assert.equal(r.body[0].role, 'org_owner');
+  assert.equal(r.body[0].name, 'org-a org', 'name comes from the organizations row, not anything else');
+});
+
+test('GET /target-orgs: an org_admin sees the one org they admin', async () => {
+  as('u-admin');
+  const r = await call('GET', '/target-orgs');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.length, 1);
+  assert.equal(r.body[0].id, 'org-a');
+  assert.equal(r.body[0].role, 'org_admin');
+});
+
+test('⚠️ GET /target-orgs: an org_member sees an EMPTY list — and the modal must disable Save', async () => {
+  /*
+   * The org_member in org-a has no org_owner/org_admin role, so the create route will refuse them
+   * with 403. The picker must mirror that: empty array, Save disabled, error line. Returning their
+   * orgs would let the modal present a button the server then refuses — a worse UX than saying so
+   * up front.
+   */
+  as('u-member');
+  const r = await call('GET', '/target-orgs');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body, [], 'an org_member has no administered organization');
+});
+
+test('GET /target-orgs: a user who admins >1 org sees all of them, name-sorted', async () => {
+  as('u-multi');
+  const r = await call('GET', '/target-orgs');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.length, 2, 'u-multi is org_admin in org-a and org-c, nothing in org-b');
+  assert.deepEqual(r.body.map((o) => o.id), ['org-a', 'org-c'], 'name-ascending');
+  assert.ok(r.body.every((o) => o.role === 'org_admin'));
+});
+
+test('⚠️ GET /target-orgs: a platform_admin sees EVERY organization on the server', async () => {
+  /*
+   * The create route lets a platform admin land a workspace in any tenant regardless of org
+   * membership. Returning anything less would force them to type an org id blind, and the picker
+   * is the one place that guesswork lives.
+   */
+  as('u-platform', 'platform_admin');
+  const r = await call('GET', '/target-orgs');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.map((o) => o.id).sort(), ['org-a', 'org-b', 'org-c']);
+  assert.ok(r.body.every((o) => o.role === 'platform_admin'));
+});
+
+test('⚠️ GET /target-orgs: an outsider who owns an unrelated org sees only that one', async () => {
+  /*
+   * Belt-and-braces: an org_owner in an org the picker shouldn't know about still gets ONLY that
+   * org, not the entire server. This is the row that proves the JOIN is doing the filtering, not
+   * something else up the stack.
+   */
+  as('u-outsider');
+  const r = await call('GET', '/target-orgs');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.map((o) => o.id), ['org-b']);
+});
+
+test('GET /target-orgs: a workspace_admin with NO org role sees an empty list', async () => {
+  /*
+   * Mirrors the org_member case: a workspace_admin has no org-level power, so they cannot create
+   * siblings, and the picker should say so rather than hand them a disabled-looking Save.
+   */
+  as('u-wsadmin');
+  const r = await call('GET', '/target-orgs');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body, []);
+});

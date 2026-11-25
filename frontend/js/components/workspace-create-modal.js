@@ -19,15 +19,14 @@ import { api } from '../api.js';
  * (resolveTargetOrg in server/routes/workspaces.js). One org: still visible — read-only — so the
  * operator can see which tenant they're creating into. Zero orgs: nothing to create into, Save
  * disabled.
+ *
+ * The list comes from GET /api/workspaces/target-orgs (lazy). It used to be bundled into /me, but
+ * on a hosted instance that means shipping every tenant on every page load for the only consumer
+ * being this modal — and the modal can ask when it opens. Fetch failure falls through to "omit
+ * organization_id and let the server resolve", which preserves the pre-multi-org behaviour for an
+ * older session whose /me cache lacks the field.
  */
-export function openWorkspaceCreateModal(me) {
-  /*
-   * Caller passes the live `me` it already has; we only fall back to localStorage / a fetch when
-   * something else (corporate-settings.js) opens the modal without one. The /me payload carries
-   * `administered_organizations` for exactly this control.
-   */
-  const resolvedMe = me || (() => { try { return JSON.parse(localStorage.getItem('user') || 'null'); } catch (_) { return null; } })();
-
+export function openWorkspaceCreateModal() {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
@@ -63,53 +62,85 @@ export function openWorkspaceCreateModal(me) {
   document.body.appendChild(overlay);
 
   /*
-   * The org control. Three shapes, all rendered into the same slot:
+   * The org control. Four states, all rendered into the same slot:
+   *
+   *   - loading: a muted "Loading…" line and Save disabled. Shown until the endpoint resolves.
+   *     The endpoint is small and usually cached, but on a slow link the modal would otherwise
+   *     flash an empty form.
+   *
+   *   - null (fetch failed): NO picker at all, organization_id stays unset. The create route then
+   *     resolves from membership the same way it always did pre-multi-org, which preserves
+   *     behaviour for any caller whose /me cache lacks the field. If they administer no org or
+   *     several, the server refuses with 403 / 400 in its own words.
+   *
+   *   - one (===1): a read-only "In: <name>" line + hidden input. The server would accept this
+   *     without any body field; we still surface it so the operator sees where the workspace is
+   *     about to land.
    *
    *   - many (>1): a select with one option per administered org; default to the current org if
    *     it's in the list, otherwise nothing selected and Save is blocked until the operator
    *     chooses. This is the case the server used to refuse with 400.
    *
-   *   - one (===1): a read-only "In: <name>" line. The server would accept this without any body
-   *     field; we still surface it so the operator sees where the workspace is about to land.
-   *
-   *   - none (===0): an error line and Save disabled. canCreateWorkspace already hides the entry
+   *   - zero (===0): an error line and Save disabled. canCreateWorkspace already hides the entry
    *     point in this state, but a corporate-settings caller could still get here; defend in depth.
    */
   const orgSlot = overlay.querySelector('#createWsOrgSlot');
-  const orgs = Array.isArray(resolvedMe?.administered_organizations) ? resolvedMe.administered_organizations : [];
-  let initialOrgId = null;
-  if (orgs.length > 1) {
-    const currentOrgId = resolvedMe?.current_organization?.id || null;
-    initialOrgId = currentOrgId && orgs.some((o) => o.id === currentOrgId) ? currentOrgId : '';
-    orgSlot.innerHTML = `
-      <div class="form-group">
-        <label for="createWsOrg">${t('switcher.create_org_label')}</label>
-        <select id="createWsOrg" class="input" style="width:100%">
-          <option value="">${t('switcher.create_org_placeholder')}</option>
-          ${orgs.map((o) => `<option value="${esc(o.id)}"${o.id === initialOrgId ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}
-        </select>
-      </div>`;
-  } else if (orgs.length === 1) {
-    initialOrgId = orgs[0].id;
-    orgSlot.innerHTML = `
-      <div class="form-group">
-        <div style="color:var(--text-muted);font-size:12px">${esc(t('switcher.create_org_in', { name: orgs[0].name }))}</div>
-        <input type="hidden" id="createWsOrg" value="${esc(orgs[0].id)}">
-      </div>`;
-  } else {
-    orgSlot.innerHTML = `
-      <div class="form-group">
-        <div style="color:var(--danger);font-size:12px">${t('switcher.create_org_none')}</div>
-      </div>`;
-  }
-
   const nameInput = overlay.querySelector('#createWsName');
   const slugInput = overlay.querySelector('#createWsSlug');
-  const orgInput = overlay.querySelector('#createWsOrg');
   const errorEl = overlay.querySelector('#createWsError');
   const saveBtn = overlay.querySelector('#createWsSave');
-  if (orgs.length === 0) saveBtn.disabled = true;
+
+  // Resolved on render and re-resolved by setPicker below. `null` means "we never asked" or "ask
+  // failed" — that is the path that omits organization_id entirely and lets the server resolve.
+  let orgs = null;
+  let orgInput = null;
+  let initialOrgId = null;
+  orgSlot.innerHTML = `<div class="form-group"><div style="color:var(--text-muted);font-size:12px">…</div></div>`;
+  saveBtn.disabled = true;
   nameInput.focus();
+
+  function setPicker(result) {
+    orgs = Array.isArray(result) ? result : null;
+    orgSlot.innerHTML = '';
+    orgInput = null;
+    initialOrgId = null;
+    if (orgs === null) {
+      // Fetch failed or older session. NO picker; the server resolves from membership as before.
+      saveBtn.disabled = false;
+      return;
+    }
+    if (orgs.length > 1) {
+      const currentOrgId = (() => { try { return JSON.parse(localStorage.getItem('user') || 'null')?.current_organization?.id || null; } catch (_) { return null; } })();
+      initialOrgId = currentOrgId && orgs.some((o) => o.id === currentOrgId) ? currentOrgId : '';
+      orgSlot.innerHTML = `
+        <div class="form-group">
+          <label for="createWsOrg">${t('switcher.create_org_label')}</label>
+          <select id="createWsOrg" class="input" style="width:100%">
+            <option value="">${t('switcher.create_org_placeholder')}</option>
+            ${orgs.map((o) => `<option value="${esc(o.id)}"${o.id === initialOrgId ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}
+          </select>
+        </div>`;
+      orgInput = overlay.querySelector('#createWsOrg');
+      saveBtn.disabled = !initialOrgId;
+    } else if (orgs.length === 1) {
+      initialOrgId = orgs[0].id;
+      orgSlot.innerHTML = `
+        <div class="form-group">
+          <div style="color:var(--text-muted);font-size:12px">${esc(t('switcher.create_org_in', { name: orgs[0].name }))}</div>
+          <input type="hidden" id="createWsOrg" value="${esc(orgs[0].id)}">
+        </div>`;
+      orgInput = overlay.querySelector('#createWsOrg');
+      saveBtn.disabled = false;
+    } else {
+      orgSlot.innerHTML = `
+        <div class="form-group">
+          <div style="color:var(--danger);font-size:12px">${t('switcher.create_org_none')}</div>
+        </div>`;
+      saveBtn.disabled = true;
+    }
+  }
+
+  api.listTargetOrgs().then(setPicker).catch(() => setPicker(null));
 
   function close() { overlay.remove(); document.removeEventListener('keydown', onKey); }
   function onKey(e) {
@@ -136,9 +167,10 @@ export function openWorkspaceCreateModal(me) {
     errorEl.style.display = 'none';
     const name = nameInput.value.trim();
     const slug = slugInput.value.trim();
+    // orgs === null → no picker was shown → omit organization_id and let the server resolve.
     const organizationId = orgInput ? orgInput.value : '';
     if (!name) { showError(t('switcher.create_name_required')); busy = false; return; }
-    if (orgs.length > 1 && !organizationId) { showError(t('switcher.create_org_required')); busy = false; return; }
+    if (Array.isArray(orgs) && orgs.length > 1 && !organizationId) { showError(t('switcher.create_org_required')); busy = false; return; }
     saveBtn.disabled = true;
     saveBtn.textContent = t('switcher.create_working');
     try {

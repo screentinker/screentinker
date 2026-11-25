@@ -959,6 +959,15 @@ export const api = {
    * cannot be used to land a workspace in someone else's tenant. With a single administered org
    * the field is omitted and the server resolves from membership, exactly as before.
    */
+  /*
+   * Organizations this caller can create a workspace inside.
+   *
+   * Server: GET /api/workspaces/target-orgs. Empty array means the caller administers NONE
+   * (defense in depth — the create route will refuse with 403). Fetch failure returns null
+   * so the modal can fall through to "omit organization_id and let the server resolve", which
+   * preserves the pre-multi-org behaviour for callers without the field populated.
+   */
+  listTargetOrgs: () => request('/workspaces/target-orgs').catch(() => null),
   createWorkspace: (data) => request('/workspaces', { method: 'POST', body: JSON.stringify(data ?? {}) }),
   renameWorkspace: (id, data) => request(`/workspaces/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   updateWorkspaceSecuritySettings: (workspaceId, data) => request(`/workspaces/${workspaceId}/security-settings`, { method: 'PUT', body: JSON.stringify(data) }),

@@ -79,8 +79,10 @@ function wireCreateButtons(scope, me) {
       e.stopPropagation();          // never let it also trigger a row's switch handler
       scope.classList.remove('open');
       const { openWorkspaceCreateModal } = await import('./workspace-create-modal.js');
-      // Pass `me` so the modal can build its org picker from /me's administered_organizations.
-      openWorkspaceCreateModal(me);
+      // Modal fetches its org list lazily from /api/workspaces/target-orgs; the /me payload is no
+      // longer needed here. canCreateWorkspace above already proved the caller is allowed to create,
+      // and the modal renders the picker for however many orgs they administer.
+      openWorkspaceCreateModal();
     });
   });
 }

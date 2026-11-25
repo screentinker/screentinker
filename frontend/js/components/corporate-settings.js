@@ -92,18 +92,13 @@ export async function mountCorporateSettings(host) {
   q('#csCap').addEventListener('change', () => { if (policy() === 'leased') showImpact(); });
   if (policy() !== 'allow') showImpact();
 
-  q('#csCreateHq')?.addEventListener('click', async () => {
+  q('#csCreateHq')?.addEventListener('click', () => {
     /*
-     * The HQ picker sits inside the corporate settings card, which doesn't otherwise need /me.
-     * Fetch it lazily here so the workspace-create modal can render its org picker without
-     * needing the caller to thread it through.
+     * The HQ picker sits inside the corporate settings card. The workspace-create modal fetches its
+     * own org list lazily from /api/workspaces/target-orgs, so we don't need to fetch /me here —
+     * the corporate-settings view doesn't otherwise read any /me field either.
      */
-    let me = null;
-    try { me = JSON.parse(localStorage.getItem('user') || 'null'); } catch (_) { me = null; }
-    if (!me || !Array.isArray(me.administered_organizations)) {
-      try { me = await api.getMe(); } catch (_) { me = null; }
-    }
-    openWorkspaceCreateModal(me);
+    openWorkspaceCreateModal();
   });
 
   q('#csSave').addEventListener('click', async () => {
