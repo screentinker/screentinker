@@ -111,6 +111,15 @@ function messagePage(bg, text) {
  * allow-same-origin here. What the pages fetch from this server (bi-token, bi-image.png, the
  * vendored Power BI client) answers an opaque (Origin: null) caller for that reason, and nothing in
  * these pages touches localStorage, sessionStorage or cookies, which throw in an opaque origin.
+ *
+ * ⚠️ THE ONE EXCEPTION IS THE POWER BI PAGE (#931). A sandbox is inherited by every frame inside the
+ * page, so Microsoft's app.powerbi.com frame ran with Origin: null too, and its own calls to
+ * *.analysis.windows.net failed CORS: "This content isn't available" on every screen. That page
+ * loads no script but this server's vendored client and inline code built from js()-escaped report
+ * ids, page names and numbers, so nothing an org admin types can become a script there. Its CSP still
+ * allows scripts only from this server, XHR only to this server and frames only from *.powerbi.com.
+ * Keep it that way: an org-supplied script or frame source on that page needs the sandbox back.
+ * Players frame it with allow-same-origin for the same reason (framedSameOrigin, ws/deviceSocket.js).
  */
 const SANDBOX = 'sandbox allow-scripts';
 
@@ -167,7 +176,7 @@ if(reloadMs>0)setInterval(function(){report.reload()["catch"](function(){});},re
 });})();</script>`);
   return {
     html,
-    csp: `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' ${origin}; connect-src ${origin}; frame-src https://app.powerbi.com https://*.powerbi.com; img-src data:; ${SANDBOX}`,
+    csp: `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' ${origin}; connect-src ${origin}; frame-src https://app.powerbi.com https://*.powerbi.com; img-src data:; base-uri 'none'; form-action 'none'`,
   };
 }
 
@@ -261,4 +270,12 @@ async function tokenFor(db, widget, cfg, { beforeFetch = null } = {}) {
   throw Object.assign(new Error('Grafana dashboards are images; there is no token'), { status: 404 });
 }
 
-module.exports = { PROVIDERS, FITS, normaliseConfig, publicUrlFor, render, previewHtml, tokenFor };
+/**
+ * Whether a player must frame this widget's page with allow-same-origin: only a Power BI dashboard
+ * on a connection (not a public link), whose page is the unsandboxed one above (#931).
+ */
+function framedSameOrigin(widgetType, cfg) {
+  return widgetType === 'bi-dashboard' && !!cfg && cfg.provider === 'powerbi' && cfg.mode !== 'public';
+}
+
+module.exports = { PROVIDERS, FITS, normaliseConfig, publicUrlFor, render, previewHtml, tokenFor, framedSameOrigin };
