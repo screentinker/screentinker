@@ -501,6 +501,35 @@ else
   fetch_players
 fi
 
+# ⚠️ A PACKAGE IN DATA_DIR PINS ITS FAMILY (lib/package-cache.js: the first directory holding ANY
+# match wins, so an operator's copy beats the checkout's native/dist). That is right for a deliberate
+# pin, and silently wrong for a copy an older upgrade or a hand install left there: prod offered Pi
+# players 3.0.0 for six releases while every upgrade built a newer .deb into native/dist. Say so
+# whenever DATA_DIR's newest copy is OLDER than native/dist's, and how to un-pin; never move files.
+warn_pinned_packages() {
+  local data dist label re dnew snew
+  data="${DATA_DIR:-$(unit_env DATA_DIR)}"; data="${data:-$APP_DIR/server}"
+  dist="$APP_DIR/native/dist"
+  [ -d "$data" ] && [ -d "$dist" ] || return 0
+  [ "$(cd "$data" && pwd -P)" = "$(cd "$dist" && pwd -P)" ] && return 0
+  newest() { # dir regex -> the highest version among matching file names (release over prerelease)
+    ls -1 "$1" 2>/dev/null | sed -nE "s#$2#\1#p" | sed 's/-/~/' | sort -V | awk '!/~/ {r=$0} /~/ {p=$0} END {print (r != "" ? r : p)}'
+  }
+  while IFS='|' read -r label re; do
+    dnew="$(newest "$data" "$re")"; snew="$(newest "$dist" "$re")"
+    [ -n "$dnew" ] && [ -n "$snew" ] || continue
+    [ "$dnew" = "$snew" ] && continue
+    [ "$(printf '%s\n%s\n' "$dnew" "$snew" | sort -V | tail -1)" = "$snew" ] || continue
+    echo "WARNING: $label: $data holds $dnew, which PINS it: the newer $snew in native/dist is not offered." >&2
+    echo "         Unless that pin is deliberate, move the old copies out of $data (e.g. into $APP_DIR/backups/)." >&2
+  done <<'PKGS'
+Raspberry Pi player (/download/pi)|^screentinker-pi_([0-9][^_]*)_all\.deb$
+Windows player (/download/win)|^ScreenTinker-Setup-([0-9][^/]*)\.exe$
+macOS player (/download/mac)|^ScreenTinker-([0-9][^/]*)\.dmg$
+PKGS
+}
+warn_pinned_packages || true
+
 # ⚠️ NOT EVERY INSTALL IS A SYSTEMD UNIT CALLED screentinker. The README's quick start is
 # `npm start`, and people put that under pm2; a hard-coded `systemctl restart` then failed at the
 # very end, leaving the new code on disk and the old process serving it. Find how this server is
