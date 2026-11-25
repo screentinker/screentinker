@@ -1001,6 +1001,29 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
         FROM organizations o LEFT JOIN users u ON u.id = o.owner_user_id WHERE o.id = ?`).get(req.organizationId)
     : null;
 
+  /*
+   * The organizations this caller is allowed to create a workspace inside.
+   *
+   * For ordinary users: every organization where they hold org_owner or org_admin. The workspace
+   * create route (routes/workspaces.js resolveTargetOrg) demands exactly one of those roles in the
+   * target org, so this list is what the create-workspace picker can present as a choice.
+   *
+   * For platform staff: every organization on the server. The create route allows a platform admin
+   * to land a workspace in any tenant regardless of org membership, so anything less than the full
+   * list would force them to type an org id blind — and the picker is the place that guesswork lives.
+   *
+   * Sort by name (case-insensitive) so the picker order is stable across reloads and locales.
+   */
+  const administeredOrganizations = isPlatformAdmin
+    ? db.prepare(`SELECT id, name, 'platform_admin' AS role FROM organizations ORDER BY name COLLATE NOCASE`).all()
+    : db.prepare(`
+        SELECT o.id, o.name, om.role
+          FROM organizations o
+          JOIN organization_members om ON om.organization_id = o.id
+         WHERE om.user_id = ? AND om.role IN ('org_owner', 'org_admin')
+         ORDER BY o.name COLLATE NOCASE
+      `).all(req.user.id);
+
   res.json({
     ...req.user,
     // Read straight from the row (the JWT predates this field) so the client's verify banner
@@ -1028,6 +1051,7 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
     is_platform_admin: req.isPlatformAdmin,
     acting_as: req.actingAs,
     accessible_workspaces: accessible,
+    administered_organizations: administeredOrganizations,
   });
 });
 

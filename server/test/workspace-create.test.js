@@ -70,14 +70,19 @@ before(async () => {
   mkUser('u-outsider', 'outsider@x.test');
   mkUser('u-wsadmin', 'wsadmin@x.test');
   mkUser('u-platform', 'platform@x.test', 'platform_admin');
+  // u-multi administers two organizations — the case that motivated the org picker in the modal.
+  mkUser('u-multi', 'multi@x.test');
 
   mkOrg('org-a', 'u-owner');
   mkOrg('org-b', 'u-outsider');
+  mkOrg('org-c', 'u-owner');
   mkOrgMember('org-a', 'u-owner', 'org_owner');
   mkOrgMember('org-a', 'u-admin', 'org_admin');
   mkOrgMember('org-a', 'u-member', 'org_member');
   mkOrgMember('org-a', 'u-wsadmin', 'org_member');
   mkOrgMember('org-b', 'u-outsider', 'org_owner');
+  mkOrgMember('org-a', 'u-multi', 'org_admin');
+  mkOrgMember('org-c', 'u-multi', 'org_admin');
 
   mkWs('ws-a', 'org-a');
   mkWs('ws-b', 'org-b');
@@ -182,6 +187,48 @@ test('someone who administers no organization is refused', async () => {
   const r = await call('POST', '/', { name: 'x' });
   assert.equal(r.status, 403);
   assert.match(String(r.body.error), /organization owner or admin/i);
+});
+
+/* ================================================================= multi-org: the picker case */
+
+test('⚠️ a user who administers >1 organization must specify which one', async () => {
+  /*
+   * This is the failure the create-workspace modal picker exists to prevent. The route refuses an
+   * ambiguous create so that picking "the first one" never silently lands a workspace in the wrong
+   * tenant — and so the picker in the modal is the one place that ambiguity is resolved.
+   */
+  as('u-multi');
+  const beforeA = countIn('org-a');
+  const beforeC = countIn('org-c');
+  const r = await call('POST', '/', { name: 'Ambiguous' });
+  assert.equal(r.status, 400);
+  assert.match(String(r.body.error), /more than one organization/i);
+  assert.equal(countIn('org-a'), beforeA, 'nothing may be written on an ambiguous refusal');
+  assert.equal(countIn('org-c'), beforeC, 'nothing may be written on an ambiguous refusal');
+});
+
+test('a multi-org user picks one of their own organizations and the create lands there', async () => {
+  as('u-multi');
+  const beforeC = countIn('org-c');
+  const r = await call('POST', '/', { name: 'Warehouse', organization_id: 'org-c' });
+  assert.equal(r.status, 201);
+  assert.equal(r.body.organization_id, 'org-c', 'the create must land in the explicitly named org');
+  assert.equal(countIn('org-c'), beforeC + 1);
+});
+
+test('⚠️ organization_id cannot reach a tenant you do not administer — even with several of your own', async () => {
+  /*
+   * The failure this prevents is not an error page — it is a workspace quietly appearing inside
+   * someone else's organization, which every workspace-scoped route downstream would then treat as
+   * legitimately theirs. Same rule with two administered orgs as with one: a body-supplied org id
+   * is honored only after the server confirms the caller administers it.
+   */
+  as('u-multi');                       // administers org-a and org-c; nothing in org-b
+  const before = countIn('org-b');
+  const r = await call('POST', '/', { name: 'Landgrab', organization_id: 'org-b' });
+  assert.equal(r.status, 403);
+  assert.match(String(r.body.error), /do not administer that organization/i);
+  assert.equal(countIn('org-b'), before, 'no workspace may be written into the other org');
 });
 
 /* ================================================================= validation + limits */
