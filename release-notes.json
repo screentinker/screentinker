@@ -14,6 +14,17 @@
   ],
   "releases": [
     {
+      "version": "3.2.6",
+      "date": "2026-11-24",
+      "notes": [
+        "New: curbside pickup. Customers scan a QR code at their parking spot, your staff see who has arrived, and a screen widget shows the order numbers.",
+        "The news ticker can show your own messages, like \"Elevator out of service\", each with an optional time to stop, and no longer goes blank between loops.",
+        "Sync a Google Drive folder into your library with your organization's own Google service account. Google Drive and SharePoint folders can now include their subfolders.",
+        "Importing from Xibo 3 and 4 brings in your media again, connection errors say what went wrong, and there is a guide for moving off Samsung MagicINFO.",
+        "Samsung Tizen screens support the live debug log, Raspberry Pi 3 players should no longer show a white screen for video, and widgets save reliably again."
+      ]
+    },
+    {
       "version": "3.2.5",
       "date": "2026-11-22",
       "notes": [
