@@ -11,7 +11,9 @@
  *   - search finds folders as well as items;
  *   - what is picked is what is SAVED (the hidden <select> stays the source of truth), and a value
  *     written by code (`select.value = x`, as every open/edit path does) repaints the button — the
- *     next New shows the reset values, not the last schedule's picks.
+ *     next New shows the reset values, not the last schedule's picks;
+ *   - leaving the view takes the pickers' document listeners with it: visiting again and again does
+ *     not grow the count (each one would pin its lists and detached DOM).
  */
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -60,6 +62,14 @@ test('schedule dialog: browse screens by group, playlists and content by folder,
   const page = await browser.newPage();
   try {
     await page.setViewport({ width: 1280, height: 1000 });
+    // Count the live `mousedown` listeners on document (added minus removed).
+    await page.evaluateOnNewDocument(() => {
+      window.__docDown = 0;
+      const add = Document.prototype.addEventListener;
+      const rem = Document.prototype.removeEventListener;
+      Document.prototype.addEventListener = function (type, ...rest) { if (this === document && type === 'mousedown') window.__docDown += 1; return add.call(this, type, ...rest); };
+      Document.prototype.removeEventListener = function (type, ...rest) { if (this === document && type === 'mousedown') window.__docDown -= 1; return rem.call(this, type, ...rest); };
+    });
     await page.goto(`${srv.base}/app#/login`, { waitUntil: 'domcontentloaded' });
     await page.evaluate((tok) => { localStorage.setItem('token', tok); localStorage.setItem('rd_onboarded', '1'); localStorage.setItem('st_ui_mode', 'advanced'); }, srv.token);
     await page.goto(`${srv.base}/app#/schedule`, { waitUntil: 'domcontentloaded' });
@@ -153,6 +163,18 @@ test('schedule dialog: browse screens by group, playlists and content by folder,
     assert.equal(shown[1].text, '— No playlist override —', 'playlist button shows the reset value');
     assert.equal(shown[2].value, '');
     assert.equal(shown[2].text, '— None —', 'content button shows the reset value, not snow-banner.png');
+
+    // --- leaving the view removes the pickers' document listeners; coming back does not add to them.
+    const visit = async () => {
+      await page.evaluate(() => { location.hash = '#/'; });
+      await waitFor(() => page.$('#scheduleModal').then((m) => !m), 20000);
+      await page.evaluate(() => { location.hash = '#/schedule'; });
+      assert.ok(await waitFor(() => page.$$eval('#scheduleModal .fsel', (els) => els.length === 3), 20000), 'schedule view back');
+      return page.evaluate(() => window.__docDown);
+    };
+    const first = await visit();
+    const third = (await visit(), await visit());
+    assert.equal(third, first, `document mousedown listeners: ${first} after one return, ${third} after three`);
   } finally {
     await page.close();
   }

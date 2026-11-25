@@ -23,6 +23,7 @@
  *   fs.root                // the element shown in the form (toggle its display to hide the field)
  *   fs.refresh()           // repaint the button from select.value
  *   fs.setData({ folders, items })   // replace the data (e.g. after a reload)
+ *   fs.destroy()           // take off the document listener; call from the view's cleanup
  */
 import { esc, hydrateAuthImages } from '../utils.js';
 import { t, tn } from '../i18n.js';
@@ -223,8 +224,11 @@ export function enhanceFolderSelect(select, opts = {}) {
     const next = e.key === 'ArrowDown' ? Math.min(rows.length - 1, at + 1) : (at <= 0 ? -1 : at - 1);
     if (next < 0) search.focus(); else rows[next].focus();
   });
-  // A click anywhere else closes the browser.
-  document.addEventListener('mousedown', (e) => { if (open && !root.contains(e.target)) close(); });
+  // A click anywhere else closes the browser. This is the one listener outside `root`, so it is the
+  // one destroy() must take off: left behind, it keeps this closure (every item, the detached DOM) alive
+  // each time the view that made it is rebuilt.
+  const onDocDown = (e) => { if (open && !root.contains(e.target)) close(); };
+  document.addEventListener('mousedown', onDocDown);
 
   refresh();
 
@@ -235,6 +239,11 @@ export function enhanceFolderSelect(select, opts = {}) {
     setData(data = {}) {
       model = buildModel(data.folders ?? opts.folders, data.items ?? opts.items);
       refresh();
+    },
+    /** Remove the document listener. Call from the owning view's cleanup. */
+    destroy() {
+      close();
+      document.removeEventListener('mousedown', onDocDown);
     },
   };
 }

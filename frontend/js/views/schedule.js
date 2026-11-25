@@ -455,7 +455,7 @@ export async function render(container) {
     searchPlaceholder: t('schedule.pick_search_screens'),
   });
   const playlistPlacements = (playlistLib && playlistLib.placements) || {};
-  enhanceFolderSelect(document.getElementById('schedPlaylist'), {
+  const playlistPick = enhanceFolderSelect(document.getElementById('schedPlaylist'), {
     folders: (playlistLib && Array.isArray(playlistLib.folders)) ? playlistLib.folders : [],
     items: playlists.map((p) => ({
       id: p.id,
@@ -468,7 +468,7 @@ export async function render(container) {
     searchPlaceholder: t('schedule.pick_search_playlists'),
     noneLabel: t('schedule.no_playlist_override'),
   });
-  enhanceFolderSelect(document.getElementById('schedContent'), {
+  const contentPick = enhanceFolderSelect(document.getElementById('schedContent'), {
     folders: Array.isArray(contentFolders) ? contentFolders : [],
     items: content.map((c) => ({
       id: c.id,
@@ -482,6 +482,8 @@ export async function render(container) {
     searchPlaceholder: t('schedule.pick_search_content'),
     noneLabel: t('schedule.content_none'),
   });
+  // Each picker listens on `document` (click outside closes it); the view is rebuilt on every visit.
+  for (const pick of [devicePick, playlistPick, contentPick]) cleanupFns.push(() => pick.destroy());
 
   function updateTargetVisibility() {
     const isGroup = groupRadio.checked;
