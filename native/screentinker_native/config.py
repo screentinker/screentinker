@@ -30,6 +30,25 @@ def default_state_dir():
     return ops.default_state_dir()
 
 
+def json_problem(path):
+    """Why a hand-edited JSON file can't be used, in words an installer can act on, or None when it reads
+    fine or isn't there. A missing comma used to read as {} and show "No server configured" (#927)."""
+    try:
+        with open(path, encoding="utf-8-sig") as f:      # a hand-edited file may carry a BOM
+            text = f.read()
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        return "%s can't be read: %s" % (path, getattr(e, "strerror", None) or e)
+    try:
+        v = json.loads(text)
+    except json.JSONDecodeError as e:
+        return "%s has an error on line %d, column %d: %s" % (path, e.lineno, e.colno, e.msg)
+    if not isinstance(v, dict):
+        return "%s must hold one { ... } object" % path
+    return None
+
+
 def _read_json(path):
     try:
         with open(path, encoding="utf-8-sig") as f:      # a hand-edited file may carry a BOM
@@ -67,6 +86,7 @@ class Config:
         self._lock = threading.RLock()
         self._data = _read_json(self.path)
         self._system = _read_json(SYSTEM_CONFIG)
+        self.system_config_problem = json_problem(SYSTEM_CONFIG)
 
     # --- generic ---------------------------------------------------------------------------
     def get(self, key, default=None):

@@ -34,6 +34,11 @@ def system_config_path():
     return os.environ.get("ST_SYSTEM_CONFIG", os.path.join(PROGRAM_DATA, "config.json"))
 
 
+def no_server_hint():
+    return ('Add "server_url" to %s (open Notepad as administrator), or run the ScreenTinker installer again'
+            % system_config_path())
+
+
 def packaged():
     return bool(getattr(sys, "frozen", False))
 
