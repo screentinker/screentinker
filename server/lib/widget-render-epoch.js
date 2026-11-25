@@ -18,5 +18,7 @@
  *   3  slides mark their photos and clips (data-st-cid) and ask the web player for cached copies
  *   4  news: own messages (#912) and a seamless ticker loop with no black gap (#921); curbside order
  *      numbers no longer cut off
+ *   5  Power BI dashboards are no longer sandboxed, so Microsoft's frame keeps its origin (#931); a
+ *      screen that cached the sandboxed page (immutable for a year) would otherwise keep failing
  */
-module.exports = 4;
+module.exports = 5;

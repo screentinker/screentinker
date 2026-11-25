@@ -427,6 +427,7 @@ test('the Power BI page is not sandboxed, and loads no script or frame but ours 
   const srcs = [...r.text.matchAll(/<script[^>]*\ssrc="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(srcs, [`${self[0]}/vendor/powerbi/powerbi.min.js`]);
   assert.doesNotMatch(r.text, /localStorage|sessionStorage|document\.cookie/);
+  assert.ok(require('../lib/widget-render-epoch') >= 5, 'screens cached the sandboxed page as immutable: the epoch bump re-fetches it');
 });
 
 test('players frame only a Power BI connection dashboard same-origin (#931)', async () => {
