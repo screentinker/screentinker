@@ -150,13 +150,19 @@ reach that host.
 
 - Screens show dashboards like any widget. The dashboard page is cached for offline use, but a live
   dashboard needs the network. Grafana screens keep the last image when they lose it.
-- **Power BI and Tableau embed a page from Microsoft or Tableau inside the widget.** The dashboard
-  page always runs with an isolated (opaque) origin, whatever **Settings → Widget sandbox isolation**
-  says, and the report embedded in it inherits that isolation. It has to: the page is served by the
-  ScreenTinker server, and without the isolation a script it loads (Tableau's comes from the Tableau
-  host) would run with access to whoever opens the link's ScreenTinker session. Turning isolation off
-  for the organization therefore does not change how a dashboard runs. Grafana images are
-  unaffected.
+- **Power BI and Tableau embed a page from Microsoft or Tableau inside the widget.** The Tableau
+  page, and any dashboard shown from a public link, always runs with an isolated (opaque) origin,
+  whatever **Settings → Widget sandbox isolation** says, and the report embedded in it inherits that
+  isolation. It has to: the page is served by the ScreenTinker server, and without the isolation a
+  script it loads (Tableau's comes from the Tableau host) would run with access to whoever opens the
+  link's ScreenTinker session. Turning isolation off for the organization therefore does not change
+  how those run. Grafana images are unaffected.
+- **A Power BI dashboard on a connection is the exception (#931).** Power BI's own frame refuses to
+  load in an isolated origin (its calls to `*.analysis.windows.net` fail CORS with `Origin: null`,
+  and the report shows "This content isn't available"), so this page runs with the server's origin
+  and screens frame it that way. It is safe to: it loads only ScreenTinker's own copy of the Power BI
+  client, and its content policy allows scripts only from this server, requests only to this server
+  and frames only from `*.powerbi.com`.
 - Very old TV browsers may not run the Power BI or Tableau embedding libraries. Grafana images work
   everywhere.
 
@@ -169,7 +175,8 @@ itself:
 - `GET /api/widgets/:id/bi-token`, a Power BI embed token or Tableau token
 
 Neither ever returns a connection's secret, and both answer a page with an opaque origin
-(`Origin: null`), which is what a screen's widget page is.
+(`Origin: null`), which is what a screen's widget page is (except the Power BI page, which calls
+them from the server's own origin).
 
 What is limited is work, not views: a cached Grafana image or Power BI embed token is served to any
 number of screens without counting. A request that would make the server render with Grafana, ask

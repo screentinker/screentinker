@@ -12,7 +12,8 @@
  *     embed token only
  *   - Tableau: a connected-app JWT with the claims Tableau requires, fresh each time
  *   - a widget can only use its own organization's connection
- *   - every dashboard page is sandboxed to an opaque origin, and what it fetches answers Origin: null
+ *   - every dashboard page is sandboxed to an opaque origin, and what it fetches answers Origin: null,
+ *     except the Power BI connection page (#931): Microsoft's frame inherits the sandbox and fails CORS
  *   - only cache misses are rate limited, per caller and per widget, so a big fleet is never refused
  *   - a platform_operator acting-as cannot manage connections; a changed address loses allow_private
  *
@@ -393,10 +394,10 @@ test('coexists with the cloud-doc widget (#521): both reserved, each render keep
 
 /* ── review fixes ─────────────────────────────────────────────────────────────────── */
 
-test('every dashboard page is sandboxed to an opaque origin, whichever provider and mode', async () => {
+test('every dashboard page but Power BI on a connection is sandboxed to an opaque origin', async () => {
   const pubTab = (await api('POST', '/api/widgets', { widget_type: 'bi-dashboard', name: 'TP', config: { provider: 'tableau', mode: 'public', public_url: 'https://public.tableau.com/views/Book/Sheet1' } })).body.id;
   const pubGraf = (await api('POST', '/api/widgets', { widget_type: 'bi-dashboard', name: 'GP', config: { provider: 'grafana', mode: 'public', public_url: 'https://g.example/public-dashboards/abc' } })).body.id;
-  for (const [name, id] of Object.entries({ grafana: W.grafana, powerbi: W.pbi, tableau: W.tab, powerbiPublic: W.pub, tableauPublic: pubTab, grafanaPublic: pubGraf })) {
+  for (const [name, id] of Object.entries({ grafana: W.grafana, tableau: W.tab, powerbiPublic: W.pub, tableauPublic: pubTab, grafanaPublic: pubGraf })) {
     const r = await api('GET', `/api/widgets/${id}/render?rev=1`, null, null);
     assert.equal(r.status, 200, name);
     const csp = r.headers.get('content-security-policy');
@@ -404,6 +405,40 @@ test('every dashboard page is sandboxed to an opaque origin, whichever provider 
     assert.doesNotMatch(csp, /allow-same-origin/, `${name}: never this server's origin`);
     assert.doesNotMatch(r.text, /localStorage|sessionStorage|document\.cookie/, `${name}: no storage use, which throws in an opaque origin`);
   }
+});
+
+/*
+ * #931: a sandbox is inherited by every frame inside the page, so app.powerbi.com ran with Origin: null
+ * and Microsoft's CORS refused its own API calls. The Power BI page is unsandboxed and framed
+ * same-origin; what keeps that safe is that it loads nothing an org admin can point elsewhere.
+ */
+test('the Power BI page is not sandboxed, and loads no script or frame but ours and Microsoft\'s', async () => {
+  const r = await api('GET', `/api/widgets/${W.pbi}/render?rev=1`, null, null);
+  assert.equal(r.status, 200);
+  const csp = r.headers.get('content-security-policy');
+  assert.doesNotMatch(csp, /(^|;\s*)sandbox\b/, 'Microsoft\'s frame would inherit an opaque origin');
+  assert.match(csp, /default-src 'none'/);
+  const dir = (name) => (csp.split(';').map((d) => d.trim()).find((d) => d.startsWith(name + ' ')) || '').split(/\s+/).slice(1);
+  const self = dir('connect-src');
+  assert.equal(self.length, 1, 'connect-src is this server only');
+  assert.deepEqual(dir('script-src').sort(), ["'unsafe-inline'", self[0]].sort(), 'scripts only inline and from this server');
+  assert.deepEqual(dir('frame-src'), ['https://app.powerbi.com', 'https://*.powerbi.com']);
+  assert.match(csp, /base-uri 'none'/);
+  const srcs = [...r.text.matchAll(/<script[^>]*\ssrc="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(srcs, [`${self[0]}/vendor/powerbi/powerbi.min.js`]);
+  assert.doesNotMatch(r.text, /localStorage|sessionStorage|document\.cookie/);
+});
+
+test('players frame only a Power BI connection dashboard same-origin (#931)', async () => {
+  assert.equal(biWidget.framedSameOrigin('bi-dashboard', { provider: 'powerbi' }), true);
+  assert.equal(biWidget.framedSameOrigin('bi-dashboard', { provider: 'powerbi', mode: 'public' }), false);
+  assert.equal(biWidget.framedSameOrigin('bi-dashboard', { provider: 'tableau' }), false);
+  assert.equal(biWidget.framedSameOrigin('bi-dashboard', null), false);
+  assert.equal(biWidget.framedSameOrigin('webpage', { provider: 'powerbi' }), false);
+  const { __refreshWidgetRevs } = require('../ws/deviceSocket');
+  const items = [{ widget_id: W.pbi }, { widget_id: W.tab }, { widget_id: W.pub }, { widget_id: W.grafana }];
+  __refreshWidgetRevs(items);
+  assert.deepEqual(items.map((i) => i.widget_allow_same_origin), [true, false, false, false]);
 });
 
 test('the token endpoint answers an opaque-origin (Origin: null) page', async () => {
