@@ -387,3 +387,34 @@
 .sched-library[hidden] { display: none; }
 .rl-pad:has(.rl-check) > a { padding-right: 52px !important; }
 #schedListBtn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ---------------------------------------------------------------- folder select (components/folder-select.js)
+ * A pick-one field browsed by folder / group: the schedule dialog's screen, playlist and content.
+ * Chips are the Add Content picker's breadcrumb, so the two read as one control. */
+.fsel { position: relative; }
+.fsel-trigger { display: flex; align-items: center; gap: 4px; width: 100%; text-align: left; cursor: pointer; background: var(--bg-input); min-height: 36px; }
+.fsel-value { color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; }
+.fsel-place { color: var(--text-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 0; min-width: 0; }
+.fsel-caret { margin-left: auto; color: var(--text-muted); flex: none; }
+.fsel-panel { margin-top: 6px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-card); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.fsel-panel[hidden] { display: none; }
+.fsel-search { background: var(--bg-input); }
+.fsel-bar { display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden; padding: 2px 0 4px; scrollbar-width: thin; }
+.fsel-bar[hidden] { display: none; }
+.fsel-bar.wrap { flex-wrap: wrap; overflow-x: hidden; overflow-y: auto; max-height: 96px; }
+.fsel-chip { flex: 0 0 auto; border: 1px solid var(--border); border-radius: 999px; padding: 3px 11px; font-size: 12px; cursor: pointer; white-space: nowrap; background: var(--bg-input); color: var(--text-secondary); }
+.fsel-chip.current { background: var(--primary, #3B82F6); color: #fff; border-color: transparent; }
+.fsel-chip .fsel-count { opacity: .75; }
+.fsel-sep, .fsel-note { flex: 0 0 auto; align-self: center; color: var(--text-muted); font-size: 12px; }
+.fsel-note { font-size: 11px; padding: 0 2px; }
+.fsel-list { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; }
+.fsel-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 8px; border: 0; border-radius: var(--radius); background: none; color: var(--text-primary); text-align: left; cursor: pointer; font: inherit; }
+.fsel-row:hover, .fsel-row:focus-visible { background: var(--bg-hover, var(--bg-input)); outline: none; }
+.fsel-row.selected { background: color-mix(in srgb, var(--primary, #3B82F6) 14%, transparent); }
+.fsel-thumb { width: 36px; height: 27px; border-radius: 4px; overflow: hidden; background: var(--bg-input); flex: none; }
+.fsel-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.fsel-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.fsel-label { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fsel-sub { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fsel-check { color: var(--primary, #3B82F6); flex: none; }
+.fsel-empty { color: var(--text-muted); font-size: 12px; padding: 10px; text-align: center; }
