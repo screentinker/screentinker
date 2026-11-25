@@ -35,6 +35,10 @@ FIRST_CHECK_S = 60
 def packaged():
     # SELF_UPDATE False (platform/macos) means this OS never installs itself: like a source checkout it
     # reports a newer version and stops there, so it never downloads a package it cannot install.
+    # An extra player on the same machine (--instance, #927) leaves installing to the first one: one
+    # package install updates the shared program and restarts every player, and two would race.
+    if os.environ.get("ST_INSTANCE"):
+        return False
     return getattr(ops, "SELF_UPDATE", True) and ops.packaged() and not VERSION.endswith("-dev")
 
 

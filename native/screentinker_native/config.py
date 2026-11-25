@@ -32,7 +32,7 @@ def default_state_dir():
 
 def _read_json(path):
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8-sig") as f:      # a hand-edited file may carry a BOM
             v = json.load(f)
         return v if isinstance(v, dict) else {}
     except (OSError, ValueError):
