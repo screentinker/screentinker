@@ -37,6 +37,10 @@ def system_config_path():
     return os.environ.get("ST_SYSTEM_CONFIG", "/etc/screentinker-pi/config.json")
 
 
+def no_server_hint():
+    return "Run:  sudo screentinker-pi setup https://your-server"
+
+
 def packaged():
     return os.path.isdir(INSTALL_ROOT)
 

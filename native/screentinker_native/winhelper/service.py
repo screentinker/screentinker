@@ -53,14 +53,34 @@ def _setup_logging():
     logging.getLogger().setLevel(logging.INFO)
 
 
+_last_config_problem = None
+
+
 def load_config():
     # utf-8-sig: an admin editing config.json with PowerShell 5 (Set-Content -Encoding UTF8) or an editor
     # that writes a BOM must not leave the helper reading {} and silently starting no player (#927).
+    # A file that doesn't parse (a missing comma) still reads as {}, but the log now says where, once
+    # per change rather than every 3s pass.
+    global _last_config_problem
     try:
         with open(CONFIG, encoding="utf-8-sig") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
+            text = f.read()
+        v = json.loads(text)
+        problem = None if isinstance(v, dict) else "%s must hold one { ... } object" % CONFIG
+    except FileNotFoundError:
+        v, problem = {}, None
+    except json.JSONDecodeError as e:
+        v, problem = {}, "%s has an error on line %d, column %d: %s (no player starts until it is fixed)" % (
+            CONFIG, e.lineno, e.colno, e.msg)
+    except (OSError, ValueError) as e:
+        v, problem = {}, "%s can't be read: %s" % (CONFIG, e)
+    if problem != _last_config_problem:
+        if problem:
+            log.error(problem)
+        elif _last_config_problem:
+            log.info("%s reads fine again", CONFIG)
+        _last_config_problem = problem
+    return v if isinstance(v, dict) else {}
 
 
 def run(argv, timeout=60):

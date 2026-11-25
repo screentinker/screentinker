@@ -184,6 +184,7 @@ is admin-only on purpose), next to the keys the installer wrote:
   Windows renumbering monitors), a number (`0` = the first monitor Qt lists), or part of the
   monitor's name or serial number (`DISPLAY2`, `SN-12345`).
 - Up to 4 players. A malformed entry is skipped and logged in `helper.log`.
+- If `config.json` itself doesn't parse (a missing comma between `players` entries is the usual one), no player starts. `helper.log` names the line and column, and a player that is already running shows the same message on screen instead of "No server configured".
 
 The helper re-reads the file every few seconds, so a new entry starts without a restart (or
 `Restart-Service ScreenTinkerHelper`). The new player shows a pairing code on its monitor: add it in

@@ -576,8 +576,12 @@ class App:
         self.stage.set("hasPin", bool(self.config.settings_pin))
         self._refresh_menu()
         if what == "no_server":
-            self.show_status("No server configured",
-                             "Run:  sudo screentinker-pi setup https://your-server")
+            problem = self.config.system_config_problem
+            if problem:
+                log.error("no server: %s", problem)
+                self.show_status("config.json has a mistake", problem)
+            else:
+                self.show_status("No server configured", ops.no_server_hint())
         elif what == "pairing":
             self.stage.set("pairingCode", str(detail or ""))
             if not self.engine.playing or not self.engine.controller.has_content_on_screen:
