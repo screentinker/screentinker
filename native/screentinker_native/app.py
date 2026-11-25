@@ -53,6 +53,9 @@ log = logging.getLogger("app")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXIT_BY_OPERATOR = 42
+# Windows: another player of the same instance already holds this session's lock. Not 0, so the helper
+# can tell "a second copy was started by hand" from a clean exit and say so instead of backing off (#927).
+EXIT_ALREADY_RUNNING = 43
 
 
 class _UiPost(QObject):
@@ -1468,8 +1471,17 @@ def _main(argv=None):
         return 0 if result.get("addon") else 3
 
     if sys.platform == "win32" and not _single_instance(inst):
-        log.info("another player is already running in this session; exiting")
-        return 0
+        log.info("another player%s is already running in this session; exiting",
+                 (" (instance %s)" % inst) if inst else "")
+        return EXIT_ALREADY_RUNNING
+    if not args.display and not os.environ.get("ST_DISPLAY", "").strip():
+        # Started without --display (the Start menu, a Startup shortcut): use this instance's own entry
+        # in config.json's "players", so it still lands on its monitor (#927).
+        from .config import configured_display, system_config
+        d = configured_display(system_config(), inst)
+        if d:
+            args.display = d
+            log.info("display %s from config.json's players list", d)
     if hasattr(ops, "single_instance"):
         from .config import default_state_dir
         if not ops.single_instance(args.state_dir or default_state_dir()):

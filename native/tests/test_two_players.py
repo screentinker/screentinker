@@ -137,3 +137,68 @@ def test_a_config_saved_with_a_bom_still_reads(tmp_path, monkeypatch):
     assert service.load_config()["server_url"] == "http://x"
     from screentinker_native import config
     assert config._read_json(str(p))["players"] == [{"display": "@0,0"}]
+
+
+# --- #927 follow-up: a hand-started second copy, and saying which players the helper read -------------
+
+def test_a_player_started_without_arguments_finds_its_own_screen_in_config():
+    """The Start menu / a Startup shortcut passes no --display: the player opened on the main monitor."""
+    from screentinker_native.config import configured_display
+    cfg = {"players": [{"display": "@1330,-1080"}, {"instance": "2", "display": " @1319,768 "}]}
+    assert configured_display(cfg, "") == "@1330,-1080"
+    assert configured_display(cfg, "2") == "@1319,768"
+    assert configured_display(cfg, "3") is None
+    assert configured_display({"players": [{"instance": "2"}]}, "2") is None, "no display = the primary"
+    assert configured_display({}, "") is None and configured_display({"players": "x"}, "") is None
+    assert configured_display({"players": ["x", {"display": "1"}]}, None) == "1"
+
+
+def test_helper_describes_the_players_it_read():
+    assert "no \"players\" list" in service.describe_specs([("", [])])
+    line = service.describe_specs(service.player_specs(
+        {"players": [{"display": "@1330,-1080"}, {"instance": "2"}]}))
+    assert "first on @1330,-1080" in line and "2 on the main screen" in line
+
+
+def test_helper_logs_the_players_once_per_change(monkeypatch, caplog):
+    import logging
+    monkeypatch.setattr(service, "_last_specs", None)
+    one = service.player_specs({})
+    two = service.player_specs({"players": [{"display": "@0,0"}, {"instance": "2", "display": "@1920,0"}]})
+    with caplog.at_level(logging.INFO, logger="helper"):
+        for specs in (one, one, two, two, two):
+            service.log_specs_if_changed(specs)
+    lines = [r.getMessage() for r in caplog.records]
+    assert len(lines) == 2 and "2 on @1920,0" in lines[1]
+
+
+def test_a_hand_started_copy_is_named_once_and_rechecked_steadily(caplog):
+    """The field log (#927): 'player first exited (0): relaunching in 3s, 6s, 12s...' forever, with no
+    hint that a Start-menu copy held the lock. Now: one clear warning, a steady 30 s re-check, no backoff."""
+    import logging
+    sl = service._Slot("", [])
+    with caplog.at_level(logging.INFO, logger="helper"):
+        for i in range(5):
+            sl.launched_at = i * 30.0
+            sl.exited(service.EXIT_ALREADY_RUNNING, i * 30.0 + 2, 1)
+            assert sl.retry_at == i * 30.0 + 2 + service.ALREADY_RUNNING_RECHECK
+            assert sl.backoff == 3 and sl.suppressed_session is None
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1 and "started outside the ScreenTinker service" in warnings[0]
+        sl.still_running(200.0)             # the copy closed and ours kept running
+        assert not sl.blocked and any("running under the service" in r.getMessage() for r in caplog.records)
+
+
+def test_a_crash_still_backs_off_and_an_operator_exit_still_stands_down():
+    sl = service._Slot("2", ["--instance", "2"])
+    sl.exited(1, 5.0, 1)
+    sl.exited(1, 10.0, 1)
+    assert sl.backoff == 12 and not sl.blocked
+    sl.exited(service.EXIT_BY_OPERATOR, 20.0, 1)
+    assert sl.suppressed_session == 1
+
+
+def test_player_and_helper_agree_on_the_exit_codes():
+    from screentinker_native import app
+    assert app.EXIT_ALREADY_RUNNING == service.EXIT_ALREADY_RUNNING
+    assert app.EXIT_BY_OPERATOR == service.EXIT_BY_OPERATOR
