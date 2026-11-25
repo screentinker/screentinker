@@ -93,7 +93,7 @@ export function openWorkspaceCreateModal(me) {
     initialOrgId = orgs[0].id;
     orgSlot.innerHTML = `
       <div class="form-group">
-        <div style="color:var(--text-muted);font-size:12px">${t('switcher.create_org_in', { name: orgs[0].name })}</div>
+        <div style="color:var(--text-muted);font-size:12px">${esc(t('switcher.create_org_in', { name: orgs[0].name }))}</div>
         <input type="hidden" id="createWsOrg" value="${esc(orgs[0].id)}">
       </div>`;
   } else {
