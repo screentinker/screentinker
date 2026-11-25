@@ -4,6 +4,7 @@ import { t, tn } from '../i18n.js';
 import { workspaceCoverage } from '../components/corporate-ui.js';
 import { canWrite } from '../utils.js';
 import { mountResourceLibrary } from '../components/library/resource-library.js';
+import { enhanceFolderSelect } from '../components/folder-select.js';
 import {
   HOUR_PX, pxToMinutes, minutesToPx, rangeFromDrag, moveRange, resizeRange,
   toLocalStamp, formatRange, canMoveAcrossDays, editsWholeSeries, isDrag,
@@ -203,10 +204,14 @@ export async function render(container) {
    * date_desc, the hidden ones are the OLDEST, which in a library built up over time are the ones
    * already filed into folders — so a customer sees content in the library and cannot schedule it.
    */
-  const [allDevices, contentPage, groups, playlists, layoutsRaw, corpCov, wallsRaw] = await Promise.all([
+  const [allDevices, contentPage, groups, playlists, layoutsRaw, corpCov, wallsRaw, contentFolders, playlistLib] = await Promise.all([
     api.getDevices(), api.getAllContent(), api.getGroups(), api.getPlaylists(), API('/layouts'),
     workspaceCoverage({ force: true }),
     API('/walls').catch(() => []),
+    // Folders only make the pickers browsable; without them the pickers still list everything, so a
+    // failed fetch must never stop the page from opening.
+    api.getFolders().catch(() => []),
+    api.getLibraryFolders('playlist').catch(() => null),
   ]);
   /*
    * A video wall is scheduled AS A WALL (services/scheduler.js): a panel follows only its wall's
@@ -430,10 +435,59 @@ export async function render(container) {
   const wallSelect = document.getElementById('schedWallSelect');
   const zoneNote = document.getElementById('schedZoneNote');
 
+  /*
+   * The screen, playlist and content fields can be browsed by group / folder instead of scrolled as one
+   * flat list (components/folder-select.js). The <select>s stay the source of truth, so everything
+   * below that reads or sets `.value` is unchanged.
+   */
+  const groupName = new Map(groups.map((g) => [g.id, g.name]));
+  const devicePick = enhanceFolderSelect(deviceSelect, {
+    // Groups are flat and a screen can be in several: each group is a "folder" it appears in.
+    folders: groups.map((g) => ({ id: g.id, parent_id: null, name: g.name })),
+    items: devices.map((d) => ({
+      id: d.id,
+      label: d.name + corpMark(corpDevice(d.id)),
+      sub: (d.group_ids || []).map((g) => groupName.get(g)).filter(Boolean).join(', '),
+      folderIds: d.group_ids || [],
+    })),
+    allLabel: t('schedule.pick_all_screens'),
+    unfiledLabel: t('schedule.pick_ungrouped'),
+    searchPlaceholder: t('schedule.pick_search_screens'),
+  });
+  const playlistPlacements = (playlistLib && playlistLib.placements) || {};
+  enhanceFolderSelect(document.getElementById('schedPlaylist'), {
+    folders: (playlistLib && Array.isArray(playlistLib.folders)) ? playlistLib.folders : [],
+    items: playlists.map((p) => ({
+      id: p.id,
+      label: p.name + (p.status === 'draft' ? ' ' + t('schedule.draft_suffix') : ''),
+      sub: tn('playlist.n_items', p.item_count || 0),
+      folderIds: playlistPlacements[p.id] ? [playlistPlacements[p.id]] : [],
+    })),
+    allLabel: t('schedule.pick_all_playlists'),
+    unfiledLabel: t('schedule.pick_no_folder'),
+    searchPlaceholder: t('schedule.pick_search_playlists'),
+    noneLabel: t('schedule.no_playlist_override'),
+  });
+  enhanceFolderSelect(document.getElementById('schedContent'), {
+    folders: Array.isArray(contentFolders) ? contentFolders : [],
+    items: content.map((c) => ({
+      id: c.id,
+      label: c.filename,
+      sub: c.mime_type || '',
+      folderIds: c.folder_id ? [c.folder_id] : [],
+      thumb: c.thumbnail_path ? `/api/content/${c.id}/thumbnail` : null,
+    })),
+    allLabel: t('schedule.pick_all_content'),
+    unfiledLabel: t('schedule.pick_no_folder'),
+    searchPlaceholder: t('schedule.pick_search_content'),
+    noneLabel: t('schedule.content_none'),
+  });
+
   function updateTargetVisibility() {
     const isGroup = groupRadio.checked;
     const isWall = wallRadio.checked;
-    deviceSelect.style.display = (isGroup || isWall) ? 'none' : '';
+    devicePick.root.style.display = (isGroup || isWall) ? 'none' : '';
+    if (isGroup || isWall) devicePick.close();
     groupSelect.style.display = isGroup ? '' : 'none';
     wallSelect.style.display = isWall ? '' : 'none';
     if (noGroupsMsg) noGroupsMsg.style.display = (isGroup && groups.length === 0) ? '' : 'none';
