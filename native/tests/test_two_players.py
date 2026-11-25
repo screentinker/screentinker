@@ -127,3 +127,13 @@ def test_helper_command_line():
     assert service.command_line(exe, ["--instance", "2", "--display", "@1920,0"]) == \
         '"%s" --instance 2 --display @1920,0' % exe
     assert service.command_line(exe, ["--display", "DISPLAY 3"]) == '"%s" --display "DISPLAY 3"' % exe
+
+
+def test_a_config_saved_with_a_bom_still_reads(tmp_path, monkeypatch):
+    """PowerShell 5's Set-Content -Encoding UTF8 writes a BOM; the helper read {} and started nothing."""
+    p = tmp_path / "config.json"
+    p.write_bytes(b"\xef\xbb\xbf" + b'{"server_url": "http://x", "players": [{"display": "@0,0"}]}')
+    monkeypatch.setattr(service, "CONFIG", str(p))
+    assert service.load_config()["server_url"] == "http://x"
+    from screentinker_native import config
+    assert config._read_json(str(p))["players"] == [{"display": "@0,0"}]

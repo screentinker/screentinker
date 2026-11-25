@@ -54,8 +54,10 @@ def _setup_logging():
 
 
 def load_config():
+    # utf-8-sig: an admin editing config.json with PowerShell 5 (Set-Content -Encoding UTF8) or an editor
+    # that writes a BOM must not leave the helper reading {} and silently starting no player (#927).
     try:
-        with open(CONFIG, encoding="utf-8") as f:
+        with open(CONFIG, encoding="utf-8-sig") as f:
             return json.load(f)
     except (OSError, ValueError):
         return {}

@@ -1305,7 +1305,9 @@ class App:
                     win.setGeometry(target.geometry())
                     if was_full:
                         win.showFullScreen()
-                    log.info("display %s: %s %s", spec, target.name(), target.geometry())
+                    found = screen_pick.find(QGuiApplication.screens(), spec) is target
+                    log.info("display %s: %s %s%s", spec, target.name(), target.geometry(),
+                             "" if found else " (not connected: on the primary until it appears)")
                 except Exception as e:
                     log.warning("could not place the window on display %s: %s", spec, e)
             place()
