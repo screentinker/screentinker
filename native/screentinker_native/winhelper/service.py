@@ -16,7 +16,8 @@ and its watchdog. The Windows twin of Linux's st-helper + `Restart=always`.
 2. WATCHDOG: the player must run in the interactive user's session (a service lives in session 0 and
    cannot show anything), so the helper launches it with CreateProcessAsUser into the active console
    session and relaunches it if it dies, with backoff. Exit code 42 means an operator chose "Exit
-   player" from the on-screen menu: the helper stands down until the next logon.
+   player" from the on-screen menu: the helper stands down until the next logon. config.json's
+   "players" list runs one player per monitor (#927, player_specs); without it, one player as ever.
 """
 
 import hashlib
@@ -301,17 +302,76 @@ def player_exe():
     return os.path.join(base, "ScreenTinker.exe")
 
 
+_INSTANCE_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+_DISPLAY_RE = re.compile(r"^[A-Za-z0-9@,._ -]{1,64}$")
+MAX_PLAYERS = 4
+
+
+def player_specs(cfg):
+    """The players this PC runs, as [(key, [extra args])], from config.json's "players" (#927).
+
+    No "players" (every install so far): ONE player with no arguments, exactly as before. With it, one
+    entry per screen, for example
+        "players": [{"display": "@0,0"}, {"instance": "2", "display": "@1920,0"}]
+    "instance" ('' or absent = the machine's first player, which keeps its existing pairing) gives an
+    extra player its own pairing and state; "display" is N, @X,Y or part of a monitor's name/serial
+    (ui/screen_pick.py). Anything malformed is skipped and logged, never passed to a command line:
+    the values are interpolated into CreateProcessAsUser's command line, so only plain characters pass.
+    """
+    raw = cfg.get("players")
+    if not isinstance(raw, list) or not raw:
+        return [("", [])]
+    out, seen = [], set()
+    for p in raw[:MAX_PLAYERS]:
+        if not isinstance(p, dict):
+            log.warning("players: skipping %r (not an object)", p)
+            continue
+        inst = str(p.get("instance") or "").strip()
+        disp = str(p.get("display") if p.get("display") is not None else "").strip()
+        if inst and not _INSTANCE_RE.match(inst):
+            log.warning("players: skipping instance %r (letters, digits, - and _ only)", inst)
+            continue
+        if disp and not _DISPLAY_RE.match(disp):
+            log.warning("players: skipping display %r", disp)
+            continue
+        if inst in seen:
+            log.warning("players: instance %r listed twice; using the first", inst or "(first)")
+            continue
+        seen.add(inst)
+        args = []
+        if inst:
+            args += ["--instance", inst]
+        if disp:
+            args += ["--display", disp]
+        out.append((inst, args))
+    return out or [("", [])]
+
+
+def command_line(exe, args):
+    """CreateProcessAsUser's command line. Every arg passed player_specs' character check, so quoting
+    the exe path and any arg with a space is enough."""
+    return " ".join(['"%s"' % exe] + [('"%s"' % a) if " " in a else a for a in args])
+
+
+class _Slot:
+    """One supervised player: its process, backoff, and whether an operator exited it this logon."""
+    def __init__(self, key, args):
+        self.key, self.args = key, args
+        self.proc = None
+        self.launched_at = 0.0
+        self.backoff = 3
+        self.retry_at = 0.0
+        self.suppressed_session = None
+
+
 def watchdog(stop):
     import win32con
     import win32event
     import win32process
     import win32profile
     import win32ts
-    proc = None
-    launched_at = 0.0
+    slots = {}
     session_seen = None
-    backoff = 3
-    suppressed_session = None
     while not stop.wait(3):
         cfg = load_config()
         if cfg.get("autostart", True) is False or not cfg.get("server_url"):
@@ -321,45 +381,64 @@ def watchdog(stop):
             continue
         if sess != session_seen:
             session_seen = sess
-            suppressed_session = None
-            backoff = 3
-        if proc is not None:
-            if win32event.WaitForSingleObject(proc, 0) == win32con.WAIT_TIMEOUT:
-                continue                                       # still running
-            code = win32process.GetExitCodeProcess(proc)
-            proc = None
-            if time.monotonic() - launched_at > 120:
-                backoff = 3          # it ran a good while: this is a fresh failure, not a crash loop
-            if code == EXIT_BY_OPERATOR:
-                log.info("player exited by operator: not relaunching until the next logon")
-                suppressed_session = sess
+            for sl in slots.values():
+                sl.suppressed_session = None
+                sl.backoff = 3
+                sl.retry_at = 0.0
+        # The wanted set is re-read every pass, so editing "players" needs no service restart: a new
+        # entry starts within seconds; a removed one is left running until it exits, then not relaunched.
+        wanted = player_specs(cfg)
+        wanted_keys = {k for k, _ in wanted}
+        for key, args in wanted:
+            sl = slots.get(key)
+            if sl is None:
+                sl = slots[key] = _Slot(key, args)
+            elif sl.args != args and sl.proc is None:
+                sl.args = args
+        for key in list(slots):
+            if key not in wanted_keys and slots[key].proc is None:
+                del slots[key]
+        now = time.monotonic()
+        for key, _ in wanted:
+            sl = slots[key]
+            name = key or "first"
+            if sl.proc is not None:
+                if win32event.WaitForSingleObject(sl.proc, 0) == win32con.WAIT_TIMEOUT:
+                    continue                                   # still running
+                code = win32process.GetExitCodeProcess(sl.proc)
+                sl.proc = None
+                if now - sl.launched_at > 120:
+                    sl.backoff = 3       # it ran a good while: this is a fresh failure, not a crash loop
+                if code == EXIT_BY_OPERATOR:
+                    log.info("player %s exited by operator: not relaunching until the next logon", name)
+                    sl.suppressed_session = sess
+                    continue
+                log.warning("player %s exited (%s): relaunching in %ss", name, code, sl.backoff)
+                sl.retry_at = now + sl.backoff
+                sl.backoff = min(sl.backoff * 2, 60)
                 continue
-            log.warning("player exited (%s): relaunching in %ss", code, backoff)
-            if stop.wait(backoff):
-                break
-            backoff = min(backoff * 2, 60)
-        if suppressed_session == sess:
-            continue
-        try:
-            token = win32ts.WTSQueryUserToken(sess)             # no one logged on -> error, try later
-        except Exception:
-            continue
-        try:
-            env = win32profile.CreateEnvironmentBlock(token, False)
-            si = win32process.STARTUPINFO()
-            si.lpDesktop = "winsta0\\default"
-            exe = player_exe()
-            hp, ht, pid, tid = win32process.CreateProcessAsUser(
-                token, exe, '"%s"' % exe, None, None, False,
-                win32con.CREATE_UNICODE_ENVIRONMENT | win32con.NORMAL_PRIORITY_CLASS,
-                env, os.path.dirname(exe), si)
-            proc = hp
-            launched_at = time.monotonic()
-            log.info("launched player pid %s in session %s", pid, sess)
-        except Exception as e:
-            log.warning("launch failed: %s", e)
-        finally:
-            token.Close()
+            if sl.suppressed_session == sess or now < sl.retry_at:
+                continue
+            try:
+                token = win32ts.WTSQueryUserToken(sess)         # no one logged on -> error, try later
+            except Exception:
+                continue
+            try:
+                env = win32profile.CreateEnvironmentBlock(token, False)
+                si = win32process.STARTUPINFO()
+                si.lpDesktop = "winsta0\\default"
+                exe = player_exe()
+                hp, ht, pid, tid = win32process.CreateProcessAsUser(
+                    token, exe, command_line(exe, sl.args), None, None, False,
+                    win32con.CREATE_UNICODE_ENVIRONMENT | win32con.NORMAL_PRIORITY_CLASS,
+                    env, os.path.dirname(exe), si)
+                sl.proc = hp
+                sl.launched_at = time.monotonic()
+                log.info("launched player %s pid %s in session %s %s", name, pid, sess, sl.args)
+            except Exception as e:
+                log.warning("launch of player %s failed: %s", name, e)
+            finally:
+                token.Close()
 
 
 # --------------------------------------------------------------------------- service shell

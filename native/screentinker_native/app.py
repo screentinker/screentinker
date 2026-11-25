@@ -1286,14 +1286,35 @@ class App:
         except Exception as e:
             log.warning("could not read the scene-graph backend (%s); assuming GPU", e)
         # --display / ST_DISPLAY: put the window on that output before going full screen there.
+        # N, @X,Y or a name (ui/screen_pick.py). When the wanted monitor is not there (off at boot), the
+        # window waits on the primary and moves the moment it appears; if it goes away, back to the
+        # primary. Two players on one PC (#927) each keep to their own output this way.
         from .ui import screen_pick
-        idx = screen_pick.wanted_index(getattr(self.args, "display", None))
-        if idx is not None:
-            target = screen_pick.pick(QGuiApplication.screens(), QGuiApplication.primaryScreen(), idx)
-            if target is not None:
-                win.setScreen(target)
-                win.setGeometry(target.geometry())
-                log.info("display %d: %s", idx, target.name())
+        spec = screen_pick.wanted(getattr(self.args, "display", None))
+        if spec is not None:
+            def place(_=None):
+                try:
+                    target = screen_pick.pick(QGuiApplication.screens(), QGuiApplication.primaryScreen(), spec)
+                    if target is None or (win.screen() is target and win.geometry() == target.geometry()):
+                        return
+                    from PySide6.QtGui import QWindow
+                    was_full = bool(win.visibility() == QWindow.Visibility.FullScreen)
+                    if was_full:
+                        win.showNormal()
+                    win.setScreen(target)
+                    win.setGeometry(target.geometry())
+                    if was_full:
+                        win.showFullScreen()
+                    log.info("display %s: %s %s", spec, target.name(), target.geometry())
+                except Exception as e:
+                    log.warning("could not place the window on display %s: %s", spec, e)
+            place()
+            self.qt.screenAdded.connect(place)
+            self.qt.screenRemoved.connect(place)
+            self.qt.primaryScreenChanged.connect(place)
+            for s in QGuiApplication.screens():
+                s.geometryChanged.connect(place)
+            self.qt.screenAdded.connect(lambda s: s.geometryChanged.connect(place))
         if not self.args.windowed:
             if sys.platform == "win32":
                 # Fullscreen alone sits UNDER the taskbar and Start menu on Windows (seen in the VM);
@@ -1337,13 +1358,30 @@ def _context_is_gles():
     return QOpenGLContext.openGLModuleType() == QOpenGLContext.OpenGLModuleType.LibGLES
 
 
-def _single_instance():
-    """One player per Windows session: the helper's watchdog and a manual start must not race two
-    players onto one screen (and into one socket identity). A named mutex dies with the process."""
+def instance_name(arg=None, env=None):
+    """--instance / ST_INSTANCE: '' for the one player a machine normally has, else a short name for a
+    second (third…) player on the same machine (#927). None when the name is not allowed."""
+    raw = arg if arg is not None else (env if env is not None else os.environ.get("ST_INSTANCE", ""))
+    name = (raw or "").strip()
+    if not name:
+        return ""
+    return name if re.fullmatch(r"[A-Za-z0-9_-]{1,32}", name) else None
+
+
+def instance_state_dir(base, name):
+    """Each extra player keeps its own pairing, cache and log under <state>/players/<name>; the first
+    player stays where it always was, so adding a second never re-pairs the first."""
+    return os.path.join(base, "players", name) if name else base
+
+
+def _single_instance(name=""):
+    """One player per Windows session AND instance: the helper's watchdog and a manual start must not
+    race two players onto one screen (and into one socket identity). A named mutex dies with the
+    process. A second player (#927) runs under its own --instance, so its own mutex."""
     import ctypes
     k32 = ctypes.windll.kernel32
     global _instance_mutex
-    _instance_mutex = k32.CreateMutexW(None, False, "Local\\ScreenTinkerPlayer")
+    _instance_mutex = k32.CreateMutexW(None, False, "Local\\ScreenTinkerPlayer" + ("-" + name if name else ""))
     return k32.GetLastError() != 183   # ERROR_ALREADY_EXISTS
 
 
@@ -1367,7 +1405,10 @@ def _main(argv=None):
     ap.add_argument("--server", help="server URL (overrides the stored one)")
     ap.add_argument("--state-dir", help="where pairing/cache/state live")
     ap.add_argument("--windowed", action="store_true", help="do not go fullscreen (development)")
-    ap.add_argument("--display", help="which screen to use, 0 = the first (default: the primary); or ST_DISPLAY")
+    ap.add_argument("--display", help="which screen to use: N (0 = the first), @X,Y (the screen containing that "
+                                      "desktop point) or part of its name/serial; default the primary; or ST_DISPLAY")
+    ap.add_argument("--instance", help="run a second (third...) player on this machine with its own pairing "
+                                       "and state, e.g. 2; or ST_INSTANCE")
     ap.add_argument("--install-autostart", action="store_true",
                     help="start this player at login and keep it running (macOS LaunchAgent)")
     ap.add_argument("--remove-autostart", action="store_true", help="undo --install-autostart")
@@ -1375,6 +1416,15 @@ def _main(argv=None):
     ap.add_argument("--audience-check", nargs="?", const="", metavar="CLIP",
                     help="check the audience-counting add-on (and count faces in CLIP), then exit")
     args = ap.parse_args(argv)
+    inst = instance_name(args.instance)
+    if inst is None:
+        print("--instance must be 1-32 letters, digits, '-' or '_'", file=sys.stderr)
+        return 2
+    if inst:
+        os.environ["ST_INSTANCE"] = inst          # deviceinfo.fingerprint(): a distinct identity per player
+        if not args.state_dir:
+            from .config import default_state_dir
+            args.state_dir = instance_state_dir(default_state_dir(), inst)
     if args.install_autostart or args.remove_autostart:
         if not hasattr(ops, "install_autostart"):
             print("autostart is set up by the installer on this OS")
@@ -1411,7 +1461,7 @@ def _main(argv=None):
         print(line)
         return 0 if result.get("addon") else 3
 
-    if sys.platform == "win32" and not _single_instance():
+    if sys.platform == "win32" and not _single_instance(inst):
         log.info("another player is already running in this session; exiting")
         return 0
     if hasattr(ops, "single_instance"):

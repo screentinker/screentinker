@@ -93,7 +93,12 @@
     <p>Playlists, schedules, layouts, zones, widgets, proof-of-play, live screen view and the &ldquo;refresh&rdquo; command all work — they are server-side or in the page. The two that do not are physical: <strong>screen off</strong> draws a black overlay rather than putting the panel to sleep, and <strong>reboot</strong> is ignored, because a web page cannot restart the computer hosting it. The dashboard shows the buttons a given screen can actually honour.</p>
 
     <h2>Several screens from one PC</h2>
-    <p>Each display is a separate browser window pointed at the player, and each pairs as its own screen. On a machine with two outputs that is two windows, two pairing codes, two independent playlists. For a genuine video wall — one image spanning several panels with bezel compensation — use the video wall feature and give each panel its own player.</p>
+    <p>Each monitor runs its own player and pairs as its own screen: on a machine with two outputs that is two pairing codes and two independent playlists.</p>
+    <ul>
+      <li><strong>ScreenTinker for Windows:</strong> list one player per monitor in <code>%ProgramData%\ScreenTinker\config.json</code>, each pinned to its monitor by its desktop position (<code>"display": "@1920,0"</code>, the same coordinates as Windows&rsquo; display arrangement). The helper starts every player at sign-in, restarts any that stops, and puts each back on its own monitor after a reboot. <a href="https://github.com/screentinker/screentinker/blob/main/docs/windows-native-player.md#two-or-more-screens-from-one-pc-927">Step-by-step setup</a>.</li>
+      <li><strong>Web player in Chrome:</strong> one Chrome window per monitor, each with its own profile so each keeps its own pairing: <code>chrome.exe --kiosk --user-data-dir=C:\ScreenTinker\screen2 --window-position=1920,0 --autoplay-policy=no-user-gesture-required https://your-server/player</code>. Put one shortcut per screen in the Startup folder (<code>shell:startup</code>) so both come back after a reboot.</li>
+    </ul>
+    <p>For a genuine video wall &mdash; one image spanning several panels with bezel compensation &mdash; use the video wall feature and give each panel its own player.</p>
 
     <div class="related">
       <h2>Related guides</h2>

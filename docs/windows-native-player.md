@@ -151,6 +151,62 @@ run as the player user. That must not become SYSTEM through the helper. So:
 | one-shot shell (PowerShell 5.1, Android output format) and interactive PTY (ConPTY; resize) | ✅ |
 | playback, group sync, VanEck transition on Direct3D 11, screenshots | ✅ |
 
+## Two or more screens from one PC (#927)
+
+One PC with two (or more) monitors can run one player per monitor. Each pairs as its own screen with
+its own playlist, keeps its pairing in its own folder, and the helper puts it back on its monitor
+after every reboot.
+
+**1. Note where each monitor sits.** In Windows **Settings → System → Display**, the arrangement gives
+every monitor a desktop position: with two 1920x1080 monitors side by side, the left one starts at
+`0,0` and the right one at `1920,0`. A monitor to the left of the main one has a negative X
+(`-1920,0`). Any point inside a monitor names it.
+
+**2. List the players** in `%ProgramData%\ScreenTinker\config.json` (an administrator Notepad; the file
+is admin-only on purpose), next to the keys the installer wrote:
+
+```json
+{
+  "server_url": "https://screentinker.com",
+  "autostart": true,
+  "players": [
+    { "display": "@0,0" },
+    { "instance": "2", "display": "@1920,0" }
+  ]
+}
+```
+
+- The entry **without** `instance` is the PC's first player and keeps the pairing it already had.
+- Every other entry needs a short `instance` name (letters, digits, `-`, `_`). It gets its own
+  pairing, cache and log in `%ProgramData%\ScreenTinker\state\players\<instance>\`, and its own
+  identity on the server.
+- `display` is one of: `@X,Y` (the monitor containing that desktop point, recommended: it survives
+  Windows renumbering monitors), a number (`0` = the first monitor Qt lists), or part of the
+  monitor's name or serial number (`DISPLAY2`, `SN-12345`).
+- Up to 4 players. A malformed entry is skipped and logged in `helper.log`.
+
+The helper re-reads the file every few seconds, so a new entry starts without a restart (or
+`Restart-Service ScreenTinkerHelper`). The new player shows a pairing code on its monitor: add it in
+the dashboard like any screen.
+
+**3. Reboots and monitors.** The helper starts every listed player at logon (keep automatic sign-in
+on) and restarts any that stops. If a monitor is off or unplugged when the player starts, the player
+waits full screen on the main monitor and moves to its own the moment it appears; if it is
+unplugged later, the player moves to the main monitor and back again when it returns.
+
+**Updates:** only the first player downloads and installs updates. The installer stops every player
+and the helper restarts them all on the new version.
+
+**Without the helper** (testing, or a machine without the service), the same options work by hand:
+
+```
+"C:\Program Files\ScreenTinker\ScreenTinker.exe" --display @0,0
+"C:\Program Files\ScreenTinker\ScreenTinker.exe" --instance 2 --display @1920,0
+```
+
+`ST_INSTANCE` and `ST_DISPLAY` are the environment-variable forms. The same options work on the
+macOS and Linux desktop players.
+
 ## Answers to the earlier open questions
 
 1. **Arbitrary installers:** refused unless the admin config sets `allow_package_install: true`
