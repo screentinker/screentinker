@@ -16,9 +16,9 @@
     "node": ">=22.14.0"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1170.0",
-    "@aws-sdk/s3-request-presigner": "^3.1170.0",
-    "@azure/msal-node": "^7.2.2",
+    "@aws-sdk/client-s3": "^3.1175.0",
+    "@aws-sdk/s3-request-presigner": "^3.1175.0",
+    "@azure/msal-node": "^7.2.3",
     "@azure/storage-blob": "^12.34.0",
     "@jsquash/avif": "^2.1.1",
     "@jsquash/webp": "^1.5.0",
@@ -29,26 +29,26 @@
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "express": "^5.3.0",
-    "express-rate-limit": "^8.7.4",
+    "express-rate-limit": "^8.7.5",
     "helmet": "^8.3.0",
     "htmlparser2": "^12.0.0",
     "jimp": "^1.6.1",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.4.0",
     "node-ical": "^0.27.6",
-    "nodemailer": "^10.6.0",
+    "nodemailer": "^10.6.1",
     "omggif": "^1.0.10",
     "otplib": "^13.6.0",
     "qrcode": "^1.5.4",
     "socket.io": "^4.8.4",
     "socket.io-client": "^4.8.4",
-    "stripe": "^23.1.0",
+    "stripe": "^23.2.0",
     "unzipper": "^0.12.5",
     "uuid": "^14.0.3"
   },
   "optionalDependencies": {
     "better-sqlite3": "13.0.3",
-    "puppeteer-core": "^25.17.0"
+    "puppeteer-core": "^25.18.1"
   },
   "devDependencies": {
     "acorn": "^8.19.0",
