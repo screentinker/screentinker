@@ -158,10 +158,15 @@ test('the inspector separates edit-dialog metadata and media settings', () => {
     mime_type: 'video/rtsp', tls_self_signed: 0,
   });
   assert.equal(verifiedCamera.find(([key]) => key === 'library.inspector.tls_self_signed')?.[1], 'library.inspector.detail_enabled');
-  const noExtendedData = inspectorDetails.detailsFor({ mime_type: 'image/png' });
+  const imageDetails = inspectorDetails.detailsFor({ mime_type: 'image/png' });
+  assert.deepEqual(plain(imageDetails.extended), [['content.image_as_video.title', 'common.loading', {
+    'data-image-as-video-status': '', 'aria-live': 'polite',
+  }]]);
+  const noExtendedData = inspectorDetails.detailsFor({ mime_type: 'image/png', remote_url: 'https://example.com/image.png' });
   assert.deepEqual(plain(noExtendedData.extended), []);
   const source = read('components/library/inspector.js');
   assert.match(source, /<dl class="lib-insp-facts">[\s\S]*\$\{extended\.length \? `<dl class="lib-insp-facts">/);
+  assert.match(source, /Object\.entries\(attrs \|\| \{\}\)/);
 });
 
 /* ---------------- the upload queue, with the uploader stubbed ---------------- */

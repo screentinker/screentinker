@@ -79,6 +79,7 @@ test('export: the copy tables are classified (never exported: a cache, and insta
   const { EXCLUDED } = require('../lib/trust/export-tables');
   assert.ok(EXCLUDED.content_video_variants);
   assert.ok(EXCLUDED.video_variant_usage);
+  assert.match(EXCLUDED.video_variant_usage, /image-as-video/);
 });
 
 test('payload: width/height and the pre-rotated flag ride on every uploaded video, read at send time', () => {

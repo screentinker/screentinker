@@ -71,8 +71,16 @@ class AudioItemRoutingTest {
 
     @Test fun `audio skips the first-frame cover full screen and shows the card`() {
         val s = src("player/MediaPlayerManager.kt")
-        assertTrue(s.contains("if (audioCard == null) coverSwitchGap(myGeneration)"))
+        assertTrue(s.contains("if (audioCard == null) coverSwitchGap(myGeneration, imageStill)"))
         assertTrue(s.contains("if (audioCard != null) showAudioCard(audioCard)"))
+    }
+
+    @Test fun `normal cold video mounts restore configured repeat mode`() {
+        val s = src("player/MediaPlayerManager.kt")
+        val repeatMode = "repeatMode = if (videoLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF"
+        assertTrue("remote video mount resets repeat mode", s.contains(repeatMode))
+        val localMount = s.substringAfter("private fun mountVideo(").substringBefore("fun showImage(")
+        assertTrue("cold local video mount resets repeat mode", localMount.contains(repeatMode))
     }
 
     @Test fun `zones and wall zones play audio with no picture and no first-frame wait`() {

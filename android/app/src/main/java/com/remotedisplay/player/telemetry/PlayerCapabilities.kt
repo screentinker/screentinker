@@ -45,6 +45,9 @@ object PlayerCapabilities {
             // Every content type the playlist engine renders, plus the layout features built on it.
             caps += listOf(
                 "playback.video", "playback.image", "playback.widget", "playback.youtube",
+                // The player can consume these clips; the server still gates generation on the
+                // display's native video plane and high-resolution output.
+                "playback.image_as_video",
                 // Live HLS channels (mime_type video/hls, an .m3u8 remote_url). ExoPlayer plays these
                 // natively once media3-exoplayer-hls is on the classpath — this build bundles it — so
                 // the claim is unconditional, exactly like playback.video/playback.youtube beside it.

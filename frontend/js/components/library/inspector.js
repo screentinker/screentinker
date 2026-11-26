@@ -50,6 +50,12 @@ function detailsFor(c) {
   const extended = [
     [t('content.label_meta'), Object.entries(objectValue(c.meta) || {}).map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`).join('\n')],
   ];
+  if (!c.remote_url && c.mime_type?.startsWith('image/')) {
+    extended.push([t('content.image_as_video.title'), t('common.loading'), {
+      'data-image-as-video-status': '',
+      'aria-live': 'polite',
+    }]);
+  }
   if (c.mime_type === 'video/rtsp') extended.push([t('library.inspector.tls_self_signed'), flag(!c.tls_self_signed)]);
   if (c.mime_type === 'video/youtube') {
     extended.push([t('content.label_unstable_connection'), flag(c.unstable_connection)]);
@@ -74,6 +80,7 @@ export function createInspector(host, opts) {
   let draft = null;
   let usageReq = 0;
   let audioTracksReq = 0;
+  let imageStatusReq = 0;
   let opener = null;
   const mq = window.matchMedia(NARROW);
 
@@ -130,6 +137,7 @@ export function createInspector(host, opts) {
     const c = item;
     const st = statusOf(c);
     const writable = opts.canWrite();
+    const imageStatusRequest = ++imageStatusReq;
     const { facts, extended } = detailsFor(c);
     host.hidden = false;
     host.innerHTML = `
@@ -170,7 +178,7 @@ export function createInspector(host, opts) {
           </div>` : `<p class="lib-field-help">${esc(t('library.inspector.read_only'))}</p>`}
         </form>
         <dl class="lib-insp-facts">${facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
-        ${extended.length ? `<dl class="lib-insp-facts">${extended.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>` : ''}
+        ${extended.length ? `<dl class="lib-insp-facts">${extended.map(([k, v, attrs]) => `<div><dt>${esc(k)}</dt><dd${Object.entries(attrs || {}).map(([name, value]) => ` ${name}="${esc(value)}"`).join('')}>${esc(v)}</dd></div>`).join('')}</dl>` : ''}
         ${!c.remote_url && c.mime_type?.startsWith('video/') ? `<section class="lib-insp-usage" aria-labelledby="libInspAudioTitle">
           <h3 id="libInspAudioTitle" class="lib-insp-sub">${esc(t('content.label_audio_tracks'))}</h3>
           <div data-audio-tracks aria-live="polite">${esc(t('common.loading'))}</div>
@@ -191,6 +199,28 @@ export function createInspector(host, opts) {
     wire();
     loadUsage(c);
     if (!c.remote_url && c.mime_type?.startsWith('video/')) loadAudioTracks(c);
+    if (!c.remote_url && c.mime_type?.startsWith('image/')) loadImageAsVideoStatus(c, imageStatusRequest);
+  }
+
+  async function loadImageAsVideoStatus(c, requestId) {
+    const box = () => host.querySelector('[data-image-as-video-status]');
+    const show = (status) => {
+      if (requestId !== imageStatusReq || !box() || !item || item.id !== c.id) return;
+      const message = {
+        ready: t('content.image_as_video.ready'),
+        preparing: t('content.image_as_video.preparing'),
+        not_generated: t('content.image_as_video.not_generated'),
+        ineligible: t('content.image_as_video.ineligible'),
+        unavailable: t('content.image_as_video.unavailable'),
+      }[status] || t('content.image_as_video.unavailable');
+      box().textContent = message;
+    };
+    try {
+      const status = await api.getContentImageAsVideoStatus(c.id);
+      show(status?.status);
+    } catch (_) {
+      show('unavailable');
+    }
   }
 
   function syncSaveRow() {

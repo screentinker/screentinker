@@ -66,10 +66,22 @@ class ContentCache internal constructor(
         // cross-matching. `contains` rather than `endsWith` for the temp check because the resume
         // validator sidecar is "<id>.<ext>.part.tag" — it does not END with ".part", and returning
         // THAT as the cached asset would hand the player a short ETag file to play.
-        val files = cacheDir.listFiles { _, name -> name.startsWith("$contentId.") && !name.contains(PART_SUFFIX) && !name.endsWith(REV_SUFFIX) }
+        val files = cacheDir.listFiles { _, name ->
+            name.startsWith("$contentId.") &&
+                !name.startsWith("$contentId$IMAGE_AS_VIDEO_VARIANT_SUFFIX") &&
+                !name.contains(PART_SUFFIX) &&
+                !name.endsWith(REV_SUFFIX)
+        }
         val hit = files?.firstOrNull()?.takeIf { it.exists() && it.length() > 0 }
         com.remotedisplay.player.util.DebugLog.v("ContentCache", "getCachedFile($contentId): dir=${cacheDir.absolutePath} listFiles=${files?.size ?: -1} hit=${hit?.name}")
         return hit
+    }
+
+    /** Keep this optional clip separate from the still and accept it only for the server's revision. */
+    fun getCachedImageAsVideoVariant(contentId: String, revision: Long): File? {
+        if (revision <= 0L) return null
+        val file = File(cacheDir, imageAsVideoVariantFilename(contentId, revision))
+        return file.takeIf { it.isFile && it.length() > 0 && readRev(it) == revision }
     }
 
     fun isContentCached(contentId: String): Boolean {
@@ -106,9 +118,23 @@ class ContentCache internal constructor(
      */
     fun fetch(serverUrl: String, contentId: String, filename: String, rev: Long = 0L): Result {
         val ext = filename.substringAfterLast('.', "mp4")
-        val finalFile = File(cacheDir, "$contentId.$ext")
-        val partFile = File(cacheDir, "$contentId.$ext$PART_SUFFIX")
-        val tagFile = File(cacheDir, "$contentId.$ext$PART_SUFFIX$TAG_SUFFIX")
+        val cacheFilename = "$contentId.$ext"
+        val url = "${serverUrl.trimEnd('/')}/api/content/$contentId/file" + (if (rev > 0L) "?rev=$rev" else "")
+        return fetchUrl(url, filename, cacheFilename, rev)
+    }
+
+    fun fetchImageAsVideoVariant(url: String, contentId: String, revision: Long): Result {
+        if (revision <= 0L) return Result.Failed
+        val filename = imageAsVideoVariantFilename(contentId, revision)
+        val result = fetchUrl(url, filename, filename, revision)
+        if (result is Result.Done) deleteStaleImageAsVideoVariants(contentId, revision)
+        return result
+    }
+
+    private fun fetchUrl(url: String, filename: String, cacheFilename: String, rev: Long): Result {
+        val finalFile = File(cacheDir, cacheFilename)
+        val partFile = File(cacheDir, "$cacheFilename$PART_SUFFIX")
+        val tagFile = File(cacheDir, "$cacheFilename$PART_SUFFIX$TAG_SUFFIX")
 
         // Only resume when we also hold the validator that was current when those bytes were
         // fetched. Without it there is no way to know the asset is still the same one, and a silent
@@ -118,10 +144,8 @@ class ContentCache internal constructor(
         if (resumeFrom == 0L) { partFile.delete(); tagFile.delete() }
 
         try {
-            // The revision rides in the URL as well as in the sidecar: an intermediary caching
-            // /api/content/<id>/file would otherwise happily serve the superseded bytes to every
-            // panel behind it, and no amount of client-side bookkeeping could tell.
-            val url = "$serverUrl/api/content/$contentId/file" + (if (rev > 0L) "?rev=$rev" else "")
+            // The revision rides in the URL as well as in the sidecar, preventing intermediary
+            // caches from serving bytes from an earlier variant revision.
             val builder = Request.Builder().url(url)
             if (resumeFrom > 0) {
                 builder.header("Range", "bytes=$resumeFrom-")
@@ -191,6 +215,7 @@ class ContentCache internal constructor(
                             try { output.fd.sync() } catch (_: Exception) {}
                         }
                     }
+
                 } catch (e: Exception) {
                     // The break we now RECOVER from instead of restarting after. Includes the read
                     // timeout (a stalled stream) and the call timeout (a slow drip that ran out of
@@ -233,6 +258,17 @@ class ContentCache internal constructor(
             val kept = partFile.length()
             return if (kept > 0) partialOrDiscard(partFile, tagFile, kept, -1L, resumeFrom) else Result.Failed
         }
+    }
+
+    private fun imageAsVideoVariantFilename(contentId: String, revision: Long) =
+        "$contentId$IMAGE_AS_VIDEO_VARIANT_SUFFIX$revision.mp4"
+
+    private fun deleteStaleImageAsVideoVariants(contentId: String, keepRevision: Long) {
+        val prefix = "$contentId$IMAGE_AS_VIDEO_VARIANT_SUFFIX"
+        cacheDir.listFiles { _, name ->
+            name.startsWith(prefix) &&
+                name.removePrefix(prefix).substringBefore(".mp4").toLongOrNull()?.let { it < keepRevision } == true
+        }?.forEach { it.delete() }
     }
 
     /**
@@ -360,6 +396,7 @@ class ContentCache internal constructor(
         private const val PART_SUFFIX = ".part"
         private const val TAG_SUFFIX = ".tag"
         private const val REV_SUFFIX = ".rev"
+        private const val IMAGE_AS_VIDEO_VARIANT_SUFFIX = ".image-as-video-variant-"
         private const val SITE_SUFFIX = ".site"
 
         /**

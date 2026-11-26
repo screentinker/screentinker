@@ -931,6 +931,8 @@ function purgeContentRow(content) {
   audioTracks.removeAllForContent(id); // visitor audio sync: per-language narration tracks + their files
   // 3.0 TV-safe copies of a tall video (lib/video-variants.js): named per content id, never shared.
   try { require('../lib/video-variants').removeFor(id); } catch (_) { /* the orphan sweep gets them */ }
+  // Image-as-video copies are revision-bound cache files too; remove them with the source image.
+  try { require('../lib/image-as-video-variants').removeFor(id); } catch (_) { /* the orphan sweep gets them */ }
   try { require('../lib/sssp3-fit-rendition').removeFor(id); } catch (_) { /* the orphan sweep gets them */ }
 
   /*
@@ -1120,6 +1122,13 @@ router.get('/:id/tv-copies', (req, res) => {
   if (!content) return;
   const vv = require('../lib/video-variants');
   res.json({ ...vv.describe(content), enabled: vv.getSettings().enabled });
+});
+
+// Status of the optional high-resolution still variant; reading it does not queue an encode.
+router.get('/:id/image-as-video-status', (req, res) => {
+  const content = checkContentRead(req, res);
+  if (!content) return;
+  res.json(require('../lib/image-as-video-variants').describe(content));
 });
 
 // Try the failed (or allowance-refused) copies again. Write access: it spends server CPU.

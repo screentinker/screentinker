@@ -842,6 +842,7 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
       d.default_content_id, d.workspace_id, d.latitude, d.longitude,
       d.capabilities, d.platform, d.android_version, d.client_type,
       d.screen_width, d.screen_height, -- 3.0: which orientation version of a layout this screen gets
+      d.render_width, d.render_height, -- image-as-video: no copy when the UI already renders the image's size (#904)
       d.id -- an experiment's per-screen variant condition (lib/local-conditions 'screens') needs it
       FROM devices d JOIN device_resolved_playlist r ON r.device_id = d.id
       WHERE d.id = ?`).get(deviceId);
@@ -1300,6 +1301,8 @@ function buildPlaylistPayloadUnchecked(deviceId, opts = {}) {
   // 3.0 TV-safe video: ready copies of tall videos, and for a screen that plays them, queue a missing
   // one now. Never from the forecast preview, which must not spend CPU on a "what if".
   try { require('../lib/video-variants').stampItems(assignments, device, { lazy: !opts.forecast }); } catch (_) { /* keep the payload playable */ }
+  // Large stills use the same lazy-vs-forecast rule; without a ready variant, Android keeps the original.
+  try { require('../lib/image-as-video-variants').stampItems(assignments, device, { lazy: !opts.forecast }); } catch (_) { /* keep the original image playable */ }
   try { require('../lib/sssp3-fit-rendition').stampItems(assignments, layout, device, { lazy: !opts.forecast }); } catch (_) { /* keep the payload playable */ }
   if (default_content) {
     try { require('../lib/sssp3-fit-rendition').stampItems([default_content], null, device, { lazy: !opts.forecast }); } catch (_) { /* keep idle content playable */ }
