@@ -1324,6 +1324,34 @@ class App:
             for s in QGuiApplication.screens():
                 s.geometryChanged.connect(place)
             self.qt.screenAdded.connect(lambda s: s.geometryChanged.connect(place))
+
+            # #927: the player placed itself on the right monitor, then ended up elsewhere with no screen
+            # change Qt could report (Windows moving windows around sign-in; Xibo did the same there,
+            # even launched late). So check every few seconds and put it back, saying so once per move.
+            moved = {"last": None}
+
+            def keep_on_screen():
+                try:
+                    target = screen_pick.pick(QGuiApplication.screens(), QGuiApplication.primaryScreen(), spec)
+                    if target is None:
+                        return
+                    g = win.geometry()
+                    t = target.geometry()
+                    if not screen_pick.window_is_off(
+                            (g.x(), g.y(), g.width(), g.height()), (t.x(), t.y(), t.width(), t.height())):
+                        moved["last"] = None
+                        return
+                    where = (win.screen().name() if win.screen() else "?", g.x(), g.y(), g.width(), g.height())
+                    if where != moved["last"]:
+                        log.warning("display %s: the window was moved to %s %s,%s %sx%s; putting it back "
+                                    "on %s", spec, *where, target.name())
+                        moved["last"] = where
+                    place()
+                except Exception as e:
+                    log.warning("could not check the window on display %s: %s", spec, e)
+            self._keep_on_screen = QTimer()
+            self._keep_on_screen.timeout.connect(keep_on_screen)
+            self._keep_on_screen.start(5000)
         if not self.args.windowed:
             if sys.platform == "win32":
                 # Fullscreen alone sits UNDER the taskbar and Start menu on Windows (seen in the VM);

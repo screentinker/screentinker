@@ -186,7 +186,7 @@ def test_a_hand_started_copy_is_named_once_and_rechecked_steadily(caplog):
             assert sl.retry_at == i * 30.0 + 2 + service.ALREADY_RUNNING_RECHECK
             assert sl.backoff == 3 and sl.suppressed_session is None
         warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warnings) == 1 and "started outside the ScreenTinker service" in warnings[0]
+        assert len(warnings) == 1 and "one this helper didn't start" in warnings[0]
         sl.still_running(200.0)             # the copy closed and ours kept running
         assert not sl.blocked and any("running under the service" in r.getMessage() for r in caplog.records)
 
@@ -359,3 +359,12 @@ def test_a_stuck_watchdog_restarts_the_helper_and_says_where_it_was(monkeypatch,
         service.stall_guard(_Stop(1), exit=exits.append)
     assert exits == [1]
     assert any("Restarting the helper" in r.getMessage() for r in caplog.records)
+
+
+def test_a_window_moved_off_its_screen_is_noticed_but_a_pixel_of_frame_is_not():
+    va2419 = (1319, 768, 1920, 1080)
+    assert not sp.window_is_off((1319, 768, 1920, 1080), va2419)
+    assert not sp.window_is_off((1318, 767, 1922, 1082), va2419)       # fullscreen frame slop
+    assert sp.window_is_off((0, 0, 1920, 1080), va2419)                # dropped onto the primary
+    assert sp.window_is_off((1319, 768, 1024, 600), va2419)            # restored to a small window
+    assert sp.window_is_off((1330, -1080, 1920, 1080), va2419)         # on the other player's screen

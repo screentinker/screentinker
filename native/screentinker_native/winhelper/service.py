@@ -430,9 +430,9 @@ class _Slot:
             # once, then keep checking at a steady pace so the helper takes over as soon as it closes.
             if not self.blocked:
                 log.warning("player %s: another ScreenTinker player%s is already running in this session, "
-                            "started outside the ScreenTinker service (the Start menu, a Startup-folder "
-                            "shortcut?). The service can't supervise it; close it, or sign out and back in, "
-                            "and the service starts its own. Checking every %ss.",
+                            "one this helper didn't start (the Start menu, a Startup-folder shortcut, or a "
+                            "player left from before the helper restarted). The helper takes over when it "
+                            "closes; checking every %ss.",
                             self.name, (" (instance %s)" % self.key) if self.key else "",
                             ALREADY_RUNNING_RECHECK)
                 self.blocked = True
