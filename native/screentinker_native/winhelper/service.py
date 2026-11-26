@@ -30,6 +30,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.parse
 import urllib.request
 
@@ -40,6 +41,7 @@ UNINSTALL_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{7C2B3E3A-
 EXIT_BY_OPERATOR = 42
 EXIT_ALREADY_RUNNING = 43     # app.py: another player of that instance already holds the session lock
 ALREADY_RUNNING_RECHECK = 30  # seconds between tries while a hand-started player holds the lock
+WATCHDOG_STALL = 120          # seconds without a finished watchdog pass before the helper restarts itself
 CREATE_NO_WINDOW = 0x08000000
 DETACHED_PROCESS = 0x00000008
 
@@ -448,75 +450,142 @@ class _Slot:
             self.blocked = False
 
 
+_noted = {}
+
+
+def note_once(topic, value, level, msg, *args, **kw):
+    """Log `msg` only when `topic` moves to a new `value`, so a state the watchdog sees every 3 s pass
+    ("no one signed in yet") is one line, not thousands. value None clears the topic without a line."""
+    if _noted.get(topic) == value:
+        return
+    _noted[topic] = value
+    if value is not None:
+        log.log(level, msg, *args, **kw)
+
+
+# The watchdog's last finished pass and its thread id, for stall_guard. #927: a field helper went
+# silent after a sign-out (no launch, no error, for 50 minutes) while a hand-started player worked.
+_beat = {"at": time.monotonic(), "thread": None}
+
+
 def watchdog(stop):
     import win32con
     import win32event
     import win32process
     import win32profile
     import win32ts
-    slots = {}
-    session_seen = None
+    w = {"slots": {}, "session_seen": None,
+         "api": (win32con, win32event, win32process, win32profile, win32ts)}
+    _beat["thread"] = threading.get_ident()
     while not stop.wait(3):
-        cfg = load_config()
-        if cfg.get("autostart", True) is False or not cfg.get("server_url"):
+        # One pass must never end the thread: an exception escaping here used to stop every relaunch
+        # until the service restarted, with nothing in the log.
+        try:
+            _watchdog_pass(w)
+            note_once("pass-error", None, 0, "")
+        except Exception as e:
+            note_once("pass-error", repr(e), logging.ERROR, "watchdog pass failed, retrying every 3s",
+                      exc_info=True)
+        _beat["at"] = time.monotonic()
+
+
+def stall_problem(now, frames=None):
+    """Why the watchdog needs a restart, or None. A pass blocked inside a Windows call (seen around a
+    sign-out) cannot be interrupted from Python, so the only cure is a new helper process."""
+    idle = now - _beat["at"]
+    if idle <= WATCHDOG_STALL:
+        return None
+    frames = sys._current_frames() if frames is None else frames
+    frame = frames.get(_beat["thread"])
+    where = "".join(traceback.format_stack(frame)) if frame is not None else "  (the thread is gone)\n"
+    return "watchdog has not finished a pass in %ds, so no player can be relaunched. It is at:\n%s" % (
+        idle, where)
+
+
+def stall_guard(stop, exit=os._exit):
+    """Exit with an error when the watchdog is stuck: the service's failure actions (the installer's
+    `sc failure ... restart/5000`) start a fresh helper, and the log keeps where it hung."""
+    while not stop.wait(30):
+        problem = stall_problem(time.monotonic())
+        if problem:
+            log.error("%sRestarting the helper.", problem)
+            logging.shutdown()
+            exit(1)
+
+
+def _watchdog_pass(w):
+    win32con, win32event, win32process, win32profile, win32ts = w["api"]
+    slots = w["slots"]
+    cfg = load_config()
+    if cfg.get("autostart", True) is False:
+        note_once("idle", "autostart", logging.INFO, '"autostart" is false in %s: not starting players', CONFIG)
+        return
+    if not cfg.get("server_url"):
+        note_once("idle", "server_url", logging.INFO, 'no "server_url" in %s: not starting players', CONFIG)
+        return
+    note_once("idle", None, 0, "")
+    sess = win32ts.WTSGetActiveConsoleSessionId()
+    if sess == 0xFFFFFFFF:
+        note_once("session", "none", logging.INFO, "no console session right now (switching users?)")
+        return
+    note_once("session", sess, logging.INFO, "console session is %s", sess)
+    if sess != w["session_seen"]:
+        w["session_seen"] = sess
+        for sl in slots.values():
+            sl.suppressed_session = None
+            sl.backoff = 3
+            sl.retry_at = 0.0
+    # The wanted set is re-read every pass, so editing "players" needs no service restart: a new
+    # entry starts within seconds; a removed one is left running until it exits, then not relaunched.
+    wanted = player_specs(cfg)
+    log_specs_if_changed(wanted)
+    wanted_keys = {k for k, _ in wanted}
+    for key, args in wanted:
+        sl = slots.get(key)
+        if sl is None:
+            sl = slots[key] = _Slot(key, args)
+        elif sl.args != args and sl.proc is None:
+            sl.args = args
+    for key in list(slots):
+        if key not in wanted_keys and slots[key].proc is None:
+            del slots[key]
+    now = time.monotonic()
+    for key, _ in wanted:
+        sl = slots[key]
+        name = key or "first"
+        if sl.proc is not None:
+            if win32event.WaitForSingleObject(sl.proc, 0) == win32con.WAIT_TIMEOUT:
+                sl.still_running(now)
+                continue
+            sl.exited(win32process.GetExitCodeProcess(sl.proc), now, sess)
             continue
-        sess = win32ts.WTSGetActiveConsoleSessionId()
-        if sess == 0xFFFFFFFF:
+        if sl.suppressed_session == sess or now < sl.retry_at:
             continue
-        if sess != session_seen:
-            session_seen = sess
-            for sl in slots.values():
-                sl.suppressed_session = None
-                sl.backoff = 3
-                sl.retry_at = 0.0
-        # The wanted set is re-read every pass, so editing "players" needs no service restart: a new
-        # entry starts within seconds; a removed one is left running until it exits, then not relaunched.
-        wanted = player_specs(cfg)
-        log_specs_if_changed(wanted)
-        wanted_keys = {k for k, _ in wanted}
-        for key, args in wanted:
-            sl = slots.get(key)
-            if sl is None:
-                sl = slots[key] = _Slot(key, args)
-            elif sl.args != args and sl.proc is None:
-                sl.args = args
-        for key in list(slots):
-            if key not in wanted_keys and slots[key].proc is None:
-                del slots[key]
-        now = time.monotonic()
-        for key, _ in wanted:
-            sl = slots[key]
-            name = key or "first"
-            if sl.proc is not None:
-                if win32event.WaitForSingleObject(sl.proc, 0) == win32con.WAIT_TIMEOUT:
-                    sl.still_running(now)
-                    continue
-                sl.exited(win32process.GetExitCodeProcess(sl.proc), now, sess)
-                continue
-            if sl.suppressed_session == sess or now < sl.retry_at:
-                continue
-            try:
-                token = win32ts.WTSQueryUserToken(sess)         # no one logged on -> error, try later
-            except Exception:
-                continue
-            try:
-                env = win32profile.CreateEnvironmentBlock(token, False)
-                si = win32process.STARTUPINFO()
-                si.lpDesktop = "winsta0\\default"
-                exe = player_exe()
-                hp, ht, pid, tid = win32process.CreateProcessAsUser(
-                    token, exe, command_line(exe, sl.args), None, None, False,
-                    win32con.CREATE_UNICODE_ENVIRONMENT | win32con.NORMAL_PRIORITY_CLASS,
-                    env, os.path.dirname(exe), si)
-                sl.proc = hp
-                sl.launched_at = time.monotonic()
-                # While a hand-started copy holds the lock, each 30 s retry would add a line: keep it quiet.
-                (log.debug if sl.blocked else log.info)("launched player %s pid %s in session %s %s",
-                                                        name, pid, sess, sl.args)
-            except Exception as e:
-                log.warning("launch of player %s failed: %s", name, e)
-            finally:
-                token.Close()
+        try:
+            token = win32ts.WTSQueryUserToken(sess)         # no one logged on -> error, try later
+        except Exception as e:
+            note_once("signin", sess, logging.INFO, "console session %s: no one is signed in yet (%s); "
+                      "players start when someone signs in", sess, e)
+            continue
+        note_once("signin", None, 0, "")
+        try:
+            env = win32profile.CreateEnvironmentBlock(token, False)
+            si = win32process.STARTUPINFO()
+            si.lpDesktop = "winsta0\\default"
+            exe = player_exe()
+            hp, ht, pid, tid = win32process.CreateProcessAsUser(
+                token, exe, command_line(exe, sl.args), None, None, False,
+                win32con.CREATE_UNICODE_ENVIRONMENT | win32con.NORMAL_PRIORITY_CLASS,
+                env, os.path.dirname(exe), si)
+            sl.proc = hp
+            sl.launched_at = time.monotonic()
+            # While a hand-started copy holds the lock, each 30 s retry would add a line: keep it quiet.
+            (log.debug if sl.blocked else log.info)("launched player %s pid %s in session %s %s",
+                                                    name, pid, sess, sl.args)
+        except Exception as e:
+            log.warning("launch of player %s failed: %s", name, e)
+        finally:
+            token.Close()
 
 
 # --------------------------------------------------------------------------- service shell
@@ -560,6 +629,7 @@ def _service_class():
             for _ in range(2):
                 threading.Thread(target=pipe_server, args=(self.stop_event,), daemon=True).start()
             threading.Thread(target=watchdog, args=(self.stop_event,), daemon=True).start()
+            threading.Thread(target=stall_guard, args=(self.stop_event,), daemon=True).start()
             win32event.WaitForSingleObject(self.hWaitStop, win32event.INFINITE)
             log.info("helper stopped")
     return ScreenTinkerHelper
