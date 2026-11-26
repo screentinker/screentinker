@@ -49,6 +49,31 @@ def json_problem(path):
     return None
 
 
+def configured_display(cfg, instance=""):
+    """The "display" config.json's "players" list gives this instance ('' = the first player), or None.
+
+    The helper passes it as --display, but a player started some other way (the Start menu shortcut, a
+    Startup-folder shortcut) gets no arguments and used to open on the main monitor, the wrong one on a
+    two-player PC (#927). Looking its own entry up here puts it on its screen however it was started."""
+    raw = cfg.get("players") if isinstance(cfg, dict) else None
+    if not isinstance(raw, list):
+        return None
+    for p in raw:
+        if not isinstance(p, dict):
+            continue
+        if str(p.get("instance") or "").strip() != (instance or ""):
+            continue
+        d = p.get("display")
+        d = str(d).strip() if d is not None else ""
+        return d or None
+    return None
+
+
+def system_config():
+    """The installer's config.json (read only), {} when missing or unreadable."""
+    return _read_json(SYSTEM_CONFIG)
+
+
 def _read_json(path):
     try:
         with open(path, encoding="utf-8-sig") as f:      # a hand-edited file may carry a BOM

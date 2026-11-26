@@ -38,6 +38,8 @@ PROGRAM_DATA = os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), "S
 CONFIG = os.path.join(PROGRAM_DATA, "config.json")
 UNINSTALL_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{7C2B3E3A-5D0B-4B5E-9F7A-5C1D2E3F4A5B}_is1"
 EXIT_BY_OPERATOR = 42
+EXIT_ALREADY_RUNNING = 43     # app.py: another player of that instance already holds the session lock
+ALREADY_RUNNING_RECHECK = 30  # seconds between tries while a hand-started player holds the lock
 CREATE_NO_WINDOW = 0x08000000
 DETACHED_PROCESS = 0x00000008
 
@@ -375,6 +377,28 @@ def command_line(exe, args):
     return " ".join(['"%s"' % exe] + [('"%s"' % a) if " " in a else a for a in args])
 
 
+def describe_specs(specs):
+    """One line for the log: which players the helper is running, and on which screen (#927)."""
+    if specs == [("", [])]:
+        return 'no "players" list in %s: one player on the main screen' % CONFIG
+    parts = []
+    for key, args in specs:
+        disp = args[args.index("--display") + 1] if "--display" in args else "the main screen"
+        parts.append("%s on %s" % (key or "first", disp))
+    return "players from %s: %s" % (CONFIG, "; ".join(parts))
+
+
+_last_specs = None
+
+
+def log_specs_if_changed(specs):
+    """Log the player list at start and whenever an edit to config.json changes it, never every pass."""
+    global _last_specs
+    if specs != _last_specs:
+        log.info("%s", describe_specs(specs))
+        _last_specs = specs
+
+
 class _Slot:
     """One supervised player: its process, backoff, and whether an operator exited it this logon."""
     def __init__(self, key, args):
@@ -384,6 +408,44 @@ class _Slot:
         self.backoff = 3
         self.retry_at = 0.0
         self.suppressed_session = None
+        self.blocked = False      # a player started outside the helper holds this instance's lock
+
+    @property
+    def name(self):
+        return self.key or "first"
+
+    def exited(self, code, now, sess):
+        """Book-keeping when the supervised process has exited with `code`; schedules any relaunch."""
+        self.proc = None
+        if now - self.launched_at > 120:
+            self.backoff = 3       # it ran a good while: this is a fresh failure, not a crash loop
+        if code == EXIT_BY_OPERATOR:
+            log.info("player %s exited by operator: not relaunching until the next logon", self.name)
+            self.suppressed_session = sess
+            return
+        if code == EXIT_ALREADY_RUNNING:
+            # Not a crash: a copy started from the Start menu or a Startup shortcut holds the lock. Say so
+            # once, then keep checking at a steady pace so the helper takes over as soon as it closes.
+            if not self.blocked:
+                log.warning("player %s: another ScreenTinker player%s is already running in this session, "
+                            "started outside the ScreenTinker service (the Start menu, a Startup-folder "
+                            "shortcut?). The service can't supervise it; close it, or sign out and back in, "
+                            "and the service starts its own. Checking every %ss.",
+                            self.name, (" (instance %s)" % self.key) if self.key else "",
+                            ALREADY_RUNNING_RECHECK)
+                self.blocked = True
+            self.backoff = 3
+            self.retry_at = now + ALREADY_RUNNING_RECHECK
+            return
+        log.warning("player %s exited (%s): relaunching in %ss", self.name, code, self.backoff)
+        self.retry_at = now + self.backoff
+        self.backoff = min(self.backoff * 2, 60)
+
+    def still_running(self, now):
+        """Called each pass while the process runs: clears the stand-down note once ours has the lock."""
+        if self.blocked and now - self.launched_at > 10:
+            log.info("player %s is running under the service now", self.name)
+            self.blocked = False
 
 
 def watchdog(stop):
@@ -410,6 +472,7 @@ def watchdog(stop):
         # The wanted set is re-read every pass, so editing "players" needs no service restart: a new
         # entry starts within seconds; a removed one is left running until it exits, then not relaunched.
         wanted = player_specs(cfg)
+        log_specs_if_changed(wanted)
         wanted_keys = {k for k, _ in wanted}
         for key, args in wanted:
             sl = slots.get(key)
@@ -426,18 +489,9 @@ def watchdog(stop):
             name = key or "first"
             if sl.proc is not None:
                 if win32event.WaitForSingleObject(sl.proc, 0) == win32con.WAIT_TIMEOUT:
-                    continue                                   # still running
-                code = win32process.GetExitCodeProcess(sl.proc)
-                sl.proc = None
-                if now - sl.launched_at > 120:
-                    sl.backoff = 3       # it ran a good while: this is a fresh failure, not a crash loop
-                if code == EXIT_BY_OPERATOR:
-                    log.info("player %s exited by operator: not relaunching until the next logon", name)
-                    sl.suppressed_session = sess
+                    sl.still_running(now)
                     continue
-                log.warning("player %s exited (%s): relaunching in %ss", name, code, sl.backoff)
-                sl.retry_at = now + sl.backoff
-                sl.backoff = min(sl.backoff * 2, 60)
+                sl.exited(win32process.GetExitCodeProcess(sl.proc), now, sess)
                 continue
             if sl.suppressed_session == sess or now < sl.retry_at:
                 continue
@@ -456,7 +510,9 @@ def watchdog(stop):
                     env, os.path.dirname(exe), si)
                 sl.proc = hp
                 sl.launched_at = time.monotonic()
-                log.info("launched player %s pid %s in session %s %s", name, pid, sess, sl.args)
+                # While a hand-started copy holds the lock, each 30 s retry would add a line: keep it quiet.
+                (log.debug if sl.blocked else log.info)("launched player %s pid %s in session %s %s",
+                                                        name, pid, sess, sl.args)
             except Exception as e:
                 log.warning("launch of player %s failed: %s", name, e)
             finally:
