@@ -94,3 +94,15 @@ def pick(screens, primary, index_or_spec, geom=_geom, idents=_idents):
     if isinstance(spec, int):
         spec = ("index", spec)
     return find(screens, spec, geom, idents) or primary
+
+
+def window_is_off(win, target):
+    """True when a window (x, y, w, h) is not where its screen (x, y, w, h) wants it: its centre is outside
+    the screen, or it no longer covers it. Small differences (a fullscreen frame a pixel off) are fine, so
+    the watch in app.py never fights Windows over nothing (#927)."""
+    wx, wy, ww, wh = win
+    tx, ty, tw, th = target
+    cx, cy = wx + ww / 2, wy + wh / 2
+    if not (tx <= cx < tx + tw and ty <= cy < ty + th):
+        return True
+    return ww < tw * 0.9 or wh < th * 0.9

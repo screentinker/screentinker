@@ -7,6 +7,8 @@ on that monitor after a reboot.
     command line, and no list = exactly the one argument-less player every install has today
 """
 import os
+import sys
+import types
 
 from screentinker_native.ui import screen_pick as sp
 from screentinker_native.winhelper import service
@@ -184,7 +186,7 @@ def test_a_hand_started_copy_is_named_once_and_rechecked_steadily(caplog):
             assert sl.retry_at == i * 30.0 + 2 + service.ALREADY_RUNNING_RECHECK
             assert sl.backoff == 3 and sl.suppressed_session is None
         warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warnings) == 1 and "started outside the ScreenTinker service" in warnings[0]
+        assert len(warnings) == 1 and "one this helper didn't start" in warnings[0]
         sl.still_running(200.0)             # the copy closed and ours kept running
         assert not sl.blocked and any("running under the service" in r.getMessage() for r in caplog.records)
 
@@ -202,3 +204,167 @@ def test_player_and_helper_agree_on_the_exit_codes():
     from screentinker_native import app
     assert app.EXIT_ALREADY_RUNNING == service.EXIT_ALREADY_RUNNING
     assert app.EXIT_BY_OPERATOR == service.EXIT_BY_OPERATOR
+
+
+# ---------------------------------------------------------------- #927: a watchdog that never goes quiet
+
+class _FakeWin:
+    """Just enough of pywin32 for _watchdog_pass: a console session, who is signed in, live processes."""
+    WAIT_TIMEOUT = 258
+    CREATE_UNICODE_ENVIRONMENT = NORMAL_PRIORITY_CLASS = 0
+
+    def __init__(self):
+        self.session, self.signed_in, self.running, self.launched, self.next_pid = 1, {1}, {}, [], 100
+
+    # win32ts
+    def WTSGetActiveConsoleSessionId(self):
+        return self.session
+
+    def WTSQueryUserToken(self, sess):
+        if sess not in self.signed_in:
+            raise OSError("no user token for session %s" % sess)
+        return types.SimpleNamespace(Close=lambda: None)
+
+    # win32profile / win32process / win32event
+    def CreateEnvironmentBlock(self, token, inherit):
+        return {}
+
+    def STARTUPINFO(self):
+        return types.SimpleNamespace()
+
+    def CreateProcessAsUser(self, token, exe, cmd, *a):
+        self.next_pid += 1
+        self.running[self.next_pid] = None
+        self.launched.append((self.session, cmd))
+        return self.next_pid, None, self.next_pid, 0
+
+    def WaitForSingleObject(self, h, ms):
+        return self.WAIT_TIMEOUT if self.running.get(h) is None else 0
+
+    def GetExitCodeProcess(self, h):
+        return self.running.pop(h)
+
+    def end_session(self, code=0):
+        for pid in list(self.running):
+            self.running[pid] = code
+
+
+def _wd(monkeypatch, cfg):
+    fw = _FakeWin()
+    monkeypatch.setattr(service, "load_config", lambda: cfg)
+    monkeypatch.setattr(service, "player_exe", lambda: r"C:\Program Files\ScreenTinker\ScreenTinker.exe")
+    monkeypatch.setattr(service, "_noted", {})
+    monkeypatch.setattr(service, "_last_specs", None)
+    return fw, {"slots": {}, "session_seen": None, "api": (fw,) * 5}
+
+
+def _passes(w, n, clock, monkeypatch, step=3.0):
+    for _ in range(n):
+        clock[0] += step
+        monkeypatch.setattr(service.time, "monotonic", lambda: clock[0])
+        service._watchdog_pass(w)
+
+
+def test_after_a_sign_out_the_players_come_back_when_someone_signs_in_and_the_wait_is_logged_once(
+        monkeypatch, caplog):
+    """Buster's log: both exited (0) at sign-out, were relaunched into the closing session, exited again,
+    then nothing at all. Every step of that path now leaves one line, and sign-in brings both back."""
+    import logging
+    cfg = {"server_url": "https://x", "players": [{"display": "@0,0"}, {"instance": "2", "display": "@1920,0"}]}
+    fw, w = _wd(monkeypatch, cfg)
+    clock = [1000.0]
+    with caplog.at_level(logging.INFO, logger="helper"):
+        _passes(w, 1, clock, monkeypatch)
+        assert len(fw.launched) == 2
+        fw.end_session(0)                           # sign-out: both quit cleanly
+        _passes(w, 3, clock, monkeypatch)           # relaunched into session 1 while it closes
+        assert len(fw.launched) == 4
+        fw.end_session(0)
+        fw.signed_in.discard(1)
+        fw.session = 2                              # the sign-in screen
+        _passes(w, 20, clock, monkeypatch)
+        assert len(fw.launched) == 4
+        fw.signed_in.add(2)                         # someone signs in
+        _passes(w, 2, clock, monkeypatch)
+    assert [s for s, _ in fw.launched[4:]] == [2, 2]
+    assert any("--instance 2" in c for _, c in fw.launched[4:])
+    msgs = [r.getMessage() for r in caplog.records]
+    waits = [m for m in msgs if "no one is signed in yet" in m]
+    assert len(waits) == 1 and "session 2" in waits[0]
+    assert "console session is 2" in msgs
+
+
+def test_the_watchdog_names_why_it_starts_nothing(monkeypatch, caplog):
+    import logging
+    cfg = {"server_url": "https://x", "autostart": False}
+    fw, w = _wd(monkeypatch, cfg)
+    clock = [0.0]
+    with caplog.at_level(logging.INFO, logger="helper"):
+        _passes(w, 5, clock, monkeypatch)
+        del cfg["server_url"], cfg["autostart"]
+        _passes(w, 5, clock, monkeypatch)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert sum('"autostart" is false' in m for m in msgs) == 1
+    assert sum('no "server_url"' in m for m in msgs) == 1
+    assert fw.launched == []
+
+
+class _Stop:
+    def __init__(self, n):
+        self.n = n
+
+    def wait(self, t):
+        self.n -= 1
+        return self.n < 0
+
+
+def test_an_exception_in_one_pass_no_longer_ends_the_watchdog(monkeypatch, caplog):
+    import logging
+    for m in ("win32con", "win32event", "win32process", "win32profile", "win32ts"):
+        monkeypatch.setitem(sys.modules, m, types.ModuleType(m))
+    monkeypatch.setattr(service, "_noted", {})
+    calls = []
+
+    def flaky(w):
+        calls.append(1)
+        if len(calls) <= 3:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(service, "_watchdog_pass", flaky)
+    with caplog.at_level(logging.INFO, logger="helper"):
+        service.watchdog(_Stop(6))
+    assert len(calls) == 6
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1 and errors[0].exc_info
+
+
+def test_a_stuck_watchdog_restarts_the_helper_and_says_where_it_was(monkeypatch, caplog):
+    import logging
+
+    def stuck_in_create_environment_block():
+        return sys._getframe()
+
+    frame = stuck_in_create_environment_block()
+    monkeypatch.setitem(service._beat, "at", 0.0)
+    monkeypatch.setitem(service._beat, "thread", 7)
+    assert service.stall_problem(service.WATCHDOG_STALL - 1) is None
+    msg = service.stall_problem(500.0, frames={7: frame})
+    assert "500s" in msg and "stuck_in_create_environment_block" in msg
+    assert "thread is gone" in service.stall_problem(500.0, frames={})
+
+    monkeypatch.setattr(service.time, "monotonic", lambda: 500.0)
+    monkeypatch.setattr(service.logging, "shutdown", lambda: None)
+    exits = []
+    with caplog.at_level(logging.INFO, logger="helper"):
+        service.stall_guard(_Stop(1), exit=exits.append)
+    assert exits == [1]
+    assert any("Restarting the helper" in r.getMessage() for r in caplog.records)
+
+
+def test_a_window_moved_off_its_screen_is_noticed_but_a_pixel_of_frame_is_not():
+    va2419 = (1319, 768, 1920, 1080)
+    assert not sp.window_is_off((1319, 768, 1920, 1080), va2419)
+    assert not sp.window_is_off((1318, 767, 1922, 1082), va2419)       # fullscreen frame slop
+    assert sp.window_is_off((0, 0, 1920, 1080), va2419)                # dropped onto the primary
+    assert sp.window_is_off((1319, 768, 1024, 600), va2419)            # restored to a small window
+    assert sp.window_is_off((1330, -1080, 1920, 1080), va2419)         # on the other player's screen
