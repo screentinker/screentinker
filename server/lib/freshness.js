@@ -121,8 +121,29 @@ function resourceWorkspace(db, type, id) {
   return row ? row.workspace_id : null;
 }
 
+/*
+ * Bumped by every invalidate. A report computed off-thread is only remembered if no invalidate
+ * happened while it was being computed, or a snooze made during a slow compute would be undone by
+ * the stale answer arriving after it.
+ */
+const generations = new Map();
+let allGeneration = 0;
+function generation(workspaceId) { return `${allGeneration}:${generations.get(workspaceId) || 0}`; }
+
 function invalidate(workspaceId) {
-  if (workspaceId) cache.delete(workspaceId); else cache.clear();
+  if (workspaceId) { cache.delete(workspaceId); generations.set(workspaceId, (generations.get(workspaceId) || 0) + 1); }
+  else { cache.clear(); allGeneration++; }
+}
+
+/** The cached report if it is younger than maxAgeMs (default: the chips' TTL), else null. */
+function cached(workspaceId, maxAgeMs = CACHE_TTL_MS) {
+  const hit = workspaceId ? cache.get(workspaceId) : null;
+  return hit && Date.now() - hit.at < maxAgeMs ? hit.report : null;
+}
+
+/** Store a report computed elsewhere (the worker) as this process's cached copy. */
+function remember(workspaceId, report) {
+  if (workspaceId && report) cache.set(workspaceId, { at: Date.now(), report });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -232,7 +253,48 @@ function severity(flags) { return (flags || []).reduce((m, f) => Math.max(m, SEV
  * Everything the Freshness page, the chips, the Simple home line and the digest need, for one
  * workspace. Every query is scoped by `workspaceId`; nothing here takes a resource id from a caller.
  */
-function computeWorkspace(db, workspaceId, { now = nowSec(), useCache = true } = {}) {
+/*
+ * ⚠️ PROOF-OF-PLAY IS READ ONE SCREEN AND ONE DAY AT A TIME, NEVER AS ONE STATEMENT.
+ *
+ * The single GROUP BY this replaced read every play in the window in one go: a workspace whose 28
+ * screens log a play every 11 s is ~900k rows a week, 3-13 s on production. On the main thread that
+ * froze the whole server (every heartbeat, every page) for its duration; the dashboard chips and the
+ * 09:00 digest both ran it. Moving it to a worker (lib/freshness-runner.js) is not enough on its own:
+ * one long statement holds a read snapshot for its whole run, and the WAL checkpoint's TRUNCATE waits
+ * on that snapshot while holding the write lock, which stalls every main-thread write instead.
+ *
+ * Each slice is its own short statement (its own snapshot) on the (device_id, started_at) index, so
+ * the checkpoint is never kept waiting longer than one slice. The sums add up to exactly what the one
+ * statement returned: the slices partition the window by device and by [start, end) time.
+ */
+const _playSliceSql = `
+    SELECT content_id, widget_id, COUNT(*) AS n, SUM(COALESCE(duration_sec, 10)) AS secs
+      FROM play_logs
+     WHERE device_id = ? AND workspace_id = ? AND started_at >= ? AND started_at < ?
+     GROUP BY content_id, widget_id`;
+function playsInWindow(db, workspaceId, deviceIds, since, now) {
+  const stmt = db.prepare(_playSliceSql);
+  // The last slice is open-ended, like the one statement was: a play stamped ahead of this clock (a
+  // player whose clock runs fast) still counts.
+  const OPEN = Number.MAX_SAFE_INTEGER;
+  const out = [];
+  for (const deviceId of deviceIds) {
+    const byKey = new Map();
+    for (let from = since; from <= now; from += DAY) {
+      const to = from + DAY > now ? OPEN : from + DAY;
+      for (const r of stmt.all(deviceId, workspaceId, from, to)) {
+        const key = JSON.stringify([r.content_id, r.widget_id]);
+        const acc = byKey.get(key);
+        if (acc) { acc.n += r.n; acc.secs += r.secs || 0; }
+        else byKey.set(key, { device_id: deviceId, content_id: r.content_id, widget_id: r.widget_id, n: r.n, secs: r.secs || 0 });
+      }
+    }
+    for (const v of byKey.values()) out.push(v);
+  }
+  return out;
+}
+
+function computeWorkspace(db, workspaceId, { now = nowSec(), useCache = true, keep = true } = {}) {
   if (!workspaceId) return null;
   if (useCache) {
     const hit = cache.get(workspaceId);
@@ -260,11 +322,7 @@ function computeWorkspace(db, workspaceId, { now = nowSec(), useCache = true } =
 
   // Proof-of-play, per device and item, over the window. The device list is this workspace's, and
   // the snapshotted play_logs.workspace_id must agree (lib/play-report.js says why).
-  const plays = db.prepare(`
-    SELECT device_id, content_id, widget_id, COUNT(*) AS n, SUM(COALESCE(duration_sec, 10)) AS secs
-      FROM play_logs
-     WHERE device_id IN (SELECT id FROM devices WHERE workspace_id = ?) AND workspace_id = ? AND started_at >= ?
-     GROUP BY device_id, content_id, widget_id`).all(workspaceId, workspaceId, since);
+  const plays = playsInWindow(db, workspaceId, devices.map((d) => d.id), since, now);
 
   const content = new Map();
   for (const c of db.prepare(`SELECT id, filename, mime_type, remote_url, created_at, updated_at, expires_at
@@ -446,7 +504,8 @@ function computeWorkspace(db, workspaceId, { now = nowSec(), useCache = true } =
     playlists: playlistOut,
     items: itemOut,
   };
-  cache.set(workspaceId, { at: Date.now(), report });
+  // keep:false is the worker's: its copy of this module is not the cache anyone reads from.
+  if (keep) cache.set(workspaceId, { at: Date.now(), report });
   return report;
 }
 
@@ -523,6 +582,6 @@ function chipsFrom(report) {
 
 module.exports = {
   DEFAULTS, DARK_DAYS, SNOOZE_TYPES,
-  getSettings, validateSettings, saveSettings, activeSnoozes, resourceWorkspace, invalidate,
-  computeWorkspace, chipsFrom, statusFor, contentAgeable, widgetTextParts, darkness,
+  getSettings, validateSettings, saveSettings, activeSnoozes, resourceWorkspace, invalidate, cached, remember, generation,
+  computeWorkspace, playsInWindow, chipsFrom, statusFor, contentAgeable, widgetTextParts, darkness,
 };

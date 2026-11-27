@@ -39,18 +39,34 @@ function requireWs(req, res) {
   return true;
 }
 
-router.get('/', (req, res) => {
+/*
+ * ⚠️ BOTH REPORT ROUTES AWAIT lib/freshness-runner, WHICH COMPUTES ON A WORKER THREAD. Computed here,
+ * on the request's own thread, one large workspace's report froze the whole server (every screen's
+ * heartbeat included) for 3-13 s on production. Never call freshness.computeWorkspace from a route.
+ */
+const runner = () => require('../lib/freshness-runner').defaultRunner();
+
+router.get('/', async (req, res) => {
   if (!requireWs(req, res)) return;
   // Always computed fresh: the page is opened rarely, and right after one of its own fixes (an expiry
   // set through the content route, which this cache cannot hear about) a minute-old answer would
   // show the problem still there. The cached copy serves the chips, which are drawn constantly.
-  const report = freshness.computeWorkspace(db, req.workspaceId, { useCache: false });
-  res.json({ ...report, can_write: canWrite(req), can_admin: canAdmin(req) });
+  try {
+    const report = await runner().report(req.workspaceId, { fresh: true });
+    if (!report) return res.status(503).json({ error: 'The freshness report is not available right now. Try again in a minute.' });
+    res.json({ ...report, can_write: canWrite(req), can_admin: canAdmin(req) });
+  } catch (e) {
+    res.status(500).json({ error: 'Could not build the freshness report' });
+  }
 });
 
-router.get('/chips', (req, res) => {
+router.get('/chips', async (req, res) => {
   if (!requireWs(req, res)) return;
-  res.json(freshness.chipsFrom(freshness.computeWorkspace(db, req.workspaceId)));
+  // No report yet (the worker is busy or restarting): no chips, which the dashboard already treats
+  // as "nothing to flag". Chips are hints; they are never worth holding the server for.
+  let report = null;
+  try { report = await runner().report(req.workspaceId); } catch (_) { /* no chips */ }
+  res.json(freshness.chipsFrom(report));
 });
 
 router.get('/settings', (req, res) => {
