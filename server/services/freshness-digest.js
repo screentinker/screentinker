@@ -39,6 +39,9 @@ const RUN_HOUR_UTC = 9;
 const RESEND_AFTER_SEC = Math.round(6.5 * 86400);
 const MAX_LINES = 5;
 
+/** Let everything queued (heartbeats, requests) run before the next step. */
+const yieldNow = () => new Promise((r) => setImmediate(r));
+
 function htmlEscape(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -153,17 +156,33 @@ ${parts.map((p) => p.html).join('\n')}
 /**
  * One sweep. Injected db/email/now/appUrl so tests drive it directly. Returns a summary object.
  */
-async function runDigestSweep({ db = defaultDb, email = defaultEmail, now = Math.floor(Date.now() / 1000), appUrl = process.env.APP_URL } = {}) {
+/*
+ * ⚠️ NEVER COMPUTE A REPORT ON THIS THREAD, AND NEVER LOOP WITHOUT YIELDING.
+ *
+ * This sweep used to compute every workspace's report inline, and a person with nothing stale
+ * `continue`d without ever reaching an await, so the whole run (1,018 workspaces on production) was
+ * ONE synchronous block: a 28 s freeze of the entire server every morning at 09:00 UTC, during which
+ * no screen could reach it. Reports now come from the worker (lib/freshness-runner.js), and the loop
+ * yields once per person regardless.
+ *
+ * `reports` is injectable so a test can drive the sweep against its own database; the default is
+ * the worker-backed runner when the sweep runs on the server's own database.
+ */
+async function runDigestSweep({ db = defaultDb, email = defaultEmail, now = Math.floor(Date.now() / 1000), appUrl = process.env.APP_URL, reports: source = null } = {}) {
   if (!enabled()) return { skipped: 'disabled', sent: 0 };
   if (!email.isConfigured()) return { skipped: 'email_not_configured', sent: 0 };
   const base = appBase(appUrl);
   if (!base) return { skipped: 'no_app_url', sent: 0 };
 
+  const compute = source
+    || (db === defaultDb
+      ? (wsId) => require('../lib/freshness-runner').defaultRunner().report(wsId, { fresh: true, now, keep: false })
+      : async (wsId) => { await yieldNow(); return freshness.computeWorkspace(db, wsId, { now, useCache: false, keep: false }); });
   const reports = new Map();
-  const reportFor = (wsId) => {
+  const reportFor = async (wsId) => {
     if (!reports.has(wsId)) {
       let r = null;
-      try { r = freshness.computeWorkspace(db, wsId, { now, useCache: false }); } catch (e) { console.warn(`[freshness] report failed for ${wsId}: ${e.message}`); }
+      try { r = await compute(wsId); } catch (e) { console.warn(`[freshness] report failed for ${wsId}: ${e.message}`); }
       reports.set(wsId, r);
     }
     return reports.get(wsId);
@@ -173,7 +192,9 @@ async function runDigestSweep({ db = defaultDb, email = defaultEmail, now = Math
   let sent = 0, considered = 0;
   for (const u of recipients(db, now)) {
     considered++;
-    const entries = workspacesFor(db, u.id).map((ws) => ({ ws, report: reportFor(ws.id) }));
+    await yieldNow();
+    const entries = [];
+    for (const ws of workspacesFor(db, u.id)) entries.push({ ws, report: await reportFor(ws.id) });
     const msg = composeDigest(u, entries, base);
     if (!msg) continue;
     let r;
