@@ -187,3 +187,43 @@ test('the digest never computes a report on the main thread', async () => {
 test('the database is intact afterwards', () => {
   assert.equal(db.pragma('integrity_check', { simple: true }), 'ok');
 });
+
+// ---------------------------------------------------------------------------------------------
+// Chips answer now (reportSoon): a dashboard never waits on a report.
+// ---------------------------------------------------------------------------------------------
+
+test('chips with nothing cached: answer null within waitMs, and the report still lands for the next ask', async () => {
+  freshness.invalidate(F.ws);
+  const r = mkRunner();
+  const t0 = Date.now();
+  assert.equal(await r.reportSoon(F.ws, { waitMs: 0 }), null, 'no report yet: no chips, right away');
+  assert.ok(Date.now() - t0 < 1000);
+  await r.report(F.ws);   // joins the compute reportSoon started (shared), it does not start another
+  const next = await r.reportSoon(F.ws, { waitMs: 0 });
+  assert.ok(next && next.devices.length === 3, 'the next ask gets the finished report');
+});
+
+test('chips with an old report: that report at once, refreshed in the background', async () => {
+  freshness.invalidate(F.ws);
+  const r = mkRunner();
+  freshness.remember(F.ws, { marker: 'old' });
+  const realNow = Date.now;
+  Date.now = () => realNow() + 5 * 60 * 1000;   // the cached report is now five minutes old
+  let served;
+  try { served = await r.reportSoon(F.ws, { waitMs: 0 }); } finally { Date.now = realNow; }
+  assert.deepEqual(served, { marker: 'old' }, 'answered with what we had, not made to wait');
+  // The background refresh it started replaces the old report when it lands.
+  const until = Date.now() + 15000;
+  while (Date.now() < until && !(freshness.cached(F.ws) || {}).devices) await new Promise((res) => setTimeout(res, 20));
+  const fresh = freshness.cached(F.ws);
+  assert.ok(fresh && fresh.devices && fresh.devices.length === 3, 'replaced by a real report');
+});
+
+test('chips after a snooze or settings change never get the report from before it', async () => {
+  const r = mkRunner();
+  freshness.remember(F.ws, { marker: 'before-snooze' });
+  freshness.invalidate(F.ws);   // what a snooze / settings save does
+  const got = await r.reportSoon(F.ws, { waitMs: 30000 });
+  assert.notDeepEqual(got, { marker: 'before-snooze' });
+  assert.ok(got && got.devices.length === 3);
+});
