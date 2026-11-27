@@ -153,6 +153,32 @@ function createFreshnessRunner({ dbPath, db, logger = console, preferWorker = tr
       return p;
     },
 
+    /*
+     * ⚠️ FOR THE CHIPS: ANSWER NOW, NEVER MAKE A DASHBOARD WAIT FOR A REPORT.
+     *
+     * A large workspace's report takes 18-30 s on the worker (production, cold cache after a
+     * restart), and a dashboard that asked for its chips sat on that request the whole time. Chips
+     * are hints, and the dashboard already treats an empty answer as "nothing to flag", so:
+     *   - a report under a minute old: that report;
+     *   - an older one: that one, right away, while a fresh one is computed for the next ask;
+     *   - none at all (just after a restart, or right after a snooze/settings change cleared it):
+     *     wait up to `waitMs` for the compute, else answer null and let it finish for the next ask.
+     * An invalidate() removes the cached report, so a snooze is never answered with the report from
+     * before it.
+     */
+    async reportSoon(workspaceId, { waitMs = 3000 } = {}) {
+      if (!workspaceId) return null;
+      const recent = freshness.cached(workspaceId);
+      if (recent) return recent;
+      const old = freshness.cached(workspaceId, Infinity);
+      const pending = this.report(workspaceId);   // starts (or joins) the shared compute
+      pending.catch(() => {});
+      if (old) return old;
+      let timer;
+      const late = new Promise((r) => { timer = setTimeout(() => r(null), waitMs); if (timer.unref) timer.unref(); });
+      try { return await Promise.race([pending, late]); } finally { clearTimeout(timer); }
+    },
+
     stop() { tearDown(null); },
   };
 }

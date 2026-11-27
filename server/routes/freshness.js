@@ -63,9 +63,10 @@ router.get('/', async (req, res) => {
 router.get('/chips', async (req, res) => {
   if (!requireWs(req, res)) return;
   // No report yet (the worker is busy or restarting): no chips, which the dashboard already treats
-  // as "nothing to flag". Chips are hints; they are never worth holding the server for.
+  // as "nothing to flag". Chips are hints; they are never worth holding the server, or the
+  // dashboard's request, for: reportSoon answers within a few seconds at most.
   let report = null;
-  try { report = await runner().report(req.workspaceId); } catch (_) { /* no chips */ }
+  try { report = await runner().reportSoon(req.workspaceId); } catch (_) { /* no chips */ }
   res.json(freshness.chipsFrom(report));
 });
 
