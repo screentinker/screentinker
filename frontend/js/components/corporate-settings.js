@@ -92,7 +92,14 @@ export async function mountCorporateSettings(host) {
   q('#csCap').addEventListener('change', () => { if (policy() === 'leased') showImpact(); });
   if (policy() !== 'allow') showImpact();
 
-  q('#csCreateHq')?.addEventListener('click', () => openWorkspaceCreateModal());
+  q('#csCreateHq')?.addEventListener('click', () => {
+    /*
+     * The HQ picker sits inside the corporate settings card. The workspace-create modal fetches its
+     * own org list lazily from /api/workspaces/target-orgs, so we don't need to fetch /me here —
+     * the corporate-settings view doesn't otherwise read any /me field either.
+     */
+    openWorkspaceCreateModal();
+  });
 
   q('#csSave').addEventListener('click', async () => {
     const body = {};

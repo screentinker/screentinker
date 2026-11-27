@@ -955,10 +955,21 @@ export const api = {
   updateMe: (data) => request('/auth/me', { method: 'PUT', body: JSON.stringify(data) }).then(keepSession),
   switchWorkspace: (workspaceId) => request('/auth/switch-workspace', { method: 'POST', body: JSON.stringify({ workspace_id: workspaceId }) }),
   /*
-   * ⚠️ THE ORG IS NOT SENT. The server resolves it from the caller's own membership — a body-supplied
-   * organization_id is honoured only after it verifies the caller administers that org, so passing
-   * one from here would buy nothing and invite the mistake. See routes/workspaces.js.
+   * ⚠️ organization_id IS SENT when the caller administers more than one organization. The server
+   * (routes/workspaces.js resolveTargetOrg) re-validates that the caller actually has org_owner /
+   * org_admin in that org (or is a platform admin) before honoring it, so the picker in the modal
+   * cannot be used to land a workspace in someone else's tenant. With a single administered org
+   * the field is omitted and the server resolves from membership, exactly as before.
    */
+  /*
+   * Organizations this caller can create a workspace inside.
+   *
+   * Server: GET /api/workspaces/target-orgs. Empty array means the caller administers NONE
+   * (defense in depth — the create route will refuse with 403). Fetch failure returns null
+   * so the modal can fall through to "omit organization_id and let the server resolve", which
+   * preserves the pre-multi-org behaviour for callers without the field populated.
+   */
+  listTargetOrgs: () => request('/workspaces/target-orgs').catch(() => null),
   createWorkspace: (data) => request('/workspaces', { method: 'POST', body: JSON.stringify(data ?? {}) }),
   renameWorkspace: (id, data) => request(`/workspaces/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   updateWorkspaceSecuritySettings: (workspaceId, data) => request(`/workspaces/${workspaceId}/security-settings`, { method: 'PUT', body: JSON.stringify(data) }),

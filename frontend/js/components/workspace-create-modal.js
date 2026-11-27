@@ -13,6 +13,18 @@ import { api } from '../api.js';
  * Deliberately mirrors workspace-rename-modal.js — same overlay classes, same Escape/Enter
  * handling, same error surface. Two modals for two verbs on one object should look identical, and
  * the rename one is the shape this codebase already settled on.
+ *
+ * The org picker here is the front end of a server rule that refuses an ambiguous create: a caller
+ * who administers more than one organization must specify which one, or the route returns 400
+ * (resolveTargetOrg in server/routes/workspaces.js). One org: still visible — read-only — so the
+ * operator can see which tenant they're creating into. Zero orgs: nothing to create into, Save
+ * disabled.
+ *
+ * The list comes from GET /api/workspaces/target-orgs (lazy). It used to be bundled into /me, but
+ * on a hosted instance that means shipping every tenant on every page load for the only consumer
+ * being this modal — and the modal can ask when it opens. Fetch failure falls through to "omit
+ * organization_id and let the server resolve", which preserves the pre-multi-org behaviour for an
+ * older session whose /me cache lacks the field.
  */
 export function openWorkspaceCreateModal() {
   const overlay = document.createElement('div');
@@ -29,6 +41,7 @@ export function openWorkspaceCreateModal() {
       </div>
       <div class="modal-body">
         <div style="color:var(--text-muted);font-size:13px;margin-bottom:12px">${t('switcher.create_hint')}</div>
+        <div id="createWsOrgSlot"></div>
         <div class="form-group">
           <label for="createWsName">${t('switcher.create_name_label')}</label>
           <input id="createWsName" type="text" class="input" maxlength="80" placeholder="${t('switcher.create_name_placeholder')}" style="width:100%">
@@ -48,16 +61,91 @@ export function openWorkspaceCreateModal() {
   `;
   document.body.appendChild(overlay);
 
+  /*
+   * The org control. Four states, all rendered into the same slot:
+   *
+   *   - loading: a muted "Loading…" line and Save disabled. Shown until the endpoint resolves.
+   *     The endpoint is small and usually cached, but on a slow link the modal would otherwise
+   *     flash an empty form.
+   *
+   *   - null (fetch failed): NO picker at all, organization_id stays unset. The create route then
+   *     resolves from membership the same way it always did pre-multi-org, which preserves
+   *     behaviour for any caller whose /me cache lacks the field. If they administer no org or
+   *     several, the server refuses with 403 / 400 in its own words.
+   *
+   *   - one (===1): a read-only "In: <name>" line + hidden input. The server would accept this
+   *     without any body field; we still surface it so the operator sees where the workspace is
+   *     about to land.
+   *
+   *   - many (>1): a select with one option per administered org; default to the current org if
+   *     it's in the list, otherwise nothing selected and Save is blocked until the operator
+   *     chooses. This is the case the server used to refuse with 400.
+   *
+   *   - zero (===0): an error line and Save disabled. canCreateWorkspace already hides the entry
+   *     point in this state, but a corporate-settings caller could still get here; defend in depth.
+   */
+  const orgSlot = overlay.querySelector('#createWsOrgSlot');
   const nameInput = overlay.querySelector('#createWsName');
   const slugInput = overlay.querySelector('#createWsSlug');
   const errorEl = overlay.querySelector('#createWsError');
   const saveBtn = overlay.querySelector('#createWsSave');
+
+  // Resolved on render and re-resolved by setPicker below. `null` means "we never asked" or "ask
+  // failed" — that is the path that omits organization_id entirely and lets the server resolve.
+  let orgs = null;
+  let orgInput = null;
+  let initialOrgId = null;
+  orgSlot.innerHTML = `<div class="form-group"><div style="color:var(--text-muted);font-size:12px">…</div></div>`;
+  saveBtn.disabled = true;
   nameInput.focus();
+
+  function setPicker(result) {
+    orgs = Array.isArray(result) ? result : null;
+    orgSlot.innerHTML = '';
+    orgInput = null;
+    initialOrgId = null;
+    if (orgs === null) {
+      // Fetch failed or older session. NO picker; the server resolves from membership as before.
+      saveBtn.disabled = false;
+      return;
+    }
+    if (orgs.length > 1) {
+      const currentOrgId = (() => { try { return JSON.parse(localStorage.getItem('user') || 'null')?.current_organization?.id || null; } catch (_) { return null; } })();
+      initialOrgId = currentOrgId && orgs.some((o) => o.id === currentOrgId) ? currentOrgId : '';
+      orgSlot.innerHTML = `
+        <div class="form-group">
+          <label for="createWsOrg">${t('switcher.create_org_label')}</label>
+          <select id="createWsOrg" class="input" style="width:100%">
+            <option value="">${t('switcher.create_org_placeholder')}</option>
+            ${orgs.map((o) => `<option value="${esc(o.id)}"${o.id === initialOrgId ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}
+          </select>
+        </div>`;
+      orgInput = overlay.querySelector('#createWsOrg');
+      saveBtn.disabled = !initialOrgId;
+    } else if (orgs.length === 1) {
+      initialOrgId = orgs[0].id;
+      orgSlot.innerHTML = `
+        <div class="form-group">
+          <div style="color:var(--text-muted);font-size:12px">${esc(t('switcher.create_org_in', { name: orgs[0].name }))}</div>
+          <input type="hidden" id="createWsOrg" value="${esc(orgs[0].id)}">
+        </div>`;
+      orgInput = overlay.querySelector('#createWsOrg');
+      saveBtn.disabled = false;
+    } else {
+      orgSlot.innerHTML = `
+        <div class="form-group">
+          <div style="color:var(--danger);font-size:12px">${t('switcher.create_org_none')}</div>
+        </div>`;
+      saveBtn.disabled = true;
+    }
+  }
+
+  api.listTargetOrgs().then(setPicker).catch(() => setPicker(null));
 
   function close() { overlay.remove(); document.removeEventListener('keydown', onKey); }
   function onKey(e) {
     if (e.key === 'Escape') close();
-    else if (e.key === 'Enter' && (e.target === nameInput || e.target === slugInput)) save();
+    else if (e.key === 'Enter' && (e.target === nameInput || e.target === slugInput || e.target === orgInput)) save();
   }
   document.addEventListener('keydown', onKey);
 
@@ -79,11 +167,16 @@ export function openWorkspaceCreateModal() {
     errorEl.style.display = 'none';
     const name = nameInput.value.trim();
     const slug = slugInput.value.trim();
+    // orgs === null → no picker was shown → omit organization_id and let the server resolve.
+    const organizationId = orgInput ? orgInput.value : '';
     if (!name) { showError(t('switcher.create_name_required')); busy = false; return; }
+    if (Array.isArray(orgs) && orgs.length > 1 && !organizationId) { showError(t('switcher.create_org_required')); busy = false; return; }
     saveBtn.disabled = true;
     saveBtn.textContent = t('switcher.create_working');
     try {
-      const ws = await api.createWorkspace({ name, slug: slug || undefined });
+      const payload = { name, slug: slug || undefined };
+      if (organizationId) payload.organization_id = organizationId;
+      const ws = await api.createWorkspace(payload);
       /*
        * ⚠️ SWITCH INTO IT BEFORE RELOADING. A new workspace is empty, and landing back in the OLD
        * one with a success toast is indistinguishable from nothing having happened — the operator's
@@ -132,4 +225,8 @@ export function openWorkspaceCreateModal() {
   }
 
   saveBtn.addEventListener('click', save);
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }

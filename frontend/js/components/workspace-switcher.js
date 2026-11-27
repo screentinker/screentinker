@@ -73,12 +73,15 @@ function createButtonHtml(me) {
 }
 
 /** Wire every create affordance inside `scope`. Safe to call when there are none. */
-function wireCreateButtons(scope) {
+function wireCreateButtons(scope, me) {
   scope.querySelectorAll('[data-create-workspace]').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();          // never let it also trigger a row's switch handler
       scope.classList.remove('open');
       const { openWorkspaceCreateModal } = await import('./workspace-create-modal.js');
+      // Modal fetches its org list lazily from /api/workspaces/target-orgs; the /me payload is no
+      // longer needed here. canCreateWorkspace above already proved the caller is allowed to create,
+      // and the modal renders the picker for however many orgs they administer.
       openWorkspaceCreateModal();
     });
   });
@@ -195,7 +198,7 @@ export function renderWorkspaceSwitcher(me, remoteOrgs = []) {
       </div>
       ${createButtonHtml(me)}`;
     wireAdminIcons(container, [only]);
-    wireCreateButtons(container);
+    wireCreateButtons(container, me);
     return;
   }
 
@@ -381,7 +384,7 @@ export function renderWorkspaceSwitcher(me, remoteOrgs = []) {
       switchTo(item.dataset.workspaceId);
     });
   });
-  wireCreateButtons(container);
+  wireCreateButtons(container, me);
 
   // Click-outside closes the menu.
   document.addEventListener('click', (e) => {

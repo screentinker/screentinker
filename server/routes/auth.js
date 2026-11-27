@@ -1001,6 +1001,14 @@ router.get('/me', requireAuth, resolveTenancy, (req, res) => {
         FROM organizations o LEFT JOIN users u ON u.id = o.owner_user_id WHERE o.id = ?`).get(req.organizationId)
     : null;
 
+  /*
+   * The organizations this caller is allowed to create a workspace inside used to live here and got
+   * lifted out — a hosted instance carries every tenant on the server, and shipping that list on
+   * every /me hit (which is every page load) was wasted bandwidth for the only consumer (the
+   * workspace-create modal). It is now GET /api/workspaces/target-orgs, fetched lazily when the
+   * modal opens. See server/routes/workspaces.js for the matching route.
+   */
+
   res.json({
     ...req.user,
     // Read straight from the row (the JWT predates this field) so the client's verify banner
