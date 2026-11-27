@@ -2347,6 +2347,22 @@ const migrations = [
   'CREATE INDEX IF NOT EXISTS idx_play_logs_content_ref ON play_logs(content_id) WHERE content_id IS NOT NULL',
   'CREATE INDEX IF NOT EXISTS idx_play_logs_widget_ref ON play_logs(widget_id) WHERE widget_id IS NOT NULL',
   /*
+   * ⚠️ THE ENERGY SAMPLER'S "WHICH PANEL IS ATTACHED" LOOKUP (lib/energy/index.js
+   * latestAttachedDisplay) asks for the newest telemetry row WITH attached_display set. On
+   * idx_telemetry_device that is a walk down every one of the screen's telemetry rows (up to 6,000)
+   * whenever the screen never reported a panel, which is almost all of them: on production
+   * 2026-11-27 only 4 of 679 screens had, among 1M telemetry rows. The sampler resolves every
+   * screen's wattage together, cached for ten minutes, so every ten minutes it ran that walk for all
+   * of them in one go: a 1.3-5 s freeze of the whole server, like clockwork (141 of 218 freezes in
+   * 30 h; caught in a CPU profile, 4.1 s under latestAttachedDisplay).
+   *
+   * PARTIAL, so it holds only the rows that have a panel (18k of 1M on prod, ~1 MB) and costs
+   * nothing on the telemetry writes that do not. The lookup's `attached_display IS NOT NULL`
+   * matches the WHERE, so SQLite uses it (verified: 679 lookups 489 ms -> 1.5 ms, same 4 found).
+   * Built once at boot (285 ms on a laptop over prod's 1M rows); IF NOT EXISTS after that.
+   */
+  'CREATE INDEX IF NOT EXISTS idx_telemetry_attached_display ON device_telemetry(device_id, reported_at DESC) WHERE attached_display IS NOT NULL',
+  /*
    * #473 v2: one row per visitor session on an interactive web page (Reports > Interactive
    * sessions). client_id is the player's own record id, UNIQUE per device, so a batch the player
    * resends after a lost ack is ignored rather than counted twice. workspace_id is snapshotted at
