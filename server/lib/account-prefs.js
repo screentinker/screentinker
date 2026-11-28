@@ -10,7 +10,7 @@
  * ⚠️ The two lists must match the dashboard: LANGUAGES = the registry in frontend/js/i18n.js,
  * THEMES = the ids in frontend/js/lib/themes.js. test/account-prefs.test.js pins both.
  */
-const LANGUAGES = ['en', 'es', 'fr', 'de', 'pt', 'hi', 'it', 'ja', 'zh', 'nl', 'da'];
+const LANGUAGES = ['en', 'es', 'fr', 'de', 'pt', 'hi', 'it', 'ja', 'zh', 'nl', 'da', 'pl'];
 const THEMES = ['graphite', 'control-room', 'light', 'classic'];
 
 /**

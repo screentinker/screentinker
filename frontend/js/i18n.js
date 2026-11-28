@@ -12,9 +12,10 @@ import ja from './i18n/ja.js';
 import zh from './i18n/zh.js';
 import nl from './i18n/nl.js';
 import da from './i18n/da.js';
+import pl from './i18n/pl.js';
 
 const fallback = en;
-const registry = { en, es, fr, de, pt, hi, it, ja, zh, nl, da };
+const registry = { en, es, fr, de, pt, hi, it, ja, zh, nl, da, pl };
 
 let currentLang = localStorage.getItem('rd_lang') || navigator.language?.split('-')[0] || 'en';
 if (!registry[currentLang]) currentLang = 'en';
@@ -116,6 +117,7 @@ export function getAvailableLanguages() {
     { code: 'hi', name: 'हिन्दी' },
     { code: 'nl', name: 'Nederlands' },
     { code: 'da', name: 'Dansk' },
+    { code: 'pl', name: 'Polski' },
   ];
 }
 

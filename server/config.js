@@ -80,6 +80,19 @@ module.exports = {
    */
   rateLimitBackstop: backstop.parseLimit(process.env.RATE_LIMIT_BACKSTOP, backstop.DEFAULT_IDENTITY_MAX),
   rateLimitBackstopAnon: backstop.parseLimit(process.env.RATE_LIMIT_BACKSTOP_ANON, backstop.DEFAULT_ANON_MAX),
+  /*
+   * Content-library WRITES (move, rename, tag, delete, upload-session creation) per minute, per IP
+   * and endpoint. Reads and chunk traffic of an open upload session are not counted here. Raise it
+   * for an office behind one NAT doing bulk library work; 0 turns this limiter off (the backstop
+   * above still applies).
+   */
+  rateLimitContent: backstop.parseLimit(process.env.RATE_LIMIT_CONTENT, 30),
+  /*
+   * Chunk requests (PATCH/GET/DELETE/finalize) on an upload session that is already open, per
+   * minute, per IP. Chunks are 1 MB and sent one after another, so 1200/min is ~20 MB/s per IP: a
+   * LAN upload outruns that. 0 turns this limiter off (the backstop still applies).
+   */
+  rateLimitUploadChunks: backstop.parseLimit(process.env.RATE_LIMIT_UPLOAD_CHUNKS, 1200),
 
   port: process.env.PORT || 3001,
   accessLogEnabled: process.env.ACCESS_LOG === 'true',

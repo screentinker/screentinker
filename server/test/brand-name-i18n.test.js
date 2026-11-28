@@ -119,7 +119,9 @@ test('the interpolation resolves, and falls back to the product name', async () 
    * locally on Node 24 and failed in CI on Node 20 with "navigator is not defined". Stubbing it
    * explicitly makes the test independent of which Node happens to be running it.
    */
-  const store = new Map();
+  // Pin English: Node's own navigator.language follows the OS locale (pl-PL on a Polish Mac), and
+  // the assertions below match English sentences.
+  const store = new Map([['rd_lang', 'en']]);
   globalThis.localStorage = {
     getItem: (k) => (store.has(k) ? store.get(k) : null),
     setItem: (k, v) => store.set(k, String(v)),
