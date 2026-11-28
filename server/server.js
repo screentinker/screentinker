@@ -1818,8 +1818,14 @@ app.use('/api/trust/org-deletion', rateLimit(60000, 10));
  * requests it takes to get there. What must stay tight is SESSION CREATION, which is the thing
  * that actually allocates disk, and that keeps the 30/min budget below.
  */
-const contentLimiter = rateLimit(60000, 30);           // 30 content operations per minute
-const uploadSessionLimiter = rateLimit(60000, 1200);   // chunk traffic for an already-open session
+// RATE_LIMIT_CONTENT (default 30) content operations per minute; 0 = this limiter off.
+const contentLimiter = config.rateLimitContent > 0
+  ? rateLimit(60000, config.rateLimitContent)
+  : (req, res, next) => next();
+// RATE_LIMIT_UPLOAD_CHUNKS (default 1200) chunk requests per minute for an already-open session; 0 = off.
+const uploadSessionLimiter = config.rateLimitUploadChunks > 0
+  ? rateLimit(60000, config.rateLimitUploadChunks)
+  : (req, res, next) => next();
 app.use('/api/content', (req, res, next) => {
   // Operations on an OPEN session (chunk PATCH, offset GET, DELETE, finalize) — never creation,
   // which has no id segment and stays on the general budget.

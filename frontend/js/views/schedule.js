@@ -1,6 +1,6 @@
 import { api, assertLocalCallAllowed } from '../api.js';
 import { showToast } from '../components/toast.js';
-import { t, tn } from '../i18n.js';
+import { t, tn, getLanguage } from '../i18n.js';
 import { workspaceCoverage } from '../components/corporate-ui.js';
 import { canWrite } from '../utils.js';
 import { mountResourceLibrary } from '../components/library/resource-library.js';
@@ -38,6 +38,27 @@ import {
  * Monthly is the one form the engine evaluates on the day-of-month. Nothing here writes a rule the
  * panel would play differently from how the calendar draws it.
  */
+
+/*
+ * Hour labels on the calendar's left edge. English (and the other 12-hour locales) read "1am … 11pm"
+ * from the schedule.hour_* strings; a 24-hour locale (pl, de, da, …) gets "00:00 … 23:00", which
+ * gluing a number onto a suffix could never produce. The UI language decides, via Intl.
+ */
+const hourCycleCache = new Map();
+function uses24h() {
+  const lang = getLanguage();
+  if (!hourCycleCache.has(lang)) {
+    let h24 = false;
+    try { h24 = !/^h1[12]$/.test(new Intl.DateTimeFormat(lang, { hour: 'numeric' }).resolvedOptions().hourCycle || 'h12'); } catch { /* 12-hour */ }
+    hourCycleCache.set(lang, h24);
+  }
+  return hourCycleCache.get(lang);
+}
+function hourLabel(h) {
+  if (uses24h()) return `${String(h).padStart(2, '0')}:00`;
+  return h === 0 ? t('schedule.hour_12am') : h < 12 ? h + t('schedule.hour_am') : h === 12 ? t('schedule.hour_12pm') : (h - 12) + t('schedule.hour_pm');
+}
+
 const DAY_KEY_LABELS = () => ({
   MO: t('schedule.day_mo'), TU: t('schedule.day_tu'), WE: t('schedule.day_we'), TH: t('schedule.day_th'),
   FR: t('schedule.day_fr'), SA: t('schedule.day_sa'), SU: t('schedule.day_su'),
@@ -752,7 +773,7 @@ export async function render(container) {
       html += `<div class="${cls}" data-head-day="${i}" role="button" tabindex="0">${DAYS[d.getDay()]}<br><span class="num">${d.getDate()}</span></div>`;
     });
     for (const h of HOURS) {
-      html += `<div class="sched-hour-label">${h === 0 ? t('schedule.hour_12am') : h < 12 ? h + t('schedule.hour_am') : h === 12 ? t('schedule.hour_12pm') : (h - 12) + t('schedule.hour_pm')}</div>`;
+      html += `<div class="sched-hour-label">${hourLabel(h)}</div>`;
       days.forEach((d, i) => {
         const work = WORK_DAYS.includes(d.getDay()) && h * 60 >= WORK_START_MIN && h * 60 < WORK_END_MIN;
         const off = !WORK_DAYS.includes(d.getDay());
