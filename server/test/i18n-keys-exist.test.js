@@ -103,7 +103,7 @@ test('every help tip is translated in every active locale', () => {
 });
 
 // Every locale shipped in frontend/js/i18n. Keep in step with the registry in i18n.js.
-const ACTIVE_LOCALES = ['es', 'fr', 'de', 'pt', 'hi', 'it', 'ja', 'zh'];
+const ACTIVE_LOCALES = ['es', 'fr', 'de', 'pt', 'hi', 'it', 'ja', 'zh', 'ru'];
 
 test('a locale never defines a key that English does not', () => {
   // The half of parity that is ALWAYS actionable: a key in a locale file that no longer exists in
@@ -112,7 +112,9 @@ test('a locale never defines a key that English does not', () => {
   for (const locale of ACTIVE_LOCALES) {
     const src = fs.readFileSync(path.join(FRONTEND, 'i18n', `${locale}.js`), 'utf8');
     const keys = new Set([...src.matchAll(/^\s*'([^']+)'\s*:/gm)].map(m => m[1]));
-    assert.deepEqual([...keys].filter(k => !defined.has(k)), [],
+    // A locale with more plural forms than English (ru) adds X_few / X_many beside English's X_other.
+    const extraPluralForm = (k) => /_(few|many)$/.test(k) && defined.has(k.replace(/_(few|many)$/, '_other'));
+    assert.deepEqual([...keys].filter(k => !defined.has(k) && !extraPluralForm(k)), [],
       `${locale}.js defines keys that do not exist in en.js`);
   }
 });
