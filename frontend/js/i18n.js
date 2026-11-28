@@ -12,9 +12,10 @@ import ja from './i18n/ja.js';
 import zh from './i18n/zh.js';
 import nl from './i18n/nl.js';
 import da from './i18n/da.js';
+import ru from './i18n/ru.js';
 
 const fallback = en;
-const registry = { en, es, fr, de, pt, hi, it, ja, zh, nl, da };
+const registry = { en, es, fr, de, pt, hi, it, ja, zh, nl, da, ru };
 
 let currentLang = localStorage.getItem('rd_lang') || navigator.language?.split('-')[0] || 'en';
 if (!registry[currentLang]) currentLang = 'en';
@@ -74,8 +75,26 @@ export function t(key, vars) {
 
 // Plural helper: looks up `${keyBase}_one` for n===1 else `${keyBase}_other`,
 // auto-injects `{n}` into vars. Use for any string that varies on a count.
+//
+// A locale whose language has more than two plural forms (Russian: 1 экран, 2 экрана, 5 экранов)
+// adds `${keyBase}_few` / `${keyBase}_many` next to `_one` / `_other`. Only when the locale has
+// one of those for this key is the CLDR category from Intl.PluralRules used, so every existing
+// locale keeps the plain n === 1 rule (French CLDR, for one, would make 0 singular).
+const pluralRules = {};
+function pluralCategory(n) {
+  try {
+    pluralRules[currentLang] ||= new Intl.PluralRules(currentLang);
+    return pluralRules[currentLang].select(n);
+  } catch { return n === 1 ? 'one' : 'other'; }
+}
+
 export function tn(keyBase, n, vars = {}) {
-  const key = keyBase + (n === 1 ? '_one' : '_other');
+  let key = keyBase + (n === 1 ? '_one' : '_other');
+  const own = registry[currentLang];
+  if (own && ((keyBase + '_few') in own || (keyBase + '_many') in own)) {
+    const cldr = keyBase + '_' + pluralCategory(n);
+    if (cldr in own) key = cldr;
+  }
   return format(lookup(key), { n, ...vars });
 }
 
@@ -116,6 +135,7 @@ export function getAvailableLanguages() {
     { code: 'hi', name: 'हिन्दी' },
     { code: 'nl', name: 'Nederlands' },
     { code: 'da', name: 'Dansk' },
+    { code: 'ru', name: 'Русский' },
   ];
 }
 
